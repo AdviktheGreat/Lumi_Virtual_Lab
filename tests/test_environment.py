@@ -613,6 +613,20 @@ class TestStoppingABuild:
         assert not thread.is_alive()
         assert isinstance(outcome["raised"], StoppedError)
 
+    def test_what_the_build_started_is_killed_if_it_ignores_being_asked_even_after_the_build_has_ended(
+        self, program: FakeDockerProgram, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(environment, "BUILD_STOP_GRACE_SECONDS", 0.3)
+        program.build(wait=True, child="ignore_term")
+        stop = threading.Event()
+        thread, outcome = self.start(program, stop)
+
+        stop.set()
+        thread.join(10)
+
+        assert not thread.is_alive()
+        assert isinstance(outcome["raised"], StoppedError)
+
     def test_a_build_that_fails_when_not_asked_to_stop_is_a_failure_and_not_a_stop(
         self, program: FakeDockerProgram
     ) -> None:

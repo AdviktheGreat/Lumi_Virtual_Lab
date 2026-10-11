@@ -41,7 +41,13 @@ elif args[:1] == ["build"]:
     if state["build"]["ignore_term"]:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     if state["build"]["child"]:
-        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(25)"])
+        ready = here / "child_ready"
+        ignoring = "signal.signal(signal.SIGTERM, signal.SIG_IGN); " if state["build"]["child"] == "ignore_term" else ""
+        code = f"import signal, time, pathlib; {ignoring}pathlib.Path({str(ready)!r}).write_text(''); time.sleep(25)"
+        subprocess.Popen([sys.executable, "-c", code])
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
     for number, line in enumerate(state["build"]["lines"]):
         (sys.stderr if number % 2 else sys.stdout).write(line + "\\n")
         (sys.stderr if number % 2 else sys.stdout).flush()
@@ -105,7 +111,8 @@ class FakeDocker:
     def build(self, **changes: Any) -> "FakeDocker":
         """Changes how a build goes: the "lines" it prints, then the "raw" bytes it prints, as hex, its "exit"
         code, whether it "wait"s for release() before it ends, whether it ignores being asked to end
-        ("ignore_term"), and whether it starts a "child" that holds its output open for 25 seconds."""
+        ("ignore_term"), and whether it starts a "child" that holds its output open for 25 seconds, which is
+        "ignore_term" for one that ignores being asked to end."""
         self.state["build"].update(changes)
         self.save()
 

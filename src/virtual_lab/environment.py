@@ -209,10 +209,10 @@ def run_build(command: Sequence[str], on_output: Callable[[str], None] | None, s
                 continue
             if process.poll() is None:
                 end_build(process, force=False)
-                try:
-                    process.wait(BUILD_STOP_GRACE_SECONDS)
-                except subprocess.TimeoutExpired:
-                    end_build(process, force=True)
+            # What the client started can outlive it and hold the output open, so the build is not over until
+            # the output has ended too
+            if not finished.wait(BUILD_STOP_GRACE_SECONDS):
+                end_build(process, force=True)
             return
 
     watcher = threading.Thread(target=watch, name="virtual-lab-build-stop", daemon=True) if stop is not None else None
