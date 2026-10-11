@@ -2,6 +2,7 @@
 for what it offers to choose from."""
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -70,6 +71,51 @@ class TestWorkspace:
         assert second.name == "2026-10-07_1530_choose-the-epitopes-2"
         assert project.parent == workspace.projects_dir
         assert first.is_dir() and second.is_dir()
+
+    def test_a_directory_made_by_another_request_in_the_meantime_is_not_taken(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        workspace = Workspace(tmp_path)
+        real_mkdir = Path.mkdir
+        rivals: list[Path] = []
+
+        def racing(self: Path, *args: object, **kwargs: object) -> None:
+            if self.name.startswith("2026-10-07_1530_") and not rivals:
+                # Another request began between this one looking for a name and making it
+                rivals.append(self)
+                real_mkdir(self, parents=True)
+            real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "mkdir", racing)
+
+        made = workspace.new_directory("chat", "Race", now=NOW)
+
+        assert rivals[0].name == "2026-10-07_1530_race"
+        assert made.name == "2026-10-07_1530_race-2"
+        assert made.is_dir() and rivals[0].is_dir()
+
+    def test_requests_that_begin_at_once_each_get_a_directory_of_their_own(self, tmp_path: Path) -> None:
+        workspace = Workspace(tmp_path)
+        starting = threading.Barrier(16)
+        made: list[Path] = []
+        failures: list[BaseException] = []
+
+        def begin() -> None:
+            try:
+                starting.wait()
+                made.append(workspace.new_directory("chat", "New chat", now=NOW))
+            except BaseException as error:
+                failures.append(error)
+
+        threads = [threading.Thread(target=begin) for _ in range(16)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert failures == []
+        assert len({path.name for path in made}) == 16
+        assert all(path.is_dir() for path in made)
 
     def test_settings_are_kept_and_unknown_or_unreadable_ones_ignored(self, tmp_path: Path) -> None:
         workspace = Workspace(tmp_path)

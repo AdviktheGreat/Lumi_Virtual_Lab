@@ -1602,6 +1602,20 @@ class TestPages:
         assert site.get("/index.html").text == "<html>home</html>"
         assert site.get("/_next/static/app.js").text == "console.log(1)"
 
+    def test_a_page_is_asked_for_by_head_as_well_as_by_get(self, site: TestClient) -> None:
+        for path in ("/", "/chat", "/_next/static/app.js", "/chat/2026-10-07_1500_what-is-a-nanobody"):
+            head = site.head(path)
+            get = site.get(path)
+
+            assert head.status_code == 200, path
+            assert head.content == b""
+            assert head.headers["content-length"] == get.headers["content-length"]
+            assert head.headers["cache-control"] == get.headers["cache-control"]
+
+    def test_the_api_does_not_answer_head_with_a_page(self, site: TestClient) -> None:
+        assert site.head("/api/health").status_code == 405
+        assert site.head("/api/missing").status_code == 405
+
     def test_an_address_of_no_page_shows_the_first_page_so_that_the_page_can_route_it(self, site: TestClient) -> None:
         assert site.get("/chat/2026-10-07_1500_what-is-a-nanobody").text == "<html>home</html>"
         assert site.get("/history").text == "<html>home</html>"
