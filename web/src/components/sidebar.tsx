@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { PanelLeftClose, Search as SearchIcon, SquarePen, X } from "lucide-react";
 import { Brand } from "@/components/brand";
-import { ChatRow } from "@/components/chat-row";
+import { ChatRow, LIST_ID } from "@/components/chat-row";
 import { useChats } from "@/components/chats-provider";
 import { useServer } from "@/components/server-provider";
 import { useShell } from "@/components/app-shell";
@@ -127,7 +127,7 @@ export function Sidebar() {
           </Link>
         </Button>
       </div>
-      <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <nav id={LIST_ID} tabIndex={-1} aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none">
         <ChatList />
       </nav>
       <div className="flex items-center justify-between border-t border-sidebar-border px-3 py-2">

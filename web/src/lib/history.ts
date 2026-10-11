@@ -7,11 +7,16 @@ export const TITLE_LIMIT = 80;
 // What a conversation is called in the list, where it has no title yet
 export const UNTITLED = "New chat";
 
+// Text cut to the most a title may be, in characters, which are more than the units that a box counts for its length
+// where there are any that are written with two
+export function capTitle(typed: string): string {
+  return [...typed].slice(0, TITLE_LIMIT).join("");
+}
+
 // A title as the server will keep it: its words, one space apart, cut to the most there may be, which is nothing for a
 // title with nothing in it
 export function cleanTitle(typed: string): string | null {
-  const words = typed.split(/\s+/).filter(Boolean).join(" ");
-  const title = [...words].slice(0, TITLE_LIMIT).join("").trimEnd();
+  const title = capTitle(typed.split(/\s+/).filter(Boolean).join(" ")).trimEnd();
 
   return title === "" ? null : title;
 }

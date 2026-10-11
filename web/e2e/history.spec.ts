@@ -207,7 +207,7 @@ test.describe("renaming a conversation", () => {
     await expect(list(page).getByRole("link", { name: renamed })).toBeVisible();
   });
 
-  test("is no longer than a title may be", async ({ page }) => {
+  test("is no longer than a title may be, in characters", async ({ page }) => {
     const title = `Long ${tag()}`;
     const id = await make(page, title);
 
@@ -218,6 +218,17 @@ test.describe("renaming a conversation", () => {
 
     await expect(options(page, id)).toBeAttached();
     expect(await titleOnServer(page, id)).toBe("x".repeat(80));
+
+    // Characters that are two units long are as much one as any, so there is room for as many of them
+    await chooseFrom(page, id, "Rename");
+    await titleField(page).fill("😀".repeat(70));
+    await expect(titleField(page)).toHaveValue("😀".repeat(70));
+    await titleField(page).fill("😀".repeat(90));
+    await expect(titleField(page)).toHaveValue("😀".repeat(80));
+    await page.keyboard.press("Enter");
+
+    await expect(titleField(page)).toHaveCount(0);
+    expect(await titleOnServer(page, id)).toBe("😀".repeat(80));
   });
 
   test("changes the heading of the conversation that is open", async ({ page }) => {
@@ -410,6 +421,8 @@ test.describe("deleting a conversation", () => {
     await expect(page.getByRole("alertdialog")).toBeHidden();
     await expect(options(page, id)).toHaveCount(0);
     expect(await titleOnServer(page, id)).toBeNull();
+    // The row that had the focus is gone, and the focus is not left with it
+    await expect(list(page)).toBeFocused();
     // It was not the one that is open, so the page is where it was
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
   });

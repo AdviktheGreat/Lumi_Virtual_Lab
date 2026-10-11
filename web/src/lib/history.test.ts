@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanTitle, inDays, matchingTitles, TITLE_LIMIT } from "./history";
+import { capTitle, cleanTitle, inDays, matchingTitles, TITLE_LIMIT } from "./history";
 
 describe("a title as it is kept", () => {
   it("is its words one space apart, with nothing round them", () => {
@@ -20,6 +20,16 @@ describe("a title as it is kept", () => {
 
   it("does not end in a space that the cut left", () => {
     expect(cleanTitle(`${"a".repeat(79)} bbb`)).toBe("a".repeat(79));
+  });
+});
+
+describe("what may be typed of a title", () => {
+  it("is as much as a title may be, in characters, and nothing is done to what is within that", () => {
+    expect(capTitle("a".repeat(100))).toBe("a".repeat(80));
+    expect(capTitle("😀".repeat(100))).toBe("😀".repeat(80));
+    expect(capTitle("😀".repeat(60))).toBe("😀".repeat(60));
+    expect(capTitle("  two  spaces ")).toBe("  two  spaces ");
+    expect(capTitle("")).toBe("");
   });
 });
 

@@ -22,11 +22,14 @@ import { Input } from "@/components/ui/input";
 import { api, ApiError } from "@/lib/api";
 import { describeError } from "@/lib/errors";
 import { timeAgo } from "@/lib/format";
-import { cleanTitle, TITLE_LIMIT, UNTITLED } from "@/lib/history";
+import { capTitle, cleanTitle, UNTITLED } from "@/lib/history";
 import type { ChatSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const WORKING = new Set(["running", "pausing", "paused", "stopping"]);
+
+// What the focus goes to when the conversation it was on is deleted, which is the list, to be gone down from the top
+export const LIST_ID = "conversations";
 
 function ChatLink({ chat, active }: { chat: ChatSummary; active: boolean }) {
   const working = WORKING.has(chat.state);
@@ -106,7 +109,7 @@ function RenameForm({ chat, onDone }: { chat: ChatSummary; onDone: (focusBack: b
       <Input
         ref={input}
         value={typed}
-        onChange={(event) => setTyped(event.target.value)}
+        onChange={(event) => setTyped(capTitle(event.target.value))}
         onBlur={() => void keep(false)}
         onKeyDown={(event) => {
           if (event.key !== "Escape") return;
@@ -118,7 +121,6 @@ function RenameForm({ chat, onDone }: { chat: ChatSummary; onDone: (focusBack: b
         readOnly={saving}
         aria-label="Conversation title"
         aria-invalid={problem !== null}
-        maxLength={TITLE_LIMIT}
         autoComplete="off"
       />
       {problem && (
@@ -141,7 +143,8 @@ function DeleteDialog({
   active: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Where the focus goes when it is closed, which is up to the row, because the menu that opened it is gone by then
+  // Where the focus goes when it is closed, which is up to the row, because the menu that opened it is gone by then, and
+  // which is not the row if it is the one that was deleted
   onClosed: () => void;
 }) {
   const router = useRouter();
@@ -298,7 +301,7 @@ export function ChatRow({ chat, active }: { chat: ChatSummary; active: boolean }
         active={active}
         open={deleting}
         onOpenChange={setDeleting}
-        onClosed={() => trigger.current?.focus()}
+        onClosed={() => (trigger.current ?? document.getElementById(LIST_ID))?.focus()}
       />
     </div>
   );
