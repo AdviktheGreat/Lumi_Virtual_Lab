@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowDown } from "lucide-react";
 import { NoteChip } from "@/components/activity";
+import { CaughtUpProvider } from "@/components/caught-up";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
 import { ChatFilesProvider } from "@/components/chat-files";
+import { FilesButton, FilesPanel } from "@/components/files-panel";
 import { LeadBlock, Notice, TurnView } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
@@ -16,10 +18,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { attachedNames, readiness } from "@/lib/attachments";
 import { describeError } from "@/lib/errors";
+import { filesChanged } from "@/lib/files";
 import { formatCost } from "@/lib/format";
 import { currentTurn, unreadNotes, type SentNote } from "@/lib/steering";
 import { useAttachments } from "@/lib/use-attachments";
 import { useChat } from "@/lib/use-chat";
+import { useFiles } from "@/lib/use-files";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import type { ChatState } from "@/lib/types";
 
@@ -55,13 +59,19 @@ export function ChatView({ id }: { id: string }) {
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [sentNotes, setSentNotes] = useState<SentNote[]>([]);
+  const [filesOpen, setFilesOpen] = useState(false);
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
   const { scroller, atBottom, jump, onScroll } = useStickToBottom<HTMLDivElement>(transcript.lastId);
+  // The files are looked at again when something may have changed them: code ran, a turn ended, or a file was sent
+  const sentFiles = attachments.items.filter((item) => item.status === "ready").length;
+  const listed = useFiles(id, filesChanged(transcript) + sentFiles);
 
   const { state, title } = transcript;
   const working = state !== "idle";
   const waitingNotes = unreadNotes(sentNotes, transcript.turns, working);
   const lead = status.kind === "ready" ? status.info.lead : "Lead scientist";
+  // What came before the page was opened is replayed to it, and what comes after is as it happens
+  const caughtUp = status.kind === "ready" && transcript.lastId >= status.info.last_event_id;
 
   // The list on the side shows a conversation's title and when it last did anything, which a turn changes
   useEffect(() => {
@@ -150,87 +160,95 @@ export function ChatView({ id }: { id: string }) {
 
   return (
     <ChatFilesProvider value={id}>
-      <PageHeader>
-        <h1 className="min-w-0 flex-1 truncate text-sm font-medium" data-testid="chat-title">
-          {title || (status.kind === "ready" ? status.info.title : "")}
-        </h1>
-        {label && (
-          <Badge variant="secondary" className="gap-1.5" data-testid="chat-state">
-            <span className="size-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
-            {label}
-          </Badge>
-        )}
-        {cost && (
-          <span className="text-xs tabular-nums text-muted-foreground" title="Spent in this conversation">
-            {cost}
-            {transcript.maxCost !== null && ` of ${formatCost(transcript.maxCost)}`}
-          </span>
-        )}
-      </PageHeader>
+      <CaughtUpProvider value={caughtUp}>
+        <PageHeader>
+          <h1 className="min-w-0 flex-1 truncate text-sm font-medium" data-testid="chat-title">
+            {title || (status.kind === "ready" ? status.info.title : "")}
+          </h1>
+          {label && (
+            <Badge variant="secondary" className="gap-1.5" data-testid="chat-state">
+              <span className="size-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
+              {label}
+            </Badge>
+          )}
+          {cost && (
+            <span className="text-xs tabular-nums text-muted-foreground" title="Spent in this conversation">
+              {cost}
+              {transcript.maxCost !== null && ` of ${formatCost(transcript.maxCost)}`}
+            </span>
+          )}
+          <FilesButton count={listed.loaded ? listed.files.length : null} open={filesOpen} onToggle={() => setFilesOpen((was) => !was)} />
+        </PageHeader>
 
-      {connection === "closed" && (
-        <div className="px-4 pt-3">
-          <Notice tone="error">The live connection to this conversation was lost. Reload the page to follow it again.</Notice>
-        </div>
-      )}
-
-      <div className="relative min-h-0 flex-1">
-        <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto" data-testid="transcript">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6">
-            {status.kind === "loading" && transcript.turns.length === 0 && (
-              <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading the conversation">
-                <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />
-                <Skeleton className="h-4 w-4/5" />
-                <Skeleton className="h-4 w-3/5" />
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            {connection === "closed" && (
+              <div className="px-4 pt-3">
+                <Notice tone="error">The live connection to this conversation was lost. Reload the page to follow it again.</Notice>
               </div>
             )}
-            {transcript.turns.map((turn) => (
-              <TurnView key={turn.number} turn={turn} lead={lead} state={state} />
-            ))}
-            {waitingNotes.map((note, at) => (
-              <NoteChip key={`${note.turn}-${at}`} text={note.text} waiting />
-            ))}
-            {status.kind === "ready" && transcript.turns.length === 0 && connection !== "connecting" && (
-              <LeadBlock speaker={lead}>
-                <p className="text-[15px] leading-7">This conversation has nothing in it yet. Ask something below.</p>
-              </LeadBlock>
-            )}
-          </div>
-        </div>
-        {!atBottom && (
-          <Button
-            variant="outline"
-            size="icon-sm"
-            aria-label="Jump to the latest"
-            onClick={() => jump()}
-            className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-card shadow-md"
-          >
-            <ArrowDown className="size-4" />
-          </Button>
-        )}
-      </div>
 
-      <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-2">
-        {problem && (
-          <div className="pb-2">
-            <Notice tone="error">{problem}</Notice>
+            <div className="relative min-h-0 flex-1">
+              <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto" data-testid="transcript">
+                <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6">
+                  {status.kind === "loading" && transcript.turns.length === 0 && (
+                    <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading the conversation">
+                      <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />
+                      <Skeleton className="h-4 w-4/5" />
+                      <Skeleton className="h-4 w-3/5" />
+                    </div>
+                  )}
+                  {transcript.turns.map((turn) => (
+                    <TurnView key={turn.number} turn={turn} lead={lead} state={state} />
+                  ))}
+                  {waitingNotes.map((note, at) => (
+                    <NoteChip key={`${note.turn}-${at}`} text={note.text} waiting />
+                  ))}
+                  {status.kind === "ready" && transcript.turns.length === 0 && connection !== "connecting" && (
+                    <LeadBlock speaker={lead}>
+                      <p className="text-[15px] leading-7">This conversation has nothing in it yet. Ask something below.</p>
+                    </LeadBlock>
+                  )}
+                </div>
+              </div>
+              {!atBottom && (
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Jump to the latest"
+                  onClick={() => jump()}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-card shadow-md"
+                >
+                  <ArrowDown className="size-4" />
+                </Button>
+              )}
+            </div>
+
+            <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-2">
+              {problem && (
+                <div className="pb-2">
+                  <Notice tone="error">{problem}</Notice>
+                </div>
+              )}
+              <Composer
+                value={draft}
+                onValueChange={setDraft}
+                onSend={() => void send()}
+                state={state}
+                onNote={() => void note()}
+                onPause={() => void steer("pause")}
+                onResume={() => void steer("resume")}
+                onStop={() => void steer("stop")}
+                disabled={sending || status.kind !== "ready"}
+                holdUp={readiness(attachments.items)}
+                files={{ items: attachments.items, onAdd: attach, onRemove: (item) => attachments.remove([item]), onRetry: attachments.retry }}
+                footer={model ? `${lead} · ${model}` : undefined}
+              />
+            </div>
           </div>
-        )}
-        <Composer
-          value={draft}
-          onValueChange={setDraft}
-          onSend={() => void send()}
-          state={state}
-          onNote={() => void note()}
-          onPause={() => void steer("pause")}
-          onResume={() => void steer("resume")}
-          onStop={() => void steer("stop")}
-          disabled={sending || status.kind !== "ready"}
-          holdUp={readiness(attachments.items)}
-          files={{ items: attachments.items, onAdd: attach, onRemove: (item) => attachments.remove([item]), onRetry: attachments.retry }}
-          footer={model ? `${lead} · ${model}` : undefined}
-        />
-      </div>
+          {filesOpen && <FilesPanel id={id} listed={listed} onClose={() => setFilesOpen(false)} />}
+        </div>
+      </CaughtUpProvider>
     </ChatFilesProvider>
   );
 }

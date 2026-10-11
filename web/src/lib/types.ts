@@ -151,3 +151,20 @@ export interface Attachment {
   path: string;
   size: number;
 }
+
+// A file of a conversation, as the list of them shows it
+export interface ChatFile {
+  // From the conversation's files
+  path: string;
+  size: number;
+  // Seconds since the epoch
+  modified: number;
+  // What the server sends it as, which is never a type that a browser would run
+  type: string;
+}
+
+export interface ChatFiles {
+  files: ChatFile[];
+  // Whether there were more files than the list gives
+  truncated: boolean;
+}

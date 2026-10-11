@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, and the notes left for it; and the files that go with a message and the way a turn is steered |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -61,6 +61,22 @@ files. A message cannot be sent while a file is on its way or has failed, and up
 The most that one file may be is the server's `max_upload_bytes` (4 GiB unless `serve` is told otherwise), which the
 pages learn from `/settings`, so they turn a larger file away before sending it.
 
+The Files button in the header opens the conversation's files: what was attached and what the code made, in folders,
+with a search once there are more than a few. A file opens beside the conversation (over it on a narrow screen) as an
+image, a table, or text, whichever it is. Only the first 200 KB of a file is read to show it, a table
+shows its first 200 rows and 40 columns, and a file that is not text is offered for download instead. The list is read
+again when a turn makes or changes a file, once the stream has been quiet for a moment.
+
+## A team in the conversation
+
+When the lead brings the team in (`convene_team`) or asks one scientist (`consult`), the call that did it opens to what
+the session is: who is in it, what it is for (under "Agenda"), and who said what in each round, with the code a scientist
+ran and the files it made where they did it. While it goes on, what a scientist is writing shows as they write it. The
+session is open while it runs, and as the researcher left it afterwards; one that was over before the page was opened stays
+closed, which is told by the page having been sent every event the conversation had when it was opened
+(`last_event_id`), since until then a call may only seem to be going on. One the researcher stopped is shown as cut short,
+not as an error, which is how `src/lib/lab.ts` tells a stop (the `failed` event of the kind `ChatStopped`) from a failure.
+
 ## End-to-end tests
 
 The tests run the real server with the built pages and a script where the model would be
@@ -78,7 +94,12 @@ a word in it:
 | `fail:` | Fails |
 | `markdown:` | Answers with a page of Markdown, including what a page must not trust: a script, a tracking image, an address that runs code |
 | `code:hello`, `error`, `two`, `plot`, `long`, `big`, `slow` | Runs code in the conversation's session first, as the word says, and answers once it has run |
+| `code:files` | Runs code that writes one of each kind of file the panel shows differently: a long table, a wide one, a long log, a file that is not text, and an empty one |
 | `tool:unknown`, `tool:resources` | Calls a tool it does not have, or looks for resources |
+| `lab:team` | Brings in the team for a round of discussion, in which the scientists answer as the script says |
+| `lab:consult` | Asks one scientist, reviewed by the critic |
+| `lab:code` | Asks one scientist, who runs code in the session before they reply |
+| `lab:slow` | Asks one scientist, who writes a long reply, slowly |
 
 Code runs on this machine, so a test that wants it makes its conversation through the server with `code: {where:
 "local"}`, as `askWhereCodeRuns` in `e2e/fixtures.ts` does. `e2e/replay.spec.ts` replaces a conversation's event stream

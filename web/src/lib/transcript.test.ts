@@ -405,6 +405,155 @@ describe("what the lead does in a turn", () => {
   });
 });
 
+describe("what a team does for the lead", () => {
+  const labEvent = (turn: number, kind: string, fields: Partial<ChatEvent> & { details?: Record<string, unknown>; round?: number; call?: string } = {}) => {
+    const { details, round, call: of, ...rest } = fields;
+
+    return event("lab", turn, {
+      data: { call: of ?? "call_1", event: kind, meeting: "lab_001", round: round ?? null, details: details ?? {} },
+      ...rest,
+    });
+  };
+  const convening = (id = "call_1") => event("tool_calls", 1, { data: { calls: [call(id, "convene_team", { agenda: "Design" })] } });
+  const labOf = (transcript: ReturnType<typeof replay>, at = 0) => {
+    const step = transcript.turns[0].steps[at];
+
+    return step.kind === "call" ? step.call.lab : null;
+  };
+
+  it("is shown with the call that brought the team in, as it goes on", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      convening(),
+      labEvent(1, "started", { details: { meeting_type: "team", agenda: "Design", num_rounds: 1, team: [{ title: "Immunologist" }] } }),
+      labEvent(1, "turn", { speaker: "Immunologist", round: 1 }),
+      labEvent(1, "message", { speaker: "Immunologist", round: 1, text: "Target it.", details: { kind: "response" } }),
+    ]);
+    const lab = labOf(transcript);
+
+    expect(lab).toMatchObject({ meeting: "lab_001", status: "running", team: ["Immunologist"], rounds: 1 });
+    expect(lab?.turns).toHaveLength(1);
+    expect(lab?.turns[0]).toMatchObject({ speaker: "Immunologist", round: 1, steps: [{ kind: "reply", text: "Target it." }] });
+  });
+
+  it("is no turn of the lead's, and does not change what the lead has said or what the call returned", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("writing", 1, { text: "Let me" }),
+      event("tool_calls", 1, { text: "Let me ask.", data: { calls: [call("call_1", "convene_team")] } }),
+      event("writing", 1, { text: "I will wait" }),
+      labEvent(1, "started", { details: { agenda: "x" } }),
+      labEvent(1, "turn", { speaker: "Immunologist", round: 1 }),
+      event("writing", 1, { speaker: "Immunologist", text: "Target", data: { call: "call_1", meeting: "lab_001", request: 1 } }),
+    ]);
+    const step = transcript.turns[0].steps.find((candidate) => candidate.kind === "call");
+
+    expect(transcript.turns).toHaveLength(1);
+    expect(transcript.turns[0].writing).toBe("I will wait");
+    expect(transcript.turns[0].steps.map((candidate) => candidate.kind)).toEqual(["say", "call"]);
+    expect(step?.kind === "call" && [step.call.status, step.call.output, step.call.cells]).toEqual(["running", null, []]);
+    expect(labOf(transcript, 1)?.writing).toEqual({ speaker: "Immunologist", text: "Target" });
+  });
+
+  it("is told of by the call it belongs to, among several", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("tool_calls", 1, { data: { calls: [call("a", "consult"), call("b", "convene_team")] } }),
+      labEvent(1, "started", { call: "b", details: { agenda: "Team" } }),
+      labEvent(1, "started", { call: "a", details: { agenda: "One" } }),
+    ]);
+
+    expect(labOf(transcript, 0)?.agenda).toBe("One");
+    expect(labOf(transcript, 1)?.agenda).toBe("Team");
+  });
+
+  it("is not shown for a call that was not told of, and makes no turn or call of its own", () => {
+    next = 0;
+    const before = replay([event("user", 1)]);
+    const transcript = replay([
+      labEvent(1, "started", { call: "ghost", details: { agenda: "x" } }),
+      event("writing", 1, { speaker: "Immunologist", text: "x", data: { call: "ghost", meeting: "m" } }),
+    ], before);
+
+    expect(transcript.turns).toEqual(before.turns);
+    // A turn that was not told of is not made for a session either
+    expect(replay([labEvent(2, "started", { call: "ghost" })]).turns).toEqual([]);
+    expect(replay([labEvent(0, "started", { call: "ghost" })]).turns).toEqual([]);
+  });
+
+  it("has no session before the team has started, however much of a reply is written", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      convening(),
+      event("writing", 1, { speaker: "Immunologist", text: "early", data: { call: "call_1", meeting: "lab_001" } }),
+    ]);
+
+    expect(labOf(transcript)).toBeNull();
+  });
+
+  it("is told of again without being changed, so that a stream started again is harmless", () => {
+    next = 0;
+    const events = [event("user", 1), convening(), labEvent(1, "started", { details: { agenda: "x" } }), labEvent(1, "turn", { speaker: "Critic", round: 1 })];
+    const once = replay(events);
+
+    expect(replay(events, once)).toBe(once);
+    expect(labOf(once)?.turns).toHaveLength(1);
+  });
+
+  it("is over with the summary, and the call that brought it in is answered with it", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      convening(),
+      labEvent(1, "started"),
+      labEvent(1, "finished", { text: "The summary." }),
+      event("tool_output", 1, { text: "The summary.", data: { call: "call_1", name: "convene_team" } }),
+      event("answer", 1, { text: "Done." }),
+    ]);
+    const step = transcript.turns[0].steps[0];
+
+    expect(labOf(transcript)).toMatchObject({ status: "finished", summary: "The summary." });
+    expect(step.kind === "call" && step.call.status).toBe("done");
+  });
+
+  it("is cut short when the turn is, whether the researcher stopped it or it failed, and is not when it was over", () => {
+    next = 0;
+    const going = (turn: number, id: string) => [
+      event("user", turn),
+      event("tool_calls", turn, { data: { calls: [call(id, "convene_team")] } }),
+      labEvent(turn, "started", { call: id }),
+    ];
+    const statusOf = (transcript: ReturnType<typeof replay>, turn: number) => {
+      const step = transcript.turns[turn].steps[0];
+
+      return step.kind === "call" ? step.call.lab?.status : undefined;
+    };
+
+    const transcript = replay([
+      ...going(1, "a"),
+      event("answer", 1, { text: "Done" }),
+      ...going(2, "b"),
+      event("stopped", 2, { text: "Stopped." }),
+      ...going(3, "c"),
+      event("failed", 3, { text: "Failed" }),
+      event("user", 4),
+      event("tool_calls", 4, { data: { calls: [call("d", "convene_team")] } }),
+      labEvent(4, "started", { call: "d" }),
+      labEvent(4, "finished", { call: "d", text: "Summary" }),
+      event("stopped", 4, { text: "Stopped." }),
+    ]);
+
+    expect(statusOf(transcript, 0)).toBe("interrupted");
+    expect(statusOf(transcript, 1)).toBe("interrupted");
+    expect(statusOf(transcript, 2)).toBe("interrupted");
+    expect(statusOf(transcript, 3)).toBe("finished");
+  });
+});
+
 describe("when the lead is thinking", () => {
   const turnOf = (...events: ChatEvent[]) => {
     next = 0;
