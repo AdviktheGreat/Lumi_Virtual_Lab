@@ -5,7 +5,7 @@ Every route is under /api and answers in JSON, and errors do too, in one shape:
 and everything else is a request and an answer.
 
     GET    /api/health                  that the server is there, which needs no token
-    GET    /api/settings, PATCH         what a new conversation starts with
+    GET    /api/settings, PATCH         what a new conversation starts with, and the largest file it can be sent
     GET    /api/models                  the models to choose from, and whether they can be reached
     GET    /api/keys                    which providers have their keys
     PUT    /api/keys/{name}, DELETE     a key, set until the server stops, or taken away
@@ -44,7 +44,7 @@ from starlette.requests import ClientDisconnect
 
 from virtual_lab.__about__ import __version__
 from virtual_lab.chat import ChatBusyError, ChatClosedError, UploadTooLargeError
-from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_CHAT_TITLE_CHARS
+from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
 from virtual_lab.environment import DATA_LAKE
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
@@ -54,7 +54,7 @@ from virtual_lab.server.security import LOCAL_HOSTS, Guard
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
 from virtual_lab.ui.library import SETTABLE_KEYS, provider_statuses
-from virtual_lab.ui.workspace import DEFAULT_WORKSPACE, Workspace
+from virtual_lab.ui.workspace import DEFAULT_WORKSPACE, Settings, Workspace
 
 # The most characters of a message, which no one writes by hand
 MAX_MESSAGE_CHARS = 200_000
@@ -224,6 +224,7 @@ def create_app(
     check_setup: bool = True,
     docker_command: Sequence[str] = ("docker",),
     release_url: str = BIOMNI_RELEASE_URL,
+    max_upload_bytes: int = MAX_UPLOAD_BYTES,
 ) -> FastAPI:
     """The server's application.
 
@@ -243,6 +244,8 @@ def create_app(
         code in Docker is made, rather than when its code first runs.
     :param docker_command: How the setup invokes Docker, which is for tests: code runs with "docker".
     :param release_url: Where the data lake is fetched from, which is for tests.
+    :param max_upload_bytes: The most bytes of one file that may be attached to a message, which the settings tell
+        the interface, so that it does not send a file the server would turn away.
     """
     store = Workspace(Path(workspace))
     setup = Setup(store, docker_command, release_url)
@@ -252,6 +255,7 @@ def create_app(
         client=client,
         chat_models=chat_models,
         setup=setup if check_setup else None,
+        max_upload_bytes=max_upload_bytes,
     )
 
     @asynccontextmanager
@@ -300,9 +304,12 @@ def create_app(
     def health() -> dict[str, Any]:
         return {"status": "ok", "version": __version__}
 
+    def settings_view(settings: Settings) -> dict[str, Any]:
+        return {**public_settings(settings), "workspace": str(store.root), "max_upload_bytes": max_upload_bytes}
+
     @api.get("/settings")
     def get_settings() -> dict[str, Any]:
-        return {**public_settings(store.load_settings()), "workspace": str(store.root)}
+        return settings_view(store.load_settings())
 
     @api.patch("/settings")
     def change_settings(body: SettingsBody) -> dict[str, Any]:
@@ -312,7 +319,7 @@ def create_app(
             raise ApiError(422, "invalid", str(error)) from error
         store.save_settings(changed)
 
-        return {**public_settings(changed), "workspace": str(store.root)}
+        return settings_view(changed)
 
     @api.get("/models")
     def get_models() -> dict[str, Any]:

@@ -67,7 +67,7 @@ test.describe("a conversation with the lead", () => {
     await answered(page, "word250", 30_000);
   });
 
-  test("Enter does not send a message while the lead is at work", async ({ page }) => {
+  test("Enter while the lead is at work adds a note, and does not send a second message", async ({ page }) => {
     let sent = 0;
     await page.route("**/api/chats/*/messages", (route) => {
       sent += 1;
@@ -77,13 +77,16 @@ test.describe("a conversation with the lead", () => {
     await expect(page.getByTestId("chat-state")).toHaveText("Working");
 
     const box = page.getByRole("textbox", { name: "Message" });
-    await box.fill("Something said too soon");
+    await box.fill("Something said while it works");
     await box.press("Enter");
 
+    await expect(page.getByTestId("pending-note")).toContainText("Something said while it works");
+    await expect(box).toHaveValue("");
     await page.getByRole("button", { name: "Stop" }).click();
     await expect(page.getByRole("status").filter({ hasText: /stopped/i })).toBeVisible({ timeout: 30_000 });
     expect(sent).toBe(1);
-    await expect(box).toHaveValue("Something said too soon");
+    await expect(page.getByTestId("user-message")).toHaveCount(1);
+    await expect(page.getByTestId("note")).toContainText("Not read: it came too late");
   });
 
   test("a turn that is stopped says so, and the conversation goes on", async ({ page }) => {

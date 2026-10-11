@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from virtual_lab.__about__ import __version__
 from virtual_lab import environment
+from virtual_lab.constants import MAX_UPLOAD_BYTES
 from virtual_lab.environment import DATA_LAKE, sandbox_image
 from virtual_lab.server import app as app_module
 from virtual_lab.server.app import MAX_MESSAGE_CHARS, MAX_PATH_CHARS, RequestBodyReader, create_app, last_event
@@ -228,7 +229,31 @@ class TestSettings:
             "data_lake": "",
             "forward_keys": [],
             "workspace": str(workspace.root),
+            "max_upload_bytes": MAX_UPLOAD_BYTES,
         }
+
+    def test_the_largest_file_that_can_be_attached_is_told_with_the_settings_and_kept_by_a_change(
+        self, workspace: Workspace
+    ) -> None:
+        app = create_app(workspace.root, token=TOKEN, check_keys=False, max_upload_bytes=1234)
+
+        with TestClient(app, base_url=LOCAL, headers=BEARER) as client:
+            assert client.get("/api/settings").json()["max_upload_bytes"] == 1234
+            assert client.patch("/api/settings", json={"stream": False}).json()["max_upload_bytes"] == 1234
+
+    def test_a_conversation_takes_the_largest_file_the_server_was_set_up_with(self, workspace: Workspace) -> None:
+        app = create_app(workspace.root, token=TOKEN, check_keys=False, max_upload_bytes=5)
+
+        with TestClient(app, base_url=LOCAL, headers=BEARER) as client:
+            made = new_chat(client)
+
+            assert handle_of(app, made["id"]).chat.max_upload_bytes == 5
+            response = client.post(f"/api/chats/{made['id']}/uploads", params={"name": "a.bin"}, content=b"012345")
+            assert response.status_code == 413
+            assert (
+                client.post(f"/api/chats/{made['id']}/uploads", params={"name": "a.bin"}, content=b"01234").status_code
+                == 201
+            )
 
     def test_a_change_is_kept_for_the_next_time(self, client: TestClient, workspace: Workspace) -> None:
         response = client.patch("/api/settings", json={"code": "docker", "max_cost": 4, "stream": False})

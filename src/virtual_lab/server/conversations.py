@@ -21,7 +21,7 @@ from langchain_core.outputs import ChatResult
 from openai import OpenAI, OpenAIError
 
 from virtual_lab.chat import Chat
-from virtual_lab.constants import CHAT_FILE_NAME, CHAT_UPLOADS_DIR_NAME, MAX_CHAT_TITLE_CHARS
+from virtual_lab.constants import CHAT_FILE_NAME, CHAT_UPLOADS_DIR_NAME, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
 from virtual_lab.events import ChatEvent
 from virtual_lab.llm import ModelSource
 from virtual_lab.server.config import ChatConfig, load_config, resolve_config, save_config
@@ -155,6 +155,7 @@ class Conversations:
     :param chat_models: Chat models for every conversation, as Chat takes them.
     :param setup: What code in Docker needs, to say before a conversation is made that it is not there, or None
         to leave that until the code is run.
+    :param max_upload_bytes: The most bytes of one file that may be attached to a message.
     """
 
     def __init__(
@@ -164,10 +165,12 @@ class Conversations:
         client: OpenAI | None = None,
         chat_models: ModelSource | None = None,
         setup: Setup | None = None,
+        max_upload_bytes: int = MAX_UPLOAD_BYTES,
     ) -> None:
         self.workspace = workspace
         self.check_keys = check_keys
         self.setup = setup
+        self.max_upload_bytes = max_upload_bytes
         self.client = client
         self.chat_models = chat_models
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -359,6 +362,7 @@ class Conversations:
                 stream=config.stream,
                 resources=config.code.resources if session is not None else "none",
                 commercial_mode=config.commercial_mode,
+                max_upload_bytes=self.max_upload_bytes,
                 on_event=handle.notify,
             )
         except (ValueError, CostUnknownError, OpenAIError, ImportError) as error:

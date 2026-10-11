@@ -1,4 +1,4 @@
-import type { ChatInfo, ChatSummary, Health, Models, NewChat, Settings } from "./types";
+import type { Attachment, ChatInfo, ChatSummary, Health, Models, NewChat, Settings } from "./types";
 
 // What the server's error says: its code is a word to act on, its message is for a person, and the rest is
 // whatever else the code carries, such as the keys that are missing
@@ -64,6 +64,57 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   return parsed as T;
 }
 
+function isAttachment(value: unknown): value is Attachment {
+  if (typeof value !== "object" || value === null) return false;
+  const { name, path, size } = value as Record<string, unknown>;
+
+  return typeof name === "string" && typeof path === "string" && typeof size === "number";
+}
+
+interface UploadOptions {
+  // Called with how much of the file has been sent, from 0 to 1
+  onProgress?: (fraction: number) => void;
+  signal?: AbortSignal;
+}
+
+// Sends a file as the body of a request, which is read by hand rather than with fetch, since fetch cannot say how much
+// of a body has gone
+function uploadFile(chatId: string, file: File, { onProgress, signal }: UploadOptions = {}): Promise<Attachment> {
+  return new Promise((resolve, reject) => {
+    const aborted = () => new DOMException("Aborted", "AbortError");
+    if (signal?.aborted) {
+      reject(aborted());
+
+      return;
+    }
+    const upload = new XMLHttpRequest();
+    upload.open("POST", `/api/chats/${encodeURIComponent(chatId)}/uploads?name=${encodeURIComponent(file.name)}`);
+    upload.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(1, event.loaded / event.total));
+    };
+    upload.onload = () => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(upload.responseText);
+      } catch {
+        parsed = undefined;
+      }
+      if (upload.status < 200 || upload.status >= 300) {
+        reject(errorFrom(upload.status, parsed));
+      } else if (isAttachment(parsed)) {
+        resolve(parsed);
+      } else {
+        reject(new ApiError(upload.status, "error", "The server did not say where it kept the file"));
+      }
+    };
+    // The browser says nothing of why, and a folder, which has nothing to read, fails the same way as a lost connection
+    upload.onerror = () => reject(new Error("The file could not be sent. It may be a folder, or the server may have stopped."));
+    upload.onabort = () => reject(aborted());
+    signal?.addEventListener("abort", () => upload.abort(), { once: true });
+    upload.send(file);
+  });
+}
+
 export const api = {
   health: (signal?: AbortSignal) => request<Health>("GET", "/health", undefined, signal),
   settings: (signal?: AbortSignal) => request<Settings>("GET", "/settings", undefined, signal),
@@ -72,7 +123,14 @@ export const api = {
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),
   deleteChat: (id: string) => request<void>("DELETE", `/chats/${encodeURIComponent(id)}`),
-  send: (id: string, text: string) =>
-    request<{ turn: number; state: string }>("POST", `/chats/${encodeURIComponent(id)}/messages`, { text }),
+  // Attachments are named as the server named them when it was sent the files
+  send: (id: string, text: string, attachments: string[] = []) =>
+    request<{ turn: number; state: string }>("POST", `/chats/${encodeURIComponent(id)}/messages`, { text, attachments }),
+  // What steers a turn that is running is accepted or not: a turn that has ended meanwhile has nothing to steer
+  note: (id: string, text: string) =>
+    request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/note`, { text }),
+  pause: (id: string) => request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/pause`),
+  resume: (id: string) => request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/resume`),
   stop: (id: string) => request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/stop`),
+  upload: uploadFile,
 };

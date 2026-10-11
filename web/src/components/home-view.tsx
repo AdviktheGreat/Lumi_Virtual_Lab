@@ -10,7 +10,10 @@ import { Notice } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
 import { api } from "@/lib/api";
+import { readiness } from "@/lib/attachments";
 import { describeError } from "@/lib/errors";
+import { useAttachments } from "@/lib/use-attachments";
+import type { ChatInfo } from "@/lib/types";
 
 const EXAMPLES = [
   {
@@ -42,23 +45,31 @@ export function HomeView() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // There is no conversation to send files to until the message is, so they are held until then
+  const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
+
+  function attach(files: File[]) {
+    const refused = attachments.add(files);
+    if (refused.length > 0) setProblem(refused.join("\n"));
+  }
 
   async function start() {
     const text = draft.trim();
     setSending(true);
     setProblem(null);
+    let chat: ChatInfo | null = null;
     try {
-      const chat = await api.createChat();
-      try {
-        await api.send(chat.id, text);
-      } catch (error) {
-        // A conversation that was never begun is not left in the list
-        await api.deleteChat(chat.id).catch(() => undefined);
-        throw error;
-      }
+      chat = await api.createChat();
+      const names = await attachments.upload(chat.id);
+      await api.send(chat.id, text, names);
       void refresh();
       router.push(`/chat?id=${encodeURIComponent(chat.id)}`);
     } catch (error) {
+      if (chat !== null) {
+        // A conversation that was never begun is not left in the list, and the files it took go with it
+        await api.deleteChat(chat.id).catch(() => undefined);
+        attachments.requeue();
+      }
       report(error);
       setProblem(describeError(error));
       setSending(false);
@@ -87,6 +98,13 @@ export function HomeView() {
               onValueChange={setDraft}
               onSend={() => void start()}
               disabled={sending}
+              holdUp={readiness(attachments.items)}
+              files={{
+                items: attachments.items,
+                onAdd: attach,
+                onRemove: (id) => attachments.remove([id]),
+                onRetry: attachments.retry,
+              }}
               autoFocus
               footer={model}
               className="shadow-md"
