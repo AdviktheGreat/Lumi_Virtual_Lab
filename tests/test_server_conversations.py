@@ -10,7 +10,8 @@ from typing import Any
 import pytest
 
 from virtual_lab import llm as llm_module
-from virtual_lab.constants import CHAT_FILE_NAME
+from virtual_lab.constants import CHAT_FILE_NAME, SANDBOX_DATA_LAKE_DIR
+from virtual_lab.environment import sandbox_image
 from virtual_lab.server.config import CONFIG_FILE_NAME
 from virtual_lab.server.conversations import (
     WORK_DIR_NAME,
@@ -20,10 +21,12 @@ from virtual_lab.server.conversations import (
     MissingKeysModel,
 )
 from virtual_lab.server.errors import ApiError
-from virtual_lab.session import LocalSession
+from virtual_lab.server.setup import Setup
+from virtual_lab.session import DockerSession, LocalSession
 from virtual_lab.ui.workspace import Settings, Workspace
 
 from conftest import TEST_MODEL, FakeClient, fake_llm, text_response
+from setup_fakes import FakeDocker
 
 TEAM = ["Scientific Critic", "Immunologist"]
 
@@ -687,3 +690,125 @@ class TestFollowers:
             return handle.closed
 
         assert asyncio.run(main())
+
+
+class TestSetup:
+    @pytest.fixture
+    def docker(self, tmp_path: Path) -> FakeDocker:
+        return FakeDocker(tmp_path / "docker")
+
+    @pytest.fixture
+    def checked(self, workspace: Workspace, docker: FakeDocker):
+        kept = Conversations(workspace, check_keys=False, setup=Setup(workspace, docker.command))
+        yield kept
+        kept.close()
+
+    def test_code_in_docker_is_not_set_up_while_docker_is_not_running_and_nothing_is_made(
+        self, checked: Conversations, docker: FakeDocker, workspace: Workspace
+    ) -> None:
+        docker.configure(daemon="down")
+
+        with pytest.raises(ApiError) as caught:
+            checked.create({"team": [], "code": {"where": "docker", "sandbox": "python"}})
+
+        error = caught.value
+        assert (error.status, error.code) == (409, "setup_needed")
+        assert error.details == {"missing": ["docker"]}
+        assert error.message.startswith("Docker is installed but is not running")
+        assert directories(workspace) == []
+
+    def test_code_in_an_image_that_is_not_built_is_not_set_up_and_says_to_build_it(
+        self, checked: Conversations, docker: FakeDocker, workspace: Workspace
+    ) -> None:
+        with pytest.raises(ApiError) as caught:
+            checked.create({"team": [], "code": {"where": "docker", "sandbox": "bio"}})
+
+        error = caught.value
+        assert (error.status, error.code) == (409, "setup_needed")
+        assert error.details == {"missing": ["image"]}
+        assert error.message == (
+            "Biomni's bio environment is not built. Build it in the setup, which takes about half an hour"
+        )
+        assert directories(workspace) == []
+
+    def test_code_in_docker_is_set_up_once_the_image_is_built_with_the_data_lake_and_keys_it_was_given(
+        self, checked: Conversations, docker: FakeDocker, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
+        docker.configure(images=[sandbox_image("bio")])
+        workspace.data_lake_dir.mkdir()
+
+        handle = checked.create(
+            {"team": [], "code": {"where": "docker", "sandbox": "bio", "forward_env": ["ANTHROPIC_API_KEY"]}}
+        )
+
+        assert isinstance(handle.session, DockerSession)
+        assert handle.session.executor.image == sandbox_image("bio")
+        assert handle.session.executor.data_lake == workspace.data_lake_dir
+        assert handle.session.executor.forward_env == ("ANTHROPIC_API_KEY",)
+        assert handle.session.data_lake_path() == SANDBOX_DATA_LAKE_DIR
+        assert handle.config.code.data_lake == str(workspace.data_lake_dir)
+        saved = json.loads((handle.directory / CONFIG_FILE_NAME).read_text())["code"]
+        assert (saved["data_lake"], saved["forward_env"]) == (str(workspace.data_lake_dir), ["ANTHROPIC_API_KEY"])
+
+    def test_a_data_lake_not_fetched_yet_is_not_mounted_and_does_not_stop_the_conversation(
+        self, checked: Conversations, docker: FakeDocker, workspace: Workspace
+    ) -> None:
+        docker.configure(images=[sandbox_image("base")])
+
+        handle = checked.create({"team": [], "code": {"where": "docker", "sandbox": "base"}})
+
+        assert isinstance(handle.session, DockerSession)
+        assert handle.session.executor.data_lake is None
+        assert handle.session.data_lake_path() is None
+        assert handle.config.code.data_lake == str(workspace.data_lake_dir)
+
+    def test_the_plain_python_image_needs_none_built(self, checked: Conversations, docker: FakeDocker) -> None:
+        handle = checked.create({"team": [], "code": {"where": "docker", "sandbox": "python"}})
+
+        assert isinstance(handle.session, DockerSession)
+
+    @pytest.mark.parametrize("where", ["none", "local"])
+    def test_code_that_is_not_in_docker_is_set_up_whether_or_not_docker_runs(
+        self, checked: Conversations, docker: FakeDocker, where: str
+    ) -> None:
+        docker.configure(daemon="down")
+
+        handle = checked.create({"team": [], "code": {"where": where, "sandbox": "full"}})
+
+        assert handle.chat.state == "idle"
+
+    def test_a_conversation_is_reopened_whether_or_not_docker_runs_since_nothing_is_run_by_opening_it(
+        self, checked: Conversations, docker: FakeDocker, workspace: Workspace
+    ) -> None:
+        docker.configure(images=[sandbox_image("base")])
+        handle = checked.create({"team": [], "code": {"where": "docker", "sandbox": "base"}})
+        checked.close()
+        docker.configure(daemon="down", images=[])
+
+        again = Conversations(workspace, check_keys=False, setup=Setup(workspace, docker.command))
+        reopened = again.get(handle.id)
+
+        assert isinstance(reopened.session, DockerSession)
+        again.close()
+
+    def test_without_the_setup_nothing_is_asked_of_docker_until_code_is_run(
+        self, conversations: Conversations, workspace: Workspace
+    ) -> None:
+        handle = conversations.create({"team": [], "code": {"where": "docker", "sandbox": "bio"}})
+
+        assert isinstance(handle.session, DockerSession)
+
+    def test_a_missing_key_is_said_before_what_is_missing_of_the_setup(
+        self, workspace: Workspace, docker: FakeDocker, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LLM_SOURCE", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        docker.configure(daemon="down")
+        kept = Conversations(workspace, setup=Setup(workspace, docker.command))
+
+        with pytest.raises(ApiError) as caught:
+            kept.create({"team": [], "code": {"where": "docker", "sandbox": "bio"}})
+
+        assert caught.value.code == "missing_keys"
+        kept.close()

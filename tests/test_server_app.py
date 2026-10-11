@@ -18,13 +18,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from virtual_lab.__about__ import __version__
+from virtual_lab import environment
+from virtual_lab.environment import DATA_LAKE, sandbox_image
 from virtual_lab.server import app as app_module
-from virtual_lab.server.app import MAX_MESSAGE_CHARS, RequestBodyReader, create_app, last_event
+from virtual_lab.server.app import MAX_MESSAGE_CHARS, MAX_PATH_CHARS, RequestBodyReader, create_app, last_event
 from virtual_lab.server.errors import ApiError
 from virtual_lab.server.security import TOKEN_COOKIE
 from virtual_lab.ui.workspace import Settings, Workspace
 
 from conftest import TEST_MODEL, FakeClient, text_response
+from setup_fakes import Bucket, FakeDocker, wait_for
 from test_server_conversations import hold_the_model, wait_until
 
 TOKEN = "the-token-of-the-person-who-started-it"
@@ -222,6 +225,8 @@ class TestSettings:
             "sandbox": "python",
             "network": True,
             "python": "",
+            "data_lake": "",
+            "forward_keys": [],
             "workspace": str(workspace.root),
         }
 
@@ -253,9 +258,58 @@ class TestSettings:
 
         assert workspace.load_settings().mcp_config == "/my/servers.json"
 
+    def test_where_the_data_lake_is_and_the_keys_code_is_given_are_kept(
+        self, client: TestClient, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        lake = tmp_path / "lake"
+
+        response = client.patch(
+            "/api/settings", json={"data_lake": str(lake), "forward_keys": ["ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data_lake"] == str(lake.resolve())
+        assert response.json()["forward_keys"] == ["ANTHROPIC_API_KEY"]
+        saved = workspace.load_settings()
+        assert (saved.data_lake, saved.forward_keys) == (str(lake.resolve()), ["ANTHROPIC_API_KEY"])
+
+        client.patch("/api/settings", json={"stream": False})
+        assert workspace.load_settings().data_lake == str(lake.resolve())
+
+        client.patch("/api/settings", json={"data_lake": "", "forward_keys": []})
+        saved = workspace.load_settings()
+        assert (saved.data_lake, saved.forward_keys) == ("", [])
+
+    def test_a_data_lake_where_conversations_are_kept_is_refused(
+        self, client: TestClient, workspace: Workspace
+    ) -> None:
+        for where in (workspace.chats_dir, workspace.chats_dir / "inside", workspace.root):
+            response = client.patch("/api/settings", json={"data_lake": str(where)})
+
+            assert response.status_code == 422, where
+            assert "conversations are kept" in error_of(response)["message"]
+        assert workspace.load_settings().data_lake == ""
+
+    def test_a_data_lake_path_that_is_too_long_is_refused_for_its_length(self, client: TestClient) -> None:
+        response = client.patch("/api/settings", json={"data_lake": "/" + "x" * (MAX_PATH_CHARS + 1)})
+
+        assert response.status_code == 422
+        assert [item["field"] for item in error_of(response)["fields"]] == ["data_lake"]
+
     @pytest.mark.parametrize(
         "body",
-        [{"model": "no-such-model"}, {"code": "cloud"}, {"max_cost": -1}, {"mcp_config": "/x"}, {"stream": "maybe"}],
+        [
+            {"model": "no-such-model"},
+            {"code": "cloud"},
+            {"max_cost": -1},
+            {"mcp_config": "/x"},
+            {"stream": "maybe"},
+            {"data_lake": "relative/lake"},
+            {"data_lake": "x" * 5000},
+            {"forward_keys": ["PATH"]},
+            {"forward_keys": "ANTHROPIC_API_KEY"},
+            {"forward_keys": ["ANTHROPIC_API_KEY"] * 100},
+        ],
     )
     def test_a_change_that_cannot_be_used_is_refused_and_keeps_nothing(
         self, client: TestClient, workspace: Workspace, body: dict[str, Any]
@@ -360,6 +414,452 @@ class TestKeys:
 
         assert response.status_code == 422
         assert os.environ["GROQ_API_KEY"] == "kept"
+
+
+class TestSetup:
+    @pytest.fixture(autouse=True)
+    def small_parts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(environment, "DATA_LAKE_CHUNK_BYTES", 256)
+
+    @pytest.fixture
+    def docker(self, tmp_path: Path) -> FakeDocker:
+        return FakeDocker(tmp_path / "docker")
+
+    @pytest.fixture
+    def bucket(self) -> Iterator[Bucket]:
+        served = Bucket()
+        yield served
+        served.close()
+
+    @pytest.fixture
+    def machine(self, workspace: Workspace, docker: FakeDocker, bucket: Bucket) -> Iterator[TestClient]:
+        made = create_app(
+            workspace.root, token=TOKEN, check_keys=False, docker_command=docker.command, release_url=bucket.url
+        )
+        with TestClient(made, base_url=LOCAL, headers=BEARER) as opened:
+            yield opened
+
+    def finished(self, machine: TestClient, job_id: str) -> dict[str, Any]:
+        job: dict[str, Any] = {}
+
+        def over() -> bool:
+            nonlocal job
+            job = machine.get(f"/api/setup/jobs/{job_id}").json()
+            return job["state"] not in ("running", "stopping")
+
+        wait_for(over)
+
+        return job
+
+    def test_what_there_is_to_set_up_is_shown_with_what_is_left_to_do(
+        self, machine: TestClient, docker: FakeDocker, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "set")
+        monkeypatch.delenv("LLM_SOURCE", raising=False)
+        workspace.save_settings(Settings(model=TEST_MODEL, code="docker", sandbox="bio"))
+
+        shown = machine.get("/api/setup").json()
+
+        assert set(shown) == {"docker", "images", "data_lake", "jobs", "steps"}
+        assert shown["docker"] == {"installed": True, "running": True, "version": "27.3.1", "message": None}
+        assert [(stage["target"], stage["built"]) for stage in shown["images"]["stages"]] == [
+            ("base", False),
+            ("bio", False),
+            ("full", False),
+        ]
+        assert shown["data_lake"]["directory"] == str(workspace.data_lake_dir)
+        assert (shown["data_lake"]["present"], shown["data_lake"]["files"]) == (0, len(DATA_LAKE))
+        assert shown["jobs"] == []
+        assert {step["id"]: step["state"] for step in shown["steps"]} == {
+            "docker": "done",
+            "image": "todo",
+            "data_lake": "todo",
+            "model_key": "done",
+        }
+        monkeypatch.delenv("OPENAI_API_KEY")
+        steps = machine.get("/api/setup").json()["steps"]
+        assert {step["id"]: step["state"] for step in steps}["model_key"] == "todo"
+
+    def test_docker_that_is_not_running_is_shown_and_nothing_is_said_of_the_images(
+        self, machine: TestClient, docker: FakeDocker
+    ) -> None:
+        docker.configure(daemon="down")
+
+        shown = machine.get("/api/setup").json()
+
+        assert shown["docker"]["running"] is False
+        assert all(stage["built"] is None for stage in shown["images"]["stages"])
+
+    def test_an_image_is_built_in_the_background_and_shown_as_built_once_it_is(
+        self, machine: TestClient, docker: FakeDocker
+    ) -> None:
+        docker.build(wait=True, lines=["#1 [1/3] FROM python", "#2 RUN pip install"])
+
+        started = machine.post("/api/setup/images/bio")
+
+        assert started.status_code == 202
+        job = started.json()
+        assert (job["kind"], job["subject"], job["state"]) == ("image", "bio", "running")
+        assert job["log"]["from"] == 0
+        wait_for(lambda: docker.started)
+        building = machine.get("/api/setup").json()
+        assert [(stage["target"], stage["building"]) for stage in building["images"]["stages"]] == [
+            ("base", False),
+            ("bio", True),
+            ("full", False),
+        ]
+        assert [item["id"] for item in building["jobs"]] == [job["id"]]
+        docker.release()
+
+        done = self.finished(machine, job["id"])
+
+        assert (done["state"], done["error"]) == ("succeeded", None)
+        assert done["message"] == "Built Biomni's bio environment"
+        assert docker.images == [sandbox_image("bio")]
+        bio = machine.get("/api/setup").json()["images"]["stages"][1]
+        assert (bio["built"], bio["building"]) == (True, False)
+
+    def test_what_a_build_prints_is_read_from_where_the_page_got_to(
+        self, machine: TestClient, docker: FakeDocker
+    ) -> None:
+        docker.build(lines=["first", "second", "third"])
+        job = machine.post("/api/setup/images/base").json()
+        self.finished(machine, job["id"])
+
+        everything = machine.get(f"/api/setup/jobs/{job['id']}", params={"log_from": 0}).json()
+        rest = machine.get(f"/api/setup/jobs/{job['id']}", params={"log_from": 2}).json()
+        past = machine.get(f"/api/setup/jobs/{job['id']}", params={"log_from": 99}).json()
+        unsaid = machine.get(f"/api/setup/jobs/{job['id']}").json()
+
+        assert everything["log"] == {"from": 0, "lines": ["first", "second", "third"]}
+        assert rest["log"] == {"from": 2, "lines": ["third"]}
+        assert past["log"] == {"from": 3, "lines": []}
+        assert unsaid["log"] == everything["log"]
+        assert unsaid["log_total"] == 3
+
+    def test_a_place_in_the_output_before_the_first_line_is_not_one(
+        self, machine: TestClient, docker: FakeDocker
+    ) -> None:
+        job = machine.post("/api/setup/images/base").json()
+        self.finished(machine, job["id"])
+
+        for bad in ("-1", "first", ""):
+            response = machine.get(f"/api/setup/jobs/{job['id']}", params={"log_from": bad})
+            assert response.status_code == 422, bad
+            assert error_of(response)["code"] == "invalid"
+
+    def test_a_build_that_fails_says_so_and_the_image_is_not_built(
+        self, machine: TestClient, docker: FakeDocker
+    ) -> None:
+        docker.build(exit=1, lines=["#5 ERROR: no space left on device"])
+        job = machine.post("/api/setup/images/base").json()
+
+        done = self.finished(machine, job["id"])
+
+        assert done["state"] == "failed"
+        assert done["error"]
+        assert machine.get("/api/setup").json()["images"]["stages"][0]["built"] is False
+
+    def test_an_image_that_is_built_is_not_built_again(self, machine: TestClient, docker: FakeDocker) -> None:
+        docker.configure(images=[sandbox_image("base")])
+
+        response = machine.post("/api/setup/images/base")
+
+        assert response.status_code == 409
+        assert error_of(response)["code"] == "already_built"
+        assert docker.builds == []
+
+    def test_an_image_is_not_built_while_docker_is_not_running(self, machine: TestClient, docker: FakeDocker) -> None:
+        docker.configure(daemon="down")
+
+        response = machine.post("/api/setup/images/base")
+
+        assert response.status_code == 409
+        assert error_of(response)["code"] == "docker_unavailable"
+        assert error_of(response)["message"].startswith("Docker is installed but is not running")
+
+    @pytest.mark.parametrize("target", ["huge", "BASE", "base%20", "full.py"])
+    def test_a_stage_that_there_is_none_of_is_not_built(self, machine: TestClient, target: str) -> None:
+        response = machine.post(f"/api/setup/images/{target}")
+
+        assert response.status_code == 422
+        assert error_of(response)["code"] == "invalid"
+
+    def test_only_one_image_is_built_at_a_time_and_the_one_being_built_is_told(
+        self, machine: TestClient, docker: FakeDocker
+    ) -> None:
+        docker.build(wait=True)
+        first = machine.post("/api/setup/images/base").json()
+
+        second = machine.post("/api/setup/images/bio")
+
+        assert second.status_code == 409
+        error = error_of(second)
+        assert error["code"] == "busy"
+        assert error["job"]["id"] == first["id"]
+        assert error["job"]["state"] == "running"
+        assert len(docker.builds) <= 1
+        docker.release()
+        self.finished(machine, first["id"])
+
+    def test_a_build_is_stopped_and_says_it_was(self, machine: TestClient, docker: FakeDocker) -> None:
+        docker.build(wait=True)
+        job = machine.post("/api/setup/images/base").json()
+        wait_for(lambda: docker.started)
+
+        stopping = machine.post(f"/api/setup/jobs/{job['id']}/stop")
+
+        assert stopping.status_code == 200
+        assert stopping.json()["state"] in ("stopping", "stopped")
+        done = self.finished(machine, job["id"])
+        assert done["state"] == "stopped"
+        assert docker.images == []
+        again = machine.post(f"/api/setup/jobs/{job['id']}/stop")
+        assert again.status_code == 200
+        assert again.json()["state"] == "stopped"
+
+    def test_a_job_there_is_none_of_is_not_found(self, machine: TestClient) -> None:
+        for method, path in [("GET", "/api/setup/jobs/nothing"), ("POST", "/api/setup/jobs/nothing/stop")]:
+            response = machine.request(method, path)
+            assert response.status_code == 404, path
+            assert error_of(response)["code"] == "not_found"
+
+    def test_the_jobs_are_listed_latest_first_without_what_they_printed(
+        self, machine: TestClient, docker: FakeDocker, bucket: Bucket
+    ) -> None:
+        assert machine.get("/api/setup/jobs").json() == {"jobs": []}
+        bucket.files[next(iter(DATA_LAKE))] = b"data"
+        built = machine.post("/api/setup/images/base").json()
+        self.finished(machine, built["id"])
+        fetched = machine.post("/api/setup/data-lake", json={"names": [next(iter(DATA_LAKE))]}).json()
+        self.finished(machine, fetched["id"])
+
+        jobs = machine.get("/api/setup/jobs").json()["jobs"]
+
+        assert [job["id"] for job in jobs] == [fetched["id"], built["id"]]
+        assert all("log" not in job for job in jobs)
+
+    def test_the_data_lake_is_listed_with_which_files_are_there(
+        self, machine: TestClient, workspace: Workspace
+    ) -> None:
+        names = list(DATA_LAKE)
+        workspace.data_lake_dir.mkdir(parents=True)
+        (workspace.data_lake_dir / names[0]).write_bytes(b"12345")
+
+        shown = machine.get("/api/setup/data-lake").json()
+
+        assert shown["data_lake"]["directory"] == str(workspace.data_lake_dir)
+        assert shown["data_lake"]["present"] == 1
+        assert [file["name"] for file in shown["files"]] == names
+        assert (shown["files"][0]["present"], shown["files"][0]["bytes"]) == (True, 5)
+        assert (shown["files"][1]["present"], shown["files"][1]["bytes"]) == (False, None)
+
+    def test_the_data_lake_is_fetched_in_the_background_to_where_the_settings_say(
+        self, machine: TestClient, bucket: Bucket, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        names = list(DATA_LAKE)[:2]
+        bucket.files.update({names[0]: b"first file", names[1]: b"second"})
+        lake = tmp_path / "lake"
+        machine.patch("/api/settings", json={"data_lake": str(lake)})
+
+        started = machine.post("/api/setup/data-lake", json={"names": names})
+
+        assert started.status_code == 202
+        job = started.json()
+        assert (job["kind"], job["state"]) == ("data_lake", "running")
+        done = self.finished(machine, job["id"])
+        assert (done["state"], done["error"]) == ("succeeded", None)
+        assert done["progress"]["done"] == 2
+        assert done["progress"]["total"] == 2
+        assert done["progress"]["fetched"] == len(b"first file") + len(b"second")
+        assert (lake.resolve() / names[0]).read_bytes() == b"first file"
+        assert (lake.resolve() / names[1]).read_bytes() == b"second"
+        assert not workspace.data_lake_dir.exists()
+        assert machine.get("/api/setup/data-lake").json()["data_lake"]["present"] == 2
+
+    def test_a_data_lake_fetched_without_naming_files_is_all_of_it(
+        self, machine: TestClient, bucket: Bucket, workspace: Workspace
+    ) -> None:
+        job = machine.post("/api/setup/data-lake").json()
+        done = self.finished(machine, job["id"])
+
+        assert done["state"] == "failed"
+        assert done["progress"]["total"] == len(DATA_LAKE)
+        assert sorted(set(bucket.requests)) == sorted(DATA_LAKE)
+
+    def test_a_fetch_that_is_stopped_part_of_the_way_says_so_and_leaves_no_part_of_a_file(
+        self, machine: TestClient, bucket: Bucket, workspace: Workspace
+    ) -> None:
+        name = next(iter(DATA_LAKE))
+        bucket.files[name] = b"x" * 100_000
+        gate = bucket.gate(name)
+        job = machine.post("/api/setup/data-lake", json={"names": [name]}).json()
+        wait_for(lambda: machine.get(f"/api/setup/jobs/{job['id']}").json()["progress"].get("bytes", 0) > 0)
+
+        machine.post(f"/api/setup/jobs/{job['id']}/stop")
+        gate.set()
+        done = self.finished(machine, job["id"])
+
+        assert done["state"] == "stopped"
+        assert list(workspace.data_lake_dir.iterdir()) == []
+
+    def test_more_files_than_the_data_lake_has_are_not_fetched(self, machine: TestClient, bucket: Bucket) -> None:
+        response = machine.post("/api/setup/data-lake", json={"names": [next(iter(DATA_LAKE))] * (len(DATA_LAKE) + 1)})
+
+        assert response.status_code == 422
+        assert [item["field"] for item in error_of(response)["fields"]] == ["names"]
+        assert bucket.requests == []
+
+    def test_only_one_fetch_runs_at_a_time(self, machine: TestClient, bucket: Bucket) -> None:
+        name = next(iter(DATA_LAKE))
+        bucket.files[name] = b"x" * 1000
+        gate = bucket.gate(name)
+        first = machine.post("/api/setup/data-lake", json={"names": [name]}).json()
+
+        second = machine.post("/api/setup/data-lake", json={"names": [name]})
+
+        assert second.status_code == 409
+        assert error_of(second)["code"] == "busy"
+        assert error_of(second)["job"]["id"] == first["id"]
+        gate.set()
+        self.finished(machine, first["id"])
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"names": []},
+            {"names": ["not-in-the-data-lake.parquet"]},
+            {"names": "all"},
+            {"names": [1]},
+            {"everything": True},
+        ],
+    )
+    def test_files_that_are_not_in_the_data_lake_are_not_fetched(
+        self, machine: TestClient, bucket: Bucket, body: dict[str, Any]
+    ) -> None:
+        response = machine.post("/api/setup/data-lake", json=body)
+
+        assert response.status_code == 422
+        assert error_of(response)["code"] == "invalid"
+        assert bucket.requests == []
+        assert machine.get("/api/setup/jobs").json() == {"jobs": []}
+
+    def test_code_in_docker_is_not_given_a_conversation_until_what_it_needs_is_there(
+        self, machine: TestClient, docker: FakeDocker, workspace: Workspace
+    ) -> None:
+        docker.configure(daemon="down")
+
+        refused = machine.post("/api/chats", json={"team": [], "code": {"where": "docker", "sandbox": "bio"}})
+
+        assert refused.status_code == 409
+        error = error_of(refused)
+        assert error["code"] == "setup_needed"
+        assert error["missing"] == ["docker"]
+        assert machine.get("/api/chats").json() == {"chats": []}
+
+        docker.configure(daemon="up")
+        refused = machine.post("/api/chats", json={"team": [], "code": {"where": "docker", "sandbox": "bio"}})
+        assert error_of(refused)["missing"] == ["image"]
+
+        docker.configure(images=[sandbox_image("bio")])
+        made = machine.post("/api/chats", json={"team": [], "code": {"where": "docker", "sandbox": "bio"}})
+        assert made.status_code == 201
+        assert made.json()["config"]["code"]["where"] == "docker"
+
+    def test_a_conversation_that_does_not_run_code_in_docker_is_made_without_docker(
+        self, machine: TestClient, docker: FakeDocker
+    ) -> None:
+        docker.configure(daemon="down")
+
+        assert machine.post("/api/chats", json={"team": []}).status_code == 201
+
+    def test_where_the_page_asks_for_no_setup_check_a_conversation_is_made_without_one(
+        self, workspace: Workspace, docker: FakeDocker
+    ) -> None:
+        docker.configure(daemon="down")
+        unchecked = create_app(
+            workspace.root, token=TOKEN, check_keys=False, check_setup=False, docker_command=docker.command
+        )
+
+        with TestClient(unchecked, base_url=LOCAL, headers=BEARER) as opened:
+            made = opened.post("/api/chats", json={"team": [], "code": {"where": "docker", "sandbox": "bio"}})
+
+        assert made.status_code == 201
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            {"data_lake": "relative"},
+            {"data_lake": 3},
+            {"forward_env": ["PATH"]},
+            {"forward_env": "ANTHROPIC_API_KEY"},
+            {"forward_env": ["not a name"]},
+        ],
+    )
+    def test_a_conversations_code_that_cannot_be_given_what_it_asks_for_is_refused(
+        self, machine: TestClient, docker: FakeDocker, code: dict[str, Any]
+    ) -> None:
+        docker.configure(images=[sandbox_image("bio")])
+
+        response = machine.post("/api/chats", json={"team": [], "code": {"where": "docker", "sandbox": "bio", **code}})
+
+        assert response.status_code == 422
+        assert error_of(response)["code"] == "invalid"
+        assert machine.get("/api/chats").json() == {"chats": []}
+
+    def test_a_conversations_data_lake_path_that_is_too_long_is_refused_for_its_length(
+        self, machine: TestClient
+    ) -> None:
+        code = {"where": "docker", "sandbox": "bio", "data_lake": "/" + "x" * (MAX_PATH_CHARS + 1)}
+
+        response = machine.post("/api/chats", json={"team": [], "code": code})
+
+        assert response.status_code == 422
+        assert [item["field"] for item in error_of(response)["fields"]] == ["code.data_lake"]
+
+    def test_the_setup_is_for_the_person_with_the_token(self, workspace: Workspace, docker: FakeDocker) -> None:
+        guarded = create_app(workspace.root, token=TOKEN, check_keys=False, docker_command=docker.command)
+
+        with TestClient(guarded, base_url=LOCAL) as anonymous:
+            for method, path in [
+                ("GET", "/api/setup"),
+                ("POST", "/api/setup/images/base"),
+                ("GET", "/api/setup/data-lake"),
+                ("POST", "/api/setup/data-lake"),
+                ("GET", "/api/setup/jobs"),
+                ("GET", "/api/setup/jobs/x"),
+                ("POST", "/api/setup/jobs/x/stop"),
+            ]:
+                response = anonymous.request(method, path)
+                assert response.status_code == 401, path
+        assert docker.builds == []
+
+    def test_a_page_of_another_address_may_not_start_a_build_or_a_fetch(
+        self, machine: TestClient, docker: FakeDocker, bucket: Bucket
+    ) -> None:
+        evil = {"Origin": "http://evil.example"}
+
+        assert machine.post("/api/setup/images/base", headers=evil).status_code == 403
+        assert machine.post("/api/setup/data-lake", headers=evil).status_code == 403
+        assert machine.post("/api/setup/jobs/x/stop", headers=evil).status_code == 403
+        assert docker.builds == []
+        assert bucket.requests == []
+
+    def test_jobs_that_are_running_when_the_server_stops_are_stopped_with_it(
+        self, workspace: Workspace, docker: FakeDocker, bucket: Bucket
+    ) -> None:
+        docker.build(wait=True, ignore_term=False)
+        made = create_app(
+            workspace.root, token=TOKEN, check_keys=False, docker_command=docker.command, release_url=bucket.url
+        )
+
+        with TestClient(made, base_url=LOCAL, headers=BEARER) as opened:
+            job = made.state.setup.jobs.get(opened.post("/api/setup/images/base").json()["id"])
+            wait_for(lambda: docker.started)
+            assert job.active
+
+        assert job.state == "stopped"
+        assert docker.images == []
 
 
 class TestScientists:

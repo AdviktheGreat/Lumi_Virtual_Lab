@@ -10,6 +10,7 @@ import argparse
 import ipaddress
 import os
 import secrets
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -384,7 +385,9 @@ class Interface:
         python: str,
         mcp_config: str,
     ) -> None:
-        settings = Settings(
+        # What this page does not show, such as the data lake and the keys code may read, is left as it was
+        settings = replace(
+            self.workspace.load_settings(),
             model=(model or "").strip() or Settings().model,
             stream=bool(stream),
             max_cost=budget_of(budget),

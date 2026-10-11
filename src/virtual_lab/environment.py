@@ -13,8 +13,10 @@ less of it.
 
 import os
 import shutil
+import signal
 import subprocess
-from collections.abc import Callable, Iterable
+import threading
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
@@ -40,6 +42,13 @@ DATA_LAKE: dict[str, str] = dict(data_lake_dict)
 
 # The software in the full sandbox image, with Biomni's description of each
 SANDBOX_LIBRARIES: dict[str, str] = dict(library_content_dict)
+
+# Seconds a build that was asked to stop is given to do so before it is killed
+BUILD_STOP_GRACE_SECONDS = 10.0
+
+
+class StoppedError(Exception):
+    """Raised when a build or a download ends early because whoever started it asked it to stop."""
 
 
 def sandbox_context() -> Path:
@@ -124,10 +133,13 @@ def build_sandbox_image(
     docker_command: tuple[str, ...] = ("docker",),
     build_args: dict[str, str] | None = None,
     rebuild: bool = False,
+    on_output: Callable[[str], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> str:
     """Builds a stage of the sandbox image, unless it is already built.
 
-    Docker's own output is shown as the build runs, since the full image takes hours.
+    Docker's own output is shown as the build runs, since the full image takes hours, unless
+    on_output is given to take it.
 
     :param target: "base" for Biomni's analysis libraries, "bio" to add its bioinformatics
         tools, or "full" to add R and the command-line tools as well.
@@ -139,9 +151,13 @@ def build_sandbox_image(
     :param docker_command: How to invoke Docker.
     :param build_args: Build arguments, such as MINIFORGE_VERSION.
     :param rebuild: Whether to build even if the tag already exists.
+    :param on_output: Called with each line Docker prints, its errors included, in place of showing it.
+    :param stop: Set to end the build, which is stopped as Docker's client is told to end and killed
+        if it does not. Layers already built are kept, so building again carries on from them.
     :raises ValueError: If the target is not a stage of the image.
     :raises DockerUnavailableError: If Docker is not installed.
     :raises ExecutionError: If the build fails.
+    :raises StoppedError: If it was stopped before it finished.
     :return: The tag of the image, to pass to DockerExecutor.
     """
     tag = tag or sandbox_image(target, platform)
@@ -151,15 +167,86 @@ def build_sandbox_image(
     if not rebuild and sandbox_image_exists(tag, docker_command):
         return tag
 
-    result = subprocess.run(command, check=False)
+    if on_output is None and stop is None:
+        returncode = subprocess.run(command, check=False).returncode
+    else:
+        returncode = run_build(command, on_output, stop)
 
-    if result.returncode != 0:
+    if returncode != 0:
+        if stop is not None and stop.is_set():
+            raise StoppedError(f"Building the {target} sandbox image was stopped")
         raise ExecutionError(
-            f"Building the {target} sandbox image failed with exit code {result.returncode}. "
+            f"Building the {target} sandbox image failed with exit code {returncode}. "
             f"The command was: {' '.join(command)}"
         )
 
     return tag
+
+
+def run_build(command: Sequence[str], on_output: Callable[[str], None] | None, stop: threading.Event | None) -> int:
+    """Runs a build, passing on what it prints a line at a time, and ending it when asked to.
+
+    :param command: The docker build command.
+    :param on_output: Called with each line of output, errors included, or None to drop them.
+    :param stop: Set to end the build.
+    :return: The exit code, which is not zero for a build that was stopped.
+    """
+    # In a group of its own, so that docker's build plugin, which it starts, is ended with it
+    process = subprocess.Popen(
+        list(command),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        errors="replace",
+        start_new_session=hasattr(os, "killpg"),
+    )
+    finished = threading.Event()
+
+    def watch() -> None:
+        assert stop is not None
+        while not finished.is_set():
+            if not stop.wait(0.1):
+                continue
+            if process.poll() is None:
+                end_build(process, force=False)
+                try:
+                    process.wait(BUILD_STOP_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    end_build(process, force=True)
+            return
+
+    watcher = threading.Thread(target=watch, name="virtual-lab-build-stop", daemon=True) if stop is not None else None
+    if watcher is not None:
+        watcher.start()
+
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            if on_output is not None:
+                on_output(line.rstrip("\r\n"))
+        return process.wait()
+    finally:
+        # A callback that raised leaves a build that nothing is reading
+        if process.poll() is None:
+            end_build(process, force=True)
+            process.wait()
+        finished.set()
+        if watcher is not None:
+            watcher.join()
+
+
+def end_build(process: subprocess.Popen, force: bool) -> None:
+    """Asks a build and what it started to end, or makes them."""
+    if not hasattr(os, "killpg"):
+        if force:
+            process.kill()
+        else:
+            process.terminate()
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 @dataclass
@@ -194,6 +281,8 @@ def download_data_lake(
     names: Iterable[str] | None = None,
     base_url: str = BIOMNI_RELEASE_URL,
     on_file: Callable[[str, int, int | None], None] | None = None,
+    on_progress: Callable[[str, int, int | None], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> DataLakeDownload:
     """Fetches Biomni's data lake, or part of it, into a directory.
 
@@ -207,7 +296,13 @@ def download_data_lake(
     :param base_url: Where Biomni publishes its release files.
     :param on_file: Called as each file finishes, with its name, its size in bytes, and the
         size the server announced, or None if it announced none.
+    :param on_progress: Called as a file is fetched, with its name, the bytes written so far,
+        and the size the server announced, or None if it announced none: once with none written
+        when the server has answered, then as each part is written.
+    :param stop: Set to end the download, which stops within a part of a file, keeping what
+        was fetched before.
     :raises ValueError: If a name is not a plain file name.
+    :raises StoppedError: If it was stopped before it finished.
     :return: What was fetched, what was already there, and what failed.
     """
     wanted = list(DATA_LAKE if names is None else names)
@@ -220,12 +315,19 @@ def download_data_lake(
     for name in wanted:
         path = directory / name
 
+        if stop is not None and stop.is_set():
+            raise StoppedError("Fetching the data lake was stopped")
+
         if path.is_file():
             outcome.present.append(name)
             continue
 
+        def report(written: int, announced: int | None, name: str = name) -> None:
+            if on_progress is not None:
+                on_progress(name, written, announced)
+
         try:
-            size, announced = fetch_file(f"{base_url.rstrip('/')}/data_lake/{name}", path)
+            size, announced = fetch_file(f"{base_url.rstrip('/')}/data_lake/{name}", path, report, stop)
         except (requests.RequestException, OSError, ValueError) as error:
             outcome.failed[name] = str(error) or type(error).__name__
             continue
@@ -237,13 +339,22 @@ def download_data_lake(
     return outcome
 
 
-def fetch_file(url: str, path: Path) -> tuple[int, int | None]:
+def fetch_file(
+    url: str,
+    path: Path,
+    on_progress: Callable[[int, int | None], None] | None = None,
+    stop: threading.Event | None = None,
+) -> tuple[int, int | None]:
     """Streams a URL to a file, renaming it into place only once it is complete.
 
     :param url: What to fetch.
     :param path: Where to write it.
+    :param on_progress: Called with the bytes written and the length the server announced, or None,
+        once the server has answered and after each part is written.
+    :param stop: Set to end the fetch, which leaves no file behind.
     :raises requests.RequestException: If the request fails.
     :raises ValueError: If the body is shorter or longer than the server announced.
+    :raises StoppedError: If it was stopped before it finished.
     :return: The bytes written, and the length the server announced.
     """
     partial = path.with_name(f".{path.name}.part")
@@ -258,11 +369,17 @@ def fetch_file(url: str, path: Path) -> tuple[int, int | None]:
             encoded = response.headers.get("Content-Encoding", "identity") != "identity"
             announced = int(header) if header and header.isdigit() and not encoded else None
             written = 0
+            if on_progress is not None:
+                on_progress(0, announced)
 
             with open(partial, "wb") as file:
                 for chunk in response.iter_content(chunk_size=DATA_LAKE_CHUNK_BYTES):
+                    if stop is not None and stop.is_set():
+                        raise StoppedError(f"Fetching {path.name} was stopped")
                     file.write(chunk)
                     written += len(chunk)
+                    if on_progress is not None:
+                        on_progress(written, announced)
 
         # A connection dropped partway through ends the body early without an error, and the
         # file would otherwise be kept as if it were whole

@@ -2,6 +2,9 @@
 
 import re
 import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,14 +18,18 @@ from virtual_lab.environment import (
     DATA_LAKE,
     SANDBOX_LIBRARIES,
     SANDBOX_TARGETS,
+    StoppedError,
     build_command,
     build_sandbox_image,
     download_data_lake,
+    end_build,
     sandbox_context,
     sandbox_image,
 )
 from virtual_lab.execution import DockerExecutor, DockerUnavailableError, ExecutionError
 from virtual_lab.repair import describe_executor
+
+from setup_fakes import FakeDocker as FakeDockerProgram, in_thread, wait_for
 
 DOCKERFILE = sandbox_context() / "Dockerfile"
 
@@ -439,3 +446,275 @@ class TestRunPlatform:
 
     def test_the_record_says_which_platform_was_used(self) -> None:
         assert describe_executor(DockerExecutor(platform="linux/amd64"))["platform"] == "linux/amd64"
+
+
+@pytest.fixture
+def program(tmp_path: Path) -> FakeDockerProgram:
+    """A program that answers as docker does, which is run for real."""
+    return FakeDockerProgram(tmp_path / "docker")
+
+
+class TestBuildOutput:
+    def test_what_docker_prints_is_passed_on_a_line_at_a_time_errors_with_the_rest(
+        self, program: FakeDockerProgram
+    ) -> None:
+        program.build(lines=["#1 first", "#2 second, to the error stream", "#3 third"])
+        lines: list[str] = []
+
+        tag = build_sandbox_image("base", docker_command=program.command, on_output=lines.append)
+
+        assert lines == ["#1 first", "#2 second, to the error stream", "#3 third"]
+        assert tag == sandbox_image("base")
+        assert program.images == [tag]
+        assert program.builds == [list(build_command("base", tag, docker_command=("docker",)))[1:]]
+
+    def test_a_build_that_fails_says_so_after_its_output_has_been_passed_on(self, program: FakeDockerProgram) -> None:
+        program.build(lines=["#1 step", "ERROR: it broke"], exit=1)
+        lines: list[str] = []
+
+        with pytest.raises(ExecutionError, match="exit code 1.*docker.py build --target bio"):
+            build_sandbox_image("bio", docker_command=program.command, on_output=lines.append)
+
+        assert lines == ["#1 step", "ERROR: it broke"]
+        assert program.images == []
+
+    def test_a_built_image_is_not_built_again(self, program: FakeDockerProgram) -> None:
+        program.configure(images=[sandbox_image("base")])
+        lines: list[str] = []
+
+        build_sandbox_image("base", docker_command=program.command, on_output=lines.append)
+
+        assert program.builds == []
+        assert lines == []
+
+    def test_a_build_asked_to_stop_and_not_asked_for_its_output_goes_on_to_the_end(
+        self, program: FakeDockerProgram
+    ) -> None:
+        build_sandbox_image("base", docker_command=program.command, stop=threading.Event())
+
+        assert program.images == [sandbox_image("base")]
+
+    def test_a_line_ends_at_a_carriage_return_as_a_progress_display_ends_it(self, program: FakeDockerProgram) -> None:
+        program.build(lines=["one\rtwo"])
+        lines: list[str] = []
+
+        build_sandbox_image("base", docker_command=program.command, on_output=lines.append)
+
+        assert lines == ["one", "two"]
+
+    def test_the_build_is_ended_if_what_takes_its_output_fails(self, program: FakeDockerProgram) -> None:
+        program.build(wait=True)
+
+        def refuse(line: str) -> None:
+            raise RuntimeError("no room for output")
+
+        thread, outcome = in_thread(
+            lambda: build_sandbox_image("base", docker_command=program.command, on_output=refuse)
+        )
+        thread.join(10)
+
+        assert not thread.is_alive()
+        assert isinstance(outcome["raised"], RuntimeError)
+        assert program.images == []
+        wait_for(lambda: not program.running, timeout=5)
+
+    def test_output_that_is_not_text_is_passed_on_with_what_cannot_be_read_replaced(
+        self, program: FakeDockerProgram
+    ) -> None:
+        program.build(lines=["before"], raw=["fffe", "6166746572"])
+        lines: list[str] = []
+
+        build_sandbox_image("base", docker_command=program.command, on_output=lines.append)
+
+        assert lines == ["before", "\ufffd\ufffd", "after"]
+
+    def test_no_thread_is_kept_to_watch_for_a_stop_that_cannot_come_or_has_not_to_be_waited_for(
+        self, program: FakeDockerProgram
+    ) -> None:
+        def watchers() -> list[str]:
+            return [thread.name for thread in threading.enumerate() if thread.name == "virtual-lab-build-stop"]
+
+        seen: list[list[str]] = []
+        build_sandbox_image("base", docker_command=program.command, on_output=lambda line: seen.append(watchers()))
+        assert seen and all(not found for found in seen)
+
+        build_sandbox_image(
+            "bio",
+            docker_command=program.command,
+            on_output=lambda line: seen.append(watchers()),
+            stop=threading.Event(),
+        )
+
+        assert seen[-1] == ["virtual-lab-build-stop"]
+        assert watchers() == []
+
+
+class TestStoppingABuild:
+    def start(self, program: FakeDockerProgram, stop: threading.Event) -> tuple[threading.Thread, dict[str, Any]]:
+        thread, outcome = in_thread(
+            lambda: build_sandbox_image("full", docker_command=program.command, on_output=lambda line: None, stop=stop)
+        )
+        wait_for(lambda: program.started)
+
+        return thread, outcome
+
+    def test_a_build_is_ended_when_asked_to_stop(self, program: FakeDockerProgram) -> None:
+        program.build(wait=True)
+        stop = threading.Event()
+        thread, outcome = self.start(program, stop)
+
+        stop.set()
+        thread.join(10)
+
+        assert not thread.is_alive()
+        assert isinstance(outcome["raised"], StoppedError)
+        assert "was stopped" in str(outcome["raised"])
+        assert program.images == []
+
+    def test_a_build_is_ended_when_asked_to_stop_long_after_it_began(self, program: FakeDockerProgram) -> None:
+        program.build(wait=True)
+        stop = threading.Event()
+        thread, outcome = self.start(program, stop)
+
+        time.sleep(0.5)
+        assert thread.is_alive()
+        stop.set()
+        thread.join(10)
+
+        assert not thread.is_alive()
+        assert isinstance(outcome["raised"], StoppedError)
+        wait_for(lambda: not program.running, timeout=5)
+
+    def test_a_build_that_ignores_being_asked_is_killed_after_the_time_it_is_given(
+        self, program: FakeDockerProgram, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(environment, "BUILD_STOP_GRACE_SECONDS", 0.3)
+        program.build(wait=True, ignore_term=True)
+        stop = threading.Event()
+        thread, outcome = self.start(program, stop)
+
+        started = time.monotonic()
+        stop.set()
+        thread.join(10)
+
+        assert not thread.is_alive()
+        assert isinstance(outcome["raised"], StoppedError)
+        assert time.monotonic() - started >= 0.3
+
+    def test_what_the_build_started_is_ended_with_it(self, program: FakeDockerProgram) -> None:
+        # Docker's client starts a plugin that does the build, and that holds its output open
+        program.build(wait=True, child=True)
+        stop = threading.Event()
+        thread, outcome = self.start(program, stop)
+
+        stop.set()
+        thread.join(10)
+
+        assert not thread.is_alive()
+        assert isinstance(outcome["raised"], StoppedError)
+
+    def test_a_build_that_fails_when_not_asked_to_stop_is_a_failure_and_not_a_stop(
+        self, program: FakeDockerProgram
+    ) -> None:
+        program.build(exit=1)
+
+        with pytest.raises(ExecutionError):
+            build_sandbox_image("base", docker_command=program.command, stop=threading.Event())
+
+    def test_ending_a_build_that_has_ended_is_not_an_error(self) -> None:
+        process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        process.wait()
+
+        end_build(process, force=False)
+        end_build(process, force=True)
+
+    def test_a_build_finished_before_it_is_asked_to_stop_is_a_build(self, program: FakeDockerProgram) -> None:
+        stop = threading.Event()
+
+        tag = build_sandbox_image("base", docker_command=program.command, on_output=lambda line: None, stop=stop)
+        stop.set()
+
+        assert program.images == [tag]
+
+
+class TestFetchProgress:
+    def test_progress_is_reported_as_each_part_is_written(self, bucket: dict[str, Any], tmp_path: Path) -> None:
+        bucket["files"] = {"hp.obo": FakeDownload(b"abcdefgh", length=8)}
+        seen: list[tuple[str, int, int | None]] = []
+
+        download_data_lake(tmp_path, names=["hp.obo"], on_progress=lambda *args: seen.append(args))
+
+        assert seen == [("hp.obo", 0, 8), ("hp.obo", 3, 8), ("hp.obo", 6, 8), ("hp.obo", 8, 8)]
+
+    def test_a_length_the_server_did_not_announce_is_reported_as_none(
+        self, bucket: dict[str, Any], tmp_path: Path
+    ) -> None:
+        bucket["files"] = {"hp.obo": FakeDownload(b"abcd")}
+        seen: list[tuple[str, int, int | None]] = []
+
+        download_data_lake(tmp_path, names=["hp.obo"], on_progress=lambda *args: seen.append(args))
+
+        assert seen == [("hp.obo", 0, None), ("hp.obo", 3, None), ("hp.obo", 4, None)]
+
+    def test_a_file_already_there_is_not_reported(self, bucket: dict[str, Any], tmp_path: Path) -> None:
+        (tmp_path / "hp.obo").write_bytes(b"mine")
+        seen: list[Any] = []
+
+        download_data_lake(tmp_path, names=["hp.obo"], on_progress=seen.append)
+
+        assert seen == []
+
+    def test_the_file_each_report_is_of_is_named(self, bucket: dict[str, Any], tmp_path: Path) -> None:
+        bucket["files"] = {"a.csv": b"aa", "b.csv": b"bbbb"}
+        seen: list[tuple[str, int, int | None]] = []
+
+        download_data_lake(tmp_path, names=["a.csv", "b.csv"], on_progress=lambda *args: seen.append(args))
+
+        assert [item[0] for item in seen] == ["a.csv", "a.csv", "b.csv", "b.csv", "b.csv"]
+
+
+class TestStoppingADownload:
+    def test_a_file_being_fetched_is_dropped_when_asked_to_stop_and_none_is_left_partway(
+        self, bucket: dict[str, Any], tmp_path: Path
+    ) -> None:
+        bucket["files"] = {"hp.obo": b"abcdefghij", "kg.csv": b"next"}
+        stop = threading.Event()
+
+        def progress(name: str, written: int, announced: int | None) -> None:
+            if written >= 3:
+                stop.set()
+
+        with pytest.raises(StoppedError, match="hp.obo was stopped"):
+            download_data_lake(tmp_path, names=["hp.obo", "kg.csv"], on_progress=progress, stop=stop)
+
+        assert list(tmp_path.iterdir()) == []
+        assert bucket["urls"] == [f"{BIOMNI_RELEASE_URL}/data_lake/hp.obo"]
+
+    def test_files_fetched_before_the_stop_are_kept_and_the_rest_are_not_asked_for(
+        self, bucket: dict[str, Any], tmp_path: Path
+    ) -> None:
+        bucket["files"] = {"a.csv": b"aa", "b.csv": b"bb", "c.csv": b"cc"}
+        stop = threading.Event()
+
+        with pytest.raises(StoppedError, match="Fetching the data lake was stopped"):
+            download_data_lake(tmp_path, names=["a.csv", "b.csv", "c.csv"], on_file=lambda *args: stop.set(), stop=stop)
+
+        assert [path.name for path in tmp_path.iterdir()] == ["a.csv"]
+        assert len(bucket["urls"]) == 1
+
+    def test_a_stop_asked_for_before_it_begins_fetches_nothing(self, bucket: dict[str, Any], tmp_path: Path) -> None:
+        bucket["files"] = {"a.csv": b"aa"}
+        stop = threading.Event()
+        stop.set()
+
+        with pytest.raises(StoppedError):
+            download_data_lake(tmp_path, names=["a.csv"], stop=stop)
+
+        assert bucket["urls"] == []
+
+    def test_an_unset_stop_does_not_stop_it(self, bucket: dict[str, Any], tmp_path: Path) -> None:
+        bucket["files"] = {"a.csv": b"aa"}
+
+        outcome = download_data_lake(tmp_path, names=["a.csv"], stop=threading.Event())
+
+        assert outcome.downloaded == ["a.csv"]
