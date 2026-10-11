@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronRight, Library, Loader2, StickyNote, Terminal } from "lucide-react";
 import { CallIcon } from "@/components/call-icon";
+import { useCaughtUp } from "@/components/caught-up";
 import { CodeBlock } from "@/components/code";
 import { CodeCell, PendingCell } from "@/components/code-cell";
 import { LabSessionView } from "@/components/lab-session";
@@ -97,8 +98,13 @@ function ToolCall({ call }: { call: Call }) {
   const team = call.name === "convene_team" || call.name === "consult";
   // What the team or a search tells is written to be read, which a tool's own output may not be
   const written = team || call.name === "find_resources";
-  // What the team says as it works is open to be read, and one that was over before the page was opened is not
-  const [open, setOpen] = useState(team && call.status === "running");
+  // What the team says as it works is open to be read, and stays as it was once it is, however the call ends. One that
+  // was over before the page was opened is not, and neither is one that only seems to be going on while the past is
+  // replayed. What the researcher chooses is what it is from then on.
+  const caughtUp = useCaughtUp();
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  if (chosen === null && team && caughtUp && call.status === "running") setChosen(true);
+  const open = chosen ?? false;
 
   return (
     <details
@@ -107,7 +113,7 @@ function ToolCall({ call }: { call: Call }) {
       data-call={call.name}
       data-status={call.status}
       open={team ? open : undefined}
-      onToggle={team ? (event) => setOpen(event.currentTarget.open) : undefined}
+      onToggle={team ? (event) => setChosen(event.currentTarget.open) : undefined}
     >
       <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-xl px-3 py-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden />

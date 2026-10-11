@@ -60,7 +60,7 @@ export interface ReadTable {
 export const TABLE_LIMITS = { rows: 200, columns: 40 };
 
 // A table to be shown: its first row as the header and the rows after it, as many as the limits allow. Text that was cut
-// off where it was read from may end in the middle of a row, which is left out.
+// off where it was read from may end in the middle of a row, which is left out, unless a new line ended the row before.
 export function readTable(text: string, divider: string, truncated: boolean, limits = TABLE_LIMITS): ReadTable {
   // One more than is shown of each, which says if there was more
   const parsed = parseTable(text, divider, { rows: limits.rows + 2, columns: limits.columns + 1 });
@@ -69,7 +69,7 @@ export function readTable(text: string, divider: string, truncated: boolean, lim
   if (parsed.length > limits.rows + 1) {
     rows = parsed.slice(0, limits.rows + 1);
     cut = true;
-  } else if (truncated) {
+  } else if (truncated && !/[\r\n]$/.test(text)) {
     rows = parsed.slice(0, -1);
   }
   if (rows.some((row) => row.length > limits.columns)) {

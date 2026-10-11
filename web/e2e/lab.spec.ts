@@ -6,6 +6,62 @@ const lab = (page: Page) => page.getByTestId("lab");
 const turns = (page: Page) => lab(page).getByTestId("lab-turn");
 const speakers = (page: Page) => turns(page).evaluateAll((found) => found.map((turn) => turn.getAttribute("data-speaker")));
 
+interface Told {
+  kind: string;
+  speaker?: string | null;
+  text?: string;
+  data?: Record<string, unknown>;
+}
+
+const LEAD = "Principal Investigator";
+const labEvent = (event: string, fields: { speaker?: string; text?: string; round?: number | null; details?: Record<string, unknown> } = {}): Told => ({
+  kind: "lab",
+  speaker: fields.speaker ?? null,
+  text: fields.text ?? "",
+  data: { call: "t1", event, meeting: "lab_001", round: fields.round ?? null, details: fields.details ?? {} },
+});
+
+// A team's session as the server tells of it, from the call that brings the team in to the lead's answer
+const SESSION: Told[] = [
+  { kind: "user", speaker: "Human researcher", text: "Bring the team in", data: { attachments: [] } },
+  { kind: "tool_calls", speaker: LEAD, text: "", data: { calls: [{ id: "t1", name: "convene_team", arguments: '{"agenda":"Design a nanobody."}' }] } },
+  labEvent("started", { details: { meeting_type: "team", agenda: "Design a nanobody.", num_rounds: 1, team: [{ title: LEAD }, { title: "Immunologist" }] } }),
+  labEvent("turn", { speaker: LEAD, round: 1 }),
+  labEvent("message", { speaker: LEAD, text: "Let us begin.", round: 1, details: { kind: "response" } }),
+  labEvent("finished", { text: "The summary." }),
+  { kind: "tool_output", text: "The team agreed.", data: { call: "t1" } },
+  { kind: "answer", speaker: LEAD, text: "That is done." },
+];
+
+// Opens a conversation whose events come one each time the page asks for them, a moment apart, so that every step of a
+// session is seen while it is told. The conversation says it had `known` events when the page was opened, which is
+// what a conversation that is over says of all of them, and one that is only beginning says of none.
+async function told(page: Page, title: string, known: number): Promise<void> {
+  const made = await page.request.post("/api/chats", { data: { title } });
+  expect(made.status()).toBe(201);
+  const id: string = (await made.json()).id;
+  let asked = 0;
+  await page.route("**/api/chats/*/events*", (route) => {
+    const at = asked;
+    asked += 1;
+    const event = SESSION[at];
+
+    return route.fulfill({
+      status: 200,
+      headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
+      body: `retry: ${event === undefined ? 600_000 : 100}\n\n${
+        event === undefined ? "" : `event: chat\nid: ${at + 1}\ndata: ${JSON.stringify({ id: at + 1, turn: 1, speaker: null, text: "", data: {}, time: 0, ...event })}\n\n`
+      }`,
+    });
+  });
+  await page.route(`**/api/chats/${id}`, async (route) => {
+    const response = await route.fetch();
+    const info = await response.json();
+    await route.fulfill({ response, json: { ...info, last_event_id: known } });
+  });
+  await page.goto(`/chat?id=${id}`);
+}
+
 test.describe("a team the lead brings in", () => {
   test("a discussion is shown in the call that brought the team in: who is in it, and who said what in each round", async ({ page }) => {
     await ask(page, "lab:team please");
@@ -76,6 +132,33 @@ test.describe("a team the lead brings in", () => {
     await expect(lab(page)).toBeVisible();
     expect(await speakers(page)).toEqual(first);
     await expect(lab(page)).toHaveAttribute("data-status", "finished");
+  });
+
+  test("a session that was over before the page was opened is not opened while the past is told to the page, a piece at a time", async ({ page }) => {
+    await told(page, "Lab: a past told in pieces", SESSION.length);
+
+    await expect(call(page)).toBeVisible();
+    // The call is going on for as long as its end has not been told, and is not shown open for that
+    await expect(call(page)).toHaveAttribute("data-status", "running");
+    await expect(lab(page)).toBeHidden();
+    await expect(page.getByTestId("lead-message").last()).toContainText("That is done.", { timeout: 15_000 });
+
+    await expect(call(page)).toHaveAttribute("data-status", "done");
+    await expect(lab(page)).toBeHidden();
+    await call(page).getByText("Convened the team").click();
+    await expect(lab(page)).toHaveAttribute("data-status", "finished");
+  });
+
+  test("a session that goes on as the page is open is shown open, and is left open when it ends", async ({ page }) => {
+    await told(page, "Lab: a session as it happens", 0);
+
+    await expect(call(page)).toHaveAttribute("data-status", "running");
+    await expect(lab(page)).toBeVisible();
+    await expect(page.getByTestId("lead-message").last()).toContainText("That is done.", { timeout: 15_000 });
+
+    await expect(call(page)).toHaveAttribute("data-status", "done");
+    await expect(lab(page)).toHaveAttribute("data-status", "finished");
+    await expect(lab(page)).toBeVisible();
   });
 
   test("the session is open while the team works, and shows what a scientist is writing as they write it", async ({ page }) => {

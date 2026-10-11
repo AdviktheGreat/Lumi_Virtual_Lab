@@ -72,7 +72,9 @@ again when a turn makes or changes a file, once the stream has been quiet for a 
 When the lead brings the team in (`convene_team`) or asks one scientist (`consult`), the call that did it opens to what
 the session is: who is in it, what it is for (under "Agenda"), and who said what in each round, with the code a scientist
 ran and the files it made where they did it. While it goes on, what a scientist is writing shows as they write it. The
-session is open while it runs, and as the researcher left it afterwards. One the researcher stopped is shown as cut short,
+session is open while it runs, and as the researcher left it afterwards; one that was over before the page was opened stays
+closed, which is told by the page having been sent every event the conversation had when it was opened
+(`last_event_id`), since until then a call may only seem to be going on. One the researcher stopped is shown as cut short,
 not as an error, which is how `src/lib/lab.ts` tells a stop (the `failed` event of the kind `ChatStopped`) from a failure.
 
 ## End-to-end tests

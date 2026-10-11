@@ -102,6 +102,19 @@ describe("a table to be shown", () => {
     expect(table).toEqual({ header: ["a", "b"], rows: [["1", "2"]], cut: true });
   });
 
+  it("keeps the last row of cut text that ends where a row does, since nothing of another was read", () => {
+    expect(readTable("a,b\n1,2\n3,4\n", ",", true, limits)).toEqual({
+      header: ["a", "b"],
+      rows: [
+        ["1", "2"],
+        ["3", "4"],
+      ],
+      cut: true,
+    });
+    expect(readTable("a,b\r\n1,2\r\n", ",", true, limits).rows).toEqual([["1", "2"]]);
+    expect(readTable("a,b\r1,2\r", ",", true, limits).rows).toEqual([["1", "2"]]);
+  });
+
   it("keeps all the rows of cut text when there are more than the limit, none of which can be half of one", () => {
     const table = readTable("a\n1\n2\n3\n4", ",", true, limits);
 
