@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronRight, Library, Loader2, MessageSquareText, Search, StickyNote, Terminal, Users, Wrench } from "lucide-react";
+import { ChevronRight, Library, Loader2, StickyNote, Terminal } from "lucide-react";
+import { CallIcon } from "@/components/call-icon";
 import { CodeBlock } from "@/components/code";
 import { CodeCell, PendingCell } from "@/components/code-cell";
+import { LabSessionView } from "@/components/lab-session";
 import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { describeResources, parseArguments, summarize } from "@/lib/calls";
@@ -14,15 +16,13 @@ import { cn } from "@/lib/utils";
 // Names listed in a card before the rest are counted
 const NAMES_SHOWN = 40;
 
-const ICONS = { run_code: Terminal, find_resources: Search, convene_team: Users, consult: MessageSquareText } as const;
-
 function Header({
-  icon: Icon,
+  icon,
   title,
   detail,
   trailing,
 }: {
-  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  icon: React.ReactNode;
   title: string;
   detail?: string | null;
   trailing?: React.ReactNode;
@@ -30,7 +30,7 @@ function Header({
   return (
     <>
       <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-        <Icon className="size-3.5" aria-hidden />
+        {icon}
       </span>
       <span className="shrink-0 text-sm font-medium">{title}</span>
       {detail && <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{detail}</span>}
@@ -70,7 +70,7 @@ function CodeCall({ call }: { call: Call }) {
   return (
     <div className={CARD} data-testid="call" data-call={call.name} data-status={call.status}>
       <div className="flex items-center gap-2.5 px-3 py-2">
-        <Header icon={Terminal} title={summary.title} trailing={<Trailing call={call} />} />
+        <Header icon={<Terminal className="size-3.5" aria-hidden />} title={summary.title} trailing={<Trailing call={call} />} />
       </div>
       <div className="flex flex-col gap-3 border-t border-border/70 p-3">
         {call.cells.map((cell, at) => (
@@ -93,25 +93,36 @@ function CodeCall({ call }: { call: Call }) {
 function ToolCall({ call }: { call: Call }) {
   const summary = summarize(call);
   const args = parseArguments(call.arguments);
-  const Icon = ICONS[call.name as keyof typeof ICONS] ?? Wrench;
   const asked = args !== null && Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : null;
+  const team = call.name === "convene_team" || call.name === "consult";
   // What the team or a search tells is written to be read, which a tool's own output may not be
-  const written = call.name === "convene_team" || call.name === "consult" || call.name === "find_resources";
+  const written = team || call.name === "find_resources";
+  // What the team says as it works is open to be read, and one that was over before the page was opened is not
+  const [open, setOpen] = useState(team && call.status === "running");
 
   return (
-    <details className={`group ${CARD}`} data-testid="call" data-call={call.name} data-status={call.status}>
+    <details
+      className={`group ${CARD}`}
+      data-testid="call"
+      data-call={call.name}
+      data-status={call.status}
+      open={team ? open : undefined}
+      onToggle={team ? (event) => setOpen(event.currentTarget.open) : undefined}
+    >
       <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-xl px-3 py-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden />
-        <Header icon={Icon} title={summary.title} detail={summary.detail} trailing={<Trailing call={call} />} />
+        <Header icon={<CallIcon name={call.name} className="size-3.5" />} title={summary.title} detail={summary.detail} trailing={<Trailing call={call} />} />
       </summary>
       <div className="flex flex-col gap-3 border-t border-border/70 p-3">
-        {asked !== null && (
+        {call.lab !== null && <LabSessionView lab={call.lab} />}
+        {/* What it was asked is what the session says of itself, where there is one */}
+        {call.lab === null && asked !== null && (
           <div className="flex flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">Asked</span>
             <CodeBlock code={asked} language="json" foldAfter={12} />
           </div>
         )}
-        {asked === null && call.arguments.trim() !== "" && call.arguments.trim() !== "{}" && (
+        {call.lab === null && asked === null && call.arguments.trim() !== "" && call.arguments.trim() !== "{}" && (
           <div className="flex flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">Asked</span>
             <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-[13px]">
@@ -121,7 +132,7 @@ function ToolCall({ call }: { call: Call }) {
         )}
         {call.output !== null && (
           <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-muted-foreground">Result</span>
+            <span className="text-xs font-medium text-muted-foreground">{call.lab === null ? "Result" : "Summary"}</span>
             <div className="max-h-96 overflow-auto rounded-lg border border-border bg-background px-3 py-2">
               {written ? (
                 <Markdown text={call.output} className="text-sm leading-6" />
@@ -147,7 +158,7 @@ function ResourcesCard({ resources }: { resources: Resources }) {
     <details className={`group ${CARD}`} data-testid="resources">
       <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-xl px-3 py-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden />
-        <Header icon={Library} title={summary.title} detail={summary.detail} />
+        <Header icon={<Library className="size-3.5" aria-hidden />} title={summary.title} detail={summary.detail} />
       </summary>
       <div className="flex flex-col gap-3 border-t border-border/70 p-3">
         {summary.groups.length === 0 && <span className="text-xs text-muted-foreground">Nothing is named.</span>}

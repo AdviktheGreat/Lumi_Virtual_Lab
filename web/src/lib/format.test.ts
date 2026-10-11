@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCost, formatDuration, stripAnsi, timeAgo } from "./format";
+import { formatCost, formatDuration, stripAnsi, timeAgo, timeAgoFromEpoch } from "./format";
 
 const NOW = new Date("2026-10-11T12:00:00Z");
 
@@ -91,5 +91,22 @@ describe("output written for a terminal", () => {
     expect(stripAnsi(`${escape}[?25lhidden cursor${escape}[?25h`)).toBe("hidden cursor");
     expect(stripAnsi(`${escape}[0 qshaped${escape}[2 q cursor`)).toBe("shaped cursor");
     expect(stripAnsi("plain [31m text, with no escape")).toBe("plain [31m text, with no escape");
+  });
+});
+
+describe("when a file was changed", () => {
+  it("is said as any time is, from the seconds since the epoch", () => {
+    const seconds = NOW.getTime() / 1000;
+
+    expect(timeAgoFromEpoch(seconds - 5, NOW)).toBe("just now");
+    expect(timeAgoFromEpoch(seconds - 5 * 60, NOW)).toBe("5 min ago");
+    expect(timeAgoFromEpoch(seconds - 3 * 3600, NOW)).toBe("3 h ago");
+  });
+
+  it("is not said for what is not a time", () => {
+    expect(timeAgoFromEpoch(Number.NaN, NOW)).toBe("");
+    expect(timeAgoFromEpoch(Number.POSITIVE_INFINITY, NOW)).toBe("");
+    // A time too far off for a date to hold
+    expect(timeAgoFromEpoch(1e20, NOW)).toBe("");
   });
 });

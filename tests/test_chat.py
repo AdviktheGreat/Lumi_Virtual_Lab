@@ -1005,6 +1005,8 @@ class TestSteering:
         assert len(fake_client.completions.calls) == 2
         events = chat.events_since()
         assert lab_events(events, "failed")[0].data["details"]["partial_path"] is not None
+        # The chat page tells a session the researcher stopped from one that went wrong by this
+        assert lab_events(events, "failed")[0].data["details"]["type"] == "ChatStopped"
         assert (tmp_path / "chat" / "lab" / "meetings" / "partial" / "lab_001.json").is_file()
         assert of(events, "tool_output")[0].text == (
             "The researcher stopped the team before it finished, so there is no summary."

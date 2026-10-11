@@ -1,4 +1,5 @@
-import type { Attachment, ChatInfo, ChatSummary, Health, Models, NewChat, Settings } from "./types";
+import { fileUrl } from "./files";
+import type { Attachment, ChatFiles, ChatInfo, ChatSummary, Health, Models, NewChat, Settings } from "./types";
 
 // What the server's error says: its code is a word to act on, its message is for a person, and the rest is
 // whatever else the code carries, such as the keys that are missing
@@ -115,6 +116,66 @@ function uploadFile(chatId: string, file: File, { onProgress, signal }: UploadOp
   });
 }
 
+export interface FileText {
+  text: string;
+  // Whether the file goes on after what was read
+  truncated: boolean;
+  // Whether it is not text, which is so for a file that has a null byte in what was read
+  binary: boolean;
+}
+
+// The start of a file, as text. Only as much as the limit is taken from the server, whatever the size of the file.
+async function readFileText(chatId: string, path: string, limit: number, signal?: AbortSignal): Promise<FileText> {
+  let response: Response;
+  try {
+    response = await fetch(fileUrl(chatId, path), { signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new NetworkError(error);
+  }
+  if (!response.ok) {
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = undefined;
+    }
+    throw errorFrom(response.status, parsed);
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return { text: await response.text(), truncated: false, binary: false };
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      length += value.length;
+      if (length > limit) {
+        truncated = true;
+        void reader.cancel();
+        break;
+      }
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new NetworkError(error);
+  }
+  const bytes = new Uint8Array(Math.min(length, limit));
+  let at = 0;
+  for (const chunk of chunks) {
+    const room = bytes.length - at;
+    bytes.set(chunk.length > room ? chunk.subarray(0, room) : chunk, at);
+    at += Math.min(chunk.length, room);
+  }
+  // A character that the limit cut in two is dropped by the decoder, which stops reading at what is not whole
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes, { stream: truncated });
+
+  return { text, truncated, binary: text.includes("\0") };
+}
+
 export const api = {
   health: (signal?: AbortSignal) => request<Health>("GET", "/health", undefined, signal),
   settings: (signal?: AbortSignal) => request<Settings>("GET", "/settings", undefined, signal),
@@ -133,4 +194,7 @@ export const api = {
   resume: (id: string) => request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/resume`),
   stop: (id: string) => request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/stop`),
   upload: uploadFile,
+  // What the conversation made or was given
+  files: (id: string, signal?: AbortSignal) => request<ChatFiles>("GET", `/chats/${encodeURIComponent(id)}/files`, undefined, signal),
+  fileText: readFileText,
 };

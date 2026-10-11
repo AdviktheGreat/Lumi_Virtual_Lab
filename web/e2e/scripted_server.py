@@ -8,9 +8,12 @@ from a script: no key is needed, and every run says the same. What it says depen
   while it is still going.
 - "markdown:" anywhere in the message makes it answer with a page of Markdown, with what a page must not trust in it,
   once it has done what else the message asks, so that the figure the page names can be one the code drew.
-- "code:" and a word (hello, error, two, plot, long, big, slow) make it run code in the conversation's session first, as
-  the word says, and answer once the code has run. "tool:unknown" makes it call a tool it does not have, and
-  "tool:resources" makes it look for resources, and choose the know-how documents there are.
+- "code:" and a word (hello, error, two, plot, long, big, slow, files) make it run code in the conversation's session
+  first, as the word says, and answer once the code has run. "tool:unknown" makes it call a tool it does not have, and
+  "tool:resources" makes it look for resources, and choose the know-how documents there are. "lab:team" makes it bring
+  in the team for a round of discussion, and "lab:consult" ask one scientist, whose replies the script writes too.
+  "lab:code" brings in one scientist who runs code in the session, if the conversation has one, before they reply.
+  "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
 - Anything else is answered with a short reply that repeats the question.
 
     python e2e/scripted_server.py --port 8799 --static-dir out
@@ -18,6 +21,7 @@ from a script: no key is needed, and every run says the same. What it says depen
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -81,6 +85,33 @@ with open("results.csv", "w") as file:
 print("drawn")
 """
 
+TEAM_AGENDA = "Design a nanobody against TP53."
+# What "code:files" writes, which is one of each of what the panel of files shows differently: a long table, a wide one
+# divided by tabs, a log longer than is read to show it, a file that is not text, and an empty one
+FILES_CODE = r"""
+import os
+os.makedirs("tables", exist_ok=True)
+os.makedirs("logs", exist_ok=True)
+with open("tables/long.csv", "w") as handle:
+    handle.write("gene,score,note\n")
+    for number in range(300):
+        handle.write(f'G{number:03d},{number / 100:.2f},"row {number}, with a comma"\n')
+with open("tables/wide.tsv", "w") as handle:
+    handle.write("\t".join(f"c{number}" for number in range(50)) + "\n")
+    handle.write("\t".join(str(number) for number in range(50)) + "\n")
+with open("logs/big.log", "w") as handle:
+    for number in range(8000):
+        handle.write(f"line {number:05d} " + "x" * 30 + "\n")
+with open("blob.bin", "wb") as handle:
+    handle.write(bytes([137, 80, 0, 1, 2, 3]))
+open("empty.txt", "w").close()
+print("files written")
+""".lstrip()
+# How many words a scientist writes when the session is to be slow
+LAB_SLOW_WORDS = 120
+# What a scientist runs when the session they are in is asked for it, which makes a file for the page to list
+LAB_CODE = 'print("lab code ran")\nopen("lab_notes.txt", "w").write("epitope: DNA-binding domain\\n")'
+
 LONG_CODE = "\n".join([*(f"step_{number} = {number} * 2" for number in range(1, 31)), "print('ran', step_30)"])
 
 # What the lead does for a message with "code:" or "tool:" in it: each step is what it says, the tool it calls, and
@@ -102,9 +133,46 @@ SCENARIOS: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
         )
     ],
     "code:slow": [("This will take a moment.", "run_code", {"code": "import time\ntime.sleep(3)\nprint('slept')"})],
+    "code:files": [("Writing some files.", "run_code", {"code": FILES_CODE})],
     "tool:unknown": [("", "mystery_tool", {"target": "TP53"})],
     "tool:resources": [("Looking for what suits it.", "find_resources", {"task": "Score a gene's expression"})],
+    "lab:team": [
+        (
+            "Bringing in the team.",
+            "convene_team",
+            {"agenda": TEAM_AGENDA, "members": ["Immunologist", "Scientific Critic"], "rounds": 1},
+        )
+    ],
+    "lab:code": [
+        (
+            "Bringing in a scientist who can check.",
+            "convene_team",
+            {"agenda": f"lab:code {TEAM_AGENDA}", "members": ["Immunologist"], "rounds": 1},
+        )
+    ],
+    "lab:slow": [
+        (
+            "Bringing in a scientist who takes their time.",
+            "convene_team",
+            {"agenda": f"slow: {TEAM_AGENDA}", "members": ["Immunologist"], "rounds": 1},
+        )
+    ],
+    "lab:consult": [
+        (
+            "Asking one scientist.",
+            "consult",
+            {"member": "Immunologist", "agenda": "Is a nanobody against TP53 immunogenic?", "rounds": 1},
+        )
+    ],
 }
+
+# What the scientists say in a team session, by who they are: each says the same wherever it is asked
+LAB_REPLIES = {
+    "Principal Investigator": "Let us begin: which part of TP53 should a nanobody bind?",
+    "Immunologist": "As the Immunologist, I would target the conserved DNA-binding epitope.",
+    "Scientific Critic": "As the Scientific Critic, I ask what shows that the epitope is exposed.",
+}
+LAB_SUMMARY = "Summary: target the conserved DNA-binding epitope, and check that it is exposed."
 
 # What the lead answers when it is asked which resources suit a task, which is what a search for them asks
 RETRIEVAL_REPLY = "TOOLS: []\nDATA_LAKE: []\nLIBRARIES: []\nKNOW_HOW: [0, 1]"
@@ -181,6 +249,36 @@ def tool_results(messages: list[dict[str, Any]]) -> int:
     return answered
 
 
+def scientist_of(kwargs: dict[str, Any]) -> str | None:
+    """Who a request is for when it is a scientist's, in a team session, rather than the lead's."""
+    tools = {tool["function"]["name"] for tool in kwargs.get("tools") or []}
+    if tools & {"convene_team", "consult"}:
+        return None
+    system = next((message["content"] for message in kwargs["messages"] if message["role"] == "system"), "")
+    found = re.match(r"You are an? ([^.]+)\.", system) if isinstance(system, str) else None
+
+    return found.group(1) if found else None
+
+
+def runs_code(title: str, kwargs: dict[str, Any]) -> bool:
+    """Whether a scientist is to run code before they reply: when the agenda says so, and they have a tool to."""
+    tools = {tool["function"]["name"] for tool in kwargs.get("tools") or []}
+    said = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] != "system")
+
+    return title == "Immunologist" and "lab:code" in said and "run_code" in tools
+
+
+def lab_reply(title: str, messages: list[dict[str, Any]]) -> str:
+    """What a scientist says in a team session: the lead who has heard the others sums up."""
+    said = " ".join(str(message["content"]) for message in messages if message["role"] != "system")
+    if title == "Principal Investigator" and "As the Immunologist" in said:
+        return LAB_SUMMARY
+    if title == "Immunologist" and "slow:" in said:
+        return " ".join(f"point{number}" for number in range(1, LAB_SLOW_WORDS + 1))
+
+    return LAB_REPLIES.get(title, f"As the {title}, I have nothing to add.")
+
+
 def scenario_for(question: str) -> list[tuple[str, str, dict[str, Any]]] | None:
     return next((steps for word, steps in SCENARIOS.items() if word in question), None)
 
@@ -236,11 +334,16 @@ class ScriptedCompletions(FakeCompletions):
         if "fail:" in question:
             raise RuntimeError("The scripted model failed, as it was asked to")
         searching = "USER QUERY:" in question and "AVAILABLE TOOLS:" in question
-        steps = None if searching else scenario_for(question)
+        scientist = None if searching else scientist_of(kwargs)
+        steps = None if searching or scientist is not None else scenario_for(question)
         done = tool_results(kwargs["messages"])
         if steps is not None and done < len(steps):
             narration, name, arguments = steps[done]
             response = call_response(narration, name, arguments, f"call_{done + 1}")
+        elif scientist is not None and runs_code(scientist, kwargs) and done == 0:
+            response = call_response("Let me check that.", "run_code", {"code": LAB_CODE}, "call_lab_1")
+        elif scientist is not None:
+            response = text_response(lab_reply(scientist, kwargs["messages"]))
         elif steps is not None and "markdown:" in question:
             response = text_response(MARKDOWN_REPLY)
         elif steps is not None:

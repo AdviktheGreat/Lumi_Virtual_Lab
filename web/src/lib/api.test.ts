@@ -280,3 +280,140 @@ describe("sending a file", () => {
     expect(FakeRequest.made).toEqual([]);
   });
 });
+
+describe("the files of a conversation", () => {
+  it("are listed from what the server wraps them in", async () => {
+    const fetch = stub(answer({ files: [{ path: "a.csv", size: 3, modified: 1, type: "text/csv" }], truncated: true }));
+
+    expect(await api.files("a b")).toEqual({ files: [{ path: "a.csv", size: 3, modified: 1, type: "text/csv" }], truncated: true });
+    expect(fetch).toHaveBeenCalledWith("/api/chats/a%20b/files", expect.objectContaining({ method: "GET" }));
+  });
+
+  it("are not listed for a conversation that is not there", async () => {
+    stub(answer({ error: { code: "not_found", message: "No such conversation" } }, 404));
+
+    await expect(api.files("gone")).rejects.toMatchObject({ status: 404, code: "not_found" });
+  });
+});
+
+// A response whose body comes in the pieces it is given, and says if it was cancelled
+function pieces(parts: (string | Uint8Array)[], status = 200) {
+  const encoder = new TextEncoder();
+  const cancelled = vi.fn();
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent >= parts.length) {
+        controller.close();
+
+        return;
+      }
+      const part = parts[sent++];
+      controller.enqueue(typeof part === "string" ? encoder.encode(part) : part);
+    },
+    cancel: cancelled,
+  });
+
+  return { response: new Response(body, { status }), cancelled };
+}
+
+describe("the text of a file", () => {
+  it("is all of a file that is under the limit, asked for by its path", async () => {
+    const { response, cancelled } = pieces(["gene,count\n", "TP53,12\n"]);
+    const fetch = stub(response);
+
+    expect(await api.fileText("a b", "dir/x y.csv", 1000)).toEqual({ text: "gene,count\nTP53,12\n", truncated: false, binary: false });
+    expect(fetch).toHaveBeenCalledWith("/api/chats/a%20b/files/dir/x%20y.csv", { signal: undefined });
+    expect(cancelled).not.toHaveBeenCalled();
+  });
+
+  it("is read whole from a response that gives no stream, which is a browser that has none", async () => {
+    const response = new Response("gene,count\n");
+    Object.defineProperty(response, "body", { value: null });
+    stub(response);
+
+    expect(await api.fileText("a", "x.csv", 3)).toEqual({ text: "gene,count\n", truncated: false, binary: false });
+  });
+
+  it("is nothing for a file with nothing in it", async () => {
+    stub(pieces([]).response);
+
+    expect(await api.fileText("a", "empty.txt", 10)).toEqual({ text: "", truncated: false, binary: false });
+  });
+
+  it("is the start of a file that goes on past the limit, which the server is then told to stop sending", async () => {
+    const { response, cancelled } = pieces(["abcd", "efgh", "ijkl", "mnop"]);
+    stub(response);
+
+    expect(await api.fileText("a", "big.txt", 6)).toEqual({ text: "abcdef", truncated: true, binary: false });
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("is all of a file that is as long as the limit, which does not go on", async () => {
+    stub(pieces(["abc", "def"]).response);
+
+    expect(await api.fileText("a", "x.txt", 6)).toEqual({ text: "abcdef", truncated: false, binary: false });
+  });
+
+  it("does not show half a character where the limit cuts one", async () => {
+    // "é" is two bytes, of which the limit leaves one
+    stub(pieces(["abé"]).response);
+
+    expect(await api.fileText("a", "x.txt", 3)).toEqual({ text: "ab", truncated: true, binary: false });
+  });
+
+  it("reads a character that comes in two pieces as one", async () => {
+    const bytes = new TextEncoder().encode("é");
+    stub(pieces([bytes.slice(0, 1), bytes.slice(1)]).response);
+
+    expect(await api.fileText("a", "x.txt", 10)).toEqual({ text: "é", truncated: false, binary: false });
+  });
+
+  it("is said not to be text when it has a null byte in it", async () => {
+    stub(pieces([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 1, 2])]).response);
+
+    expect(await api.fileText("a", "x.png", 100)).toMatchObject({ binary: true, truncated: false });
+  });
+
+  it("fails as the server says it did, or with what it sent if it said nothing", async () => {
+    stub(answer({ error: { code: "not_found", message: "No such file there" } }, 404));
+    await expect(api.fileText("a", "x.txt", 10)).rejects.toMatchObject({ status: 404, code: "not_found", message: "No such file there" });
+
+    stub(new Response("<html>", { status: 502 }));
+    await expect(api.fileText("a", "x.txt", 10)).rejects.toMatchObject({ status: 502, code: "error" });
+  });
+
+  it("fails as a server that cannot be reached, unless it was told to stop", async () => {
+    stub(new TypeError("fetch failed"));
+    await expect(api.fileText("a", "x.txt", 10)).rejects.toBeInstanceOf(NetworkError);
+
+    stub(new DOMException("Aborted", "AbortError"));
+    await expect(api.fileText("a", "x.txt", 10)).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("fails as a server that cannot be reached when the connection drops while it is read, unless it was told to stop", async () => {
+    const dropping = (error: unknown) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(error);
+          },
+        }),
+      );
+
+    stub(dropping(new TypeError("terminated")));
+    await expect(api.fileText("a", "x.txt", 10)).rejects.toBeInstanceOf(NetworkError);
+
+    stub(dropping(new DOMException("Aborted", "AbortError")));
+    await expect(api.fileText("a", "x.txt", 10)).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("gives the signal it was given to the request", async () => {
+    const fetch = stub(pieces(["x"]).response);
+    const { signal } = new AbortController();
+
+    await api.fileText("a", "x.txt", 10, signal);
+
+    expect(fetch).toHaveBeenCalledWith(expect.any(String), { signal });
+  });
+});

@@ -1,25 +1,13 @@
+import { cellOf, type Cell } from "./cell";
+import { reduceLab, settleLab, writeLab, type LabSession } from "./lab";
+import { asNumber, asRecord, asStrings, asText } from "./read";
 import type { Attachment, ChatEvent, ChatState } from "./types";
+
+export type { Cell };
 
 // How a turn stands: it begins with the researcher's message and ends with the lead's answer, the researcher
 // stopping it, or an error
 export type Outcome = "running" | "answered" | "stopped" | "failed";
-
-// Code that ran in the session, as the server tells of it
-export interface Cell {
-  language: string;
-  code: string;
-  // "ok", "error", "timeout", or "lost"; anything else the server may one day say is shown as it is
-  status: string;
-  output: string;
-  error: string | null;
-  duration: number;
-  // Figures, and every file that appeared while it ran, relative to the conversation's files
-  plots: string[];
-  producedFiles: string[];
-  // Bytes dropped from the middle of the output to bound it
-  outputDropped: number;
-  value: unknown;
-}
 
 // "interrupted" is a call that the turn ended before it was answered
 export type CallStatus = "running" | "done" | "interrupted";
@@ -34,6 +22,8 @@ export interface Call {
   output: string | null;
   // The code it ran in the session, which is what a call to run code is
   cells: Cell[];
+  // What the team did, which is what a call to bring in the team, or to ask one scientist, is
+  lab: LabSession | null;
 }
 
 export interface Resources {
@@ -99,44 +89,10 @@ function withTurn(transcript: Transcript, number: number, change: (turn: Turn) =
   return transcript.turns.map((turn, at) => (at === index ? change(turn) : turn));
 }
 
-// What an event says, which a server of another version may say otherwise: each is the value if it is of the kind
-// asked for, and what is given instead if not
-
-function asText(value: unknown, otherwise = ""): string {
-  return typeof value === "string" ? value : otherwise;
-}
-
-function asNumber(value: unknown, otherwise = 0): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : otherwise;
-}
-
-function asStrings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
 function attachmentsOf(event: ChatEvent): Attachment[] {
   const given = event.data.attachments;
 
   return Array.isArray(given) ? (given as Attachment[]) : [];
-}
-
-function cellOf(data: Record<string, unknown>): Cell {
-  return {
-    language: asText(data.language, "python"),
-    code: asText(data.code),
-    status: asText(data.status, "ok"),
-    output: asText(data.output),
-    error: typeof data.error === "string" && data.error !== "" ? data.error : null,
-    duration: asNumber(data.duration),
-    plots: asStrings(data.plots),
-    producedFiles: asStrings(data.produced_files),
-    outputDropped: asNumber(data.output_dropped),
-    value: data.value ?? null,
-  };
 }
 
 function resourcesOf(data: Record<string, unknown>): Resources {
@@ -163,6 +119,7 @@ function callsOf(data: Record<string, unknown>): Call[] {
       status: "running",
       output: null,
       cells: [],
+      lab: null,
     };
   });
 }
@@ -186,9 +143,12 @@ function hasCall(turn: Turn, id: string): boolean {
 function settle(turn: Turn, to: CallStatus): Turn {
   return {
     ...turn,
-    steps: turn.steps.map((step) =>
-      step.kind === "call" && step.call.status === "running" ? { ...step, call: { ...step.call, status: to } } : step,
-    ),
+    steps: turn.steps.map((step) => {
+      if (step.kind !== "call") return step;
+      const lab = step.call.lab === null ? null : settleLab(step.call.lab);
+
+      return { ...step, call: { ...step.call, status: step.call.status === "running" ? to : step.call.status, lab } };
+    }),
   };
 }
 
@@ -213,6 +173,12 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
   const inTurn = (change: (turn: Turn) => Turn): Transcript =>
     // What happens outside a turn is not part of one
     event.turn < 1 ? next : { ...next, turns: withTurn(next, event.turn, change) };
+  // What happens to a call that is there, since there is nothing to show what happens to one that is not
+  const inCall = (id: string, change: (call: Call) => Call): Transcript => {
+    const turn = next.turns.find((candidate) => candidate.number === event.turn);
+
+    return turn !== undefined && hasCall(turn, id) ? inTurn((found) => changeCall(found, id, change)) : next;
+  };
 
   switch (event.kind) {
     case "user":
@@ -228,9 +194,9 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
         maxCost: typeof event.data.max_cost === "number" ? event.data.max_cost : null,
       };
     case "writing":
-      // A scientist writing in a team session is not the lead's reply
+      // A scientist writing in a team session is not the lead's reply, but what the session is shown with
       if (event.data.meeting !== undefined && event.data.meeting !== null) {
-        return next;
+        return inCall(asText(event.data.call), (call) => ({ ...call, lab: call.lab === null ? null : writeLab(call.lab, event) }));
       }
 
       return { ...next, turns: withTurn(next, event.turn, (turn) => ({ ...turn, writing: event.text })) };
@@ -261,6 +227,7 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
           status: "running",
           output: null,
           cells: [],
+          lab: null,
         });
 
         return { ...turn, steps: [...turn.steps, { kind: "call", key: `call-${id || event.id}`, call }] };
@@ -272,6 +239,9 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
 
       return inTurn((turn) => (hasCall(turn, id) ? changeCall(turn, id, (call) => ({ ...call, cells: [...call.cells, cell] })) : turn));
     }
+    case "lab":
+      // A session whose call was not told of is not shown, for want of a call to show it with
+      return inCall(asText(event.data.call), (call) => ({ ...call, lab: reduceLab(call.lab, event) }));
     case "resources":
       return inTurn((turn) => ({
         ...turn,

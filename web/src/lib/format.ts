@@ -54,3 +54,10 @@ const ANSI = new RegExp(`${ESCAPE}\\[[0-9;?]*[ -/]*[@-~]`, "g");
 export function stripAnsi(text: string): string {
   return text.replace(ANSI, "");
 }
+
+// When a file was changed, from the seconds since the epoch that the server gives, as timeAgo says it
+export function timeAgoFromEpoch(seconds: number, now: Date = new Date()): string {
+  const then = new Date(seconds * 1000);
+
+  return Number.isNaN(then.getTime()) ? "" : timeAgo(then.toISOString(), now);
+}
