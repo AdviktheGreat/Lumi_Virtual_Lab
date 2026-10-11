@@ -213,12 +213,16 @@ class Workspace:
         base = f"{(now or datetime.now()).strftime('%Y-%m-%d_%H%M')}_{slug(title)}"
         path = parent / base
         number = 2
-        while path.exists():
-            path = parent / f"{base}-{number}"
-            number += 1
-        path.mkdir(parents=True)
-
-        return path
+        while True:
+            # Made, not looked for first: of two requests that begin at once with the same name, one makes it
+            # and the other takes the next
+            try:
+                path.mkdir(parents=True)
+            except FileExistsError:
+                path = parent / f"{base}-{number}"
+                number += 1
+            else:
+                return path
 
     def entries(self) -> list[Entry]:
         """Every meeting and project in the workspace, the latest first."""

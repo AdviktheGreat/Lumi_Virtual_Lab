@@ -542,6 +542,19 @@ It prints a link with a token in it. Opening the link keeps the token in a cooki
 - `POST /api/setup/images/{stage}` starts building a stage, and `POST /api/setup/data-lake` fetches the data lake (all of it, or `{"names": [...]}`), each answering at once (202) with a job. `GET /api/setup/data-lake` lists its files and which are there. A job reports what it is doing, its progress (the files and bytes fetched), and what it printed, from `GET /api/setup/jobs/{id}?log_from=` so that a page asks only for what is new; `POST /api/setup/jobs/{id}/stop` stops it, ending the build or leaving no part of a file, and stopping the server stops what is running. One image is built at a time, and one fetch runs at a time.
 - With `--static-dir` (or pages in the install), the server also shows the built pages of an interface, and any address that is not a file or under `/api` shows its first page.
 
+### The chat interface
+
+The pages that talk to this server are in `web/`, written with Next.js, React, Tailwind, and shadcn/ui, and exported as static files: nothing runs but the server. They start a conversation with the lead scientist, show its reply as it is written, list the conversations on the side, and say when the server cannot be reached or no longer accepts the token. They need Node 22 or later to build, and nothing at all to use once built.
+
+```bash
+cd web
+npm install
+npm run package                         # the pages, into src/virtual_lab/server/static
+virtual-lab-server                      # now shows them at the link it prints
+```
+
+`npm run package` is what makes a build of the package carry the pages (they are not kept in the repository). To change the interface, build into `web/out` with `npm run build` and run `virtual-lab-server --static-dir web/out`. `npm run lint`, `npm run typecheck`, and `npm test` check the code, and `npm run test:e2e` drives a browser through the built pages against the real server with a script where the model would be, so it needs no key. See `web/README.md`.
+
 ## Growing the toolset from papers
 
 Biomni grows its toolset by reading papers for the computational tasks, databases, and software in them. `read_paper` and `extract_paper_findings` do the same reading. A PDF needs pypdf: `pip install "virtual-lab[papers]"`. Plain text, Markdown, and LaTeX files need nothing.

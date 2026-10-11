@@ -98,6 +98,11 @@ virtual-lab-ui = "virtual_lab.ui:main"
 [tool.hatch.version]
 path = "src/virtual_lab/__about__.py"
 
+# The interface's built pages are not in version control, so they are named here to be in the wheel. Build them first,
+# with npm run package in web/
+[tool.hatch.build.targets.wheel]
+artifacts = ["src/virtual_lab/server/static/**"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # The tests import their own helpers from conftest, so the tests directory is on sys.path

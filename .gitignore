@@ -164,5 +164,11 @@ cython_debug/
 # Mac
 .DS_Store
 
+# The interface's pages, which npm run package builds into the server's directory
+src/virtual_lab/server/static/
+
+# Python's lib/ above would take the interface's own
+!web/src/lib/
+
 # Papers
 nanobody_design/discussions/finetuning/papers

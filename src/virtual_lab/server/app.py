@@ -522,10 +522,12 @@ def create_app(
     if static_dir is not None:
         pages = Path(static_dir)
 
-        @app.get("/{path:path}", include_in_schema=False)
-        def page(path: str) -> FileResponse:
+        # HEAD as well as GET, which the page's router asks of an address before it goes to it
+        @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+        def page(request: Request, path: str) -> FileResponse:
             if path == "api" or path.startswith("api/"):
-                raise HTTPException(404)
+                # What the API has no address for, and, for HEAD, what it has but does not answer that to
+                raise HTTPException(404 if request.method == "GET" else 405)
             found = static_file(pages, path)
             if found is None and not Path(path).suffix:
                 found = static_file(pages, "")
