@@ -92,6 +92,13 @@
   --sidebar-accent-foreground: oklch(0.27 0.045 262);
   --sidebar-border: oklch(0.925 0.008 250);
   --sidebar-ring: oklch(0.58 0.11 262);
+  --tok-comment: oklch(0.55 0.02 255);
+  --tok-keyword: oklch(0.5 0.17 305);
+  --tok-string: oklch(0.5 0.12 150);
+  --tok-number: oklch(0.55 0.15 55);
+  --tok-title: oklch(0.5 0.14 255);
+  --tok-type: oklch(0.52 0.11 195);
+  --tok-meta: oklch(0.55 0.14 15);
 }
 
 .dark {
@@ -130,6 +137,13 @@
   --sidebar-accent-foreground: oklch(0.95 0.005 250);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.65 0.12 262);
+  --tok-comment: oklch(0.68 0.02 255);
+  --tok-keyword: oklch(0.75 0.14 305);
+  --tok-string: oklch(0.78 0.12 150);
+  --tok-number: oklch(0.79 0.12 60);
+  --tok-title: oklch(0.76 0.11 255);
+  --tok-type: oklch(0.78 0.1 195);
+  --tok-meta: oklch(0.76 0.12 15);
 }
 
 @layer base {
@@ -158,4 +172,57 @@
     scrollbar-width: thin;
     scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
   }
+}
+
+/* What lowlight marks in code: a few colours for the kinds of thing, and nothing for the rest */
+.hljs-comment,
+.hljs-quote {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-name {
+  color: var(--tok-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--tok-string);
+}
+.hljs-number,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-link {
+  color: var(--tok-number);
+}
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--tok-title);
+}
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-built_in,
+.hljs-attr,
+.hljs-attribute,
+.hljs-params {
+  color: var(--tok-type);
+}
+.hljs-meta,
+.hljs-deletion,
+.hljs-tag {
+  color: var(--tok-meta);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
 }

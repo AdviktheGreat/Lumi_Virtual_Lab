@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyTranscript, reduce, replay } from "./transcript";
+import { emptyTranscript, isThinking, reduce, replay } from "./transcript";
 import type { ChatEvent, ChatEventKind } from "./types";
 
 let next = 0;
@@ -27,6 +27,7 @@ describe("a transcript", () => {
       {
         number: 1,
         user: { text: "What is a nanobody?", attachments: [{ name: "a.csv", path: "uploads/a.csv", size: 3 }] },
+        steps: [],
         writing: "Nanobodies are small",
         outcome: "running",
         text: "",
@@ -76,7 +77,7 @@ describe("a transcript", () => {
     const transcript = replay([event("answer", 4, { text: "An answer" })]);
 
     expect(transcript.turns).toEqual([
-      { number: 4, user: null, writing: "", outcome: "answered", text: "An answer", errorType: null },
+      { number: 4, user: null, steps: [], writing: "", outcome: "answered", text: "An answer", errorType: null },
     ]);
   });
 
@@ -128,13 +129,310 @@ describe("a transcript", () => {
 
   it("reads past events it does not show yet", () => {
     next = 0;
-    const transcript = replay([event("user", 1, { text: "hi" }), event("tool_calls", 1), event("cell", 1), event("lab", 1)]);
+    const transcript = replay([event("user", 1, { text: "hi" }), event("lab", 1), event("status", 0, { data: { state: "idle" } })]);
 
-    expect(transcript.lastId).toBe(4);
+    expect(transcript.lastId).toBe(3);
     expect(transcript.turns).toHaveLength(1);
+    expect(transcript.turns[0].steps).toEqual([]);
   });
 
   it("starts with nothing", () => {
     expect(emptyTranscript).toMatchObject({ title: "", state: "idle", turns: [], lastId: 0, spent: null, maxCost: null });
+  });
+});
+
+const call = (id: string, name: string, args: unknown = {}) => ({ id, name, arguments: JSON.stringify(args) });
+
+const cellData = (fields: Record<string, unknown> = {}) => ({
+  language: "python",
+  code: "print(1)",
+  status: "ok",
+  output: "1\n",
+  error: null,
+  duration: 0.25,
+  plots: [],
+  produced_files: [],
+  output_dropped: 0,
+  sandboxed: false,
+  tool_calls: [],
+  value: null,
+  plot_paths: [],
+  call: "call_1",
+  ...fields,
+});
+
+describe("what the lead does in a turn", () => {
+  it("is what it says beside its calls, and the calls, in the order they were told of", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1, { text: "Count" }),
+      event("writing", 1, { text: "Let me run" }),
+      event("tool_calls", 1, { text: "Let me run that.", data: { calls: [call("call_1", "run_code", { code: "print(1)" }), call("call_2", "other")] } }),
+    ]);
+    const turn = transcript.turns[0];
+
+    expect(turn.writing).toBe("");
+    expect(turn.steps.map((step) => step.kind)).toEqual(["say", "call", "call"]);
+    expect(turn.steps[0]).toMatchObject({ kind: "say", text: "Let me run that." });
+    expect(turn.steps[1]).toMatchObject({
+      kind: "call",
+      call: { id: "call_1", name: "run_code", arguments: '{"code":"print(1)"}', status: "running", output: null, cells: [] },
+    });
+  });
+
+  it("says nothing for a call made with no words beside it", () => {
+    next = 0;
+    const transcript = replay([event("user", 1), event("tool_calls", 1, { text: "  \n", data: { calls: [call("a", "run_code")] } })]);
+
+    expect(transcript.turns[0].steps.map((step) => step.kind)).toEqual(["call"]);
+  });
+
+  it("has the code a call ran, and what it returned, with the call", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("tool_calls", 1, { data: { calls: [call("call_1", "run_code")] } }),
+      event("cell", 1, { data: cellData({ output: "1\n", plots: ["plots/figure_1.png"], produced_files: ["plots/figure_1.png", "out.csv"], error: "", output_dropped: 12, value: 3 }) }),
+      event("cell", 1, { data: cellData({ status: "error", error: "NameError: x", duration: 1.5 }) }),
+      event("tool_output", 1, { text: "1", data: { call: "call_1", name: "run_code" } }),
+    ]);
+    const step = transcript.turns[0].steps[0];
+
+    expect(step.kind === "call" && step.call.status).toBe("done");
+    expect(step.kind === "call" && step.call.output).toBe("1");
+    expect(step.kind === "call" && step.call.cells).toEqual([
+      {
+        language: "python",
+        code: "print(1)",
+        status: "ok",
+        output: "1\n",
+        error: null,
+        duration: 0.25,
+        plots: ["plots/figure_1.png"],
+        producedFiles: ["plots/figure_1.png", "out.csv"],
+        outputDropped: 12,
+        value: 3,
+      },
+      expect.objectContaining({ status: "error", error: "NameError: x", duration: 1.5 }),
+    ]);
+  });
+
+  it("keeps each call's cells and output with that call", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("tool_calls", 1, { data: { calls: [call("a", "run_code")] } }),
+      event("cell", 1, { data: cellData({ call: "a", code: "a()" }) }),
+      event("tool_output", 1, { text: "A", data: { call: "a" } }),
+      event("tool_calls", 1, { data: { calls: [call("b", "run_code")] } }),
+      event("cell", 1, { data: cellData({ call: "b", code: "b()" }) }),
+    ]);
+    const [first, second] = transcript.turns[0].steps.map((step) => (step.kind === "call" ? step.call : null));
+
+    expect([first?.status, first?.output, first?.cells.map((cell) => cell.code)]).toEqual(["done", "A", ["a()"]]);
+    expect([second?.status, second?.output, second?.cells.map((cell) => cell.code)]).toEqual(["running", null, ["b()"]]);
+  });
+
+  it("tells of a call again without making another of it", () => {
+    next = 0;
+    const calls = { data: { calls: [call("a", "run_code")] } };
+    const transcript = replay([event("user", 1), event("tool_calls", 1, calls), event("tool_calls", 1, calls)]);
+
+    expect(transcript.turns[0].steps).toHaveLength(1);
+  });
+
+  it("shows an answer to a call it was not told of, and drops a cell of one", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("cell", 1, { data: cellData({ call: "ghost" }) }),
+      event("tool_output", 1, { text: "Unseen", data: { call: "ghost", name: "run_code" } }),
+    ]);
+    const steps = transcript.turns[0].steps;
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ kind: "call", call: { id: "ghost", name: "run_code", status: "done", output: "Unseen", cells: [] } });
+  });
+
+  it("gives a call that came with no id one of its own by where it came", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("tool_calls", 1, { data: { calls: [{ name: "a", arguments: "{}" }, { name: "b", arguments: "{}" }] } }),
+    ]);
+
+    expect(transcript.turns[0].steps.map((step) => (step.kind === "call" ? step.call.id : null))).toEqual(["call-0", "call-1"]);
+  });
+
+  it("makes nothing of calls that are not a list, or are not calls", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("tool_calls", 1, { data: { calls: "run_code" } }),
+      event("tool_calls", 1, { data: { calls: [null, 4, { id: "ok", name: "x", arguments: 3 }] } }),
+    ]);
+    const calls = transcript.turns[0].steps.map((step) => (step.kind === "call" ? step.call : null));
+
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toMatchObject({ id: "ok", name: "x", arguments: "" });
+  });
+
+  it("fills in what a cell leaves out", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("tool_calls", 1, { data: { calls: [call("a", "run_code")] } }),
+      event("cell", 1, { data: { call: "a", plots: "none", duration: "fast", output_dropped: Infinity } }),
+    ]);
+    const step = transcript.turns[0].steps[0];
+
+    expect(step.kind === "call" && step.call.cells[0]).toEqual({
+      language: "python",
+      code: "",
+      status: "ok",
+      output: "",
+      error: null,
+      duration: 0,
+      plots: [],
+      producedFiles: [],
+      outputDropped: 0,
+      value: null,
+    });
+  });
+
+  it("is told of the resources the lead has, and of what it chose them for", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("resources", 1, {
+        data: {
+          mode: "retrieve",
+          available: { tools: 3, data_lake: "many" },
+          selected: { tools: ["m.a", 7, "m.b"], libraries: "numpy" },
+          retrieval: { task: "Align reads", model: "m", reply: "..." },
+        },
+      }),
+      event("resources", 1, { data: { mode: "all", available: {}, selected: {}, retrieval: null } }),
+    ]);
+    const [first, second] = transcript.turns[0].steps;
+
+    expect(first).toMatchObject({
+      kind: "resources",
+      resources: { mode: "retrieve", available: { tools: 3, data_lake: 0 }, selected: { tools: ["m.a", "m.b"], libraries: [] }, task: "Align reads" },
+    });
+    expect(second).toMatchObject({ kind: "resources", resources: { mode: "all", task: null } });
+  });
+
+  it("takes resources that come with no mode as all that were named", () => {
+    next = 0;
+    const transcript = replay([event("user", 1), event("resources", 1, { data: { available: { tools: 2 } } })]);
+
+    expect(transcript.turns[0].steps[0]).toMatchObject({ kind: "resources", resources: { mode: "all", available: { tools: 2 } } });
+  });
+
+  it("makes nothing of resources named outside a turn", () => {
+    next = 0;
+    const transcript = replay([event("resources", 0, { data: { mode: "all" } })]);
+
+    expect(transcript.turns).toEqual([]);
+    expect(transcript.lastId).toBe(1);
+  });
+
+  it("is told of a note, and whether anyone read it", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("note", 1, { text: "Look at B cells", data: { to: "lead", read: true } }),
+      event("note", 1, { text: "Too late", data: { to: null, read: false } }),
+      event("note", 1, { text: "Odd", data: { to: "somebody", read: "yes" } }),
+    ]);
+
+    expect(transcript.turns[0].steps).toEqual([
+      { kind: "note", key: "note-2", text: "Look at B cells", to: "lead", read: true },
+      { kind: "note", key: "note-3", text: "Too late", to: null, read: false },
+      { kind: "note", key: "note-4", text: "Odd", to: null, read: false },
+    ]);
+  });
+
+  it("settles what is still running when the turn ends: done for an answer, cut short for the rest", () => {
+    next = 0;
+    const running = (turn: number, id: string) => [
+      event("user", turn),
+      event("tool_calls", turn, { data: { calls: [call(id, "run_code")] } }),
+    ];
+    const statuses = (transcript: ReturnType<typeof replay>, turn: number) =>
+      transcript.turns[turn].steps.map((step) => (step.kind === "call" ? step.call.status : null));
+
+    const transcript = replay([
+      ...running(1, "a"),
+      event("answer", 1, { text: "Done" }),
+      ...running(2, "b"),
+      event("stopped", 2, { text: "Stopped." }),
+      ...running(3, "c"),
+      event("failed", 3, { text: "Failed" }),
+    ]);
+
+    expect(statuses(transcript, 0)).toEqual(["done"]);
+    expect(statuses(transcript, 1)).toEqual(["interrupted"]);
+    expect(statuses(transcript, 2)).toEqual(["interrupted"]);
+  });
+
+  it("does not change a call that was answered when the turn ends", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1),
+      event("tool_calls", 1, { data: { calls: [call("a", "run_code")] } }),
+      event("tool_output", 1, { text: "ok", data: { call: "a" } }),
+      event("stopped", 1, { text: "Stopped." }),
+    ]);
+    const step = transcript.turns[0].steps[0];
+
+    expect(step.kind === "call" && step.call.status).toBe("done");
+  });
+
+  it("is not changed by a cell, an output, or a call it has read", () => {
+    next = 0;
+    const events = [
+      event("user", 1),
+      event("tool_calls", 1, { data: { calls: [call("a", "run_code")] } }),
+      event("cell", 1, { data: cellData({ call: "a" }) }),
+      event("tool_output", 1, { text: "x", data: { call: "a" } }),
+    ];
+    const once = replay(events);
+
+    expect(replay(events, once)).toBe(once);
+    expect(once.turns[0].steps).toHaveLength(1);
+  });
+});
+
+describe("when the lead is thinking", () => {
+  const turnOf = (...events: ChatEvent[]) => {
+    next = 0;
+
+    return replay([event("user", 1), ...events]).turns[0];
+  };
+  const calling = (id: string) => event("tool_calls", 1, { data: { calls: [call(id, "run_code")] } });
+
+  it("is so when it is at work and has shown nothing of what comes next", () => {
+    expect(isThinking(turnOf(), true)).toBe(true);
+    expect(isThinking(turnOf(calling("a"), event("tool_output", 1, { text: "ok", data: { call: "a" } })), true)).toBe(true);
+  });
+
+  it("is not so once it is writing", () => {
+    expect(isThinking(turnOf(event("writing", 1, { text: "The" })), true)).toBe(false);
+  });
+
+  it("is not so while a call is running, which says what is being waited for", () => {
+    expect(isThinking(turnOf(calling("a")), true)).toBe(false);
+    expect(
+      isThinking(turnOf(calling("a"), calling("b"), event("tool_output", 1, { text: "ok", data: { call: "b" } })), true),
+    ).toBe(false);
+  });
+
+  it("is not so when the lead is not at work, or the turn is over", () => {
+    expect(isThinking(turnOf(), false)).toBe(false);
+    expect(isThinking(turnOf(event("answer", 1, { text: "Done" })), true)).toBe(false);
+    expect(isThinking(turnOf(event("stopped", 1, { text: "Stopped" })), true)).toBe(false);
+    expect(isThinking(turnOf(event("failed", 1, { text: "Broke" })), true)).toBe(false);
   });
 });

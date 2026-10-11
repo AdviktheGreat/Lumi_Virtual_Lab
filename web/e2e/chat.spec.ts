@@ -11,6 +11,8 @@ test.describe("a conversation with the lead", () => {
     await expect(page.getByTestId("user-message")).toHaveText(question);
     await answered(page, "This answer is from a script");
     await expect(page.getByTestId("lead-message")).toContainText(`You asked: ${question}`);
+    // It did nothing but answer, so there is no list of what it did, not even an empty one
+    await expect(page.getByTestId("steps")).toHaveCount(0);
     await expect(page.getByTestId("chat-title")).toHaveText(question);
     await expect(page).toHaveTitle(`${question} · Virtual Lab`);
   });
