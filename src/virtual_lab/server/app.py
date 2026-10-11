@@ -9,6 +9,11 @@ and everything else is a request and an answer.
     GET    /api/models                  the models to choose from, and whether they can be reached
     GET    /api/keys                    which providers have their keys
     PUT    /api/keys/{name}, DELETE     a key, set until the server stops, or taken away
+    GET    /api/setup                   Docker, the sandbox images, the data lake, the jobs, and what is left to do
+    POST   /api/setup/images/{stage}    start building a stage of the sandbox image, as a job
+    GET    /api/setup/data-lake         the files of the data lake, and which are there; POST fetches them, as a job
+    GET    /api/setup/jobs              the jobs; /jobs/{id} is one, with what it printed from ?log_from=
+    POST   /api/setup/jobs/{id}/stop    ask a job to stop
     GET    /api/scientists, PUT         the library and the scientists the person described
     DELETE /api/scientists/{title}      one of those the person described
     GET    /api/chats, POST             the conversations, and a new one
@@ -23,7 +28,7 @@ and everything else is a request and an answer.
 
 import asyncio
 import os
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, BinaryIO, cast
@@ -39,12 +44,14 @@ from starlette.requests import ClientDisconnect
 
 from virtual_lab.__about__ import __version__
 from virtual_lab.chat import ChatBusyError, ChatClosedError, UploadTooLargeError
-from virtual_lab.constants import MAX_CHAT_TITLE_CHARS
+from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_CHAT_TITLE_CHARS
+from virtual_lab.environment import DATA_LAKE
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.files import file_response, list_files, resolve_inside
 from virtual_lab.server.security import LOCAL_HOSTS, Guard
+from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
 from virtual_lab.ui.library import SETTABLE_KEYS, provider_statuses
 from virtual_lab.ui.workspace import DEFAULT_WORKSPACE, Workspace
@@ -57,6 +64,9 @@ UPLOAD_CHUNK_TIMEOUT = 120.0
 
 # What a key may be at most, and the characters it may not hold, which an environment variable cannot
 MAX_KEY_CHARS = 4096
+
+# The most characters of a path a page may give
+MAX_PATH_CHARS = 4096
 
 # What a page of the interface is given to keep: what has a hash in its name never changes
 IMMUTABLE_PREFIX = "_next/static/"
@@ -81,6 +91,8 @@ class CodeBody(RequestModel):
     network: bool = True
     python: str = ""
     resources: str = "retrieve"
+    data_lake: str = Field("", max_length=MAX_PATH_CHARS)
+    forward_env: list[str] = Field(default_factory=list, max_length=len(SETTABLE_KEYS))
 
 
 class ChatBody(RequestModel):
@@ -104,6 +116,8 @@ class SettingsBody(RequestModel):
     sandbox: str = "python"
     network: bool = True
     python: str = ""
+    data_lake: str = Field("", max_length=MAX_PATH_CHARS)
+    forward_keys: list[str] = Field(default_factory=list, max_length=len(SETTABLE_KEYS))
 
 
 class RenameBody(RequestModel):
@@ -121,6 +135,12 @@ class NoteBody(RequestModel):
 
 class KeyBody(RequestModel):
     value: str = Field(max_length=MAX_KEY_CHARS)
+
+
+class DataLakeBody(RequestModel):
+    """What to fetch of the data lake, which is all of it unless files are named."""
+
+    names: list[str] | None = Field(None, max_length=len(DATA_LAKE))
 
 
 class RequestBodyReader:
@@ -201,6 +221,9 @@ def create_app(
     check_keys: bool = True,
     client: Any = None,
     chat_models: Any = None,
+    check_setup: bool = True,
+    docker_command: Sequence[str] = ("docker",),
+    release_url: str = BIOMNI_RELEASE_URL,
 ) -> FastAPI:
     """The server's application.
 
@@ -216,9 +239,20 @@ def create_app(
     :param check_keys: Whether to say a key is not set before something is paid for, as Conversations does.
     :param client: An OpenAI client for every conversation, as Chat takes one.
     :param chat_models: Chat models for every conversation, as Chat takes them.
+    :param check_setup: Whether to say Docker or the sandbox image is not there before a conversation that runs
+        code in Docker is made, rather than when its code first runs.
+    :param docker_command: How the setup invokes Docker, which is for tests: code runs with "docker".
+    :param release_url: Where the data lake is fetched from, which is for tests.
     """
     store = Workspace(Path(workspace))
-    conversations = Conversations(store, check_keys=check_keys, client=client, chat_models=chat_models)
+    setup = Setup(store, docker_command, release_url)
+    conversations = Conversations(
+        store,
+        check_keys=check_keys,
+        client=client,
+        chat_models=chat_models,
+        setup=setup if check_setup else None,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -227,11 +261,13 @@ def create_app(
             yield
         finally:
             await anyio.to_thread.run_sync(conversations.close)
+            await anyio.to_thread.run_sync(setup.close)
 
     app = FastAPI(
         title="Virtual Lab", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.conversations = conversations
+    app.state.setup = setup
     app.state.workspace = store
 
     @app.exception_handler(ApiError)
@@ -271,7 +307,7 @@ def create_app(
     @api.patch("/settings")
     def change_settings(body: SettingsBody) -> dict[str, Any]:
         try:
-            changed = update_settings(store.load_settings(), body.model_dump(exclude_unset=True))
+            changed = update_settings(store.load_settings(), body.model_dump(exclude_unset=True), store)
         except (ValueError, TypeError) as error:
             raise ApiError(422, "invalid", str(error)) from error
         store.save_settings(changed)
@@ -319,6 +355,44 @@ def create_app(
         os.environ.pop(name, None)
 
         return key_statuses()
+
+    @api.get("/setup")
+    def get_setup() -> dict[str, Any]:
+        return setup.status(store.load_settings())
+
+    @api.post("/setup/images/{target}", status_code=202)
+    def build_image(target: str) -> dict[str, Any]:
+        return setup.build_image(target).snapshot(0)
+
+    @api.get("/setup/data-lake")
+    def get_data_lake() -> dict[str, Any]:
+        settings = store.load_settings()
+
+        return {"data_lake": setup.data_lake(settings), "files": setup.data_lake_files(settings)}
+
+    @api.post("/setup/data-lake", status_code=202)
+    def fetch_data_lake(body: DataLakeBody | None = None) -> dict[str, Any]:
+        names = body.names if body is not None else None
+
+        return setup.download_data_lake(store.load_settings(), names).snapshot(0)
+
+    @api.get("/setup/jobs")
+    def list_jobs() -> dict[str, Any]:
+        return {"jobs": setup.jobs.snapshots()}
+
+    @api.get("/setup/jobs/{job_id}")
+    def get_job(job_id: str, log_from: int = Query(0, ge=0)) -> dict[str, Any]:
+        try:
+            return setup.jobs.get(job_id).snapshot(log_from)
+        except KeyError:
+            raise not_found("job with that id") from None
+
+    @api.post("/setup/jobs/{job_id}/stop")
+    def stop_job(job_id: str) -> dict[str, Any]:
+        try:
+            return setup.jobs.stop(job_id).snapshot(0)
+        except KeyError:
+            raise not_found("job with that id") from None
 
     @api.get("/scientists")
     def get_scientists() -> dict[str, Any]:

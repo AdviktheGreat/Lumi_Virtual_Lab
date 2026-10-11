@@ -13,6 +13,9 @@ from virtual_lab.server.config import (
     DEFAULT_TEAM,
     PUBLIC_SETTINGS,
     ChatConfig,
+    check_data_lake,
+    check_forward_keys,
+    data_lake_directory,
     describe_models,
     describe_scientist,
     library,
@@ -83,7 +86,14 @@ class TestResolving:
         assert config.model == "gpt-5.2"
         assert titles(config.team) == ["Scientific Critic"]
         # What the request names of the code is changed, and the rest is the settings'
-        assert config.code == CodeSetup(where="docker", sandbox="full", network=True, python="", resources="all")
+        assert config.code == CodeSetup(
+            where="docker",
+            sandbox="full",
+            network=True,
+            python="",
+            resources="all",
+            data_lake=str(workspace.data_lake_dir),
+        )
         assert config.max_cost == 0.25
         assert config.stream is False
         assert config.commercial_mode is True
@@ -293,21 +303,33 @@ class TestSettings:
         assert tuple(shown) == PUBLIC_SETTINGS
         assert "mcp_config" not in shown
 
-    def test_a_change_gives_settings_with_it_made_and_leaves_the_old_ones_as_they_were(self) -> None:
+    def test_the_data_lake_and_the_keys_code_may_read_are_among_them(self) -> None:
+        shown = public_settings(Settings(data_lake="/lake", forward_keys=["ANTHROPIC_API_KEY"]))
+
+        assert shown["data_lake"] == "/lake"
+        assert shown["forward_keys"] == ["ANTHROPIC_API_KEY"]
+        assert public_settings(Settings())["data_lake"] == ""
+        assert public_settings(Settings())["forward_keys"] == []
+
+    def test_a_change_gives_settings_with_it_made_and_leaves_the_old_ones_as_they_were(
+        self, workspace: Workspace
+    ) -> None:
         old = Settings(max_cost=2.0, mcp_config="/keep/this.json")
 
-        new = update_settings(old, {"model": "claude-sonnet-4-5", "max_cost": 3, "code": "docker", "sandbox": "bio"})
+        new = update_settings(
+            old, {"model": "claude-sonnet-4-5", "max_cost": 3, "code": "docker", "sandbox": "bio"}, workspace
+        )
 
         assert (new.model, new.max_cost, new.code, new.sandbox) == ("claude-sonnet-4-5", 3.0, "docker", "bio")
         assert isinstance(new.max_cost, float)
         assert new.mcp_config == "/keep/this.json"
         assert (old.max_cost, old.model, old.code) == (2.0, Settings().model, "none")
 
-    def test_a_limit_of_nothing_may_be_spent_can_be_set(self) -> None:
-        assert update_settings(Settings(max_cost=2.0), {"max_cost": 0}).max_cost == 0.0
+    def test_a_limit_of_nothing_may_be_spent_can_be_set(self, workspace: Workspace) -> None:
+        assert update_settings(Settings(max_cost=2.0), {"max_cost": 0}, workspace).max_cost == 0.0
 
-    def test_no_limit_can_be_set(self) -> None:
-        assert update_settings(Settings(max_cost=2.0), {"max_cost": None}).max_cost is None
+    def test_no_limit_can_be_set(self, workspace: Workspace) -> None:
+        assert update_settings(Settings(max_cost=2.0), {"max_cost": None}, workspace).max_cost is None
 
     @pytest.mark.parametrize(
         ("changes", "message"),
@@ -323,9 +345,11 @@ class TestSettings:
             ({"max_cost": float("inf")}, "max_cost must be a finite amount"),
         ],
     )
-    def test_a_change_that_cannot_be_used_is_refused(self, changes: dict[str, Any], message: str) -> None:
+    def test_a_change_that_cannot_be_used_is_refused(
+        self, workspace: Workspace, changes: dict[str, Any], message: str
+    ) -> None:
         with pytest.raises(ValueError, match=message):
-            update_settings(Settings(), changes)
+            update_settings(Settings(), changes, workspace)
 
 
 class TestModels:
@@ -345,3 +369,248 @@ class TestModels:
 
     def test_the_default_model_comes_first(self) -> None:
         assert describe_models()[0]["id"] == Settings().model
+
+
+class TestWhatCodeHas:
+    def test_code_in_one_of_biomnis_environments_is_given_the_data_lake_in_the_workspace(
+        self, workspace: Workspace
+    ) -> None:
+        for sandbox in ("base", "bio", "full"):
+            config = resolve_config({"code": {"where": "docker", "sandbox": sandbox}}, settings(), workspace)
+
+            assert config.code.data_lake == str(workspace.data_lake_dir)
+
+    def test_the_data_lake_the_settings_name_is_the_one_given(self, workspace: Workspace, tmp_path: Path) -> None:
+        elsewhere = tmp_path / "biomni" / "data_lake"
+
+        config = resolve_config(
+            {"code": {"where": "docker", "sandbox": "bio"}}, settings(data_lake=str(elsewhere)), workspace
+        )
+
+        assert config.code.data_lake == str(elsewhere)
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            {"where": "docker", "sandbox": "python"},
+            {"where": "local", "sandbox": "bio"},
+            {"where": "none", "sandbox": "full"},
+        ],
+    )
+    def test_code_not_in_one_of_biomnis_environments_is_given_none(
+        self, workspace: Workspace, code: dict[str, str]
+    ) -> None:
+        assert resolve_config({"code": code}, settings(), workspace).code.data_lake == ""
+
+    def test_what_the_settings_say_of_where_and_which_environment_decides_it_too(self, workspace: Workspace) -> None:
+        chosen = settings(code="docker", sandbox="bio")
+
+        assert resolve_config({}, chosen, workspace).code.data_lake == str(workspace.data_lake_dir)
+        assert resolve_config({"code": {"sandbox": "python"}}, chosen, workspace).code.data_lake == ""
+
+    def test_a_request_may_leave_the_data_lake_out_or_give_another(self, workspace: Workspace, tmp_path: Path) -> None:
+        docker = {"where": "docker", "sandbox": "bio"}
+        elsewhere = tmp_path / "mine"
+
+        none = resolve_config({"code": {**docker, "data_lake": ""}}, settings(), workspace)
+        other = resolve_config({"code": {**docker, "data_lake": str(elsewhere)}}, settings(), workspace)
+        plain = resolve_config(
+            {"code": {"where": "docker", "sandbox": "python", "data_lake": str(elsewhere)}}, settings(), workspace
+        )
+
+        assert none.code.data_lake == ""
+        assert other.code.data_lake == str(elsewhere.resolve())
+        assert plain.code.data_lake == str(elsewhere.resolve())
+
+    def test_a_data_lake_that_cannot_be_used_is_refused(self, workspace: Workspace) -> None:
+        with pytest.raises(ValueError, match="full path"):
+            resolve_config({"code": {"where": "docker", "data_lake": "relative/lake"}}, settings(), workspace)
+
+    def test_the_keys_the_settings_give_code_are_passed_in_where_code_is_in_docker(self, workspace: Workspace) -> None:
+        chosen = settings(forward_keys=["ANTHROPIC_API_KEY", "OPENAI_API_KEY"])
+
+        for sandbox in ("python", "bio"):
+            config = resolve_config({"code": {"where": "docker", "sandbox": sandbox}}, chosen, workspace)
+
+            assert config.code.forward_env == ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+
+    @pytest.mark.parametrize("where", ["none", "local"])
+    def test_no_key_is_passed_where_code_is_not_in_docker(self, workspace: Workspace, where: str) -> None:
+        chosen = settings(forward_keys=["ANTHROPIC_API_KEY"])
+
+        assert resolve_config({"code": {"where": where}}, chosen, workspace).code.forward_env == []
+
+    def test_no_key_is_passed_unless_one_is_chosen(self, workspace: Workspace) -> None:
+        assert resolve_config({"code": {"where": "docker"}}, settings(), workspace).code.forward_env == []
+
+    def test_a_request_may_choose_its_own_keys_or_none(self, workspace: Workspace) -> None:
+        chosen = settings(forward_keys=["ANTHROPIC_API_KEY"])
+        docker = {"where": "docker", "sandbox": "bio"}
+
+        none = resolve_config({"code": {**docker, "forward_env": []}}, chosen, workspace)
+        other = resolve_config({"code": {**docker, "forward_env": ["GROQ_API_KEY", "GROQ_API_KEY"]}}, chosen, workspace)
+
+        assert none.code.forward_env == []
+        assert other.code.forward_env == ["GROQ_API_KEY"]
+
+    def test_a_key_that_is_not_one_the_interface_sets_cannot_be_passed_in(self, workspace: Workspace) -> None:
+        with pytest.raises(ValueError, match="A key to give code is one of"):
+            resolve_config({"code": {"where": "docker", "forward_env": ["HOME"]}}, settings(), workspace)
+
+    def test_what_code_has_is_kept_with_the_conversation_and_read_back(
+        self, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        config = resolve_config(
+            {"code": {"where": "docker", "sandbox": "bio", "forward_env": ["ANTHROPIC_API_KEY"]}},
+            settings(),
+            workspace,
+        )
+        directory = tmp_path / "chat"
+        directory.mkdir()
+
+        save_config(directory, config)
+
+        saved = json.loads((directory / CONFIG_FILE_NAME).read_text())["code"]
+        assert saved["data_lake"] == str(workspace.data_lake_dir)
+        assert saved["forward_env"] == ["ANTHROPIC_API_KEY"]
+        assert load_config(directory) == config
+
+    def test_a_conversation_set_up_before_these_existed_is_read_with_none(
+        self, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        directory = tmp_path / "chat"
+        directory.mkdir()
+        old = resolve_config({"team": []}, settings(), workspace).to_dict()
+        for name in ("data_lake", "forward_env"):
+            del old["code"][name]
+        (directory / CONFIG_FILE_NAME).write_text(json.dumps(old))
+
+        loaded = load_config(directory)
+
+        assert loaded is not None
+        assert (loaded.code.data_lake, loaded.code.forward_env) == ("", [])
+
+    def test_the_data_lake_is_the_one_the_settings_name_or_the_workspaces(
+        self, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        assert data_lake_directory(settings(), workspace) == workspace.data_lake_dir
+        assert data_lake_directory(settings(data_lake=str(tmp_path / "x")), workspace) == tmp_path / "x"
+        assert data_lake_directory(settings(data_lake="~/lake"), workspace) == Path.home() / "lake"
+
+
+class TestCheckingTheDataLake:
+    def test_nothing_is_the_workspaces_own(self, workspace: Workspace) -> None:
+        assert check_data_lake("", workspace) == ""
+        assert check_data_lake("   ", workspace) == ""
+
+    def test_a_full_path_is_kept_as_it_resolves(self, workspace: Workspace, tmp_path: Path) -> None:
+        assert check_data_lake(f"  {tmp_path}/biomni/../lake  ", workspace) == str(tmp_path.resolve() / "lake")
+
+    def test_a_path_that_is_not_there_yet_is_allowed(self, workspace: Workspace, tmp_path: Path) -> None:
+        assert check_data_lake(str(tmp_path / "not" / "yet"), workspace) == str(tmp_path.resolve() / "not" / "yet")
+
+    def test_the_home_directory_is_expanded(self, workspace: Workspace) -> None:
+        assert check_data_lake("~/biomni/data_lake", workspace) == str((Path.home() / "biomni" / "data_lake").resolve())
+
+    @pytest.mark.parametrize("value", ["lake", "./lake", "../lake", "biomni/data_lake"])
+    def test_a_path_that_is_not_a_full_one_is_refused(self, workspace: Workspace, value: str) -> None:
+        with pytest.raises(ValueError, match="full path"):
+            check_data_lake(value, workspace)
+
+    def test_a_file_is_refused(self, workspace: Workspace, tmp_path: Path) -> None:
+        (tmp_path / "file").write_text("")
+
+        with pytest.raises(ValueError, match="is a file"):
+            check_data_lake(str(tmp_path / "file"), workspace)
+
+    @pytest.mark.parametrize("value", [None, 5, ["/x"], {"a": 1}])
+    def test_what_is_not_text_is_refused(self, workspace: Workspace, value: Any) -> None:
+        with pytest.raises(ValueError, match="The data lake is a directory, not"):
+            check_data_lake(value, workspace)
+
+    @pytest.mark.parametrize("name", ["with,comma", 'with"quote', "with\nbreak"])
+    def test_a_path_that_docker_cannot_mount_is_refused(self, workspace: Workspace, tmp_path: Path, name: str) -> None:
+        with pytest.raises(ValueError, match="cannot mount a path containing a comma"):
+            check_data_lake(str(tmp_path / name), workspace)
+
+    def test_where_conversations_are_kept_is_refused_and_so_is_what_holds_them(self, workspace: Workspace) -> None:
+        for where in (
+            workspace.chats_dir,
+            workspace.chats_dir / "a-chat" / "work",
+            workspace.root,
+            workspace.root.parent,
+        ):
+            with pytest.raises(ValueError, match="cannot be where conversations are kept"):
+                check_data_lake(str(where), workspace)
+
+    def test_beside_the_conversations_is_where_the_data_lake_is_kept_by_default(self, workspace: Workspace) -> None:
+        assert check_data_lake(str(workspace.data_lake_dir), workspace) == str(workspace.data_lake_dir)
+
+    def test_a_directory_whose_name_only_starts_as_the_conversations_does_is_allowed(
+        self, workspace: Workspace
+    ) -> None:
+        beside = workspace.root / "chats-and-more"
+
+        assert check_data_lake(str(beside), workspace) == str(beside)
+
+
+class TestCheckingTheKeys:
+    def test_the_keys_the_interface_sets_are_kept_once_each_in_the_order_given(self) -> None:
+        assert check_forward_keys(["GROQ_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY"]) == [
+            "GROQ_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ]
+        assert check_forward_keys(("OPENAI_API_KEY",)) == ["OPENAI_API_KEY"]
+        assert check_forward_keys([]) == []
+
+    def test_a_name_that_is_not_one_of_them_is_refused_and_named(self) -> None:
+        with pytest.raises(ValueError, match="not HOME, PATH$"):
+            check_forward_keys(["ANTHROPIC_API_KEY", "HOME", "PATH"])
+
+    @pytest.mark.parametrize("names", ["ANTHROPIC_API_KEY", None, 3, {"ANTHROPIC_API_KEY": 1}])
+    def test_what_is_not_a_list_is_refused(self, names: Any) -> None:
+        with pytest.raises(ValueError, match="a list of names"):
+            check_forward_keys(names)
+
+
+class TestChangingWhatCodeHas:
+    def test_a_data_lake_and_keys_can_be_set_and_are_kept_in_the_form_code_uses(
+        self, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        new = update_settings(
+            Settings(),
+            {"data_lake": f"{tmp_path}/a/../lake", "forward_keys": ["GROQ_API_KEY", "GROQ_API_KEY"]},
+            workspace,
+        )
+
+        assert new.data_lake == str(tmp_path.resolve() / "lake")
+        assert new.forward_keys == ["GROQ_API_KEY"]
+
+    def test_the_workspaces_own_data_lake_is_asked_for_by_nothing(self, workspace: Workspace) -> None:
+        assert update_settings(Settings(data_lake="/old/lake"), {"data_lake": ""}, workspace).data_lake == ""
+
+    def test_what_is_not_changed_is_not_looked_at_again(self, workspace: Workspace) -> None:
+        old = Settings(data_lake="relative", forward_keys=["HOME"])
+
+        new = update_settings(old, {"stream": False}, workspace)
+
+        assert (new.data_lake, new.forward_keys) == ("relative", ["HOME"])
+
+    @pytest.mark.parametrize(
+        ("changes", "message"),
+        [
+            ({"data_lake": "relative"}, "full path"),
+            ({"data_lake": 5}, "The data lake is a directory"),
+            ({"forward_keys": ["HOME"]}, "A key to give code is one of"),
+            ({"forward_keys": "ANTHROPIC_API_KEY"}, "a list of names"),
+        ],
+    )
+    def test_a_data_lake_or_keys_that_cannot_be_used_are_refused(
+        self, workspace: Workspace, changes: dict[str, Any], message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            update_settings(Settings(), changes, workspace)
+
+    def test_the_data_lake_is_looked_for_where_conversations_are_kept(self, workspace: Workspace) -> None:
+        with pytest.raises(ValueError, match="cannot be where conversations are kept"):
+            update_settings(Settings(), {"data_lake": str(workspace.root)}, workspace)

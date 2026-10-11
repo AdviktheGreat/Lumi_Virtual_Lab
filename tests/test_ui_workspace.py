@@ -84,6 +84,24 @@ class TestWorkspace:
         workspace.settings_path.write_text("{not json")
         assert workspace.load_settings() == Settings()
 
+    def test_the_data_lake_and_the_keys_code_may_read_are_kept_and_are_none_by_default(self, tmp_path: Path) -> None:
+        workspace = Workspace(tmp_path)
+        assert (Settings().data_lake, Settings().forward_keys) == ("", [])
+
+        workspace.save_settings(Settings(data_lake="/my/lake", forward_keys=["GROQ_API_KEY"]))
+
+        loaded = workspace.load_settings()
+        assert (loaded.data_lake, loaded.forward_keys) == ("/my/lake", ["GROQ_API_KEY"])
+        assert Settings().forward_keys is not Settings().forward_keys
+
+    def test_the_data_lake_is_kept_beside_the_conversations_unless_the_settings_say_otherwise(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = Workspace(tmp_path)
+
+        assert workspace.data_lake_dir == workspace.root / "data_lake"
+        assert workspace.data_lake_dir.parent == workspace.chats_dir.parent
+
     def test_a_finished_meeting_is_listed_with_its_agenda_status_and_cost(
         self, fake_client: FakeClient, tmp_path: Path
     ) -> None:

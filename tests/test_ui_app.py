@@ -394,6 +394,18 @@ class TestSettingsExportAndHistory:
         with pytest.raises(gr.Error, match="less than nothing"):
             page.save_settings("gpt-5.2", False, -1, "none", "python", True, "", "")
 
+    def test_saving_what_this_page_shows_leaves_the_data_lake_and_the_keys_code_may_read_as_they_were(
+        self, tmp_path: Path
+    ) -> None:
+        page = interface(tmp_path)
+        page.workspace.save_settings(Settings(data_lake="/my/lake", forward_keys=["ANTHROPIC_API_KEY"]))
+
+        page.save_settings("gpt-5.2", False, None, "docker", "bio", True, "", "")
+
+        saved = page.settings()
+        assert (saved.model, saved.code, saved.sandbox) == ("gpt-5.2", "docker", "bio")
+        assert (saved.data_lake, saved.forward_keys) == ("/my/lake", ["ANTHROPIC_API_KEY"])
+
     def test_a_scientist_added_is_offered_and_used(self, tmp_path: Path) -> None:
         page = interface(tmp_path)
         page.workspace.save_scientist(

@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from virtual_lab.agent import Agent
+from virtual_lab.execution import ExecutionError, check_mountable
 from virtual_lab.llm import detect_source
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.schemas import normalize_title
 from virtual_lab.scientists import SCIENTISTS
-from virtual_lab.ui.library import missing_keys, models, provider_of
+from virtual_lab.ui.library import SETTABLE_KEYS, missing_keys, models, provider_of
 from virtual_lab.ui.runs import CodeSetup, agent_from
 from virtual_lab.ui.workspace import SCIENTIST_FIELDS, Settings, Workspace, read_json
 from virtual_lab.utils import write_atomically
@@ -36,7 +37,17 @@ DEFAULT_TEAM = (
 )
 
 # The settings a page shows and changes: those of a conversation, and not the MCP config the interface keeps
-PUBLIC_SETTINGS = ("model", "stream", "max_cost", "code", "sandbox", "network", "python")
+PUBLIC_SETTINGS = (
+    "model",
+    "stream",
+    "max_cost",
+    "code",
+    "sandbox",
+    "network",
+    "python",
+    "data_lake",
+    "forward_keys",
+)
 
 # What a team's scientist is described with
 Spec = Mapping[str, Any]
@@ -80,6 +91,8 @@ class ChatConfig:
                 "network": self.code.network,
                 "python": self.code.python,
                 "resources": self.code.resources,
+                "data_lake": self.code.data_lake,
+                "forward_env": list(self.code.forward_env),
             },
             "max_cost": self.max_cost,
             "stream": self.stream,
@@ -103,10 +116,56 @@ def public_settings(settings: Settings) -> dict[str, Any]:
     return {key: getattr(settings, key) for key in PUBLIC_SETTINGS}
 
 
-def update_settings(settings: Settings, changes: Mapping[str, Any]) -> Settings:
+def data_lake_directory(settings: Settings, workspace: Workspace) -> Path:
+    """Where Biomni's data lake is kept: where the settings say, or in the workspace."""
+    return Path(settings.data_lake).expanduser() if settings.data_lake else workspace.data_lake_dir
+
+
+def check_data_lake(value: Any, workspace: Workspace) -> str:
+    """A directory for the data lake, made a full path, or "" for the workspace's own.
+
+    :raises ValueError: If it is not a full path, is a file, cannot be mounted into a container, or is where
+        conversations are kept or holds them, which would leave code able to change the data lake.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"The data lake is a directory, not {value!r}")
+    if not value.strip():
+        return ""
+    path = Path(value.strip()).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"The data lake is a full path, which {value.strip()!r} is not")
+    path = path.resolve()
+    if path.is_file():
+        raise ValueError(f"The data lake is a directory, and {path} is a file")
+    try:
+        check_mountable(path, "Choose another directory.")
+    except ExecutionError as error:
+        raise ValueError(str(error)) from error
+    chats = workspace.chats_dir
+    if path.is_relative_to(chats) or chats.is_relative_to(path):
+        raise ValueError(f"The data lake cannot be where conversations are kept, {chats}, or hold them")
+
+    return str(path)
+
+
+def check_forward_keys(names: Any) -> list[str]:
+    """The keys to give code, without repeats.
+
+    :raises ValueError: If it is not a list of keys the interface can set.
+    """
+    if not isinstance(names, (list, tuple)):
+        raise ValueError(f"The keys to give code are a list of names, not {names!r}")
+    if unknown := [name for name in names if name not in SETTABLE_KEYS]:
+        raise ValueError(f"A key to give code is one of {', '.join(SETTABLE_KEYS)}, not {', '.join(map(str, unknown))}")
+
+    return list(dict.fromkeys(names))
+
+
+def update_settings(settings: Settings, changes: Mapping[str, Any], workspace: Workspace) -> Settings:
     """The settings with these changed, which are not kept if one cannot be used.
 
     :param changes: Any of the public settings, with the value to give it.
+    :param workspace: The workspace they are for, to check the data lake against where its conversations are.
     :raises ValueError: If a setting is not one that can be changed, or its value cannot be used.
     """
     if unknown := sorted(set(changes) - set(PUBLIC_SETTINGS)):
@@ -114,6 +173,10 @@ def update_settings(settings: Settings, changes: Mapping[str, Any]) -> Settings:
     changed = replace(settings, **changes)
     detect_source(changed.model)
     CodeSetup(where=changed.code, sandbox=changed.sandbox)
+    if "data_lake" in changes:
+        changed.data_lake = check_data_lake(changed.data_lake, workspace)
+    if "forward_keys" in changes:
+        changed.forward_keys = check_forward_keys(changed.forward_keys)
     if changed.max_cost is not None:
         changed.max_cost = float(changed.max_cost)
         if not (math.isfinite(changed.max_cost) and changed.max_cost >= 0):
@@ -177,15 +240,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
     if len(set(titles)) != len(titles):
         raise ValueError("The lead and the team must have different titles")
 
-    code = CodeSetup(
-        **{
-            "where": settings.code,
-            "sandbox": settings.sandbox,
-            "network": settings.network,
-            "python": settings.python,
-            **(request.get("code") or {}),
-        }
-    )
+    code = resolve_code(request.get("code") or {}, settings, workspace)
 
     max_cost = request["max_cost"] if "max_cost" in request else settings.max_cost
     if max_cost is not None:
@@ -204,6 +259,33 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         stream=bool(stream),
         commercial_mode=bool(request.get("commercial_mode") or False),
     )
+
+
+def resolve_code(request: Mapping[str, Any], settings: Settings, workspace: Workspace) -> CodeSetup:
+    """Where code runs and what it has there: what the request gives, and the settings for the rest.
+
+    Under Docker, Biomni's environments get the data lake, and the keys the settings give code are passed in.
+
+    :raises ValueError: If something chosen cannot be used.
+    """
+    chosen = {
+        "where": settings.code,
+        "sandbox": settings.sandbox,
+        "network": settings.network,
+        "python": settings.python,
+        **request,
+    }
+    docker = chosen["where"] == "docker"
+    if "data_lake" in chosen:
+        chosen["data_lake"] = check_data_lake(chosen["data_lake"], workspace)
+    elif docker and chosen["sandbox"] != "python":
+        chosen["data_lake"] = str(data_lake_directory(settings, workspace))
+    if "forward_env" in chosen:
+        chosen["forward_env"] = check_forward_keys(chosen["forward_env"])
+    elif docker:
+        chosen["forward_env"] = check_forward_keys(settings.forward_keys)
+
+    return CodeSetup(**chosen)
 
 
 def save_config(directory: Path, config: ChatConfig) -> None:

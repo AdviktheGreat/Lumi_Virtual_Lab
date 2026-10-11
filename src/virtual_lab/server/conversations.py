@@ -26,6 +26,7 @@ from virtual_lab.events import ChatEvent
 from virtual_lab.llm import ModelSource
 from virtual_lab.server.config import ChatConfig, load_config, resolve_config, save_config
 from virtual_lab.server.errors import ApiError, not_found
+from virtual_lab.server.setup import Setup
 from virtual_lab.session import Session
 from virtual_lab.ui.library import missing_keys
 from virtual_lab.ui.workspace import Workspace, read_json
@@ -152,6 +153,8 @@ class Conversations:
         model needs is not set, rather than after something has gone wrong.
     :param client: An OpenAI client for every conversation, as Chat takes one.
     :param chat_models: Chat models for every conversation, as Chat takes them.
+    :param setup: What code in Docker needs, to say before a conversation is made that it is not there, or None
+        to leave that until the code is run.
     """
 
     def __init__(
@@ -160,9 +163,11 @@ class Conversations:
         check_keys: bool = True,
         client: OpenAI | None = None,
         chat_models: ModelSource | None = None,
+        setup: Setup | None = None,
     ) -> None:
         self.workspace = workspace
         self.check_keys = check_keys
+        self.setup = setup
         self.client = client
         self.chat_models = chat_models
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -218,7 +223,8 @@ class Conversations:
 
         :param request: What it is set up with, as resolve_config takes it.
         :param title: What to call it; by default its first message.
-        :raises ApiError: If something chosen cannot be used, or a key is not set.
+        :raises ApiError: If something chosen cannot be used, a key is not set, or code is to run in Docker and
+            Docker or the image is not there.
         """
         title = " ".join((title or "").split())[:MAX_CHAT_TITLE_CHARS] or None
         try:
@@ -226,6 +232,7 @@ class Conversations:
         except (ValueError, TypeError) as error:
             raise ApiError(422, "invalid", str(error)) from error
         self.require_keys(config)
+        self.require_setup(config)
 
         directory = self.workspace.new_directory("chat", title or "New chat")
         try:
@@ -318,6 +325,21 @@ class Conversations:
                 "missing_keys",
                 f"{config.model} needs {', '.join(missing)}, which is not set. Add it in the settings.",
                 missing=missing,
+            )
+
+    def require_setup(self, config: ChatConfig) -> None:
+        """Says what code cannot run without before a conversation is made, rather than when it first runs.
+
+        :raises ApiError: If code is to run in Docker and Docker is not running or the image is not built.
+        """
+        if self.setup is None:
+            return
+        if issues := self.setup.missing(config):
+            raise ApiError(
+                409,
+                "setup_needed",
+                " ".join(issue["message"] for issue in issues),
+                missing=[issue["id"] for issue in issues],
             )
 
     def _start(self, directory: Path, config: ChatConfig, title: str | None, keyless: bool = False) -> ChatHandle:

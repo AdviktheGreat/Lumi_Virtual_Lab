@@ -41,6 +41,9 @@ PROJECT_SETUP_FILE_NAME = "interface_setup.json"
 
 SETTINGS_FILE_NAME = "settings.json"
 
+# Where the workspace keeps Biomni's data lake, beside the conversations and not in any of them
+DATA_LAKE_DIR_NAME = "data_lake"
+
 # The scientists the person described, to put on a team beside the library's
 SCIENTISTS_FILE_NAME = "scientists.json"
 SCIENTIST_FIELDS = ("title", "expertise", "goal", "role")
@@ -65,6 +68,9 @@ class Settings:
     :param network: Whether code in a session can reach the network.
     :param python: The interpreter code runs with on this machine, or "" for this one.
     :param mcp_config: A file of MCP servers to offer, as connect_mcp reads it, or "".
+    :param data_lake: The directory Biomni's data lake is kept in, or "" for the workspace's own.
+    :param forward_keys: The API keys code in a Docker session may read, by name. Code can send what it reads
+        anywhere the network reaches, so none is given unless chosen.
     """
 
     model: str = DEFAULT_MODEL
@@ -75,6 +81,8 @@ class Settings:
     network: bool = True
     python: str = ""
     mcp_config: str = ""
+    data_lake: str = ""
+    forward_keys: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Settings":
@@ -146,6 +154,11 @@ class Workspace:
     @property
     def projects_dir(self) -> Path:
         return self.root / "projects"
+
+    @property
+    def data_lake_dir(self) -> Path:
+        """Where Biomni's data lake is kept unless the settings say otherwise."""
+        return self.root / DATA_LAKE_DIR_NAME
 
     @property
     def settings_path(self) -> Path:
