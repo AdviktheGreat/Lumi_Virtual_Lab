@@ -66,7 +66,8 @@ function useEscapeToClose(open: boolean, onClose: () => void): void {
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      // A menu, a dialog, or a box that has something to give up takes its own Escape, and says so by handling it
+      if (event.key === "Escape" && !event.defaultPrevented) onClose();
     };
     document.addEventListener("keydown", close);
 

@@ -1,50 +1,54 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { PanelLeftClose, SquarePen } from "lucide-react";
+import { PanelLeftClose, Search as SearchIcon, SquarePen, X } from "lucide-react";
 import { Brand } from "@/components/brand";
+import { ChatRow, LIST_ID } from "@/components/chat-row";
 import { useChats } from "@/components/chats-provider";
 import { useServer } from "@/components/server-provider";
 import { useShell } from "@/components/app-shell";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { timeAgo } from "@/lib/format";
-import type { ChatSummary } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { inDays, matchingTitles, SEARCH_FROM } from "@/lib/history";
 
-const WORKING = new Set(["running", "pausing", "paused", "stopping"]);
-
-function ChatLink({ chat, active }: { chat: ChatSummary; active: boolean }) {
-  const working = WORKING.has(chat.state);
-  const title = chat.title || "New chat";
-
+function Search({ typed, onTyped }: { typed: string; onTyped: (typed: string) => void }) {
   return (
-    <Link
-      href={`/chat?id=${encodeURIComponent(chat.id)}`}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        "group flex flex-col gap-0.5 rounded-lg px-2.5 py-2 text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-        active && "bg-sidebar-accent text-sidebar-accent-foreground",
-      )}
-    >
-      <span className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
-        {working && (
-          <span
-            role="img"
-            aria-label={chat.state === "paused" ? "Paused" : "Working"}
-            className={cn("size-2 shrink-0 rounded-full bg-brand", chat.state !== "paused" && "animate-pulse")}
-          />
+    <div className="sticky top-0 z-10 bg-sidebar pb-1 pt-0.5">
+      <div className="relative">
+        <SearchIcon aria-hidden className="pointer-events-none absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+        <Input
+          type="search"
+          value={typed}
+          onChange={(event) => onTyped(event.target.value)}
+          onKeyDown={(event) => {
+            // Escape empties the search, and closes the drawer it is in only when there is nothing to empty
+            if (event.key !== "Escape" || typed === "") return;
+            event.preventDefault();
+            onTyped("");
+          }}
+          placeholder="Search conversations"
+          aria-label="Search conversations"
+          autoComplete="off"
+          className="pl-8 pr-8 [&::-webkit-search-cancel-button]:appearance-none"
+        />
+        {typed !== "" && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Clear the search"
+            onClick={() => onTyped("")}
+            className="absolute right-1 top-1"
+          >
+            <X />
+          </Button>
         )}
-        {chat.state === "interrupted" && (
-          <span role="img" aria-label="Cut off" className="size-2 shrink-0 rounded-full bg-warning" />
-        )}
-      </span>
-      <span className="truncate text-xs text-muted-foreground">{timeAgo(chat.updated_at ?? chat.created_at)}</span>
-    </Link>
+      </div>
+    </div>
   );
 }
 
@@ -52,6 +56,7 @@ function ChatList() {
   const { chats } = useChats();
   const pathname = usePathname();
   const activeId = useSearchParams().get("id");
+  const [typed, setTyped] = useState("");
 
   if (chats === null) {
     return (
@@ -69,14 +74,29 @@ function ChatList() {
     return <p className="px-2.5 py-1 text-sm text-muted-foreground">Conversations you start are kept here.</p>;
   }
 
+  // What was typed no longer counts once there are too few conversations to need it, which is when it is not shown
+  const searchable = chats.length >= SEARCH_FROM;
+  const shown = searchable ? matchingTitles(chats, typed) : chats;
+
   return (
-    <ul className="flex flex-col gap-0.5">
-      {chats.map((chat) => (
-        <li key={chat.id}>
-          <ChatLink chat={chat} active={pathname === "/chat" && activeId === chat.id} />
-        </li>
+    <>
+      {searchable && <Search typed={typed} onTyped={setTyped} />}
+      {shown.length === 0 && (
+        <p className="px-2.5 py-1 text-sm text-muted-foreground">No conversation has all of those words in its title.</p>
+      )}
+      {inDays(shown).map((day) => (
+        <div key={day.name}>
+          <h2 className="px-2.5 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{day.name}</h2>
+          <ul className="flex flex-col gap-0.5">
+            {day.chats.map((chat) => (
+              <li key={chat.id}>
+                <ChatRow chat={chat} active={pathname === "/chat" && activeId === chat.id} />
+              </li>
+            ))}
+          </ul>
+        </div>
       ))}
-    </ul>
+    </>
   );
 }
 
@@ -107,8 +127,7 @@ export function Sidebar() {
           </Link>
         </Button>
       </div>
-      <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        <h2 className="px-2.5 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent</h2>
+      <nav id={LIST_ID} tabIndex={-1} aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none">
         <ChatList />
       </nav>
       <div className="flex items-center justify-between border-t border-sidebar-border px-3 py-2">
