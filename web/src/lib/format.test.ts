@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCost, timeAgo } from "./format";
+import { formatCost, formatDuration, stripAnsi, timeAgo } from "./format";
 
 const NOW = new Date("2026-10-11T12:00:00Z");
 
@@ -54,5 +54,42 @@ describe("what something cost", () => {
   it("is nothing where it is not known", () => {
     expect(formatCost(null)).toBe("");
     expect(formatCost(undefined)).toBe("");
+  });
+});
+
+describe("how long something took", () => {
+  it("is said in the unit that fits", () => {
+    expect(formatDuration(0.25)).toBe("250 ms");
+    expect(formatDuration(0)).toBe("<1 ms");
+    expect(formatDuration(0.0004)).toBe("<1 ms");
+    expect(formatDuration(0.001)).toBe("1 ms");
+    expect(formatDuration(0.9996)).toBe("1.0 s");
+    expect(formatDuration(1)).toBe("1.0 s");
+    expect(formatDuration(9.94)).toBe("9.9 s");
+    expect(formatDuration(9.96)).toBe("10 s");
+    expect(formatDuration(10)).toBe("10 s");
+    expect(formatDuration(59.4)).toBe("59 s");
+    expect(formatDuration(59.6)).toBe("1 min");
+    expect(formatDuration(60)).toBe("1 min");
+    expect(formatDuration(119.6)).toBe("2 min");
+    expect(formatDuration(125)).toBe("2 min 5 s");
+  });
+
+  it("is nothing for a time that is not one", () => {
+    expect(formatDuration(-1)).toBe("");
+    expect(formatDuration(Number.NaN)).toBe("");
+    expect(formatDuration(Infinity)).toBe("");
+  });
+});
+
+describe("output written for a terminal", () => {
+  it("has its colours and cursor movements taken out", () => {
+    const escape = String.fromCharCode(27);
+
+    expect(stripAnsi(`${escape}[31mred${escape}[0m and ${escape}[1;32mbold green${escape}[0m`)).toBe("red and bold green");
+    expect(stripAnsi(`line${escape}[2K${escape}[1A done`)).toBe("line done");
+    expect(stripAnsi(`${escape}[?25lhidden cursor${escape}[?25h`)).toBe("hidden cursor");
+    expect(stripAnsi(`${escape}[0 qshaped${escape}[2 q cursor`)).toBe("shaped cursor");
+    expect(stripAnsi("plain [31m text, with no escape")).toBe("plain [31m text, with no escape");
   });
 });

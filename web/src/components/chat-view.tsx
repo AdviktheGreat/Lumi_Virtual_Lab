@@ -5,7 +5,8 @@ import Link from "next/link";
 import { ArrowDown } from "lucide-react";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
-import { LeadMessage, Notice, TurnView } from "@/components/messages";
+import { ChatFilesProvider } from "@/components/chat-files";
+import { LeadBlock, Notice, TurnView } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
 import { Badge } from "@/components/ui/badge";
@@ -110,7 +111,7 @@ export function ChatView({ id }: { id: string }) {
   const model = status.kind === "ready" ? status.info.config.model : null;
 
   return (
-    <>
+    <ChatFilesProvider value={id}>
       <PageHeader>
         <h1 className="min-w-0 flex-1 truncate text-sm font-medium" data-testid="chat-title">
           {title || (status.kind === "ready" ? status.info.title : "")}
@@ -149,7 +150,9 @@ export function ChatView({ id }: { id: string }) {
               <TurnView key={turn.number} turn={turn} lead={lead} working={working} />
             ))}
             {status.kind === "ready" && transcript.turns.length === 0 && connection !== "connecting" && (
-              <LeadMessage speaker={lead}>This conversation has nothing in it yet. Ask something below.</LeadMessage>
+              <LeadBlock speaker={lead}>
+                <p className="text-[15px] leading-7">This conversation has nothing in it yet. Ask something below.</p>
+              </LeadBlock>
             )}
           </div>
         </div>
@@ -182,6 +185,6 @@ export function ChatView({ id }: { id: string }) {
           footer={model ? `${lead} · ${model}` : undefined}
         />
       </div>
-    </>
+    </ChatFilesProvider>
   );
 }

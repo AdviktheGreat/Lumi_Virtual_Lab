@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, and the notes left for it |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -50,8 +50,20 @@ The tests run the real server with the built pages and a script where the model 
 `virtual-lab[server]` installed: it is `python3` unless `VIRTUAL_LAB_PYTHON` says otherwise. `E2E_PORT` changes the
 port, which is 8799.
 
-The scripted model answers a question with a short reply that repeats it. A message with `slow:` in it is answered with
-a long reply, written slowly, which a test can follow or stop. A message with `fail:` in it makes the model fail.
+The scripted model answers a question with a short reply that repeats it. What else a message makes it do depends on
+a word in it:
+
+| In the message | The scripted lead |
+| --- | --- |
+| `slow:` | Writes a long reply, slowly, which a test can follow or stop |
+| `fail:` | Fails |
+| `markdown:` | Answers with a page of Markdown, including what a page must not trust: a script, a tracking image, an address that runs code |
+| `code:hello`, `error`, `two`, `plot`, `long`, `big`, `slow` | Runs code in the conversation's session first, as the word says, and answers once it has run |
+| `tool:unknown`, `tool:resources` | Calls a tool it does not have, or looks for resources |
+
+Code runs on this machine, so a test that wants it makes its conversation through the server with `code: {where:
+"local"}`, as `askWhereCodeRuns` in `e2e/fixtures.ts` does. `e2e/replay.spec.ts` replaces a conversation's event stream
+with events written in the test, for what the scripted lead does not do, such as a turn that is cut short.
 
 ## Notes
 
