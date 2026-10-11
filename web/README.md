@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -42,6 +42,21 @@ virtual-lab-server --static-dir out
 
 The server turns away any page that is not its own, so `next dev` on another port cannot talk to it: rebuild instead,
 which takes seconds.
+
+## The list of conversations
+
+The sidebar lists every conversation under the day it was last at work (Today, Yesterday, Previous 7 days, Earlier, by
+the reader's own calendar), the latest first, and looks again every few seconds and whenever the page is shown. With
+eight or more there is a search box, which finds the titles that have all the words typed, in any order and whatever
+their case; Escape empties it.
+
+The options of a conversation are in the menu at the end of its row, which shows when the row is pointed at or reached by
+keyboard, and always on a screen that is touched. Rename changes the title where it is read: Enter or leaving the box
+keeps it, Escape gives it up, and one with nothing in it, or the one it had, changes nothing. The server keeps a title
+with its words one space apart, cut to 80 characters (`src/lib/history.ts` does the same before asking), and tells the
+conversation that is open, whose heading follows. Delete asks first, and removes the conversation with its messages and
+its files, stopping it if it is at work; if it is the one that is open, the page goes to the home page. One that is gone
+already is as good as deleted.
 
 ## Steering a turn
 

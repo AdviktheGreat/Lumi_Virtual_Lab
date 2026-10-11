@@ -85,6 +85,13 @@ describe("the API", () => {
     expect(bodies).toEqual(["{}", JSON.stringify({ model: "gpt-5.2" })]);
   });
 
+  it("renames a conversation by what the server's PATCH is given, and gives back the conversation", async () => {
+    const fetch = stub(answer({ id: "a b", title: "Kept" }));
+
+    expect(await api.renameChat("a b", "Kept")).toMatchObject({ title: "Kept" });
+    expect(fetch).toHaveBeenCalledWith("/api/chats/a%20b", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ title: "Kept" }) }));
+  });
+
   it("takes no answer for the answer to a removal", async () => {
     const fetch = stub(new Response(null, { status: 204 }));
 
