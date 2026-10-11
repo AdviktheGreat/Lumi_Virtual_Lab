@@ -139,6 +139,44 @@ test.describe("events as the server tells of them", () => {
     await expect(notes.nth(2)).toContainText("Not read: it came too late");
   });
 
+  test("files named outside the conversation's files are not linked to, and a name with a percent sign is", async ({ page }) => {
+    const asked: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/files/") || request.url().includes("health.png")) asked.push(request.url());
+    });
+    await tell(page, [
+      user("Files"),
+      calling("c1", "run_code", { code: "work()" }),
+      {
+        kind: "cell",
+        data: {
+          call: "c1",
+          code: "work()",
+          status: "ok",
+          plots: ["../../health.png", "plots/ok.png"],
+          produced_files: ["../../health.png", "/etc/passwd", "100%.csv", "my results/a#b.csv"],
+        },
+      },
+      { kind: "answer", speaker: lead, text: "Done." },
+    ]);
+
+    const cell = page.getByTestId("code-cell");
+    // The figure that is inside the files is asked for, and is not there, as the conversation has no such file
+    const figures = cell.getByRole("group", { name: "Figures" });
+    await expect(figures).toContainText("../../health.png is not available");
+    await expect(figures).toContainText("plots/ok.png is not available");
+    expect(asked.filter((url) => url.endsWith("/files/plots/ok.png"))).toHaveLength(1);
+    expect(asked.some((url) => url.includes("health.png") || url.includes(".."))).toBe(false);
+    // A figure is not listed again as a file, and of the three that are, the one that is not inside the files is not a link
+    const made = cell.getByRole("list", { name: "Files it made" });
+    await expect(made.getByRole("listitem")).toHaveText(["/etc/passwd", "100%.csv", "my results/a#b.csv"]);
+    const links = made.getByRole("link");
+    await expect(links).toHaveCount(2);
+    const hrefs = await links.evaluateAll((all) => all.map((link) => link.getAttribute("href")));
+    expect(hrefs.filter((href) => href?.endsWith("/files/100%25.csv"))).toHaveLength(1);
+    expect(hrefs.filter((href) => href?.endsWith("/files/my%20results/a%23b.csv"))).toHaveLength(1);
+  });
+
   test("events that are not as they should be are left out, and what is as it should be is shown", async ({ page }) => {
     await tell(page, [
       user("Odd things"),

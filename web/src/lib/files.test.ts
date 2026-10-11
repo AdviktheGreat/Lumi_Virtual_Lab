@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fileUrl, formatBytes, isImage, localPath } from "./files";
+import { fileUrl, formatBytes, insidePath, isImage, localPath } from "./files";
 
 describe("the address of a file", () => {
   it("is under the conversation's files, with each part of the path written as an address", () => {
@@ -23,6 +23,22 @@ describe("a file that is an image", () => {
     }
     for (const name of ["a.csv", "png", "a.png.txt", "a.pngx", "a.tiff"]) {
       expect(isImage(name)).toBe(false);
+    }
+  });
+});
+
+describe("a path from where the code ran", () => {
+  it("is inside the files, tidied, when it stays in them", () => {
+    expect(insidePath("plots/figure_1.png")).toBe("plots/figure_1.png");
+    expect(insidePath("./a//b.csv")).toBe("a/b.csv");
+    // It is a path as it is written, and not an address, so a percent sign in a name is a percent sign
+    expect(insidePath("100%.csv")).toBe("100%.csv");
+    expect(insidePath("a b/c#d.txt")).toBe("a b/c#d.txt");
+  });
+
+  it("is nothing when it starts from the root, goes up, or is not a path", () => {
+    for (const path of ["", ".", "./", "/etc/passwd", "//host/a", "../a", "a/../../b", "a\\b", "a\0b"]) {
+      expect(insidePath(path)).toBeNull();
     }
   });
 });

@@ -74,19 +74,28 @@ function Files({ paths }: { paths: string[] }) {
 
   return (
     <ul className="flex flex-wrap items-center gap-1.5" aria-label="Files it made">
-      {shown.map((path) => (
-        <li key={path}>
-          <a
-            href={fileAddress(path) ?? undefined}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex max-w-xs items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs hover:bg-muted"
-          >
+      {shown.map((path) => {
+        const address = fileAddress(path);
+        const inside = (
+          <>
             <FileText className="size-3 shrink-0 text-muted-foreground" aria-hidden />
             <span className="truncate">{path}</span>
-          </a>
-        </li>
-      ))}
+          </>
+        );
+        const style = "flex max-w-xs items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs";
+
+        return (
+          <li key={path}>
+            {address === null ? (
+              <span className={style}>{inside}</span>
+            ) : (
+              <a href={address} target="_blank" rel="noopener noreferrer" className={`${style} hover:bg-muted`}>
+                {inside}
+              </a>
+            )}
+          </li>
+        );
+      })}
       {paths.length > shown.length && (
         <li>
           <Button type="button" variant="ghost" size="xs" onClick={() => setAll(true)}>

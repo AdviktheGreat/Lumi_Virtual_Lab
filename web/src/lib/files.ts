@@ -14,25 +14,30 @@ export function fileUrl(chatId: string, path: string, download = false): string 
   return `/api/chats/${encodeURIComponent(chatId)}/files/${encoded}${download ? "?download=true" : ""}`;
 }
 
-// What an address in an answer names, if it names a file of the conversation: a path from where the code ran, with
-// nothing in front of it that would take the page elsewhere and nothing in it that would leave the files
-export function localPath(address: string): string | null {
-  const given = address.trim();
-  if (given === "" || given.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(given)) {
-    return null;
-  }
-  let path: string;
-  try {
-    path = decodeURI(given.split(/[?#]/)[0]);
-  } catch {
-    return null;
-  }
+// A path from where the code ran, tidied, if it stays inside the conversation's files: nothing that starts from the
+// root, goes up a directory, or is not a path on any system
+export function insidePath(path: string): string | null {
+  if (path.startsWith("/")) return null;
   const parts = path.split("/").filter((part) => part !== "" && part !== ".");
   if (parts.length === 0 || parts.some((part) => part === ".." || part.includes("\\") || part.includes("\0"))) {
     return null;
   }
 
   return parts.join("/");
+}
+
+// What an address in an answer names, if it names a file of the conversation: a path, with nothing in front of it that
+// would take the page elsewhere
+export function localPath(address: string): string | null {
+  const given = address.trim();
+  if (given === "" || /^[a-z][a-z0-9+.-]*:/i.test(given)) {
+    return null;
+  }
+  try {
+    return insidePath(decodeURI(given.split(/[?#]/)[0]));
+  } catch {
+    return null;
+  }
 }
 
 // A size, as a person would say it
