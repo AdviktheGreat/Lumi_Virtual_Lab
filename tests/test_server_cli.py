@@ -9,6 +9,7 @@ import pytest
 import uvicorn
 
 import virtual_lab.server as server_package
+from virtual_lab.constants import MAX_UPLOAD_BYTES
 from virtual_lab.server import cli
 from virtual_lab.server.cli import address_of, is_loopback, listen, main, serve
 
@@ -175,6 +176,18 @@ class TestServing:
         given, plain = (started.config.app.state.conversations for started in recording.started)
         assert (given.check_keys, given.client, given.chat_models) == (False, client, models)
         assert (plain.check_keys, plain.client, plain.chat_models) == (True, None, None)
+        for started in recording.started:
+            assert started.sockets is not None
+            started.sockets[0].close()
+
+    def test_the_largest_file_that_may_be_attached_is_handed_to_the_conversations(
+        self, tmp_path: Path, recording: type[RecordingServer]
+    ) -> None:
+        serve(tmp_path / "ws", token="t", open_browser=False, max_upload_bytes=777)
+        serve(tmp_path / "ws", token="t", open_browser=False)
+
+        limited, usual = (started.config.app.state.conversations for started in recording.started)
+        assert (limited.max_upload_bytes, usual.max_upload_bytes) == (777, MAX_UPLOAD_BYTES)
         for started in recording.started:
             assert started.sockets is not None
             started.sockets[0].close()

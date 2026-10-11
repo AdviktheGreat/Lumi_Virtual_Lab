@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, and the notes left for it |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, and the notes left for it; and the files that go with a message and the way a turn is steered |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -43,12 +43,31 @@ virtual-lab-server --static-dir out
 The server turns away any page that is not its own, so `next dev` on another port cannot talk to it: rebuild instead,
 which takes seconds.
 
+## Steering a turn
+
+While the lead is at work, the box in the composer takes a note instead of a message, and the lead reads it before its
+next step. Pause holds the turn once the step that is running is done, Resume lets it go on, and Stop ends it. The
+buttons follow the state the server reports (`idle`, `running`, `pausing`, `paused`, `stopping`), as
+`src/lib/steering.ts` lays out. A note stays marked as waiting until the conversation says it was read, or that it came
+too late.
+
+## Files
+
+A file is attached with the paperclip, by dropping it on the composer, or by pasting it. With a conversation to send it
+to, it goes at once, with its progress shown, and can be retried or removed; on the home page, where there is no
+conversation yet, files wait until the first message makes one. The message is sent with the names the server gave the
+files. A message cannot be sent while a file is on its way or has failed, and up to 100 files go with one message.
+
+The most that one file may be is the server's `max_upload_bytes` (4 GiB unless `serve` is told otherwise), which the
+pages learn from `/settings`, so they turn a larger file away before sending it.
+
 ## End-to-end tests
 
 The tests run the real server with the built pages and a script where the model would be
 (`e2e/scripted_server.py`), so they need no key and give the same answers every time. They need the Python that has
 `virtual-lab[server]` installed: it is `python3` unless `VIRTUAL_LAB_PYTHON` says otherwise. `E2E_PORT` changes the
-port, which is 8799.
+port, which is 8799. The scripted server takes 20 KiB as the most for a file, so that the tests of the limit need only
+small files; `--max-upload-bytes` changes it.
 
 The scripted model answers a question with a short reply that repeats it. What else a message makes it do depends on
 a word in it:

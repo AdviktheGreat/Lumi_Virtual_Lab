@@ -43,6 +43,9 @@ TEST_MODEL = "gpt-4o-2024-08-06"
 WORD_DELAY = 0.04
 LONG_REPLY_WORDS = 250
 
+# The largest file a message can be sent with, which is small, so that one too large is quick to make
+MAX_UPLOAD_BYTES = 20 * 1024
+
 
 # Code that draws a figure and makes a file, without matplotlib: a stand-in for the module, which saves a picture
 PLOT_CODE = """\
@@ -263,6 +266,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8799)
     parser.add_argument("--static-dir", default=str(ROOT / "web" / "out"))
     parser.add_argument("--word-delay", type=float, default=WORD_DELAY)
+    parser.add_argument("--max-upload-bytes", type=int, default=MAX_UPLOAD_BYTES)
     options = parser.parse_args()
 
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
@@ -275,6 +279,7 @@ def main() -> None:
             open_browser=False,
             check_keys=False,
             client=ScriptedClient(options.word_delay),
+            max_upload_bytes=options.max_upload_bytes,
         )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)

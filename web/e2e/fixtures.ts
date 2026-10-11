@@ -41,7 +41,7 @@ export async function askWhereCodeRuns(page: Page, question: string): Promise<st
 export async function answered(page: Page, text: string | RegExp, timeout = 10_000): Promise<void> {
   await expect(page.getByTestId("lead-message").last()).toContainText(text, { timeout });
   await expect(page.getByTestId("chat-state")).toHaveCount(0, { timeout });
-  await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout });
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible({ timeout });
 }
 
 export const test = base.extend({

@@ -100,6 +100,8 @@ export interface Settings {
   data_lake: string;
   forward_keys: string[];
   workspace: string;
+  // The largest file that can be attached to a message
+  max_upload_bytes: number;
 }
 
 export interface ModelChoice {

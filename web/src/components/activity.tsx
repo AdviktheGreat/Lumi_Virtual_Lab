@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { describeResources, parseArguments, summarize } from "@/lib/calls";
 import { stripAnsi } from "@/lib/format";
 import type { Call, Resources, Step } from "@/lib/transcript";
+import { cn } from "@/lib/utils";
 
 // Names listed in a card before the rest are counted
 const NAMES_SHOWN = 40;
@@ -180,14 +181,33 @@ function ResourcesCard({ resources }: { resources: Resources }) {
 
 const READ_BY = { lead: "Read by the lead", lab: "Read by the team" } as const;
 
-function NoteChip({ text, to, read }: { text: string; to: "lead" | "lab" | null; read: boolean }) {
+// A note the researcher wrote for the lead or the team, which says who read it, or that no one did. One that was sent
+// and has not been told of yet is waiting for whoever is next to read it.
+export function NoteChip({
+  text,
+  to = null,
+  read = false,
+  waiting = false,
+}: {
+  text: string;
+  to?: "lead" | "lab" | null;
+  read?: boolean;
+  waiting?: boolean;
+}) {
+  const said = waiting ? "Sent: it is read before the next step" : read && to !== null ? READ_BY[to] : "Not read: it came too late";
+
   return (
-    <div className="flex flex-col items-end gap-1" data-testid="note">
-      <p className="flex max-w-[85%] items-start gap-2 whitespace-pre-wrap break-words rounded-xl border border-dashed border-border px-3 py-2 text-sm">
+    <div className="flex flex-col items-end gap-1" data-testid={waiting ? "pending-note" : "note"}>
+      <p
+        className={cn(
+          "flex max-w-[85%] items-start gap-2 whitespace-pre-wrap break-words rounded-xl border border-dashed border-border px-3 py-2 text-sm",
+          waiting && "text-muted-foreground",
+        )}
+      >
         <StickyNote className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         {text}
       </p>
-      <span className="text-xs text-muted-foreground">{read && to !== null ? READ_BY[to] : "Not read: it came too late"}</span>
+      <span className="text-xs text-muted-foreground">{said}</span>
     </div>
   );
 }

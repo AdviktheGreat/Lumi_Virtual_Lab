@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowDown } from "lucide-react";
+import { NoteChip } from "@/components/activity";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
 import { ChatFilesProvider } from "@/components/chat-files";
@@ -13,8 +14,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { attachedNames, readiness } from "@/lib/attachments";
 import { describeError } from "@/lib/errors";
 import { formatCost } from "@/lib/format";
+import { currentTurn, unreadNotes, type SentNote } from "@/lib/steering";
+import { useAttachments } from "@/lib/use-attachments";
 import { useChat } from "@/lib/use-chat";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import type { ChatState } from "@/lib/types";
@@ -46,14 +50,17 @@ export function ChatNotFound() {
 export function ChatView({ id }: { id: string }) {
   const { status, transcript, connection } = useChat(id);
   const { refresh } = useChats();
-  const { report } = useServer();
+  const { server, report } = useServer();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [sentNotes, setSentNotes] = useState<SentNote[]>([]);
+  const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
   const { scroller, atBottom, jump, onScroll } = useStickToBottom<HTMLDivElement>(transcript.lastId);
 
   const { state, title } = transcript;
   const working = state !== "idle";
+  const waitingNotes = unreadNotes(sentNotes, transcript.turns, working);
   const lead = status.kind === "ready" ? status.info.lead : "Lead scientist";
 
   // The list on the side shows a conversation's title and when it last did anything, which a turn changes
@@ -69,13 +76,20 @@ export function ChatView({ id }: { id: string }) {
     };
   }, [title]);
 
+  function attach(files: File[]) {
+    const refused = attachments.add(files);
+    if (refused.length > 0) setProblem(refused.join("\n"));
+  }
+
   async function send() {
     const text = draft.trim();
+    const sent = attachments.items.filter((item) => item.status === "ready");
     setSending(true);
     setProblem(null);
     try {
-      await api.send(id, text);
+      await api.send(id, text, attachedNames(sent));
       setDraft("");
+      attachments.remove(sent.map((item) => item.id));
       jump("instant");
     } catch (error) {
       report(error);
@@ -85,9 +99,33 @@ export function ChatView({ id }: { id: string }) {
     }
   }
 
-  async function stop() {
+  // A note is for the lead as it works, so what is not taken, because it has finished, is left in the box to be sent as a
+  // message
+  async function note() {
+    const text = draft.trim();
+    const turn = currentTurn(transcript.turns);
+    setSending(true);
+    setProblem(null);
     try {
-      await api.stop(id);
+      const { accepted } = await api.note(id, text);
+      if (accepted) {
+        setSentNotes((notes) => [...notes, { turn, text }]);
+        setDraft("");
+        jump("instant");
+      } else {
+        setProblem("The lead had already finished, so the note was not added. Send it as a message instead.");
+      }
+    } catch (error) {
+      report(error);
+      setProblem(describeError(error));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function steer(action: "pause" | "resume" | "stop") {
+    try {
+      await api[action](id);
     } catch (error) {
       report(error);
       setProblem(describeError(error));
@@ -147,7 +185,10 @@ export function ChatView({ id }: { id: string }) {
               </div>
             )}
             {transcript.turns.map((turn) => (
-              <TurnView key={turn.number} turn={turn} lead={lead} working={working} />
+              <TurnView key={turn.number} turn={turn} lead={lead} state={state} />
+            ))}
+            {waitingNotes.map((note, at) => (
+              <NoteChip key={`${note.turn}-${at}`} text={note.text} waiting />
             ))}
             {status.kind === "ready" && transcript.turns.length === 0 && connection !== "connecting" && (
               <LeadBlock speaker={lead}>
@@ -179,9 +220,14 @@ export function ChatView({ id }: { id: string }) {
           value={draft}
           onValueChange={setDraft}
           onSend={() => void send()}
-          running={working}
-          onStop={() => void stop()}
+          state={state}
+          onNote={() => void note()}
+          onPause={() => void steer("pause")}
+          onResume={() => void steer("resume")}
+          onStop={() => void steer("stop")}
           disabled={sending || status.kind !== "ready"}
+          holdUp={readiness(attachments.items)}
+          files={{ items: attachments.items, onAdd: attach, onRemove: (item) => attachments.remove([item]), onRetry: attachments.retry }}
           footer={model ? `${lead} · ${model}` : undefined}
         />
       </div>

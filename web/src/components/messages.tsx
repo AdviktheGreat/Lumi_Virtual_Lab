@@ -3,8 +3,9 @@ import { Steps } from "@/components/activity";
 import { BrandMark } from "@/components/brand";
 import { Markdown } from "@/components/markdown";
 import { cn } from "@/lib/utils";
+import { holdNotice } from "@/lib/steering";
 import { isThinking, type Turn } from "@/lib/transcript";
-import type { Attachment } from "@/lib/types";
+import type { Attachment, ChatState } from "@/lib/types";
 
 function Files({ files }: { files: Attachment[] }) {
   if (files.length === 0) return null;
@@ -79,20 +80,27 @@ export function Notice({ tone, children }: { tone: "error" | "muted"; children: 
   );
 }
 
-export function TurnView({ turn, lead, working }: { turn: Turn; lead: string; working: boolean }) {
+export function TurnView({ turn, lead, state }: { turn: Turn; lead: string; state: ChatState }) {
   const reply = turn.outcome === "answered" ? turn.text : turn.writing;
-  const thinking = isThinking(turn, working);
+  const thinking = isThinking(turn, state === "running");
+  // The lead is not thinking while it is held, and says so instead
+  const held = turn.outcome === "running" ? holdNotice(state) : null;
 
   return (
     <section className="flex flex-col gap-5" aria-label={`Turn ${turn.number}`}>
       {turn.user && <UserMessage text={turn.user.text} attachments={turn.user.attachments} />}
-      {(turn.steps.length > 0 || reply !== "" || thinking) && (
+      {(turn.steps.length > 0 || reply !== "" || thinking || held !== null) && (
         <LeadBlock speaker={lead}>
           <Steps steps={turn.steps} />
           {reply !== "" && <LeadText text={reply} live={turn.outcome === "running"} />}
           {thinking && (
             <div className="animate-pulse text-sm text-muted-foreground" role="status">
               Thinking…
+            </div>
+          )}
+          {held !== null && (
+            <div className="text-sm text-muted-foreground" role="status" data-testid="held">
+              {held}
             </div>
           )}
         </LeadBlock>
