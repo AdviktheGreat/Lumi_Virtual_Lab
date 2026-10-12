@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { describedBy, Field, Section } from "@/components/settings-fields";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,20 +26,23 @@ function byProvider(models: Models): [string, Models["models"]][] {
 function ModelPicker({
   value,
   onChange,
+  chosenToType,
+  onChooseToType,
   models,
   problem,
   describedByIds,
 }: {
   value: string;
   onChange: (model: string) => void;
+  // A name that is typed stays typed while it is, even when it is the name of one that is offered, and one that is not
+  // offered can only be typed
+  chosenToType: boolean;
+  onChooseToType: (typing: boolean) => void;
   models: Loaded<Models>;
   problem?: string;
   describedByIds?: string;
 }) {
   const offered = models.kind === "ready" ? models.value : null;
-  // A name that is typed stays typed while it is, even when it is the name of one that is offered, and one that is not
-  // offered can only be typed
-  const [chosenToType, setChosenToType] = useState(false);
 
   if (offered === null) {
     return (
@@ -66,9 +68,9 @@ function ModelPicker({
         value={typing ? OTHER : value}
         onChange={(event) => {
           if (event.target.value === OTHER) {
-            setChosenToType(true);
+            onChooseToType(true);
           } else {
-            setChosenToType(false);
+            onChooseToType(false);
             onChange(event.target.value);
           }
         }}
@@ -104,6 +106,8 @@ function ModelPicker({
 export function ModelTab({
   draft,
   onChange,
+  typing,
+  onTyping,
   problems,
   models,
   keys,
@@ -111,6 +115,10 @@ export function ModelTab({
 }: {
   draft: Draft;
   onChange: (changes: Partial<Draft>) => void;
+  // Whether the model is being named rather than chosen, which is kept by whoever holds the settings, so that it is not
+  // forgotten on moving to another part of them
+  typing: boolean;
+  onTyping: (typing: boolean) => void;
   problems: Problems;
   models: Loaded<Models>;
   keys: Loaded<KeyStatuses>;
@@ -139,6 +147,8 @@ export function ModelTab({
           <ModelPicker
             value={draft.model}
             onChange={(model) => onChange({ model })}
+            chosenToType={typing}
+            onChooseToType={onTyping}
             models={models}
             problem={problems.model}
             describedByIds={describedBy("settings-model", { hint: true, problem: problems.model !== undefined })}

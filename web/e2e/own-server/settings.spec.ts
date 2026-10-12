@@ -141,6 +141,55 @@ test.describe("the settings", () => {
     await expect(again.getByRole("textbox", { name: "Name of the model" })).toHaveValue("claude-my-own-model");
   });
 
+  test("keep naming the model while the person goes to another part of the settings and back", async ({ page }) => {
+    const dialog = await openSettings(page);
+    const picker = dialog.getByRole("combobox", { name: "Model", exact: true });
+
+    await picker.selectOption({ label: "Another model…" });
+    await expect(dialog.getByRole("textbox", { name: "Name of the model" })).toHaveValue("gpt-5.2");
+
+    await dialog.getByRole("tab", { name: "Keys" }).click();
+    await dialog.getByRole("tab", { name: "Model" }).click();
+
+    await expect(picker.locator("option:checked")).toHaveText("Another model…");
+    await expect(dialog.getByRole("textbox", { name: "Name of the model" })).toHaveValue("gpt-5.2");
+  });
+
+  test("show which models are ready from the latest answer, even when an earlier one comes after it", async ({ page }) => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let asked = 0;
+    // The first answer is read before the key is given, and delivered after
+    await page.route("**/api/models", async (route) => {
+      asked += 1;
+      if (asked > 1) return route.continue();
+      const stale = await route.fetch();
+      await gate;
+
+      return route.fulfill({ response: stale });
+    });
+    const dialog = await openSettings(page, "Keys");
+
+    await dialog.getByLabel("OpenAI key", { exact: true }).fill("sk-test-race");
+    await dialog.getByRole("button", { name: "Save", exact: true }).first().click();
+    await expect(dialog.getByTestId("key-state-OPENAI_API_KEY")).toHaveText("Set");
+    await expect.poll(() => asked).toBe(2);
+    await dialog.getByRole("tab", { name: "Model" }).click();
+    const model = dialog.getByRole("combobox", { name: "Model", exact: true });
+    await expect(model).toBeVisible();
+    await expect(model.locator("option", { hasText: "gpt-5.2 (needs a key)" })).toHaveCount(0);
+
+    const arrived = page.waitForResponse((response) => response.url().endsWith("/api/models"));
+    release();
+    await arrived;
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+
+    await expect(model.locator("option", { hasText: "gpt-5.2 (needs a key)" })).toHaveCount(0);
+    await expect(dialog.getByText("This model needs")).toHaveCount(0);
+  });
+
   test("say that a model needs every key its provider does, when it needs more than one", async ({ page }) => {
     await page.route("**/api/models", (route) =>
       route.fulfill({

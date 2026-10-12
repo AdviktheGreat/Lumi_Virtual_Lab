@@ -48,6 +48,7 @@ export function SettingsDialog({
   const editor = useScientistEditor();
   const [saved, setSaved] = useState(settings);
   const [draft, setDraft] = useState<Draft>(() => draftOf(settings));
+  const [typingModel, setTypingModel] = useState(false);
   const [tab, setTab] = useState(first);
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -142,6 +143,8 @@ export function SettingsDialog({
               <ModelTab
                 draft={draft}
                 onChange={edit}
+                typing={typingModel}
+                onTyping={setTypingModel}
                 problems={problems}
                 models={data.models}
                 keys={data.keys}
