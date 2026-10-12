@@ -92,6 +92,64 @@ describe("the API", () => {
     expect(fetch).toHaveBeenCalledWith("/api/chats/a%20b", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ title: "Kept" }) }));
   });
 
+  it("changes the settings by the PATCH it is given only what changes, and gives back the settings", async () => {
+    const fetch = stub(answer({ model: "gpt-5.2", max_cost: 5 }));
+
+    expect(await api.changeSettings({ max_cost: 5 })).toMatchObject({ max_cost: 5 });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/settings",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ max_cost: 5 }) }),
+    );
+  });
+
+  it("gives a key to the server as the body of a PUT, and names it in the address and not in the body", async () => {
+    const fetch = stub(answer({ settable: ["OPENAI_API_KEY"], providers: [] }));
+
+    await api.setKey("OPENAI_API_KEY", "sk-secret");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/keys/OPENAI_API_KEY",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ value: "sk-secret" }) }),
+    );
+  });
+
+  it("names a key in the address as it is, whatever is in its name", async () => {
+    const fetch = stub(answer({ settable: [], providers: [] }));
+
+    await api.setKey("MY KEY/2", "sk-secret");
+    await api.removeKey("MY KEY/2");
+
+    const addresses = (fetch.mock.calls as unknown as [string, RequestInit][]).map(([address]) => address);
+    expect(addresses).toEqual(["/api/keys/MY%20KEY%2F2", "/api/keys/MY%20KEY%2F2"]);
+  });
+
+  it("takes a key away by naming it, and reads which keys are set from what comes back", async () => {
+    const fetch = stub(answer({ settable: ["OPENAI_API_KEY"], providers: [{ provider: "OpenAI", variables: ["OPENAI_API_KEY"], missing: [], ready: true }] }));
+
+    const statuses = await api.removeKey("OPENAI_API_KEY");
+
+    expect(statuses.providers[0].ready).toBe(true);
+    expect(fetch).toHaveBeenCalledWith("/api/keys/OPENAI_API_KEY", expect.objectContaining({ method: "DELETE", body: undefined }));
+  });
+
+  it("lists the scientists from what the server wraps them in, and takes the library from what a change gives back", async () => {
+    const scientist = { title: "Chemist", expertise: "Bonds", goal: "Make", role: "Bench", builtin: false };
+    const fetch = vi.fn(async () => answer({ scientists: [scientist] }));
+    vi.stubGlobal("fetch", fetch);
+
+    expect(await api.scientists()).toEqual([scientist]);
+    expect(await api.saveScientist({ title: "Chemist", expertise: "Bonds", goal: "Make", role: "Bench" })).toEqual([scientist]);
+    expect(await api.removeScientist("Chemist / Physicist")).toEqual([scientist]);
+
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([address, options]) => [address, options.method])).toEqual([
+      ["/api/scientists", "GET"],
+      ["/api/scientists", "PUT"],
+      ["/api/scientists/Chemist%20%2F%20Physicist", "DELETE"],
+    ]);
+    expect(calls[1][1].body).toBe(JSON.stringify({ title: "Chemist", expertise: "Bonds", goal: "Make", role: "Bench" }));
+  });
+
   it("takes no answer for the answer to a removal", async () => {
     const fetch = stub(new Response(null, { status: 204 }));
 

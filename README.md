@@ -544,7 +544,7 @@ It prints a link with a token in it. Opening the link keeps the token in a cooki
 
 ### The chat interface
 
-The pages that talk to this server are in `web/`, written with Next.js, React, Tailwind, and shadcn/ui, and exported as static files: nothing runs but the server. They start a conversation with the lead scientist, show its reply as it is written, list the conversations on the side, and say when the server cannot be reached or no longer accepts the token. They need Node 22 or later to build, and nothing at all to use once built.
+The pages that talk to this server are in `web/`, written with Next.js, React, Tailwind, and shadcn/ui, and exported as static files: nothing runs but the server. They start a conversation with the lead scientist, show its reply as it is written, list the conversations on the side, set the model, the keys, where code runs, and the scientists, and say when the server cannot be reached or no longer accepts the token. They need Node 22 or later to build, and nothing at all to use once built.
 
 ```bash
 cd web

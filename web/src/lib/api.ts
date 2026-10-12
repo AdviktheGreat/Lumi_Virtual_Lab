@@ -1,5 +1,18 @@
 import { fileUrl } from "./files";
-import type { Attachment, ChatFiles, ChatInfo, ChatSummary, Health, Models, NewChat, Settings } from "./types";
+import type {
+  Attachment,
+  ChatFiles,
+  ChatInfo,
+  ChatSummary,
+  Health,
+  KeyStatuses,
+  LibraryScientist,
+  Models,
+  NewChat,
+  Scientist,
+  Settings,
+  SettingsChange,
+} from "./types";
 
 // What the server's error says: its code is a word to act on, its message is for a person, and the rest is
 // whatever else the code carries, such as the keys that are missing
@@ -179,7 +192,20 @@ async function readFileText(chatId: string, path: string, limit: number, signal?
 export const api = {
   health: (signal?: AbortSignal) => request<Health>("GET", "/health", undefined, signal),
   settings: (signal?: AbortSignal) => request<Settings>("GET", "/settings", undefined, signal),
+  // Only what is given is changed, and the settings are given back as they now are
+  changeSettings: (changes: SettingsChange) => request<Settings>("PATCH", "/settings", changes),
   models: (signal?: AbortSignal) => request<Models>("GET", "/models", undefined, signal),
+  keys: (signal?: AbortSignal) => request<KeyStatuses>("GET", "/keys", undefined, signal),
+  // A key is kept by the server until it stops, and is never given back: what comes back is which are set
+  setKey: (name: string, value: string) => request<KeyStatuses>("PUT", `/keys/${encodeURIComponent(name)}`, { value }),
+  removeKey: (name: string) => request<KeyStatuses>("DELETE", `/keys/${encodeURIComponent(name)}`),
+  scientists: async (signal?: AbortSignal) =>
+    (await request<{ scientists: LibraryScientist[] }>("GET", "/scientists", undefined, signal)).scientists,
+  // One with the title of another takes its place, and the library is given back as it now is
+  saveScientist: async (scientist: Scientist) =>
+    (await request<{ scientists: LibraryScientist[] }>("PUT", "/scientists", scientist)).scientists,
+  removeScientist: async (title: string) =>
+    (await request<{ scientists: LibraryScientist[] }>("DELETE", `/scientists/${encodeURIComponent(title)}`)).scientists,
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),

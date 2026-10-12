@@ -3,6 +3,7 @@
 import { createContext, Suspense, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChatsProvider } from "@/components/chats-provider";
+import { SettingsProvider } from "@/components/settings-provider";
 import { Sidebar } from "@/components/sidebar";
 import { cn } from "@/lib/utils";
 
@@ -98,32 +99,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <Context.Provider value={value}>
       <ChatsProvider>
-        <Suspense>
-          <DrawerCloser onClose={closeDrawer} />
-        </Suspense>
-        <div className="flex h-full overflow-hidden">
-          {drawerOpen && (
-            <div
-              className="fixed inset-0 z-30 bg-black/40 md:hidden"
-              onClick={() => setDrawerOpen(false)}
-              aria-hidden
-            />
-          )}
-          <aside
-            aria-label="Sidebar"
-            className={cn(
-              "fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[transform,visibility] duration-200 md:static md:z-auto md:translate-x-0",
-              // Off the screen is also out of the tab order
-              drawerOpen ? "translate-x-0" : "-translate-x-full max-md:invisible",
-              !sidebarShown && "md:hidden",
+        <SettingsProvider>
+          <Suspense>
+            <DrawerCloser onClose={closeDrawer} />
+          </Suspense>
+          <div className="flex h-full overflow-hidden">
+            {drawerOpen && (
+              <div
+                className="fixed inset-0 z-30 bg-black/40 md:hidden"
+                onClick={() => setDrawerOpen(false)}
+                aria-hidden
+              />
             )}
-          >
-            <Suspense>
-              <Sidebar />
-            </Suspense>
-          </aside>
-          <div className="flex min-w-0 flex-1 flex-col bg-background">{children}</div>
-        </div>
+            <aside
+              aria-label="Sidebar"
+              className={cn(
+                "fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[transform,visibility] duration-200 md:static md:z-auto md:translate-x-0",
+                // Off the screen is also out of the tab order
+                drawerOpen ? "translate-x-0" : "-translate-x-full max-md:invisible",
+                !sidebarShown && "md:hidden",
+              )}
+            >
+              <Suspense>
+                <Sidebar />
+              </Suspense>
+            </aside>
+            <div className="flex min-w-0 flex-1 flex-col bg-background">{children}</div>
+          </div>
+        </SettingsProvider>
       </ChatsProvider>
     </Context.Provider>
   );

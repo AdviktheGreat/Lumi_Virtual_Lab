@@ -8,3 +8,18 @@ export function describeError(error: unknown): string {
 
   return "Something went wrong.";
 }
+
+// What a page tells of an error, and where the person can put it right, if there is such a place
+export interface Problem {
+  text: string;
+  fix: "keys" | null;
+}
+
+export function plainProblem(text: string): Problem {
+  return { text, fix: null };
+}
+
+// A model whose provider's key is not set is put right by giving the key
+export function problemOf(error: unknown): Problem {
+  return { text: describeError(error), fix: error instanceof ApiError && error.code === "missing_keys" ? "keys" : null };
+}
