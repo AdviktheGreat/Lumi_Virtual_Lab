@@ -104,15 +104,39 @@ export interface Settings {
   max_upload_bytes: number;
 }
 
+// What a request to change the settings may hold: any of them, each as it is to be
+export type SettingsChange = Partial<Omit<Settings, "workspace" | "max_upload_bytes">>;
+
 export interface ModelChoice {
   id: string;
-  provider: string;
+  // Null for a model whose provider the server does not know
+  provider: string | null;
+  // Whether the keys its provider needs are set
   ready: boolean;
 }
 
 export interface Models {
   default: string;
   models: ModelChoice[];
+}
+
+// Whether a provider's models can be reached, which is by whether the variables it needs are set. No key is ever sent.
+export interface ProviderStatus {
+  provider: string;
+  variables: string[];
+  missing: string[];
+  ready: boolean;
+}
+
+export interface KeyStatuses {
+  // The keys that can be given
+  settable: string[];
+  providers: ProviderStatus[];
+}
+
+// A scientist of the library: the lab's own, or one that the person described
+export interface LibraryScientist extends Scientist {
+  builtin: boolean;
 }
 
 export interface Health {

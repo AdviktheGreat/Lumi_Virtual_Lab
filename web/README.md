@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, and the scientists |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -58,6 +58,28 @@ conversation that is open, whose heading follows. Delete asks first, and removes
 its files, stopping it if it is at work; if it is the one that is open, the page goes to the home page. One that is gone
 already is as good as deleted.
 
+## Settings
+
+The gear at the foot of the sidebar opens the settings, in four parts. What is set is what conversations started from then
+on begin with; one already begun keeps what it began with.
+
+- **Model** has the model, which is chosen from those the server can reach, grouped by whose they are, or named when it is
+  not one of them ("Another model…"). A model whose key is not set says so, with a button that goes to the keys. It also
+  has the most one conversation may spend, in dollars (empty for no limit), and whether replies show as they are written.
+- **Keys** has a box for each key the server can take, which says whether it is set and never shows it. A key is kept by
+  the server until it stops, and is sent from the box once, as a password; Remove takes one away, including one the server
+  was started with.
+- **Code** has where the lab runs code. In a Docker container it has the image, whether the code can reach the network,
+  the data lake (for Biomni's images), and which keys the code can read. On this computer it warns that nothing holds the
+  code back, and has the Python to run it with.
+- **Scientists** has the library the lead draws on. The lab's own cannot be deleted; editing one keeps your own version
+  under its title, and deleting that gives the lab's back. A new scientist cannot take the title of one that exists.
+
+Save changes sends only what was changed (`PATCH /api/settings`), so a setting changed meanwhile by another page is not
+undone, and shows what the server refuses beside the button. Closing with something changed and not saved asks first,
+and a scientist that is half written counts as not saved. A conversation that cannot start because its model's key is not set says which key,
+and offers to go and set it (`src/lib/errors.ts` tells those from other errors by the server's `missing_keys` code).
+
 ## Steering a turn
 
 While the lead is at work, the box in the composer takes a note instead of a message, and the lead reads it before its
@@ -99,6 +121,11 @@ The tests run the real server with the built pages and a script where the model 
 `virtual-lab[server]` installed: it is `python3` unless `VIRTUAL_LAB_PYTHON` says otherwise. `E2E_PORT` changes the
 port, which is 8799. The scripted server takes 20 KiB as the most for a file, so that the tests of the limit need only
 small files; `--max-upload-bytes` changes it.
+
+The tests of the settings, the keys, and the scientists (`e2e/own-server`) change what every conversation is made with, so
+they run in a project of their own, against a second scripted server on the next port (8800). Each file of them puts
+back what it changed before each test, and neither touches what the other does. They run in order within a file, and a
+test that needs a key puts it there itself, since the server keeps none.
 
 The scripted model answers a question with a short reply that repeats it. What else a message makes it do depends on
 a word in it:

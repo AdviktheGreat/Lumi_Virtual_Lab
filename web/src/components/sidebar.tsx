@@ -3,10 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { PanelLeftClose, Search as SearchIcon, SquarePen, X } from "lucide-react";
+import { PanelLeftClose, Search as SearchIcon, Settings, SquarePen, X } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { ChatRow, LIST_ID } from "@/components/chat-row";
 import { useChats } from "@/components/chats-provider";
+import { useSettings } from "@/components/settings-provider";
 import { useServer } from "@/components/server-provider";
 import { useShell } from "@/components/app-shell";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -103,6 +104,7 @@ function ChatList() {
 export function Sidebar() {
   const { toggleSidebar } = useShell();
   const { server } = useServer();
+  const settings = useSettings();
 
   return (
     <>
@@ -131,7 +133,12 @@ export function Sidebar() {
         <ChatList />
       </nav>
       <div className="flex items-center justify-between border-t border-sidebar-border px-3 py-2">
-        <ThemeToggle />
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon-sm" aria-label="Settings" onClick={() => settings.open()}>
+            <Settings className="size-4" />
+          </Button>
+          <ThemeToggle />
+        </div>
         {server.status === "ready" && <span className="text-xs text-muted-foreground">v{server.version}</span>}
       </div>
     </>

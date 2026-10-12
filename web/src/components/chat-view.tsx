@@ -9,7 +9,7 @@ import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
 import { ChatFilesProvider } from "@/components/chat-files";
 import { FilesButton, FilesPanel } from "@/components/files-panel";
-import { LeadBlock, Notice, TurnView } from "@/components/messages";
+import { LeadBlock, Notice, ProblemNotice, TurnView } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { attachedNames, readiness } from "@/lib/attachments";
-import { describeError } from "@/lib/errors";
+import { describeError, plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { filesChanged } from "@/lib/files";
 import { formatCost } from "@/lib/format";
 import { currentTurn, unreadNotes, type SentNote } from "@/lib/steering";
@@ -57,7 +57,7 @@ export function ChatView({ id }: { id: string }) {
   const { server, report } = useServer();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
   const [sentNotes, setSentNotes] = useState<SentNote[]>([]);
   const [filesOpen, setFilesOpen] = useState(false);
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
@@ -88,7 +88,7 @@ export function ChatView({ id }: { id: string }) {
 
   function attach(files: File[]) {
     const refused = attachments.add(files);
-    if (refused.length > 0) setProblem(refused.join("\n"));
+    if (refused.length > 0) setProblem(plainProblem(refused.join("\n")));
   }
 
   async function send() {
@@ -103,7 +103,7 @@ export function ChatView({ id }: { id: string }) {
       jump("instant");
     } catch (error) {
       report(error);
-      setProblem(describeError(error));
+      setProblem(problemOf(error));
     } finally {
       setSending(false);
     }
@@ -123,11 +123,11 @@ export function ChatView({ id }: { id: string }) {
         setDraft("");
         jump("instant");
       } else {
-        setProblem("The lead had already finished, so the note was not added. Send it as a message instead.");
+        setProblem(plainProblem("The lead had already finished, so the note was not added. Send it as a message instead."));
       }
     } catch (error) {
       report(error);
-      setProblem(describeError(error));
+      setProblem(problemOf(error));
     } finally {
       setSending(false);
     }
@@ -138,7 +138,7 @@ export function ChatView({ id }: { id: string }) {
       await api[action](id);
     } catch (error) {
       report(error);
-      setProblem(describeError(error));
+      setProblem(problemOf(error));
     }
   }
 
@@ -227,7 +227,7 @@ export function ChatView({ id }: { id: string }) {
             <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-2">
               {problem && (
                 <div className="pb-2">
-                  <Notice tone="error">{problem}</Notice>
+                  <ProblemNotice problem={problem} />
                 </div>
               )}
               <Composer

@@ -6,12 +6,12 @@ import { Dna, FlaskConical, Microscope, Network } from "lucide-react";
 import { BrandMark } from "@/components/brand";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
-import { Notice } from "@/components/messages";
+import { ProblemNotice } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
 import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
-import { describeError } from "@/lib/errors";
+import { plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { useAttachments } from "@/lib/use-attachments";
 import type { ChatInfo } from "@/lib/types";
 
@@ -44,13 +44,13 @@ export function HomeView() {
   const { refresh } = useChats();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
   // There is no conversation to send files to until the message is, so they are held until then
   const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
 
   function attach(files: File[]) {
     const refused = attachments.add(files);
-    if (refused.length > 0) setProblem(refused.join("\n"));
+    if (refused.length > 0) setProblem(plainProblem(refused.join("\n")));
   }
 
   async function start() {
@@ -71,7 +71,7 @@ export function HomeView() {
         attachments.requeue();
       }
       report(error);
-      setProblem(describeError(error));
+      setProblem(problemOf(error));
       setSending(false);
     }
   }
@@ -92,7 +92,7 @@ export function HomeView() {
           </div>
 
           <div className="flex flex-col gap-2">
-            {problem && <Notice tone="error">{problem}</Notice>}
+            {problem && <ProblemNotice problem={problem} />}
             <Composer
               value={draft}
               onValueChange={setDraft}

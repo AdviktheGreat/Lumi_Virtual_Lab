@@ -2,6 +2,9 @@ import { CircleAlert, OctagonX, Paperclip } from "lucide-react";
 import { Steps } from "@/components/activity";
 import { BrandMark } from "@/components/brand";
 import { Markdown } from "@/components/markdown";
+import { useSettings } from "@/components/settings-provider";
+import { Button } from "@/components/ui/button";
+import type { Problem } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { holdNotice } from "@/lib/steering";
 import { isThinking, type Turn } from "@/lib/transcript";
@@ -61,7 +64,16 @@ export function LeadText({ text, live = false }: { text: string; live?: boolean 
   );
 }
 
-export function Notice({ tone, children }: { tone: "error" | "muted"; children: React.ReactNode }) {
+export function Notice({
+  tone,
+  action,
+  children,
+}: {
+  tone: "error" | "muted";
+  // What the person can do about it
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   const Icon = tone === "error" ? CircleAlert : OctagonX;
 
   return (
@@ -75,8 +87,29 @@ export function Notice({ tone, children }: { tone: "error" | "muted"; children: 
       )}
     >
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <div className="min-w-0 whitespace-pre-wrap break-words">{children}</div>
+      <div className="min-w-0 flex-1 whitespace-pre-wrap break-words">{children}</div>
+      {action}
     </div>
+  );
+}
+
+// What went wrong, with the way to put it right where there is one
+export function ProblemNotice({ problem }: { problem: Problem }) {
+  const settings = useSettings();
+
+  return (
+    <Notice
+      tone="error"
+      action={
+        problem.fix === "keys" ? (
+          <Button variant="outline" size="xs" onClick={() => settings.open("keys")} className="shrink-0 text-foreground">
+            Add the key
+          </Button>
+        ) : undefined
+      }
+    >
+      {problem.text}
+    </Notice>
   );
 }
 
