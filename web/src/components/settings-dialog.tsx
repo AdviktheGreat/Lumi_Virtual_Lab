@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { describeError } from "@/lib/errors";
+import { returnFocusTo } from "@/lib/focus";
 import { changesOf, draftOf, type Draft } from "@/lib/settings";
 import type { KeyStatuses, Settings } from "@/lib/types";
 import { useSettingsData } from "@/lib/use-settings-data";
@@ -105,11 +106,7 @@ export function SettingsDialog({
     >
       <DialogContent
         className="h-[min(40rem,calc(100dvh-2rem))] sm:max-w-2xl"
-        onCloseAutoFocus={(event) => {
-          // The dialog gives the focus back to what opened it, and nothing opened this one but the page
-          event.preventDefault();
-          if (opener?.isConnected) opener.focus();
-        }}
+        onCloseAutoFocus={returnFocusTo(opener)}
       >
         <DialogHeader>
           <div className="flex items-center justify-between gap-2">

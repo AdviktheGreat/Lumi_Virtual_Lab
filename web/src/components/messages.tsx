@@ -3,6 +3,7 @@ import { Steps } from "@/components/activity";
 import { BrandMark } from "@/components/brand";
 import { Markdown } from "@/components/markdown";
 import { useSettings } from "@/components/settings-provider";
+import { useSetup } from "@/components/setup-provider";
 import { Button } from "@/components/ui/button";
 import type { Problem } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -96,6 +97,7 @@ export function Notice({
 // What went wrong, with the way to put it right where there is one
 export function ProblemNotice({ problem }: { problem: Problem }) {
   const settings = useSettings();
+  const setup = useSetup();
 
   return (
     <Notice
@@ -104,6 +106,10 @@ export function ProblemNotice({ problem }: { problem: Problem }) {
         problem.fix === "keys" ? (
           <Button variant="outline" size="xs" onClick={() => settings.open("keys")} className="shrink-0 text-foreground">
             Add the key
+          </Button>
+        ) : problem.fix === "setup" ? (
+          <Button variant="outline" size="xs" onClick={() => setup.open()} className="shrink-0 text-foreground">
+            Set up
           </Button>
         ) : undefined
       }

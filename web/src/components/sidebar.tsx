@@ -3,11 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { PanelLeftClose, Search as SearchIcon, Settings, SquarePen, X } from "lucide-react";
+import { Container, PanelLeftClose, Search as SearchIcon, Settings, SquarePen, X } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { ChatRow, LIST_ID } from "@/components/chat-row";
 import { useChats } from "@/components/chats-provider";
 import { useSettings } from "@/components/settings-provider";
+import { useSetup } from "@/components/setup-provider";
 import { useServer } from "@/components/server-provider";
 import { useShell } from "@/components/app-shell";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -105,6 +106,7 @@ export function Sidebar() {
   const { toggleSidebar } = useShell();
   const { server } = useServer();
   const settings = useSettings();
+  const setup = useSetup();
 
   return (
     <>
@@ -136,6 +138,18 @@ export function Sidebar() {
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon-sm" aria-label="Settings" onClick={() => settings.open()}>
             <Settings className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={setup.working ? "Set up, something is being built or fetched" : "Set up"}
+            onClick={() => setup.open()}
+            className="relative"
+          >
+            <Container className="size-4" />
+            {setup.working && (
+              <span aria-hidden className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />
+            )}
           </Button>
           <ThemeToggle />
         </div>

@@ -4,11 +4,15 @@ const port = Number(process.env.E2E_PORT ?? 8799);
 // The server of the tests that change what every conversation is made with, or what the server knows: the settings, the
 // keys, and the scientists. The tests of the other server make conversations all the time, and would be made differently.
 const ownPort = port + 1;
+// The server of the tests of the setup, where Docker and the place the data lake is fetched from are stand-ins that the
+// tests arrange, through the port after it (see e2e/setup/state.ts)
+const setupPort = port + 2;
+const controlPort = port + 3;
 // The Python that has virtual-lab[server] installed, which is whatever is on the path unless it is told
 const python = process.env.VIRTUAL_LAB_PYTHON ?? "python3";
 
-const server = (at: number) => ({
-  command: `${python} e2e/scripted_server.py --port ${at} --static-dir out`,
+const server = (at: number, options = "") => ({
+  command: `${python} e2e/scripted_server.py --port ${at} --static-dir out ${options}`.trim(),
   url: `http://127.0.0.1:${at}/api/health`,
   // A server left over from another run would have its conversations in it
   reuseExistingServer: false,
@@ -30,12 +34,19 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [
-    { name: "chromium", testIgnore: "**/own-server/**", use: { ...devices["Desktop Chrome"] } },
+    { name: "chromium", testIgnore: ["**/own-server/**", "**/setup/**"], use: { ...devices["Desktop Chrome"] } },
     {
       name: "own-server",
       testMatch: "**/own-server/**/*.spec.ts",
       use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${ownPort}` },
     },
+    {
+      name: "setup",
+      testMatch: "**/setup/**/*.spec.ts",
+      // What they arrange is shared by all of them, so they are run one after another
+      fullyParallel: false,
+      use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${setupPort}` },
+    },
   ],
-  webServer: [server(port), server(ownPort)],
+  webServer: [server(port), server(ownPort), server(setupPort, `--setup-control-port ${controlPort}`)],
 });

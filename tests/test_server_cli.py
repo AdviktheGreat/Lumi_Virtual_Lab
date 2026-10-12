@@ -9,7 +9,7 @@ import pytest
 import uvicorn
 
 import virtual_lab.server as server_package
-from virtual_lab.constants import MAX_UPLOAD_BYTES
+from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_UPLOAD_BYTES
 from virtual_lab.server import cli
 from virtual_lab.server.cli import address_of, is_loopback, listen, main, serve
 
@@ -188,6 +188,25 @@ class TestServing:
 
         limited, usual = (started.config.app.state.conversations for started in recording.started)
         assert (limited.max_upload_bytes, usual.max_upload_bytes) == (777, MAX_UPLOAD_BYTES)
+        for started in recording.started:
+            assert started.sockets is not None
+            started.sockets[0].close()
+
+    def test_how_docker_is_invoked_and_where_the_data_lake_is_fetched_from_are_handed_to_the_setup(
+        self, tmp_path: Path, recording: type[RecordingServer]
+    ) -> None:
+        serve(
+            tmp_path / "ws",
+            token="t",
+            open_browser=False,
+            docker_command=("fake-docker", "--flag"),
+            release_url="http://127.0.0.1:1/release",
+        )
+        serve(tmp_path / "ws", token="t", open_browser=False)
+
+        given, plain = (started.config.app.state.setup for started in recording.started)
+        assert (given.docker_command, given.release_url) == (("fake-docker", "--flag"), "http://127.0.0.1:1/release")
+        assert (plain.docker_command, plain.release_url) == (("docker",), BIOMNI_RELEASE_URL)
         for started in recording.started:
             assert started.sockets is not None
             started.sockets[0].close()

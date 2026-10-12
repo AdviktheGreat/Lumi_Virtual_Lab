@@ -22,10 +22,19 @@ describe("a problem", () => {
     expect(problemOf(error)).toEqual({ text: "Set OPENAI_API_KEY first.", fix: "keys" });
   });
 
+  it("is put right with the setup when code in Docker has no Docker or no image to run in", () => {
+    const error = new ApiError(409, "setup_needed", "Docker is not running.", { missing: ["docker"] });
+
+    expect(problemOf(error)).toEqual({ text: "Docker is not running.", fix: "setup" });
+  });
+
   it("has nowhere to be put right for any other error, whatever it is", () => {
     expect(problemOf(new ApiError(422, "invalid", "That is not allowed."))).toEqual({ text: "That is not allowed.", fix: null });
     expect(problemOf(new NetworkError(new Error("offline"))).fix).toBeNull();
     expect(problemOf(new Error("missing_keys"))).toEqual({ text: "missing_keys", fix: null });
     expect(problemOf("nope")).toEqual({ text: "Something went wrong.", fix: null });
+    // A word that is on every object is not a code that has a fix
+    expect(problemOf(new ApiError(500, "constructor", "Odd.")).fix).toBeNull();
+    expect(problemOf(new ApiError(500, "toString", "Odd.")).fix).toBeNull();
   });
 });
