@@ -361,6 +361,71 @@ class TestWhatTheLeadDid:
         assert 'id="team-session-lab_001"' in document
         assert "Last said before it stopped" in document and "Opening." in text.split("Lab 001")[1]
 
+    def test_a_session_that_cannot_be_read_is_said_so_and_the_rest_is_still_saved(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            team_meeting(rounds=0),
+            text_response("The summary of the team."),
+            text_response("The lab found a summary."),
+        ]
+        chat = make_chat(tmp_path)
+        chat.send("Design a nanobody.")
+        chat.close()
+        transcript = team_sessions_of(tmp_path / "chat")["lab_001"]
+        transcript.write_text('[{"agent": "Immunologist"', encoding="utf-8")
+
+        document = chat_html(tmp_path / "chat")
+
+        assert document.count('id="team-session-lab_001"') == 1
+        # It is a section like the others, headed as a meeting is, with what is wrong said as the sessions say it
+        assert (
+            '<div class="eyebrow">Virtual Lab · Team meeting</div><h2>Lab 001</h2>'
+            '<div class="callout error">This session could not be read, so what was said in it is not here.</div>'
+        ) in document
+        assert '<a href="#team-session-lab_001">Read the discussion</a>' in document
+        assert "The lab found a summary." in document
+
+    @pytest.mark.parametrize("damage", [b"{not json", b"\xff\xfe{", b'{"agent": "x"}', b"[1]"])
+    def test_a_session_that_is_not_what_it_should_be_does_not_stop_the_others_being_shown(
+        self, damage: bytes, tmp_path: Path
+    ) -> None:
+        events = [happened("user", text="Go"), happened("answer", text="Done.")]
+        chat_dir = saved_chat(tmp_path / "chat", events)
+        lab = chat_dir / "lab"
+        lab.mkdir()
+        (lab / "lab_001.json").write_bytes(damage)
+        (lab / "lab_002.json").write_text(json.dumps([{"agent": "Immunologist", "message": "An immunology view."}]))
+        steps = [
+            {"kind": "meeting", "name": name, "files": {"transcript": f"{name}.json"}} for name in ("lab_001", "lab_002")
+        ]
+        (lab / "project.json").write_text(json.dumps({"steps": steps}))
+
+        document = chat_html(chat_dir)
+
+        assert document.count("This session could not be read") == 1
+        assert in_order(text_of(document), "Lab 001", "could not be read", "Lab 002", "An immunology view.")
+
+    def test_a_session_that_cannot_be_opened_is_said_so(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        chat_dir = saved_chat(tmp_path / "chat", [happened("user", text="Go"), happened("answer", text="Done.")])
+        lab = chat_dir / "lab"
+        lab.mkdir()
+        name = "lab_<img src=x>"
+        (lab / "lab_001.json").write_text("[]")
+        (lab / "project.json").write_text(
+            json.dumps({"steps": [{"kind": "meeting", "name": name, "files": {"transcript": "lab_001.json"}}]})
+        )
+
+        def refuse(path: Path) -> None:
+            raise PermissionError(path)
+
+        monkeypatch.setattr("virtual_lab.export_chat.load_meeting", refuse)
+
+        document = chat_html(chat_dir)
+
+        assert "This session could not be read" in document
+        assert "<img" not in document
+
     def test_a_note_is_shown_with_who_read_it(self, tmp_path: Path) -> None:
         events = [
             happened("user", text="Go"),
@@ -793,3 +858,48 @@ def test_only_the_meetings_in_a_ledger_are_team_sessions(tmp_path: Path) -> None
     (lab / "project.json").write_text(json.dumps(ledger))
 
     assert team_sessions_of(tmp_path) == {"lab_001": lab / "lab_001" / "transcript.json"}
+
+
+@pytest.mark.parametrize(
+    "ledger",
+    [None, "", "{not json", "[]", "null", '"steps"', "{}", '{"steps": null}', '{"steps": {"a": 1}}', '{"steps": "meeting"}', '{"steps": 3}'],
+)
+def test_a_ledger_that_cannot_be_read_is_taken_as_no_team_sessions(tmp_path: Path, ledger: str | None) -> None:
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    if ledger is not None:
+        (lab / "project.json").write_text(ledger)
+
+    assert team_sessions_of(tmp_path) == {}
+
+
+@pytest.mark.parametrize("kind", ["not text", "a directory"])
+def test_a_ledger_that_cannot_be_read_as_text_is_taken_as_no_team_sessions(tmp_path: Path, kind: str) -> None:
+    ledger = tmp_path / "lab" / "project.json"
+    ledger.parent.mkdir()
+    if kind == "not text":
+        ledger.write_bytes(b"\xff\xfe{")
+    else:
+        ledger.mkdir()
+
+    assert team_sessions_of(tmp_path) == {}
+
+
+def test_a_step_that_is_not_made_as_it_should_be_is_passed_over_and_the_rest_are_kept(tmp_path: Path) -> None:
+    lab = tmp_path / "lab"
+    (lab / "ok").mkdir(parents=True)
+    (lab / "ok" / "transcript.json").write_text("[]")
+    steps = [
+        "meeting",
+        None,
+        {"kind": "meeting"},
+        {"kind": "meeting", "name": 7, "files": {"transcript": "ok/transcript.json"}},
+        {"kind": "meeting", "name": "no_files"},
+        {"kind": "meeting", "name": "files_list", "files": ["ok/transcript.json"]},
+        {"kind": "meeting", "name": "path_is_not_text", "files": {"transcript": 3}},
+        {"kind": "meeting", "name": "path_is_a_list", "files": {"transcript": ["ok/transcript.json"]}},
+        {"kind": "meeting", "name": "ok", "files": {"transcript": "ok/transcript.json"}},
+    ]
+    (lab / "project.json").write_text(json.dumps({"steps": steps}))
+
+    assert team_sessions_of(tmp_path) == {"ok": lab / "ok" / "transcript.json"}

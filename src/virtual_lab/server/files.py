@@ -9,6 +9,7 @@ not a file at all.
 import mimetypes
 import os
 import re
+import unicodedata
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
@@ -141,18 +142,29 @@ def file_response(path: Path, download: bool = False) -> FileResponse:
     return response
 
 
+def safe_name(text: str) -> str:
+    """What is left of text when what cannot be in a file name is replaced and the spaces, dots and dashes at its
+    ends are taken off."""
+    return " ".join(re.sub(r"[^\w .,()+-]+", "-", text).split()).strip(" .-")
+
+
 def download_headers(title: str, extension: str) -> dict[str, str]:
     """The headers that have a page save what it is sent as a file named for a conversation, which keeps what
-    cannot be in a file name out of it, and names it as a browser reads names that are not ASCII.
+    cannot be in a file name out of it, and names it twice: as a browser reads names that are not ASCII, and, for
+    what does not, as the same name without the characters that are not.
 
     :param title: The conversation's title.
     :param extension: What the file is, as pdf or html.
     """
-    stem = re.sub(r"[^\w .,()+-]+", "-", title)
-    stem = " ".join(stem.split()).strip(" .-")[:MAX_DOWNLOAD_NAME_CHARS].strip(" .-") or "conversation"
+    stem = safe_name(title)[:MAX_DOWNLOAD_NAME_CHARS].strip(" .-") or "conversation"
+    # Accents are taken off before what has no ASCII form is dropped, so that Café is kept as Cafe
+    plain = safe_name(unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode()) or "conversation"
+    disposition = "; ".join(
+        ["attachment", f'filename="{plain}.{extension}"', f"filename*=utf-8''{quote(f'{stem}.{extension}')}"]
+    )
 
     return {
-        "Content-Disposition": f"attachment; filename*=utf-8''{quote(f'{stem}.{extension}')}",
+        "Content-Disposition": disposition,
         "Content-Security-Policy": CONTENT_SECURITY_POLICY,
         "X-Content-Type-Options": "nosniff",
         "Cache-Control": "no-store",

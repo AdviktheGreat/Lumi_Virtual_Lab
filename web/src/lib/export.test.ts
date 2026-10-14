@@ -21,7 +21,7 @@ describe("the name a document is saved as", () => {
   });
 
   it("is the one that is not ASCII where both are sent", () => {
-    expect(exportNameOf("attachment; filename=\"plan.html\"; filename*=utf-8''%C3%BCber.html", "html")).toBe("über.html");
+    expect(exportNameOf("attachment; filename=\"uber.html\"; filename*=utf-8''%C3%BCber.html", "html")).toBe("über.html");
   });
 
   it("is the plain one where the other is not encoded as it says", () => {

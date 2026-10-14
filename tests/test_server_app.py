@@ -1630,7 +1630,9 @@ class TestExport:
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/html; charset=utf-8"
-        assert response.headers["content-disposition"] == "attachment; filename*=utf-8''What%20is%20a%20nanobody.html"
+        assert response.headers["content-disposition"] == (
+            "attachment; filename=\"What is a nanobody.html\"; filename*=utf-8''What%20is%20a%20nanobody.html"
+        )
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["cache-control"] == "no-store"
         assert "sandbox" in response.headers["content-security-policy"]
@@ -1657,7 +1659,9 @@ class TestExport:
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/pdf"
-        assert response.headers["content-disposition"] == "attachment; filename*=utf-8''What%20is%20a%20nanobody.pdf"
+        assert response.headers["content-disposition"] == (
+            "attachment; filename=\"What is a nanobody.pdf\"; filename*=utf-8''What%20is%20a%20nanobody.pdf"
+        )
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.content == b"%PDF-1.7 a pretend one"
         assert len(given) == 1 and "Nanobodies are small antibodies." in given[0]
@@ -1704,7 +1708,8 @@ class TestExport:
         response = client.get(f"/api/chats/{chat_id}/export")
 
         assert response.headers["content-disposition"] == (
-            "attachment; filename*=utf-8''%C3%9Cn%C3%AFcode-%20%E6%8A%97%E4%BD%93%20-%20-a-%20-b.html"
+            "attachment; filename=\"Unicode- - -a- -b.html\"; "
+            "filename*=utf-8''%C3%9Cn%C3%AFcode-%20%E6%8A%97%E4%BD%93%20-%20-a-%20-b.html"
         )
 
     def test_a_conversation_that_is_still_being_answered_is_saved_as_far_as_it_has_got(
@@ -1815,26 +1820,32 @@ class TestExport:
 
 class TestDownloadHeaders:
     @pytest.mark.parametrize(
-        ("title", "name"),
+        ("title", "plain", "encoded"),
         [
-            ("Nanobody design", "Nanobody%20design.html"),
-            ("What is a nanobody?", "What%20is%20a%20nanobody.html"),
-            ("Plan: CRISPR / base editing", "Plan-%20CRISPR%20-%20base%20editing.html"),
-            ("a" * 200, "a" * 80 + ".html"),
-            ("  ..hidden..  ", "hidden.html"),
-            ("", "conversation.html"),
-            ("???", "conversation.html"),
-            ("../../etc/passwd", "etc-passwd.html"),
-            ('say "hi"\r\nSet-Cookie: x=1', "say%20-hi-Set-Cookie-%20x-1.html"),
-            ("抗体 design", "%E6%8A%97%E4%BD%93%20design.html"),
-            ("x" * 79 + " .y", "x" * 79 + ".html"),
-            ("." * 100 + "abc", "abc.html"),
+            ("Nanobody design", "Nanobody design.html", "Nanobody%20design.html"),
+            ("What is a nanobody?", "What is a nanobody.html", "What%20is%20a%20nanobody.html"),
+            ("Plan: CRISPR / base editing", "Plan- CRISPR - base editing.html", "Plan-%20CRISPR%20-%20base%20editing.html"),
+            ("a" * 200, "a" * 80 + ".html", "a" * 80 + ".html"),
+            ("  ..hidden..  ", "hidden.html", "hidden.html"),
+            ("", "conversation.html", "conversation.html"),
+            ("???", "conversation.html", "conversation.html"),
+            ("../../etc/passwd", "etc-passwd.html", "etc-passwd.html"),
+            (
+                'say "hi"\r\nSet-Cookie: x=1',
+                "say -hi-Set-Cookie- x-1.html",
+                "say%20-hi-Set-Cookie-%20x-1.html",
+            ),
+            ("抗体 design", "design.html", "%E6%8A%97%E4%BD%93%20design.html"),
+            ("抗体", "conversation.html", "%E6%8A%97%E4%BD%93.html"),
+            ("Café Ünïcode ²", "Cafe Unicode 2.html", "Caf%C3%A9%20%C3%9Cn%C3%AFcode%20%C2%B2.html"),
+            ("x" * 79 + " .y", "x" * 79 + ".html", "x" * 79 + ".html"),
+            ("." * 100 + "abc", "abc.html", "abc.html"),
         ],
     )
-    def test_a_title_becomes_a_name_a_file_can_have(self, title: str, name: str) -> None:
+    def test_a_title_becomes_a_name_a_file_can_have(self, title: str, plain: str, encoded: str) -> None:
         headers = download_headers(title, "html")
 
-        assert headers["Content-Disposition"] == f"attachment; filename*=utf-8''{name}"
+        assert headers["Content-Disposition"] == f"attachment; filename=\"{plain}\"; filename*=utf-8''{encoded}"
 
     def test_a_page_sent_this_way_is_not_run_or_kept(self) -> None:
         headers = download_headers("A title", "pdf")

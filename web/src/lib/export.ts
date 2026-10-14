@@ -15,8 +15,8 @@ export const EXPORT_CHOICES: ExportChoice[] = [
 ];
 
 // What the server sent the file's name as, if it did, taken from the header that says how the file is to be saved.
-// The name is sent as the header says to send one that is not ASCII (filename*=utf-8''…), and the plain form is read
-// too, for a server that sends that.
+// The server sends it twice: as the header says to send one that is not ASCII (filename*=utf-8''…), which is the whole
+// name and so the one taken, and plain, without what is not ASCII, which is taken where the first is not as it says.
 function namedIn(disposition: string | null): string | null {
   if (disposition === null) return null;
   const encoded = /(?:^|;)\s*filename\*\s*=\s*([^;]+)/i.exec(disposition);

@@ -39,6 +39,7 @@ from virtual_lab.export import (
     code_block,
     document,
     escape,
+    humanize,
     image_uri,
     load_meeting,
     markdown,
@@ -461,16 +462,22 @@ def turn_html(turn: Turn, lead: str, sessions: dict[str, Path], figures: Figures
 
 def team_sessions_of(chat_dir: Path) -> dict[str, Path]:
     """The transcripts of the team sessions the lead held, by the name each was saved under, in the order they
-    were held. One that was stopped or failed is there as far as it got."""
+    were held. One that was stopped or failed is there as far as it got. A ledger that cannot be read is taken as
+    the lead having held none, so that the conversation can still be saved."""
     ledger_path = Path(chat_dir) / CHAT_LAB_DIR_NAME / PROJECT_FILE_NAME
-    if not ledger_path.is_file():
+    try:
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return {}
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    steps = ledger.get("steps") if isinstance(ledger, dict) else None
     sessions: dict[str, Path] = {}
-    for step in ledger["steps"]:
-        files = step.get("files") or {}
+    for step in steps if isinstance(steps, list) else []:
+        if not isinstance(step, dict) or step.get("kind") != "meeting" or not isinstance(step.get("name"), str):
+            continue
+        files = step.get("files")
+        files = files if isinstance(files, dict) else {}
         saved = files.get("transcript") or files.get("partial")
-        if step["kind"] == "meeting" and saved and (path := ledger_path.parent / saved).is_file():
+        if isinstance(saved, str) and (path := ledger_path.parent / saved).is_file():
             sessions[step["name"]] = path
 
     return sessions
@@ -534,7 +541,14 @@ def chat_html(
         parts.append("<p>Nothing has been said in this conversation yet.</p>")
 
     for name, path in sessions.items():
-        section = meeting_body(load_meeting(path), False, max_output_chars, heading_level=2)
+        try:
+            section = meeting_body(load_meeting(path), False, max_output_chars, heading_level=2)
+        except (OSError, ValueError):
+            section = (
+                '<div class="eyebrow">Virtual Lab · Team meeting</div>'
+                f"<h2>{escape(humanize(name))}</h2>"
+                '<div class="callout error">This session could not be read, so what was said in it is not here.</div>'
+            )
         parts.append(f'<section class="meeting" id="{session_anchor(name)}">{section}</section>')
 
     return document(str(title), "\n".join(parts))
