@@ -6,8 +6,9 @@ import { useServer } from "@/components/server-provider";
 import type { Settings } from "@/lib/types";
 
 interface SettingsContext {
-  // Opens the settings, at the part of them that is wanted. Nothing opens while the server has not said what they are.
-  open: (tab?: SettingsTab) => void;
+  // Opens the settings, at the part of them that is wanted, and gives the focus back to what had it, or to what is named
+  // if what has it is about to go. Nothing opens while the server has not said what they are.
+  open: (tab?: SettingsTab, opener?: HTMLElement | null) => void;
 }
 
 const Context = createContext<SettingsContext | null>(null);
@@ -20,9 +21,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const settings = server.status === "ready" ? server.settings : null;
 
   const open = useCallback(
-    (tab: SettingsTab = "model") => {
-      const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      if (settings !== null) setOpened({ tab, settings, opener });
+    (tab: SettingsTab = "model", opener?: HTMLElement | null) => {
+      const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (settings !== null) setOpened({ tab, settings, opener: opener === undefined ? focused : opener });
     },
     [settings],
   );

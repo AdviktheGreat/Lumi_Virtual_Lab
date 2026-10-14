@@ -139,7 +139,8 @@ export function SetupDialog({
               onOpenLake={() => setTab("lake")}
               onAddKey={() => {
                 onClose();
-                settings.open("keys");
+                // What has the focus is in this dialog, which is gone by the time the settings are closed
+                settings.open("keys", opener);
               }}
             />
           </TabsContent>

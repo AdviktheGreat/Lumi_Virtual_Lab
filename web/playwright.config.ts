@@ -12,7 +12,8 @@ const controlPort = port + 3;
 const python = process.env.VIRTUAL_LAB_PYTHON ?? "python3";
 
 const server = (at: number, options = "") => ({
-  command: `${python} e2e/scripted_server.py --port ${at} --static-dir out ${options}`.trim(),
+  // The path is quoted, since a folder it is in may have a space in its name
+  command: `"${python}" e2e/scripted_server.py --port ${at} --static-dir out ${options}`.trim(),
   url: `http://127.0.0.1:${at}/api/health`,
   // A server left over from another run would have its conversations in it
   reuseExistingServer: false,

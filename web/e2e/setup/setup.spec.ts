@@ -317,6 +317,11 @@ test.describe("the setup", () => {
     const settings = page.getByRole("dialog", { name: "Settings" });
     await expect(settings).toBeVisible();
     await expect(settings.getByRole("tab", { name: "Keys" })).toHaveAttribute("aria-selected", "true");
+
+    // The focus goes back to what opened the setup, since what was pressed in it is gone
+    await page.keyboard.press("Escape");
+    await expect(settings).toHaveCount(0);
+    await expect(sidebarButton(page)).toBeFocused();
   });
 
   test("takes the data lake step to the data lake", async ({ page }) => {
