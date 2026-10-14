@@ -1,3 +1,4 @@
+import { exportNameOf, type ExportFormat } from "./export";
 import { fileUrl } from "./files";
 import type {
   Attachment,
@@ -132,19 +133,12 @@ function uploadFile(chatId: string, file: File, { onProgress, signal }: UploadOp
   });
 }
 
-export interface FileText {
-  text: string;
-  // Whether the file goes on after what was read
-  truncated: boolean;
-  // Whether it is not text, which is so for a file that has a null byte in what was read
-  binary: boolean;
-}
-
-// The start of a file, as text. Only as much as the limit is taken from the server, whatever the size of the file.
-async function readFileText(chatId: string, path: string, limit: number, signal?: AbortSignal): Promise<FileText> {
+// What a request that is not for JSON is answered with, once it is known to have gone well: what went wrong is told in
+// the server's own shape, which is read, and what went well is left for the caller to read
+async function fetchBody(address: string, signal?: AbortSignal): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(fileUrl(chatId, path), { signal });
+    response = await fetch(address, { signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new NetworkError(error);
@@ -158,6 +152,21 @@ async function readFileText(chatId: string, path: string, limit: number, signal?
     }
     throw errorFrom(response.status, parsed);
   }
+
+  return response;
+}
+
+export interface FileText {
+  text: string;
+  // Whether the file goes on after what was read
+  truncated: boolean;
+  // Whether it is not text, which is so for a file that has a null byte in what was read
+  binary: boolean;
+}
+
+// The start of a file, as text. Only as much as the limit is taken from the server, whatever the size of the file.
+async function readFileText(chatId: string, path: string, limit: number, signal?: AbortSignal): Promise<FileText> {
+  const response = await fetchBody(fileUrl(chatId, path), signal);
   const reader = response.body?.getReader();
   if (!reader) return { text: await response.text(), truncated: false, binary: false };
   const chunks: Uint8Array[] = [];
@@ -190,6 +199,27 @@ async function readFileText(chatId: string, path: string, limit: number, signal?
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes, { stream: truncated });
 
   return { text, truncated, binary: text.includes("\0") };
+}
+
+export interface ExportedChat {
+  file: Blob;
+  // What to save it as
+  name: string;
+}
+
+// A conversation as a document, whole, which is made for it by the server. It is fetched here, and not by a link that
+// downloads, so that what the server says when it cannot make it is told, and not saved as the file.
+async function exportChat(id: string, format: ExportFormat, signal?: AbortSignal): Promise<ExportedChat> {
+  const response = await fetchBody(`/api/chats/${encodeURIComponent(id)}/export?format=${format}`, signal);
+  let file: Blob;
+  try {
+    file = await response.blob();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new NetworkError(error);
+  }
+
+  return { file, name: exportNameOf(response.headers.get("Content-Disposition"), format) };
 }
 
 export const api = {
@@ -240,4 +270,5 @@ export const api = {
   // What the conversation made or was given
   files: (id: string, signal?: AbortSignal) => request<ChatFiles>("GET", `/chats/${encodeURIComponent(id)}/files`, undefined, signal),
   fileText: readFileText,
+  exportChat,
 };

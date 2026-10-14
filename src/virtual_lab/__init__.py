@@ -87,6 +87,7 @@ from virtual_lab.export import (
     save_project_html,
     save_project_pdf,
 )
+from virtual_lab.export_chat import chat_html, save_chat_html, save_chat_pdf
 from virtual_lab.execution import (
     DockerExecutor,
     DockerUnavailableError,
@@ -397,6 +398,7 @@ __all__ = [
     "biomni_tools",
     "biorxiv_papers",
     "build_sandbox_image",
+    "chat_html",
     "combine_paper_summaries",
     "commercial_data_lake",
     "connect_mcp",
@@ -443,6 +445,8 @@ __all__ = [
     "run_with_repair",
     "sandbox_image",
     "save_artifacts",
+    "save_chat_html",
+    "save_chat_pdf",
     "save_execution_record",
     "save_meeting_html",
     "save_meeting_pdf",

@@ -1592,6 +1592,21 @@ class TestKeeping:
         assert path.read_bytes() == '{"a": "é"}\n'.encode()
         assert "was cut short" in capsys.readouterr().out
 
+    def test_a_reader_that_is_not_the_conversation_leaves_the_file_as_it_is(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "lines.jsonl"
+        path.write_text('{"a": 1}\n{"b": ', encoding="utf-8")
+
+        assert chat_module.read_json_lines(path, repair=False) == [{"a": 1}]
+        assert path.read_text(encoding="utf-8") == '{"a": 1}\n{"b": '
+        # The line may be one that is still being written, so it is not said to have been cut short
+        assert capsys.readouterr().out == ""
+
+        assert chat_module.read_json_lines(path) == [{"a": 1}]
+        assert path.read_text(encoding="utf-8") == '{"a": 1}\n'
+        assert "cut short" in capsys.readouterr().out
+
     def test_a_line_cut_short_by_a_crash_is_dropped_and_any_other_is_an_error(
         self, fake_client: FakeClient, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

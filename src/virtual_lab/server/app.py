@@ -24,6 +24,7 @@ and everything else is a request and an answer.
     GET    /api/chats/{id}/events       the events of the conversation, as they happen
     POST   /api/chats/{id}/uploads      a file for the conversation, as the body, named by ?name=
     GET    /api/chats/{id}/files        what the conversation made or was given, and /files/{path} one of them
+    GET    /api/chats/{id}/export       the conversation as a document to save, as ?format=html, the default, or pdf
 """
 
 import asyncio
@@ -31,7 +32,7 @@ import os
 from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, Literal, cast
 
 import anyio.to_thread
 from fastapi import APIRouter, FastAPI, Header, Query, Request
@@ -46,10 +47,12 @@ from virtual_lab.__about__ import __version__
 from virtual_lab.chat import ChatBusyError, ChatClosedError, UploadTooLargeError
 from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
 from virtual_lab.environment import DATA_LAKE
+from virtual_lab.export import PDFExportError, make_pdf
+from virtual_lab.export_chat import chat_html
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.errors import ApiError, not_found
-from virtual_lab.server.files import file_response, list_files, resolve_inside
+from virtual_lab.server.files import download_headers, file_response, list_files, resolve_inside
 from virtual_lab.server.security import LOCAL_HOSTS, Guard
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
@@ -70,6 +73,12 @@ MAX_PATH_CHARS = 4096
 
 # What a page of the interface is given to keep: what has a hash in its name never changes
 IMMUTABLE_PREFIX = "_next/static/"
+
+# What a page is told when a conversation cannot be saved as a PDF, which is so where WeasyPrint is not installed
+PDF_UNAVAILABLE = (
+    "A PDF cannot be made on this machine, because WeasyPrint and the Pango library it draws text with are not "
+    "installed. Save the page instead, and print it to a PDF from the browser."
+)
 
 
 class RequestModel(BaseModel):
@@ -523,6 +532,20 @@ def create_app(
         handle = conversations.get(chat_id)
 
         return file_response(resolve_inside(handle.files_root, path, handle.files_shown), download=download)
+
+    @api.get("/chats/{chat_id}/export")
+    def export_chat(chat_id: str, kind: Literal["html", "pdf"] = Query("html", alias="format")) -> Response:
+        handle = conversations.get(chat_id)
+        page = chat_html(handle.directory, files_dir=handle.files_root)
+        if kind == "html":
+            content, media_type = page.encode("utf-8"), "text/html; charset=utf-8"
+        else:
+            try:
+                content, media_type = make_pdf(page), "application/pdf"
+            except PDFExportError as error:
+                raise ApiError(501, "pdf_unavailable", PDF_UNAVAILABLE, reason=str(error)) from error
+
+        return Response(content, media_type=media_type, headers=download_headers(handle.chat.title, kind))
 
     app.include_router(api)
 

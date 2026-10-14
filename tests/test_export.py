@@ -676,15 +676,15 @@ class TestPDF:
     def test_what_weasyprint_prints_and_warns_of_as_it_loads_is_kept_quiet(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        made: list[tuple[str, Any, Path]] = []
+        made: list[tuple[str, Any]] = []
 
         class HTML:
             def __init__(self, string: str, url_fetcher: Any) -> None:
                 self.string, self.url_fetcher = string, url_fetcher
 
-            def write_pdf(self, path: Path) -> None:
-                assert path.parent.is_dir()
-                made.append((self.string, self.url_fetcher, path))
+            def write_pdf(self) -> bytes:
+                made.append((self.string, self.url_fetcher))
+                return b"%PDF-made"
 
         def noisy(name: str, *args: Any, **kwargs: Any) -> Any:
             if name == "weasyprint":
@@ -704,7 +704,8 @@ class TestPDF:
             path = export.render_pdf("<p>x</p>", tmp_path / "new" / "x.pdf")
 
         assert path == tmp_path / "new" / "x.pdf"
-        assert [(string, written) for string, _, written in made] == [("<p>x</p>", path)]
+        assert [string for string, _ in made] == ["<p>x</p>"]
+        assert path.read_bytes() == b"%PDF-made"
         assert printed.getvalue() == ""
 
     def test_weasyprint_from_68_fetches_only_data_uris(self) -> None:

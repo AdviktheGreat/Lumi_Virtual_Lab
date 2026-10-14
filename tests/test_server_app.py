@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import threading
 import time
 from collections.abc import Iterator
@@ -21,13 +22,24 @@ from virtual_lab.__about__ import __version__
 from virtual_lab import environment
 from virtual_lab.constants import MAX_UPLOAD_BYTES
 from virtual_lab.environment import DATA_LAKE, sandbox_image
+from virtual_lab.events import ChatEvent
+from virtual_lab.export import PDFExportError
 from virtual_lab.server import app as app_module
-from virtual_lab.server.app import MAX_MESSAGE_CHARS, MAX_PATH_CHARS, RequestBodyReader, create_app, last_event
+from virtual_lab.server.app import (
+    MAX_MESSAGE_CHARS,
+    MAX_PATH_CHARS,
+    PDF_UNAVAILABLE,
+    RequestBodyReader,
+    create_app,
+    last_event,
+)
 from virtual_lab.server.errors import ApiError
+from virtual_lab.server.files import download_headers
 from virtual_lab.server.security import TOKEN_COOKIE
 from virtual_lab.ui.workspace import Settings, Workspace
 
 from conftest import TEST_MODEL, FakeClient, text_response
+from test_export import PNG
 from setup_fakes import Bucket, FakeDocker, wait_for
 from test_server_conversations import hold_the_model, wait_until
 
@@ -140,6 +152,7 @@ class TestAccess:
                 ("GET", "/api/keys"),
                 ("PUT", "/api/keys/OPENAI_API_KEY"),
                 ("GET", "/api/chats/anything/events"),
+                ("GET", "/api/chats/anything/export"),
             ]:
                 response = anonymous.request(method, path, json={})
                 assert response.status_code == 401, path
@@ -1056,6 +1069,8 @@ class TestChats:
             ("GET", "/files", None),
             ("GET", "/files/x.txt", None),
             ("GET", "/events", None),
+            ("GET", "/export", None),
+            ("GET", "/export?format=pdf", None),
             ("POST", "/uploads?name=x", None),
         ]:
             response = client.request(method, f"/api/chats/{chat_id}{suffix}", json=body)
@@ -1597,6 +1612,249 @@ class TestFiles:
         assert client.get(f"/api/chats/{first}/files/private.txt").status_code == 200
         assert client.get(f"/api/chats/{second}/files/private.txt").status_code == 404
         assert client.get(f"/api/chats/{second}/files/..%2f{first}%2fwork%2fprivate.txt").status_code == 404
+
+
+class TestExport:
+    def talk(self, client: TestClient, fake_client: FakeClient, **body: Any) -> str:
+        made = new_chat(client, **body)
+        fake_client.completions.responses.append(text_response("Nanobodies are small antibodies."))
+        client.post(f"/api/chats/{made['id']}/messages", json={"text": "What is a nanobody?"})
+        wait_idle(client, made["id"])
+
+        return made["id"]
+
+    def test_a_conversation_is_sent_as_a_page_to_be_saved(self, client: TestClient, fake_client: FakeClient) -> None:
+        chat_id = self.talk(client, fake_client)
+
+        response = client.get(f"/api/chats/{chat_id}/export")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "text/html; charset=utf-8"
+        assert response.headers["content-disposition"] == (
+            "attachment; filename=\"What is a nanobody.html\"; filename*=utf-8''What%20is%20a%20nanobody.html"
+        )
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["cache-control"] == "no-store"
+        assert "sandbox" in response.headers["content-security-policy"]
+        assert "default-src 'none'" in response.headers["content-security-policy"]
+        assert response.text.startswith("<!DOCTYPE html>")
+        assert "What is a nanobody?" in response.text
+        assert "Nanobodies are small antibodies." in response.text
+        assert client.get(f"/api/chats/{chat_id}/export", params={"format": "html"}).content == response.content
+
+    def test_a_conversation_is_sent_as_a_pdf_when_one_can_be_made(
+        self, client: TestClient, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        chat_id = self.talk(client, fake_client)
+        given: list[str] = []
+
+        def make_pdf(page: str) -> bytes:
+            given.append(page)
+
+            return b"%PDF-1.7 a pretend one"
+
+        monkeypatch.setattr(app_module, "make_pdf", make_pdf)
+
+        response = client.get(f"/api/chats/{chat_id}/export", params={"format": "pdf"})
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/pdf"
+        assert response.headers["content-disposition"] == (
+            "attachment; filename=\"What is a nanobody.pdf\"; filename*=utf-8''What%20is%20a%20nanobody.pdf"
+        )
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.content == b"%PDF-1.7 a pretend one"
+        assert len(given) == 1 and "Nanobodies are small antibodies." in given[0]
+
+    def test_a_pdf_that_cannot_be_made_is_told_so_and_a_page_still_can_be_had(
+        self, client: TestClient, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        chat_id = self.talk(client, fake_client)
+
+        def make_pdf(page: str) -> bytes:
+            raise PDFExportError("Making a PDF needs WeasyPrint. (ImportError: no module named weasyprint)")
+
+        monkeypatch.setattr(app_module, "make_pdf", make_pdf)
+
+        response = client.get(f"/api/chats/{chat_id}/export", params={"format": "pdf"})
+
+        assert response.status_code == 501
+        assert error_of(response) == {
+            "code": "pdf_unavailable",
+            "message": PDF_UNAVAILABLE,
+            "reason": "Making a PDF needs WeasyPrint. (ImportError: no module named weasyprint)",
+        }
+        assert "print it to a PDF from the browser" in PDF_UNAVAILABLE
+        assert "content-disposition" not in response.headers
+        assert client.get(f"/api/chats/{chat_id}/export").status_code == 200
+
+    @pytest.mark.parametrize("kind", ["docx", "", "HTML", "pdf,html", "html&format=pdf"])
+    def test_a_kind_of_file_there_is_none_of_is_refused(
+        self, client: TestClient, fake_client: FakeClient, kind: str
+    ) -> None:
+        chat_id = self.talk(client, fake_client)
+
+        response = client.get(f"/api/chats/{chat_id}/export", params={"format": kind})
+
+        assert response.status_code == 422
+        assert error_of(response)["code"] == "invalid"
+
+    def test_what_is_in_a_title_that_cannot_be_in_a_file_name_is_kept_out_of_it(
+        self, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        chat_id = self.talk(client, fake_client)
+        client.patch(f"/api/chats/{chat_id}", json={"title": 'Ünïcode: 抗体 / "a" <b> \\ ..'})
+
+        response = client.get(f"/api/chats/{chat_id}/export")
+
+        assert response.headers["content-disposition"] == (
+            "attachment; filename=\"Unicode- - -a- -b.html\"; "
+            "filename*=utf-8''%C3%9Cn%C3%AFcode-%20%E6%8A%97%E4%BD%93%20-%20-a-%20-b.html"
+        )
+
+    def test_a_conversation_that_is_still_being_answered_is_saved_as_far_as_it_has_got(
+        self, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        made = new_chat(client)
+        gate = hold_the_model(fake_client)
+        client.post(f"/api/chats/{made['id']}/messages", json={"text": "Slow question"})
+        wait_until(gate.reached.is_set)
+
+        response = client.get(f"/api/chats/{made['id']}/export")
+        gate.release()
+        wait_idle(client, made["id"])
+
+        assert response.status_code == 200
+        assert "Slow question" in response.text
+        assert client.get(f"/api/chats/{made['id']}").json()["turns"] == 1
+
+    def test_a_conversation_is_saved_after_the_server_was_restarted(
+        self, client: TestClient, fake_client: FakeClient, workspace: Workspace
+    ) -> None:
+        chat_id = self.talk(client, fake_client)
+        client.app.state.conversations.close()  # type: ignore[attr-defined]
+
+        with TestClient(create_app(workspace.root, token=TOKEN, check_keys=False), base_url=LOCAL, headers=BEARER) as later:
+            response = later.get(f"/api/chats/{chat_id}/export")
+
+        assert response.status_code == 200
+        assert "Nanobodies are small antibodies." in response.text
+
+    def test_saving_a_conversation_does_not_change_what_it_saved(
+        self, client: TestClient, fake_client: FakeClient, app: FastAPI
+    ) -> None:
+        chat_id = self.talk(client, fake_client)
+        directory = handle_of(app, chat_id).directory
+        before = {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+
+        for kind in ("html", "html"):
+            assert client.get(f"/api/chats/{chat_id}/export", params={"format": kind}).status_code == 200
+
+        assert {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()} == before
+
+    def drew(self, client: TestClient, app: FastAPI, chat_id: str, tmp_path: Path) -> None:
+        """Has the conversation's code draw a figure, and name another that is outside its files."""
+        handle = handle_of(app, chat_id)
+        (handle.files_root / "plots").mkdir()
+        (handle.files_root / "plots" / "figure_1.png").write_bytes(PNG)
+        (tmp_path / "outside.png").write_bytes(PNG)
+        last = client.get(f"/api/chats/{chat_id}").json()["last_event_id"]
+        happened = [
+            ChatEvent(
+                kind="tool_calls",
+                id=last + 1,
+                turn=1,
+                speaker=None,
+                text="",
+                data={"calls": [{"id": "c1", "name": "run_code", "arguments": '{"code": "draw()"}'}]},
+                time=0.0,
+            ),
+            ChatEvent(
+                kind="cell",
+                id=last + 2,
+                turn=1,
+                speaker=None,
+                text="",
+                data={
+                    "call": "c1",
+                    "language": "python",
+                    "code": "draw()",
+                    "status": "ok",
+                    "output": "",
+                    "duration": 0.1,
+                    "plots": ["plots/figure_1.png", "../../../outside.png"],
+                },
+                time=0.0,
+            ),
+        ]
+        with (handle.directory / "events.jsonl").open("a", encoding="utf-8") as saved:
+            saved.writelines(json.dumps(event.to_dict()) + "\n" for event in happened)
+
+    def test_the_figures_its_code_drew_are_in_the_page_and_nothing_else_of_the_session_is(
+        self, client: TestClient, fake_client: FakeClient, app: FastAPI, tmp_path: Path
+    ) -> None:
+        chat_id = self.talk(client, fake_client, code={"where": "local"})
+        self.drew(client, app, chat_id, tmp_path)
+
+        response = client.get(f"/api/chats/{chat_id}/export")
+
+        assert response.status_code == 200
+        assert response.text.count("data:image/png;base64,") == 1
+        assert "outside.png could not be found" in response.text
+
+    def test_the_figures_are_found_where_the_workspace_is_now_and_not_where_it_was(
+        self, client: TestClient, fake_client: FakeClient, app: FastAPI, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        chat_id = self.talk(client, fake_client, code={"where": "local"})
+        self.drew(client, app, chat_id, tmp_path)
+        client.app.state.conversations.close()  # type: ignore[attr-defined]
+        moved = tmp_path / "moved"
+        shutil.move(workspace.root, moved)
+
+        with TestClient(create_app(moved, token=TOKEN, check_keys=False), base_url=LOCAL, headers=BEARER) as later:
+            response = later.get(f"/api/chats/{chat_id}/export")
+
+        assert response.status_code == 200
+        assert response.text.count("data:image/png;base64,") == 1
+
+
+class TestDownloadHeaders:
+    @pytest.mark.parametrize(
+        ("title", "plain", "encoded"),
+        [
+            ("Nanobody design", "Nanobody design.html", "Nanobody%20design.html"),
+            ("What is a nanobody?", "What is a nanobody.html", "What%20is%20a%20nanobody.html"),
+            ("Plan: CRISPR / base editing", "Plan- CRISPR - base editing.html", "Plan-%20CRISPR%20-%20base%20editing.html"),
+            ("a" * 200, "a" * 80 + ".html", "a" * 80 + ".html"),
+            ("  ..hidden..  ", "hidden.html", "hidden.html"),
+            ("", "conversation.html", "conversation.html"),
+            ("???", "conversation.html", "conversation.html"),
+            ("../../etc/passwd", "etc-passwd.html", "etc-passwd.html"),
+            (
+                'say "hi"\r\nSet-Cookie: x=1',
+                "say -hi-Set-Cookie- x-1.html",
+                "say%20-hi-Set-Cookie-%20x-1.html",
+            ),
+            ("抗体 design", "design.html", "%E6%8A%97%E4%BD%93%20design.html"),
+            ("抗体", "conversation.html", "%E6%8A%97%E4%BD%93.html"),
+            ("Café Ünïcode ²", "Cafe Unicode 2.html", "Caf%C3%A9%20%C3%9Cn%C3%AFcode%20%C2%B2.html"),
+            ("x" * 79 + " .y", "x" * 79 + ".html", "x" * 79 + ".html"),
+            ("." * 100 + "abc", "abc.html", "abc.html"),
+        ],
+    )
+    def test_a_title_becomes_a_name_a_file_can_have(self, title: str, plain: str, encoded: str) -> None:
+        headers = download_headers(title, "html")
+
+        assert headers["Content-Disposition"] == f"attachment; filename=\"{plain}\"; filename*=utf-8''{encoded}"
+
+    def test_a_page_sent_this_way_is_not_run_or_kept(self) -> None:
+        headers = download_headers("A title", "pdf")
+
+        assert headers["Content-Disposition"].endswith(".pdf")
+        assert headers["X-Content-Type-Options"] == "nosniff"
+        assert headers["Cache-Control"] == "no-store"
+        assert "default-src 'none'" in headers["Content-Security-Policy"]
+        assert "sandbox" in headers["Content-Security-Policy"]
 
 
 class TestPages:
