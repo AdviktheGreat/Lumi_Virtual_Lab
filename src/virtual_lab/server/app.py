@@ -53,11 +53,11 @@ from virtual_lab.server.config import describe_models, library, public_settings,
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.files import download_headers, file_response, list_files, resolve_inside
+from virtual_lab.server.library import SETTABLE_KEYS, provider_statuses
 from virtual_lab.server.security import LOCAL_HOSTS, Guard
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
-from virtual_lab.ui.library import SETTABLE_KEYS, provider_statuses
-from virtual_lab.ui.workspace import DEFAULT_WORKSPACE, Settings, Workspace
+from virtual_lab.server.workspace import DEFAULT_WORKSPACE, Settings, Workspace
 
 # The most characters of a message, which no one writes by hand
 MAX_MESSAGE_CHARS = 200_000

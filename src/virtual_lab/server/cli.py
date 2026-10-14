@@ -15,7 +15,7 @@ import uvicorn
 from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_UPLOAD_BYTES
 from virtual_lab.server.app import create_app
 from virtual_lab.server.security import LOCAL_HOSTS, new_token
-from virtual_lab.ui.workspace import DEFAULT_WORKSPACE
+from virtual_lab.server.workspace import DEFAULT_WORKSPACE
 
 # The first port tried when none is asked for, and how many after it are, if it is taken
 FIRST_PORT = 8765

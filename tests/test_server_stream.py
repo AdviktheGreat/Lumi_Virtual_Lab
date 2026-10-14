@@ -12,7 +12,7 @@ import pytest
 from virtual_lab.events import ChatEvent
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.stream import RETRY_MILLISECONDS, follow, format_event
-from virtual_lab.ui.workspace import Settings, Workspace
+from virtual_lab.server.workspace import Settings, Workspace
 
 from conftest import TEST_MODEL, FakeClient, text_response
 

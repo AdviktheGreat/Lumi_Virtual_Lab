@@ -36,7 +36,7 @@ from virtual_lab.server.app import (
 from virtual_lab.server.errors import ApiError
 from virtual_lab.server.files import download_headers
 from virtual_lab.server.security import TOKEN_COOKIE
-from virtual_lab.ui.workspace import Settings, Workspace
+from virtual_lab.server.workspace import Settings, Workspace
 
 from conftest import TEST_MODEL, FakeClient, text_response
 from test_export import PNG
@@ -289,13 +289,6 @@ class TestSettings:
         client.patch("/api/settings", json={})
         assert workspace.load_settings().network is False
 
-    def test_the_interfaces_other_settings_survive_a_change(self, client: TestClient, workspace: Workspace) -> None:
-        workspace.save_settings(Settings(model=TEST_MODEL, mcp_config="/my/servers.json"))
-
-        client.patch("/api/settings", json={"stream": False})
-
-        assert workspace.load_settings().mcp_config == "/my/servers.json"
-
     def test_where_the_data_lake_is_and_the_keys_code_is_given_are_kept(
         self, client: TestClient, workspace: Workspace, tmp_path: Path
     ) -> None:
@@ -340,7 +333,7 @@ class TestSettings:
             {"model": "no-such-model"},
             {"code": "cloud"},
             {"max_cost": -1},
-            {"mcp_config": "/x"},
+            {"colour": "red"},
             {"stream": "maybe"},
             {"data_lake": "relative/lake"},
             {"data_lake": "x" * 5000},

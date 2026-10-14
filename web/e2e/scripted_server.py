@@ -55,7 +55,7 @@ from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
-from virtual_lab.ui.workspace import Workspace  # noqa: E402
+from virtual_lab.server.workspace import Workspace  # noqa: E402
 
 TOKEN = "e2e-token"
 TEST_MODEL = "gpt-4o-2024-08-06"

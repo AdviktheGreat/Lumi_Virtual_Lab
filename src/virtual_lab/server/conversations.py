@@ -26,10 +26,10 @@ from virtual_lab.events import ChatEvent
 from virtual_lab.llm import ModelSource
 from virtual_lab.server.config import ChatConfig, load_config, resolve_config, save_config
 from virtual_lab.server.errors import ApiError, not_found
+from virtual_lab.server.library import missing_keys
 from virtual_lab.server.setup import Setup
+from virtual_lab.server.workspace import Workspace, read_json
 from virtual_lab.session import Session
-from virtual_lab.ui.library import missing_keys
-from virtual_lab.ui.workspace import Workspace, read_json
 from virtual_lab.utils import CostUnknownError
 
 # What a conversation's code runs in, under its directory
@@ -237,7 +237,7 @@ class Conversations:
         self.require_keys(config)
         self.require_setup(config)
 
-        directory = self.workspace.new_directory("chat", title or "New chat")
+        directory = self.workspace.new_chat_directory(title or "New chat")
         try:
             save_config(directory, config)
             handle = self._start(directory, config, title)

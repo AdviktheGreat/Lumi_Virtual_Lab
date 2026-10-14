@@ -26,8 +26,8 @@ from virtual_lab.resources import commercial_data_lake
 from virtual_lab.server.config import ChatConfig, data_lake_directory
 from virtual_lab.server.errors import ApiError
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
-from virtual_lab.ui.library import missing_keys
-from virtual_lab.ui.workspace import Settings, Workspace
+from virtual_lab.server.library import missing_keys
+from virtual_lab.server.workspace import Settings, Workspace
 
 # Seconds Docker is given to say whether it is running
 DOCKER_TIMEOUT = 10.0

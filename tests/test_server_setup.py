@@ -17,7 +17,7 @@ from virtual_lab.server.config import resolve_config
 from virtual_lab.server.errors import ApiError
 from virtual_lab.server.jobs import Job
 from virtual_lab.server.setup import STAGES, Setup, checklist, file_size, free_space
-from virtual_lab.ui.workspace import Settings, Workspace
+from virtual_lab.server.workspace import Settings, Workspace
 
 from conftest import TEST_MODEL
 from setup_fakes import Bucket, FakeDocker, wait_for
