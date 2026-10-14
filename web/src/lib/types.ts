@@ -192,3 +192,106 @@ export interface ChatFiles {
   // Whether there were more files than the list gives
   truncated: boolean;
 }
+
+// Whether Docker is there, as the setup finds it
+export interface DockerStatus {
+  installed: boolean;
+  running: boolean;
+  version: string | null;
+  // What is wrong, when it is not running
+  message: string | null;
+}
+
+// A stage of the image that code runs in, each adding to the one before
+export interface ImageStage {
+  target: string;
+  tag: string;
+  summary: string;
+  // About how long it takes to build, in words
+  estimate: string;
+  // Not known while Docker is not running
+  built: boolean | null;
+  building: boolean;
+}
+
+export interface Images {
+  platform: string;
+  // Whether this computer runs the image by pretending to be another, which is slow
+  emulated: boolean;
+  stages: ImageStage[];
+}
+
+export interface DataLakeSummary {
+  directory: string;
+  // Whether the settings name the folder, and not the workspace
+  custom: boolean;
+  files: number;
+  present: number;
+  complete: boolean;
+  bytes: number;
+  free_bytes: number | null;
+}
+
+export interface DataLakeFile {
+  name: string;
+  description: string;
+  present: boolean;
+  bytes: number | null;
+  // Whether Biomni's commercial mode uses it, which is whether it may be used commercially
+  commercial: boolean;
+}
+
+export interface DataLake {
+  data_lake: DataLakeSummary;
+  files: DataLakeFile[];
+}
+
+export type JobState = "running" | "stopping" | "succeeded" | "failed" | "stopped";
+
+// How far a job has got, of what it is counting: a fetch of the data lake counts files and bytes
+export interface JobProgress {
+  done?: number;
+  total?: number;
+  current?: string | null;
+  bytes?: number;
+  bytes_total?: number | null;
+  fetched?: number;
+}
+
+// A piece of work the server does in the background: building an image, or fetching the data lake
+export interface Job {
+  id: string;
+  kind: string;
+  subject: string;
+  title: string;
+  state: JobState;
+  // What it is doing, or did
+  message: string;
+  progress: JobProgress;
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+  // How many lines it has printed, which are not given with the list of jobs
+  log_total: number;
+  log?: { from: number; lines: string[] };
+}
+
+export type StepState = "done" | "todo" | "running" | "blocked";
+
+// What there is to do to be ready to run code, one step at a time
+export interface SetupStep {
+  id: string;
+  title: string;
+  state: StepState;
+  detail: string;
+  // Whether code cannot run without it
+  required: boolean;
+}
+
+export interface SetupStatus {
+  docker: DockerStatus;
+  images: Images;
+  data_lake: DataLakeSummary;
+  jobs: Job[];
+  steps: SetupStep[];
+}

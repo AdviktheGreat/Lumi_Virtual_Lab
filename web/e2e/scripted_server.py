@@ -17,6 +17,9 @@ from a script: no key is needed, and every run says the same. What it says depen
 - Anything else is answered with a short reply that repeats the question.
 
     python e2e/scripted_server.py --port 8799 --static-dir out
+
+With --setup-control-port, Docker and the place the data lake is fetched from are stand-ins too (see
+tests/setup_fakes.py), which a test arranges and looks at by POSTing JSON to that port; see FakeSetup.control.
 """
 
 import argparse
@@ -25,8 +28,10 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +43,11 @@ from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageToolCa
 from openai.types.chat.chat_completion import ChatCompletion, Choice  # noqa: E402
 from openai.types.chat.chat_completion_message_tool_call import Function  # noqa: E402
 
+from setup_fakes import Bucket, FakeDocker  # noqa: E402
+
+from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
+from virtual_lab.ui.workspace import Workspace  # noqa: E402
 
 TOKEN = "e2e-token"
 TEST_MODEL = "gpt-4o-2024-08-06"
@@ -364,15 +373,129 @@ class ScriptedClient(FakeClient):
         self.chat = type("Chat", (), {"completions": ScriptedCompletions(delay)})()
 
 
+# How big each file of the data lake is in the stand-in for the place it is fetched from, which is big enough for the
+# part of it that has been fetched, when a fetch is held halfway, to be a size to read
+DATA_LAKE_FILE_BYTES = 10 * 1024
+
+
+class FakeSetup:
+    """Docker and the release the data lake is fetched from, as stand-ins, and what a test does to them.
+
+    :param directory: Where the stand-in for Docker is kept.
+    :param workspace: The workspace of the server, whose data lake is what is fetched into.
+    """
+
+    def __init__(self, directory: Path, workspace: Path) -> None:
+        self.docker = FakeDocker(directory)
+        self.bucket = Bucket()
+        self.files = {name: bytes(range(256)) * (DATA_LAKE_FILE_BYTES // 256) for name in DATA_LAKE}
+        self.bucket.files = dict(self.files)
+        self.lake = Workspace(workspace).data_lake_dir
+
+    def settle(self) -> None:
+        """Lets everything that is held go on, so that every job that is at work can end."""
+        for gate in self.bucket.gates.values():
+            gate.set()
+        self.docker.release()
+
+    def reset(self) -> None:
+        """Puts everything as it was when the server began: Docker is up and has no image, and no file is fetched.
+        Nothing may be at work, since what is would go on into what is put as it was."""
+        self.bucket.gates.clear()
+        self.bucket.files = dict(self.files)
+        self.bucket.requests.clear()
+        for name in ("started", "pid", "builds.jsonl"):
+            (self.docker.directory / name).unlink(missing_ok=True)
+        fresh = FakeDocker(self.docker.directory)
+        self.docker.state = fresh.state
+        self.docker.save()
+        (self.docker.directory / "release").unlink(missing_ok=True)
+        shutil.rmtree(self.lake, ignore_errors=True)
+
+    def control(self, order: dict[str, Any]) -> dict[str, Any]:
+        """Does what a test asks, each of these that it names, and says what it can be asked of.
+
+        - "settle": lets everything that is held go on, which ends the jobs that are at work, once they are done.
+        - "reset": puts everything as it began, which is done when no job is at work.
+        - "docker": changes what Docker answers, as FakeDocker.configure does.
+        - "build": changes how a build goes, as FakeDocker.build does.
+        - "release": lets a build that is waiting end.
+        - "hold": the names of files of the data lake whose fetch is held halfway, until they are named in "let".
+        - "let": the names of files whose fetch goes on.
+        - "withhold": the names of files that the release does not have, which makes fetching them fail.
+        - "present": the names of files to put in the data lake as if they were fetched already.
+        - "state": asks, and is answered with "builds" begun, whether a build "started", and the "images" built.
+        """
+        if order.get("settle"):
+            self.settle()
+        if order.get("reset"):
+            self.reset()
+        if "docker" in order:
+            self.docker.configure(**order["docker"])
+        if "build" in order:
+            self.docker.build(**order["build"])
+        for name in order.get("hold", []):
+            self.bucket.gate(name)
+        for name in order.get("let", []):
+            self.bucket.gates[name].set()
+        for name in order.get("withhold", []):
+            del self.bucket.files[name]
+        for name in order.get("present", []):
+            self.lake.mkdir(parents=True, exist_ok=True)
+            (self.lake / name).write_bytes(self.files[name])
+        if order.get("release"):
+            self.docker.release()
+
+        return {
+            "builds": self.docker.builds,
+            "started": self.docker.started,
+            "images": self.docker.images,
+            "requests": list(self.bucket.requests),
+        }
+
+
+def serve_control(setup: FakeSetup, port: int) -> None:
+    """Listens on a port for a test to arrange the stand-ins, which it does by POSTing the JSON control takes."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.dumps(setup.control(json.loads(self.rfile.read(length) or b"{}"))).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="The server the interface's end-to-end tests run against.")
     parser.add_argument("--port", type=int, default=8799)
+    parser.add_argument(
+        "--setup-control-port",
+        type=int,
+        default=None,
+        help="stand in for Docker and where the data lake is fetched from, arranged by what is POSTed to this port",
+    )
     parser.add_argument("--static-dir", default=str(ROOT / "web" / "out"))
     parser.add_argument("--word-delay", type=float, default=WORD_DELAY)
     parser.add_argument("--max-upload-bytes", type=int, default=MAX_UPLOAD_BYTES)
     options = parser.parse_args()
 
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
+    setup = None
+    stand_ins: dict[str, Any] = {}
+    if options.setup_control_port is not None:
+        setup = FakeSetup(workspace.parent / f"{workspace.name}-docker", workspace)
+        serve_control(setup, options.setup_control_port)
+        stand_ins = {"docker_command": setup.docker.command, "release_url": setup.bucket.url}
     try:
         serve(
             workspace=workspace,
@@ -383,9 +506,13 @@ def main() -> None:
             check_keys=False,
             client=ScriptedClient(options.word_delay),
             max_upload_bytes=options.max_upload_bytes,
+            **stand_ins,
         )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
+        if setup is not None:
+            shutil.rmtree(setup.docker.directory, ignore_errors=True)
+            setup.bucket.close()
 
 
 if __name__ == "__main__":

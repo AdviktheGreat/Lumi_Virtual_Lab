@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, and the scientists |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, and the scientists; and what there is to set up for code in Docker, and the jobs that build and fetch it |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -80,6 +80,30 @@ undone, and shows what the server refuses beside the button. Closing with someth
 and a scientist that is half written counts as not saved. A conversation that cannot start because its model's key is not set says which key,
 and offers to go and set it (`src/lib/errors.ts` tells those from other errors by the server's `missing_keys` code).
 
+## Setting up for code in Docker
+
+The container icon in the sidebar, beside the gear, opens the setup, in three parts. Building and fetching go on in the
+server, so they go on when the setup is closed, the icon shows a dot while one does, and the setup shows them again
+when it is opened.
+
+- **Overview** is the checklist the server draws up (`GET /api/setup`): Docker, the image, and the key for the model,
+  and the data lake if it is wanted, each marked done, to do, in progress, or waiting. Each stage of the image shows
+  whether it is built, with a button to build it where Docker can, its progress, and what it printed; a build that failed
+  says why. Where the computer is not the one the image is made for, it says the image will run slowly. Check again asks
+  Docker again.
+- **Data lake** lists the files of Biomni's data lake and which are there, with a search and a way to show only those
+  that are not. It offers to fetch all that are missing, or only those that may be used commercially, and asks first,
+  saying about how much that is (the server cannot say of a file it has not got, so 11 GB is a figure kept in
+  `src/lib/setup.ts`) and warning when the disk has less room than that. A file can be fetched on its own.
+- **Jobs** lists what has been built or fetched since the server started, the latest first. A job at work has a Stop
+  button, which says Stopping until the server has stopped it, and a job can show what it printed.
+
+A job is followed by asking for the jobs every second while one is at work, and when the page is shown again (the page
+may have been hidden for hours). What a job printed is asked for from the line after the last that is held
+(`?log_from=`), so only what is new is sent, and the page keeps the last 2000 lines, as the server does. When a job
+finishes, what it changed (the steps, the images, the files) is asked for again. A conversation that cannot start because
+Docker or the image is not ready (the server's `setup_needed` code) offers a Set up button that opens the setup.
+
 ## Steering a turn
 
 While the lead is at work, the box in the composer takes a note instead of a message, and the lead reads it before its
@@ -126,6 +150,14 @@ The tests of the settings, the keys, and the scientists (`e2e/own-server`) chang
 they run in a project of their own, against a second scripted server on the next port (8800). Each file of them puts
 back what it changed before each test, and neither touches what the other does. They run in order within a file, and a
 test that needs a key puts it there itself, since the server keeps none.
+
+The tests of the setup (`e2e/setup`) have a third scripted server, on the port after that (8801), which is given stand-ins
+for Docker and for the place the data lake is fetched from, so that nothing is built or downloaded: a Docker that says
+what a test tells it, and files of 10 KB for every file of the data lake. A test arranges them through a small server on
+the port after (8802, `--setup-control-port`; `e2e/setup/state.ts` is the client, and `FakeSetup.control` in
+`e2e/scripted_server.py` lists what it can be told), for instance to hold a download so that its progress and stopping can
+be seen. These run in a project of their own (`--project=setup`), one test at a time, and put the stand-ins back as they
+were before each test.
 
 The scripted model answers a question with a short reply that repeats it. What else a message makes it do depends on
 a word in it:

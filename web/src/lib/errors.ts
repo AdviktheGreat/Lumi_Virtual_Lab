@@ -12,14 +12,20 @@ export function describeError(error: unknown): string {
 // What a page tells of an error, and where the person can put it right, if there is such a place
 export interface Problem {
   text: string;
-  fix: "keys" | null;
+  fix: "keys" | "setup" | null;
 }
 
 export function plainProblem(text: string): Problem {
   return { text, fix: null };
 }
 
-// A model whose provider's key is not set is put right by giving the key
+// What the server's error codes are put right by: a model whose provider's key is not set, by giving the key, and code in
+// Docker that has no Docker or no image to run in, by setting them up
+const FIXES = new Map<string, NonNullable<Problem["fix"]>>([
+  ["missing_keys", "keys"],
+  ["setup_needed", "setup"],
+]);
+
 export function problemOf(error: unknown): Problem {
-  return { text: describeError(error), fix: error instanceof ApiError && error.code === "missing_keys" ? "keys" : null };
+  return { text: describeError(error), fix: (error instanceof ApiError && FIXES.get(error.code)) || null };
 }

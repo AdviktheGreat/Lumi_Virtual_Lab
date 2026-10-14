@@ -4,7 +4,9 @@ import type {
   ChatFiles,
   ChatInfo,
   ChatSummary,
+  DataLake,
   Health,
+  Job,
   KeyStatuses,
   LibraryScientist,
   Models,
@@ -12,6 +14,7 @@ import type {
   Scientist,
   Settings,
   SettingsChange,
+  SetupStatus,
 } from "./types";
 
 // What the server's error says: its code is a word to act on, its message is for a person, and the rest is
@@ -206,6 +209,18 @@ export const api = {
     (await request<{ scientists: LibraryScientist[] }>("PUT", "/scientists", scientist)).scientists,
   removeScientist: async (title: string) =>
     (await request<{ scientists: LibraryScientist[] }>("DELETE", `/scientists/${encodeURIComponent(title)}`)).scientists,
+  // Docker, the images, the data lake, the jobs, and what is left to do. Asking is not quick, since Docker is asked.
+  setup: (signal?: AbortSignal) => request<SetupStatus>("GET", "/setup", undefined, signal),
+  // Starts building a stage of the image, which goes on as a job
+  buildImage: (stage: string) => request<Job>("POST", `/setup/images/${encodeURIComponent(stage)}`),
+  dataLake: (signal?: AbortSignal) => request<DataLake>("GET", "/setup/data-lake", undefined, signal),
+  // Starts fetching the files named, or all of them if none are named, which goes on as a job
+  fetchDataLake: (names?: string[]) => request<Job>("POST", "/setup/data-lake", names === undefined ? undefined : { names }),
+  jobs: async (signal?: AbortSignal) => (await request<{ jobs: Job[] }>("GET", "/setup/jobs", undefined, signal)).jobs,
+  // A job with what it printed from the line numbered, counting from 0
+  job: (id: string, logFrom: number, signal?: AbortSignal) =>
+    request<Job>("GET", `/setup/jobs/${encodeURIComponent(id)}?log_from=${logFrom}`, undefined, signal),
+  stopJob: (id: string) => request<Job>("POST", `/setup/jobs/${encodeURIComponent(id)}/stop`),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),

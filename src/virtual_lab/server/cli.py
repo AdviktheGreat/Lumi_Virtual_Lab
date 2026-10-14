@@ -12,7 +12,7 @@ from typing import Any
 
 import uvicorn
 
-from virtual_lab.constants import MAX_UPLOAD_BYTES
+from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_UPLOAD_BYTES
 from virtual_lab.server.app import create_app
 from virtual_lab.server.security import LOCAL_HOSTS, new_token
 from virtual_lab.ui.workspace import DEFAULT_WORKSPACE
@@ -83,6 +83,8 @@ def serve(
     client: Any = None,
     chat_models: Any = None,
     max_upload_bytes: int = MAX_UPLOAD_BYTES,
+    docker_command: Sequence[str] = ("docker",),
+    release_url: str = BIOMNI_RELEASE_URL,
 ) -> None:
     """Starts the server and waits until it is stopped.
 
@@ -100,6 +102,8 @@ def serve(
     :param client: An OpenAI client for every conversation, as Chat takes one.
     :param chat_models: Chat models for every conversation, as Chat takes them.
     :param max_upload_bytes: The most bytes of one file that may be attached to a message.
+    :param docker_command: How the setup invokes Docker, which is for tests: code runs with "docker".
+    :param release_url: Where the setup fetches the data lake from, which is for tests.
     :raises ValueError: If it would listen beyond this machine without being told what it is reached by.
     :raises OSError: If the port is not free.
     """
@@ -119,6 +123,8 @@ def serve(
         client=client,
         chat_models=chat_models,
         max_upload_bytes=max_upload_bytes,
+        docker_command=docker_command,
+        release_url=release_url,
     )
     sock = listen(host, port)
     address = address_of(host, sock)

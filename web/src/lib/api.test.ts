@@ -150,6 +150,64 @@ describe("the API", () => {
     expect(calls[1][1].body).toBe(JSON.stringify({ title: "Chemist", expertise: "Bonds", goal: "Make", role: "Bench" }));
   });
 
+  it("asks for the setup, and for the data lake, with nothing in the request", async () => {
+    const fetch = vi.fn(async () => answer({ steps: [], files: [] }));
+    vi.stubGlobal("fetch", fetch);
+
+    await api.setup();
+    await api.dataLake();
+
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([address, options]) => [address, options.method, options.body])).toEqual([
+      ["/api/setup", "GET", undefined],
+      ["/api/setup/data-lake", "GET", undefined],
+    ]);
+  });
+
+  it("starts a build by the stage in the address, and says nothing else", async () => {
+    const fetch = stub(answer({ id: "abc", kind: "image" }));
+
+    expect(await api.buildImage("base")).toMatchObject({ id: "abc" });
+    expect(fetch).toHaveBeenCalledWith("/api/setup/images/base", expect.objectContaining({ method: "POST", body: undefined }));
+
+    await api.buildImage("a/b c");
+    expect(fetch).toHaveBeenLastCalledWith("/api/setup/images/a%2Fb%20c", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("starts the fetching of all the data lake with no names, and of some with the names", async () => {
+    const fetch = vi.fn(async () => answer({ id: "abc" }));
+    vi.stubGlobal("fetch", fetch);
+
+    await api.fetchDataLake();
+    await api.fetchDataLake(["a.csv", "b c.tsv"]);
+
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([address, options]) => [address, options.method, options.body])).toEqual([
+      ["/api/setup/data-lake", "POST", undefined],
+      ["/api/setup/data-lake", "POST", JSON.stringify({ names: ["a.csv", "b c.tsv"] })],
+    ]);
+  });
+
+  it("lists the jobs from what the server wraps them in, and asks for one with what it printed from a line", async () => {
+    const fetch = vi.fn(async (address: string) =>
+      answer(address === "/api/setup/jobs" ? { jobs: [{ id: "abc" }, { id: "def" }] } : { id: "abc", log: { from: 4, lines: [] } }),
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    expect(await api.jobs()).toEqual([{ id: "abc" }, { id: "def" }]);
+    expect(await api.job("a/b c", 4)).toMatchObject({ log: { from: 4 } });
+
+    const addresses = (fetch.mock.calls as unknown as [string, RequestInit][]).map(([address]) => address);
+    expect(addresses).toEqual(["/api/setup/jobs", "/api/setup/jobs/a%2Fb%20c?log_from=4"]);
+  });
+
+  it("asks a job to stop by its id", async () => {
+    const fetch = stub(answer({ id: "a b", state: "stopping" }));
+
+    expect(await api.stopJob("a b")).toMatchObject({ state: "stopping" });
+    expect(fetch).toHaveBeenCalledWith("/api/setup/jobs/a%20b/stop", expect.objectContaining({ method: "POST", body: undefined }));
+  });
+
   it("takes no answer for the answer to a removal", async () => {
     const fetch = stub(new Response(null, { status: 204 }));
 
