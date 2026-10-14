@@ -10,6 +10,7 @@ import { baseName, dividerOf, fileUrl, folderOf, formatBytes, inFolders, matchin
 import { timeAgoFromEpoch } from "@/lib/format";
 import type { ChatFile } from "@/lib/types";
 import { PREVIEW_BYTES, useFileText, type Listed } from "@/lib/use-files";
+import { ScrollBox } from "@/components/scroll-box";
 
 function KindIcon({ file, className }: { file: ChatFile; className?: string }) {
   switch (previewOf(file)) {
@@ -85,7 +86,7 @@ function Table({ text, file, truncated }: { text: string; file: ChatFile; trunca
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="overflow-auto rounded-lg border border-border">
+      <ScrollBox className="overflow-auto rounded-lg border border-border">
         <table className="w-full border-collapse text-xs" data-testid="file-table">
           <thead className="sticky top-0 bg-muted">
             <tr>
@@ -108,7 +109,7 @@ function Table({ text, file, truncated }: { text: string; file: ChatFile; trunca
             ))}
           </tbody>
         </table>
-      </div>
+      </ScrollBox>
       {table.cut && <p className="text-xs text-muted-foreground">Only the start of the table is shown. Download the file to see all of it.</p>}
     </div>
   );
@@ -120,7 +121,7 @@ function TextPreview({ id, file }: { id: string; file: ChatFile }) {
 
   if (reading.kind === "loading") {
     return (
-      <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading the file">
+      <div className="flex flex-col gap-2" role="status" aria-busy="true" aria-label="Loading the file">
         <Skeleton className="h-4 w-4/5" />
         <Skeleton className="h-4 w-3/5" />
         <Skeleton className="h-4 w-2/3" />
@@ -141,12 +142,13 @@ function TextPreview({ id, file }: { id: string; file: ChatFile }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <pre
+      <ScrollBox
+        as="pre"
         className="overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-xs leading-5"
         data-testid="file-text"
       >
         {reading.file.text}
-      </pre>
+      </ScrollBox>
       {reading.file.truncated && (
         <p className="text-xs text-muted-foreground">
           Only the first {formatBytes(PREVIEW_BYTES)} are shown. Download the file to see all of it.
@@ -204,9 +206,9 @@ function Detail({ id, file, onBack }: { id: string; file: ChatFile; onBack: () =
           </Button>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      <ScrollBox className="min-h-0 flex-1 overflow-auto p-3">
         <Preview id={id} file={file} />
-      </div>
+      </ScrollBox>
     </div>
   );
 }
@@ -306,7 +308,7 @@ export function FilesPanel({ id, listed, onClose }: { id: string; listed: Listed
           </div>
         )}
         {!listed.loaded && listed.error === null && (
-          <div className="flex flex-col gap-2 p-3" aria-busy="true" aria-label="Loading the files">
+          <div className="flex flex-col gap-2 p-3" role="status" aria-busy="true" aria-label="Loading the files">
             <Skeleton className="h-7 w-full" />
             <Skeleton className="h-7 w-full" />
             <Skeleton className="h-7 w-4/5" />

@@ -228,7 +228,7 @@ export function LakeTab({
         Biomni&apos;s release, and ones already there are left alone.
       </p>
       {lake.kind === "loading" && (
-        <div className="flex flex-col gap-2" aria-busy="true" aria-label="Looking at the data lake">
+        <div className="flex flex-col gap-2" role="status" aria-busy="true" aria-label="Looking at the data lake">
           {[0, 1, 2, 3].map((row) => (
             <Skeleton key={row} className="h-10 w-full" />
           ))}

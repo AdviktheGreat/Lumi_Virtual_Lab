@@ -108,7 +108,7 @@ export function JobsTab({
   return (
     <Section>
       {jobs === null && (
-        <div className="flex flex-col gap-2" aria-busy="true" aria-label="Looking at the jobs">
+        <div className="flex flex-col gap-2" role="status" aria-busy="true" aria-label="Looking at the jobs">
           {[0, 1].map((row) => (
             <Skeleton key={row} className="h-20 w-full" />
           ))}

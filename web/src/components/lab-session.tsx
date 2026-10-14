@@ -18,6 +18,7 @@ import {
   type LabTurn,
 } from "@/lib/lab";
 import { cn } from "@/lib/utils";
+import { ScrollBox } from "@/components/scroll-box";
 
 // One for each of the tones that speakerTone gives
 const TONES = [
@@ -139,9 +140,12 @@ function StepView({ turn, at, waiting }: { turn: LabTurn; at: number; waiting: b
               <summary className="w-fit cursor-pointer rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
                 What it gave back
               </summary>
-              <pre className="mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-[13px] leading-5">
+              <ScrollBox
+                as="pre"
+                className="mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-[13px] leading-5"
+              >
                 {output}
-              </pre>
+              </ScrollBox>
             </details>
           )}
         </div>

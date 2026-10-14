@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { formatDuration, stripAnsi } from "@/lib/format";
 import type { Cell } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
+import { ScrollBox } from "@/components/scroll-box";
 
 // Lines of code shown before the rest is folded away
 const CODE_LINES = 14;
@@ -124,7 +125,8 @@ export function CodeCell({ cell }: { cell: Cell }) {
         <Status status={cell.status} duration={cell.duration} />
       </div>
       {output !== "" && (
-        <pre
+        <ScrollBox
+          as="pre"
           role="group"
           aria-label="Output"
           className={cn(
@@ -138,7 +140,7 @@ export function CodeCell({ cell }: { cell: Cell }) {
             </span>
           )}
           {output}
-        </pre>
+        </ScrollBox>
       )}
       {errorShown && (
         <p role="alert" className="whitespace-pre-wrap break-words rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 font-mono text-[13px] text-destructive">
@@ -146,9 +148,14 @@ export function CodeCell({ cell }: { cell: Cell }) {
         </p>
       )}
       {value !== null && (
-        <pre role="group" className="max-h-48 overflow-auto rounded-lg border border-border bg-card px-3 py-2 font-mono text-[13px]" aria-label="Value">
+        <ScrollBox
+          as="pre"
+          role="group"
+          className="max-h-48 overflow-auto rounded-lg border border-border bg-card px-3 py-2 font-mono text-[13px]"
+          aria-label="Value"
+        >
           {value}
-        </pre>
+        </ScrollBox>
       )}
       {plots.length > 0 && (
         <div role="group" className="grid gap-2 sm:grid-cols-2" aria-label="Figures">

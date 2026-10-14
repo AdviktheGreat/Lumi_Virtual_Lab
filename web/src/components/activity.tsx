@@ -13,6 +13,7 @@ import { describeResources, parseArguments, summarize } from "@/lib/calls";
 import { stripAnsi } from "@/lib/format";
 import type { Call, Resources, Step } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
+import { ScrollBox } from "@/components/scroll-box";
 
 // Names listed in a card before the rest are counted
 const NAMES_SHOWN = 40;
@@ -81,9 +82,12 @@ function CodeCall({ call }: { call: Call }) {
           <PendingCell code={summary.code.text} language={summary.code.language} running={running} />
         )}
         {call.cells.length === 0 && !running && call.output !== null && call.output !== "" && (
-          <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 text-[13px] leading-5">
+          <ScrollBox
+            as="pre"
+            className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 text-[13px] leading-5"
+          >
             {stripAnsi(call.output)}
-          </pre>
+          </ScrollBox>
         )}
       </div>
     </div>
@@ -131,21 +135,24 @@ function ToolCall({ call }: { call: Call }) {
         {call.lab === null && asked === null && call.arguments.trim() !== "" && call.arguments.trim() !== "{}" && (
           <div className="flex flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">Asked</span>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-[13px]">
+            <ScrollBox
+              as="pre"
+              className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-[13px]"
+            >
               {call.arguments}
-            </pre>
+            </ScrollBox>
           </div>
         )}
         {call.output !== null && (
           <div className="flex flex-col gap-1">
             <span className="text-xs font-medium text-muted-foreground">{call.lab === null ? "Result" : "Summary"}</span>
-            <div className="max-h-96 overflow-auto rounded-lg border border-border bg-background px-3 py-2">
+            <ScrollBox className="max-h-96 overflow-auto rounded-lg border border-border bg-background px-3 py-2">
               {written ? (
                 <Markdown text={call.output} className="text-sm leading-6" />
               ) : (
                 <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-5">{stripAnsi(call.output)}</pre>
               )}
-            </div>
+            </ScrollBox>
           </div>
         )}
         {call.output === null && call.status === "running" && (

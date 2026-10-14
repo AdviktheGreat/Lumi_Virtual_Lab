@@ -8,6 +8,7 @@ import { useFileUrl } from "@/components/chat-files";
 import { localPath } from "@/lib/files";
 import { linkKind } from "@/lib/links";
 import { cn } from "@/lib/utils";
+import { ScrollBox } from "@/components/scroll-box";
 
 const LINK = "font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:decoration-brand";
 
@@ -109,9 +110,9 @@ const components: Components = {
   ),
   hr: () => <hr className="my-1 border-border" />,
   table: ({ children }) => (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <ScrollBox className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full border-collapse text-sm">{children}</table>
-    </div>
+    </ScrollBox>
   ),
   thead: ({ children }) => <thead className="bg-muted/60">{children}</thead>,
   th: ({ children, style }) => (

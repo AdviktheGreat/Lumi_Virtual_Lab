@@ -164,7 +164,7 @@ export function ChatView({ id }: { id: string }) {
       <CaughtUpProvider value={caughtUp}>
         <PageHeader>
           <h1 className="min-w-0 flex-1 truncate text-sm font-medium" data-testid="chat-title">
-            {title || (status.kind === "ready" ? status.info.title : "")}
+            {title || (status.kind === "ready" ? status.info.title : "") || <span className="sr-only">Conversation</span>}
           </h1>
           {label && (
             <Badge variant="secondary" className="gap-1.5" data-testid="chat-state">
@@ -194,7 +194,7 @@ export function ChatView({ id }: { id: string }) {
               <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto" data-testid="transcript">
                 <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6">
                   {status.kind === "loading" && transcript.turns.length === 0 && (
-                    <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading the conversation">
+                    <div className="flex flex-col gap-3" role="status" aria-busy="true" aria-label="Loading the conversation">
                       <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />
                       <Skeleton className="h-4 w-4/5" />
                       <Skeleton className="h-4 w-3/5" />

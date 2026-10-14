@@ -151,6 +151,9 @@ test.describe("saving a conversation as a document", () => {
 
     await expect(toggle(page)).toHaveText("Saving…");
     await expect(toggle(page)).toHaveAttribute("aria-busy", "true");
+    // The menu the choice was made in is gone before the button is pressed again, as it is for anyone, since a press
+    // while it is still going is not taken as one to open it
+    await expect(page.getByTestId("export-html")).toBeHidden();
     await toggle(page).click();
     await expect(page.getByTestId("export-html")).toHaveAttribute("data-disabled", "");
     await expect(page.getByTestId("export-pdf")).toHaveAttribute("data-disabled", "");

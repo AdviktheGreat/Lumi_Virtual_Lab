@@ -9,6 +9,7 @@ import { CopyButton } from "@/components/copy-button";
 import { languageLabel } from "@/lib/calls";
 import { fold } from "@/lib/fold";
 import { cn } from "@/lib/utils";
+import { ScrollBox } from "@/components/scroll-box";
 
 const lowlight = createLowlight(common);
 
@@ -43,11 +44,11 @@ export function CodeBlock({ code, language, foldAfter, className }: CodeBlockPro
         <span>{language ? languageLabel(language) : "Code"}</span>
         <CopyButton text={code} label="Copy code" />
       </div>
-      <pre className="overflow-x-auto px-3 py-2.5 font-mono text-[13px] leading-5">
+      <ScrollBox as="pre" className="overflow-x-auto px-3 py-2.5 font-mono text-[13px] leading-5">
         <code>
           <Highlighted code={folding.text} language={language} />
         </code>
-      </pre>
+      </ScrollBox>
       {folding.foldable && (
         <Button
           type="button"
