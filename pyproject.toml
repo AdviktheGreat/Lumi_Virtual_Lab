@@ -68,8 +68,6 @@ mcp = ["mcp>=2.3,<3", "PyYAML"]
 pdf = ["weasyprint>=66"]
 # Reading papers saved as PDFs, for the tasks, databases, and software in them
 papers = ["pypdf>=5"]
-# The web interface, with virtual-lab-ui or launch_ui
-ui = ["gradio>=6.0"]
 # The server a page talks to, with virtual-lab-server or serve
 server = ["fastapi>=0.115", "uvicorn>=0.30"]
 nanobody-design = [
@@ -85,7 +83,7 @@ dev = [
     # What the server's tests send requests with, and read the server's streams with
     "httpx",
     # Every extra the tests use, so that none of them is skipped or fails for want of a package
-    "virtual-lab[bedrock,eval,mcp,ollama,papers,pdf,server,ui]",
+    "virtual-lab[bedrock,eval,mcp,ollama,papers,pdf,server]",
 ]
 
 [project.scripts]
@@ -93,7 +91,6 @@ virtual-lab-functions = "virtual_lab.functions_cli:main"
 virtual-lab-mcp = "virtual_lab.mcp_server:main"
 virtual-lab-papers = "virtual_lab.papers_cli:main"
 virtual-lab-server = "virtual_lab.server:main"
-virtual-lab-ui = "virtual_lab.ui:main"
 
 [tool.hatch.version]
 path = "src/virtual_lab/__about__.py"

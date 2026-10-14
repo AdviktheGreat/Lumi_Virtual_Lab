@@ -50,7 +50,7 @@ cd virtual_lab
 pip install -e .
 ```
 
-Tools from MCP servers, and serving tools over MCP with `virtual-lab-mcp`, need the MCP SDK, which the `mcp` extra installs: `pip install "virtual-lab[mcp]"`. Saving meetings as PDFs needs the `pdf` extra and the Pango library (see [Saving a meeting, a project, or a conversation as a document](#saving-a-meeting-a-project-or-a-conversation-as-a-document)). The web interface needs Gradio, which the `ui` extra installs: `pip install "virtual-lab[ui]"` (see [The web interface](#the-web-interface)). Reading papers in PDFs needs pypdf, which the `papers` extra installs: `pip install "virtual-lab[papers]"` (see [Growing the toolset from papers](#growing-the-toolset-from-papers)).
+Tools from MCP servers, and serving tools over MCP with `virtual-lab-mcp`, need the MCP SDK, which the `mcp` extra installs: `pip install "virtual-lab[mcp]"`. Saving meetings as PDFs needs the `pdf` extra and the Pango library (see [Saving a meeting, a project, or a conversation as a document](#saving-a-meeting-a-project-or-a-conversation-as-a-document)). The server that the chat interface talks to needs FastAPI and Uvicorn, which the `server` extra installs: `pip install "virtual-lab[server]"` (see [Serving the conversation to a page](#serving-the-conversation-to-a-page)). Reading papers in PDFs needs pypdf, which the `papers` extra installs: `pip install "virtual-lab[papers]"` (see [Growing the toolset from papers](#growing-the-toolset-from-papers)).
 
 
 ## Models and API keys
@@ -192,38 +192,6 @@ save_chat_pdf("workspace/chats/2025-03-04_0912_nanobodies")   # conversation.pdf
 - `meeting_html`, `project_html`, and `chat_html` return the document rather than saving it.
 - A conversation is saved as it went. Each turn has what the researcher wrote and attached, then what the lead did, in order: what it said, the code it ran with what it printed and the figures it drew, the files it made, and the tools it called with what they gave back. Each time the lead brought in the team, the call links to the team's session, which is added after the conversation as a meeting is. A conversation that is still going is saved as far as it has got, and saving it changes nothing in what it saved.
 - A conversation is read from its folder under the workspace's `chats/`, so `save_chat_html` and `save_chat_pdf` take that folder and save `conversation.html` or `conversation.pdf` in it unless told where. The figures are read from the session's directory, which is where the conversation says it was; if the folder has been moved, `files_dir` says where it is now.
-
-
-## The web interface
-
-Biomni has a Gradio page to work an agent from. The Virtual Lab has one for a lab: set up a meeting or a project, follow it as it happens, steer it or let it run, and read back everything it has done. It needs Gradio, which the `ui` extra installs.
-
-```bash
-pip install "virtual-lab[ui]"
-virtual-lab-ui                          # http://127.0.0.1:7860, opened in your browser
-virtual-lab-ui --workspace ~/lab --port 8000 --no-browser
-```
-
-```python
-from virtual_lab.ui import launch_ui
-
-launch_ui(workspace="~/lab", password="a secret")   # waits until stopped; block=False to carry on
-```
-
-The page has four tabs, in a light "lab notebook" look or a dark "control room" one, which the header switches between. It starts as your system is.
-
-- **Meeting room**: the agenda, the questions, who leads, who is on the team, the rounds, the model, the budget, the databases and MCP servers the agents may use, where their code runs, and what they are told of Biomni's tools, data, and know-how (`resources`, as `hold_meeting` takes it, which matters where code runs). The discussion appears reply by reply, as `on_event` reports it, and word by word if asked. While it runs, a note can be added for the next agent to speak (as `steer` takes it), the meeting can be paused, and it can be stopped, which saves what was done under `partial/`. A finished meeting can be followed up by a new one that builds on its summary, and saved as HTML or PDF. Scientists of your own can be added to the lab.
-- **Project**: a goal, and the team lead chooses the team (or you do), makes a plan, and decides each step. By default each decision waits on the page for you: approve it, approve it with your changes to the step, or stop the project, at once or after the step under way so that it ends with a report. Letting the project run on its own approves every step, still within its budget. The report can be saved as HTML or PDF, with its meetings if asked for.
-- **History**: every meeting and project in the workspace, read from the files they were saved in, including those run from a script and those that were interrupted. Selecting one shows it as a document. A project that stopped can be carried on from here, with a larger budget and more rounds.
-- **Settings**: the model, whether to stream, the budget, where code runs (nowhere, in a Docker container of plain Python or one of Biomni's three environments, or on this machine with no isolation), the interpreter for code on this machine, and a file of MCP servers to offer. These are what each new form starts with.
-
-Anything that waits for a person waits on the page: a step to approve, a tool that needs approval (see [Tools that wait for a person's approval](#tools-that-wait-for-a-persons-approval)), and a question an MCP server asks.
-
-- A run goes on whether or not a page is open, and a page opened later, or reloaded, shows the run that is going on. One meeting and one project can run at once.
-- Everything is kept in the workspace, `~/virtual_lab_workspace` unless `--workspace` says otherwise: `settings.json`, `scientists.json` for the scientists you add, and a directory for each meeting in `meetings/` and each project in `projects/`, named for the date and the agenda or goal, and saved as `hold_meeting` and `Project` save them. The page shows only what is in those files, so a run started from a script into the workspace appears in the history.
-- The page listens on this machine alone, with no password. Anyone who reaches it can spend on your API keys and, if code runs, run code on your machine or in its containers, so `--share` (a public link through Gradio, for 72 hours) and any `--host` beyond this machine are refused without a password, from `--password` or `$VIRTUAL_LAB_UI_PASSWORD`. Sign in with that password and any name.
-- The keys are the ones the models need, as [Models and API keys](#models-and-api-keys) says. A key can be set in Settings too, and is then used until the interface stops, never saved or shown. A model whose key is not set is refused when the run is started, saying which.
-- What the agents wrote is rendered as Markdown with any HTML shown as text, and a link opens in a new tab only if it is to a web page.
 
 
 ## Running the code that agents write
@@ -539,10 +507,11 @@ It prints a link with a token in it. Opening the link keeps the token in a cooki
 - `POST /api/chats/{id}/messages` answers at once (202), and the answer comes as events. `note`, `pause`, `resume`, and `stop` steer the turn that is running, and say whether they could.
 - `GET /api/chats/{id}/events` is a stream of server-sent events, each with its number as its `id`. It starts after `?after=` or the `Last-Event-ID` a browser sends when it opens the stream again, whichever is later, so a page that was cut off misses nothing. The server keeps nothing for a stream: it reads the conversation, so a slow page is told of the latest of a reply being written, and not of every word.
 - `POST /api/chats/{id}/uploads?name=...` takes a file as the body, and gives back what `save_upload` does, to name in the next message. `GET /api/chats/{id}/files` lists what the conversation made or was given, and `/files/{path}` sends one. A file the agents' code wrote is never run by the page: HTML and scripts are sent as plain text, only types that are safe to show are shown in the page and the rest are saved, all with a CSP that runs no script and fetches nothing from elsewhere, and a path that leaves the conversation's directory is not a file.
-- `GET` and `PATCH /api/settings` show and change what each new conversation starts with, `GET /api/models` lists the models and whether their keys are set, and `GET /api/keys` says which providers have theirs. `PUT /api/keys/{name}` sets a key until the server stops, and `DELETE` takes it away. A key is never saved or sent back. `/api/scientists` keeps the scientists you describe, as the web interface does.
+- `GET` and `PATCH /api/settings` show and change what each new conversation starts with, `GET /api/models` lists the models and whether their keys are set, and `GET /api/keys` says which providers have theirs. `PUT /api/keys/{name}` sets a key until the server stops, and `DELETE` takes it away. A key is never saved or sent back. `/api/scientists` keeps the scientists you describe, in `scientists.json` in the workspace.
 - Settings also say where Biomni's data lake is kept (`data_lake`, a full path, or the workspace's `data_lake/` if empty) and which of the keys the interface can set code is given in Docker (`forward_keys`, which a conversation's `code.forward_env` may replace). A conversation whose code runs in one of Biomni's environments is given the data lake to read, once there is one, and the keys it was told to forward, which are passed by name and never written down.
 - `GET /api/setup` says what code in Docker needs and what is there: whether Docker is installed and running, each stage of the sandbox image (`base`, `bio`, `full`) with whether it is built and about how long it takes, how much of the data lake is there and the space left, the jobs, and a checklist in the order to do it. A conversation whose code runs in Docker is not made while Docker is not running or its image is not built (`setup_needed`), rather than failing when its code first runs; `create_app(check_setup=False)` turns that off.
 - `POST /api/setup/images/{stage}` starts building a stage, and `POST /api/setup/data-lake` fetches the data lake (all of it, or `{"names": [...]}`), each answering at once (202) with a job. `GET /api/setup/data-lake` lists its files and which are there. A job reports what it is doing, its progress (the files and bytes fetched), and what it printed, from `GET /api/setup/jobs/{id}?log_from=` so that a page asks only for what is new; `POST /api/setup/jobs/{id}/stop` stops it, ending the build or leaving no part of a file, and stopping the server stops what is running. One image is built at a time, and one fetch runs at a time.
+- Everything is kept in the workspace, `~/virtual_lab_workspace` unless `--workspace` says otherwise: `settings.json`, `scientists.json`, a directory for each conversation in `chats/`, named for the date and the title, and `data_lake/`.
 - With `--static-dir` (or pages in the install), the server also shows the built pages of an interface, and any address that is not a file or under `/api` shows its first page.
 
 ### The chat interface
@@ -557,6 +526,8 @@ virtual-lab-server                      # now shows them at the link it prints
 ```
 
 `npm run package` is what makes a build of the package carry the pages (they are not kept in the repository). To change the interface, build into `web/out` with `npm run build` and run `virtual-lab-server --static-dir web/out`. `npm run lint`, `npm run typecheck`, and `npm test` check the code, and `npm run test:e2e` drives a browser through the built pages against the real server with a script where the model would be, so it needs no key. See `web/README.md`.
+
+The chat interface is the one page. It does not set up a meeting or a project itself: in a conversation the lead brings in the team for a meeting when a question needs it, and a meeting or a project run from a script, with `hold_meeting` or `Project`, is saved and resumed as described above. An earlier version had a Gradio page for setting up a meeting or a project, started with `virtual-lab-ui`, which has been removed along with the `ui` extra.
 
 ## Growing the toolset from papers
 

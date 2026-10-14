@@ -1,6 +1,7 @@
 """Tests of what a conversation is set up with, and that it is carried on as it was set up."""
 
 import json
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import pytest
 
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.scientists import SCIENTISTS
+from virtual_lab.server.code import CodeSetup
 from virtual_lab.server.config import (
     CONFIG_FILE_NAME,
     DEFAULT_TEAM,
@@ -25,8 +27,7 @@ from virtual_lab.server.config import (
     save_config,
     update_settings,
 )
-from virtual_lab.ui.runs import CodeSetup
-from virtual_lab.ui.workspace import Settings, Workspace
+from virtual_lab.server.workspace import Settings, Workspace
 
 from conftest import TEST_MODEL
 
@@ -297,11 +298,11 @@ class TestKeeping:
 
 
 class TestSettings:
-    def test_settings_are_shown_without_the_mcp_config_the_interface_keeps(self) -> None:
-        shown = public_settings(Settings(mcp_config="/somewhere/servers.json"))
+    def test_every_setting_is_shown(self) -> None:
+        shown = public_settings(Settings())
 
         assert tuple(shown) == PUBLIC_SETTINGS
-        assert "mcp_config" not in shown
+        assert set(shown) == {item.name for item in fields(Settings)}
 
     def test_the_data_lake_and_the_keys_code_may_read_are_among_them(self) -> None:
         shown = public_settings(Settings(data_lake="/lake", forward_keys=["ANTHROPIC_API_KEY"]))
@@ -314,7 +315,7 @@ class TestSettings:
     def test_a_change_gives_settings_with_it_made_and_leaves_the_old_ones_as_they_were(
         self, workspace: Workspace
     ) -> None:
-        old = Settings(max_cost=2.0, mcp_config="/keep/this.json")
+        old = Settings(max_cost=2.0)
 
         new = update_settings(
             old, {"model": "claude-sonnet-4-5", "max_cost": 3, "code": "docker", "sandbox": "bio"}, workspace
@@ -322,7 +323,6 @@ class TestSettings:
 
         assert (new.model, new.max_cost, new.code, new.sandbox) == ("claude-sonnet-4-5", 3.0, "docker", "bio")
         assert isinstance(new.max_cost, float)
-        assert new.mcp_config == "/keep/this.json"
         assert (old.max_cost, old.model, old.code) == (2.0, Settings().model, "none")
 
     def test_a_limit_of_nothing_may_be_spent_can_be_set(self, workspace: Workspace) -> None:
@@ -335,7 +335,6 @@ class TestSettings:
         ("changes", "message"),
         [
             ({"colour": "red"}, "There is no setting colour"),
-            ({"mcp_config": "/x.json"}, "There is no setting mcp_config"),
             ({"model": ""}, "Unable to determine the source"),
             ({"model": "no-such-model"}, "Unable to determine the source"),
             ({"code": "cloud"}, "Code runs in one of"),

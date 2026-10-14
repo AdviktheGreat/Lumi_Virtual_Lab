@@ -23,7 +23,7 @@ from virtual_lab.server.conversations import (
 from virtual_lab.server.errors import ApiError
 from virtual_lab.server.setup import Setup
 from virtual_lab.session import DockerSession, LocalSession
-from virtual_lab.ui.workspace import Settings, Workspace
+from virtual_lab.server.workspace import Settings, Workspace
 
 from conftest import TEST_MODEL, FakeClient, fake_llm, text_response
 from setup_fakes import FakeDocker

@@ -18,9 +18,9 @@ from virtual_lab.llm import detect_source
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.schemas import normalize_title
 from virtual_lab.scientists import SCIENTISTS
-from virtual_lab.ui.library import SETTABLE_KEYS, missing_keys, models, provider_of
-from virtual_lab.ui.runs import CodeSetup, agent_from
-from virtual_lab.ui.workspace import SCIENTIST_FIELDS, Settings, Workspace, read_json
+from virtual_lab.server.code import CodeSetup
+from virtual_lab.server.library import SETTABLE_KEYS, missing_keys, models, provider_of
+from virtual_lab.server.workspace import SCIENTIST_FIELDS, Settings, Workspace, read_json
 from virtual_lab.utils import write_atomically
 
 CONFIG_FILE_NAME = "config.json"
@@ -36,7 +36,7 @@ DEFAULT_TEAM = (
     ),
 )
 
-# The settings a page shows and changes: those of a conversation, and not the MCP config the interface keeps
+# The settings a page shows and changes
 PUBLIC_SETTINGS = (
     "model",
     "stream",
@@ -51,6 +51,17 @@ PUBLIC_SETTINGS = (
 
 # What a team's scientist is described with
 Spec = Mapping[str, Any]
+
+
+def agent_from(data: Mapping[str, Any]) -> Agent:
+    """An agent from its description, as describe_agent gives it, or as the page has it."""
+    return Agent(
+        title=str(data["title"]).strip(),
+        expertise=str(data["expertise"]).strip(),
+        goal=str(data["goal"]).strip(),
+        role=str(data["role"]).strip(),
+        model=str(data["model"]).strip(),
+    )
 
 
 @dataclass(frozen=True)
