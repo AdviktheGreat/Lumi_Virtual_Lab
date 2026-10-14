@@ -1,49 +1,8 @@
-import type { Page } from "@playwright/test";
+import { calling, lead, tell, user, type Told } from "./replay";
 import { expect, test } from "./fixtures";
 
 // What the page shows for events that the scripted lead does not tell of, such as a turn that was cut short and the
 // notes a researcher leaves: the conversation is real, and the events it is told of are written here
-
-interface Told {
-  kind: string;
-  turn?: number;
-  speaker?: string | null;
-  text?: string;
-  data?: Record<string, unknown>;
-}
-
-async function tell(page: Page, events: Told[]): Promise<void> {
-  // Titled at once, for the reason that askWhereCodeRuns is
-  const made = await page.request.post("/api/chats", { data: { title: `Replay: ${test.info().title}` } });
-  expect(made.status()).toBe(201);
-  const id: string = (await made.json()).id;
-
-  const body = events
-    .map((event, at) => {
-      const whole = { id: at + 1, turn: 1, speaker: null, text: "", data: {}, time: 0, ...event };
-
-      return `event: chat\nid: ${at + 1}\ndata: ${JSON.stringify(whole)}\n\n`;
-    })
-    .join("");
-  await page.route("**/api/chats/*/events*", (route) =>
-    route.fulfill({
-      status: 200,
-      headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
-      // The stream is not made again for a while, which would only tell of the same events
-      body: `retry: 600000\n\n${body}`,
-    }),
-  );
-  await page.goto(`/chat?id=${id}`);
-}
-
-const user = (text: string): Told => ({ kind: "user", speaker: "Human researcher", text, data: { attachments: [] } });
-const lead = "Principal Investigator";
-const calling = (id: string, name: string, args: unknown): Told => ({
-  kind: "tool_calls",
-  speaker: lead,
-  text: "Starting.",
-  data: { calls: [{ id, name, arguments: JSON.stringify(args) }] },
-});
 
 test.describe("events as the server tells of them", () => {
   test("a call that was cut short before it answered is said to be, with the code it was to run", async ({ page }) => {

@@ -28,9 +28,10 @@ export function ServerGate({ children }: { children: React.ReactNode }) {
   }
   if (server.status === "checking") {
     return (
-      <div className="flex h-dvh items-center justify-center" aria-busy="true">
+      <main className="flex h-dvh items-center justify-center" aria-busy="true">
+        <h1 className="sr-only">Looking for the server</h1>
         <Brand className="animate-pulse" />
-      </div>
+      </main>
     );
   }
 

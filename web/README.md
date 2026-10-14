@@ -180,6 +180,7 @@ a word in it:
 | `slow:` | Writes a long reply, slowly, which a test can follow or stop |
 | `fail:` | Fails |
 | `markdown:` | Answers with a page of Markdown, including what a page must not trust: a script, a tracking image, an address that runs code |
+| `wide:` | Answers with a table and lines of code that run past the width of the page, for what scrolls in a reply |
 | `code:hello`, `error`, `two`, `plot`, `long`, `big`, `slow` | Runs code in the conversation's session first, as the word says, and answers once it has run |
 | `code:files` | Runs code that writes one of each kind of file the panel shows differently: a long table, a wide one, a long log, a file that is not text, and an empty one |
 | `tool:unknown`, `tool:resources` | Calls a tool it does not have, or looks for resources |
@@ -192,6 +193,22 @@ a word in it:
 Code runs on this machine, so a test that wants it makes its conversation through the server with `code: {where:
 "local"}`, as `askWhereCodeRuns` in `e2e/fixtures.ts` does. `e2e/replay.spec.ts` replaces a conversation's event stream
 with events written in the test, for what the scripted lead does not do, such as a turn that is cut short.
+
+## How the pages look, and who can use them
+
+`e2e/appearance.spec.ts` goes through the pages in both themes, at the width of a desktop and of a phone: the home page,
+replies, a team's session, an error, the menu for saving, the files and what is shown of them, the conversations, the
+settings, and the setup. At each it runs [axe](https://github.com/dequelabs/axe-core) (`e2e/axe.ts`), which checks the page
+against the rules for being usable without a mouse or good eyes (contrast, names, landmarks, and what can be reached from
+the keyboard), and looks for the page going past its edge. It also holds what is being got, so as to look at what is shown
+meanwhile. A rule is left out only where the page is not what is wrong: the order of headings in what a model writes, and
+what a menu that is open puts behind it.
+
+What scrolls, such as output, code, a table, or a file, is a `ScrollBox` (`src/components/scroll-box.tsx`). The arrow
+keys scroll only what has the focus, so it can be reached from the keyboard while what is in it is more than it shows, and
+is not one more stop in the order of the page when it is not. It looks again as the window changes and as what is in it
+changes, which does not always make it draw itself again. Anything new that scrolls is made with it, which axe says when
+it is not.
 
 ## Notes
 

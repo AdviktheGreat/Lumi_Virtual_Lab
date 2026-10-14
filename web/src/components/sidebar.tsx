@@ -62,7 +62,7 @@ function ChatList() {
 
   if (chats === null) {
     return (
-      <div className="flex flex-col gap-2 px-2.5 py-1" aria-busy="true" aria-label="Loading conversations">
+      <div className="flex flex-col gap-2 px-2.5 py-1" role="status" aria-busy="true" aria-label="Loading conversations">
         {[0, 1, 2].map((row) => (
           <div key={row} className="flex flex-col gap-1.5">
             <Skeleton className="h-4 w-4/5" />

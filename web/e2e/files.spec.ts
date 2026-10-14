@@ -287,7 +287,7 @@ test.describe("the files of a conversation", () => {
     await expect.poll(() => asked).toBe(2);
     await toggle(page).click();
 
-    await expect(panel(page).getByLabel("Loading the files")).toBeVisible();
+    await expect(panel(page).getByRole("status", { name: "Loading the files" })).toBeVisible();
     await expect(panel(page).getByRole("alert")).toHaveCount(0);
   });
 

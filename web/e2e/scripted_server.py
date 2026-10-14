@@ -8,6 +8,8 @@ from a script: no key is needed, and every run says the same. What it says depen
   while it is still going.
 - "markdown:" anywhere in the message makes it answer with a page of Markdown, with what a page must not trust in it,
   once it has done what else the message asks, so that the figure the page names can be one the code drew.
+- "wide:" anywhere in the message makes it answer with a table, and with lines of code, that run past the width of the
+  page, so that what scrolls in a reply can be reached from a keyboard.
 - "code:" and a word (hello, error, two, plot, long, big, slow, files) make it run code in the conversation's session
   first, as the word says, and answer once the code has run. "tool:unknown" makes it call a tool it does not have, and
   "tool:resources" makes it look for resources, and choose the know-how documents there are. "lab:team" makes it bring
@@ -99,6 +101,28 @@ with open("results.csv", "w") as file:
     file.write("gene,score\\nTP53,0.91\\n")
 print("drawn")
 """
+
+# What "wide:" answers with: a table of ten columns whose cells cannot be broken, a line of code that is wider than any
+# window, and a line that is wider than the page is with the sidebar beside it and narrower than it is without
+WIDE_REPLY = """\
+A table with more columns than a page has room for:
+
+| Sample | Transcript | Variant | Position | Depth | Quality | Strand | Allele | Source | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ENSG00000141510.18 | ENST00000269305.9 | NM_000546.6:c.215C>G | chr17:7661779-7687550 | 1021.5x | Q38.25 | forward | rs1042522 | ClinVar-2024-03 | pathogenic |
+
+A line of code that no window is wide enough for:
+
+```python
+print("%s")
+```
+
+And one that fits a wide window and not a narrow one:
+
+```python
+total = compute_total(alpha, beta, gamma, delta, epsilon, zeta, eta, theta)
+```
+""" % " ".join(f"word{number}" for number in range(1, 41))
 
 TEAM_AGENDA = "Design a nanobody against TP53."
 # What "code:files" writes, which is one of each of what the panel of files shows differently: a long table, a wide one
@@ -363,6 +387,8 @@ class ScriptedCompletions(FakeCompletions):
             response = text_response(MARKDOWN_REPLY)
         elif steps is not None:
             response = text_response(f"That is done: {len(steps)} step{'s' if len(steps) != 1 else ''} ran.")
+        elif "wide:" in question:
+            response = text_response(WIDE_REPLY)
         else:
             response = text_response(reply_to(question))
         if kwargs.get("stream"):

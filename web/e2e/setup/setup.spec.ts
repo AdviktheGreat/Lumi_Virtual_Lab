@@ -355,10 +355,10 @@ test.describe("the setup", () => {
     });
     const dialog = await openSetup(page);
 
-    await expect(dialog.getByLabel("Looking at what is set up")).toBeVisible();
+    await expect(dialog.getByRole("status", { name: "Looking at what is set up" })).toBeVisible();
     answer();
     await expect(dialog.getByRole("list", { name: "What there is to set up" })).toBeVisible();
-    await expect(dialog.getByLabel("Looking at what is set up")).toHaveCount(0);
+    await expect(dialog.getByRole("status", { name: "Looking at what is set up" })).toHaveCount(0);
   });
 });
 
@@ -722,10 +722,10 @@ test.describe("the data lake", () => {
     });
     const dialog = await openSetup(page, "Data lake");
 
-    await expect(dialog.getByLabel("Looking at the data lake")).toBeVisible();
+    await expect(dialog.getByRole("status", { name: "Looking at the data lake" })).toBeVisible();
     answer();
     await expect(dialog.getByText("0 of 76 files")).toBeVisible();
-    await expect(dialog.getByLabel("Looking at the data lake")).toHaveCount(0);
+    await expect(dialog.getByRole("status", { name: "Looking at the data lake" })).toHaveCount(0);
   });
 });
 
@@ -749,9 +749,9 @@ test.describe("the jobs", () => {
     await page.reload();
     const dialog = await openSetup(page, "Jobs");
 
-    await expect(dialog.getByLabel("Looking at the jobs")).toBeVisible();
+    await expect(dialog.getByRole("status", { name: "Looking at the jobs" })).toBeVisible();
     answer();
-    await expect(dialog.getByLabel("Looking at the jobs")).toHaveCount(0);
+    await expect(dialog.getByRole("status", { name: "Looking at the jobs" })).toHaveCount(0);
     await expect(dialog.getByRole("list", { name: "Jobs" })).toBeVisible();
   });
 

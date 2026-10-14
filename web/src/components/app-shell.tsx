@@ -126,7 +126,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <Sidebar />
                 </Suspense>
               </aside>
-              <div className="flex min-w-0 flex-1 flex-col bg-background">{children}</div>
+              <main className="flex min-w-0 flex-1 flex-col bg-background">{children}</main>
             </div>
           </SetupProvider>
         </SettingsProvider>

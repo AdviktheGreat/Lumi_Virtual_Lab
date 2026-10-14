@@ -286,7 +286,7 @@ export function OverviewTab({
         Biomni&apos;s, and a key for the model. Biomni&apos;s data lake is not needed, but some of its tools use it.
       </p>
       {status.kind === "loading" && (
-        <div className="flex flex-col gap-2.5" aria-busy="true" aria-label="Looking at what is set up">
+        <div className="flex flex-col gap-2.5" role="status" aria-busy="true" aria-label="Looking at what is set up">
           {[0, 1, 2].map((row) => (
             <Skeleton key={row} className="h-16 w-full" />
           ))}
