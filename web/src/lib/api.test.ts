@@ -540,3 +540,80 @@ describe("the text of a file", () => {
     expect(fetch).toHaveBeenCalledWith(expect.any(String), { signal });
   });
 });
+
+describe("a conversation as a document", () => {
+  const page = (disposition: string | null = "attachment; filename*=utf-8''A%20title.html") =>
+    new Response("<!DOCTYPE html><p>Hello</p>", {
+      headers: { "Content-Type": "text/html; charset=utf-8", ...(disposition === null ? {} : { "Content-Disposition": disposition }) },
+    });
+
+  it("asks for the format it wants, and gives the file with the name the server gave it", async () => {
+    const fetch = stub(page());
+
+    const { file, name } = await api.exportChat("a b", "html");
+
+    expect(fetch).toHaveBeenCalledWith("/api/chats/a%20b/export?format=html", { signal: undefined });
+    expect(name).toBe("A title.html");
+    expect(await file.text()).toBe("<!DOCTYPE html><p>Hello</p>");
+  });
+
+  it("asks for a PDF as one, and names the file for what it is where the server named none", async () => {
+    const fetch = stub(new Response("%PDF-1.7", { headers: { "Content-Type": "application/pdf" } }));
+
+    const { file, name } = await api.exportChat("a", "pdf");
+
+    expect(fetch).toHaveBeenCalledWith("/api/chats/a/export?format=pdf", { signal: undefined });
+    expect(name).toBe("conversation.pdf");
+    expect(file.size).toBe(8);
+  });
+
+  it("tells what the server said when it could not make the document, and not a file of it", async () => {
+    stub(answer({ error: { code: "pdf_unavailable", message: "A PDF cannot be made here.", reason: "no Pango" } }, 501));
+
+    await expect(api.exportChat("a", "pdf")).rejects.toMatchObject({
+      status: 501,
+      code: "pdf_unavailable",
+      message: "A PDF cannot be made here.",
+      details: { reason: "no Pango" },
+    });
+  });
+
+  it("tells of a conversation that is gone, and of an answer that is not the server's", async () => {
+    stub(answer({ error: { code: "not_found", message: "There is no conversation" } }, 404));
+    await expect(api.exportChat("a", "html")).rejects.toMatchObject({ status: 404, code: "not_found" });
+
+    stub(new Response("<html>Bad gateway</html>", { status: 502 }));
+    await expect(api.exportChat("a", "html")).rejects.toMatchObject({ status: 502, code: "error", message: "The server answered 502" });
+  });
+
+  it("fails as a server that cannot be reached when the connection drops, or while the file is read, unless it was told to stop", async () => {
+    stub(new TypeError("Failed to fetch"));
+    await expect(api.exportChat("a", "html")).rejects.toBeInstanceOf(NetworkError);
+
+    stub(new DOMException("Aborted", "AbortError"));
+    await expect(api.exportChat("a", "html")).rejects.toMatchObject({ name: "AbortError" });
+
+    const dropping = (error: unknown) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(error);
+          },
+        }),
+      );
+    stub(dropping(new TypeError("terminated")));
+    await expect(api.exportChat("a", "html")).rejects.toBeInstanceOf(NetworkError);
+
+    stub(dropping(new DOMException("Aborted", "AbortError")));
+    await expect(api.exportChat("a", "html")).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("gives the signal it was given to the request", async () => {
+    const fetch = stub(page());
+    const { signal } = new AbortController();
+
+    await api.exportChat("a", "html", signal);
+
+    expect(fetch).toHaveBeenCalledWith(expect.any(String), { signal });
+  });
+});

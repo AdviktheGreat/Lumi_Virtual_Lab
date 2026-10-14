@@ -239,7 +239,11 @@ h3 { font-size: 11pt; margin: 18px 0 6px; }
 .badge { display: inline-block; border-radius: 9px; padding: 1px 8px; font-size: 7.5pt; font-weight: 600; }
 .badge.ok { background: #e3efe0; color: #2f5d27; }
 .badge.bad { background: #f6e1df; color: #8e2d27; }
+.badge.warn { background: #f3e9cc; color: #7a5c14; }
 .badge.neutral { background: #ece8de; color: #5b564c; }
+.plain { white-space: pre-wrap; }
+.call { margin: 10px 0; }
+.call .meta, .call .body { margin: 4px 0; }
 .callout { border: 1px solid #e3ddcf; border-radius: 6px; background: #f7f4ec; padding: 10px 14px; margin: 10px 0; }
 .callout.error { border-color: #e7c3bf; background: #fbefed; }
 .team { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -814,16 +818,26 @@ def import_weasyprint() -> Any:
     return weasyprint
 
 
-def render_pdf(document_html: str, pdf_path: Path) -> Path:
+def make_pdf(document_html: str) -> bytes:
     """Makes a PDF of an HTML document with WeasyPrint.
+
+    :raises PDFExportError: If WeasyPrint or Pango is not installed.
+    :return: The PDF.
+    """
+    weasyprint = import_weasyprint()
+
+    return weasyprint.HTML(string=document_html, url_fetcher=url_fetcher(weasyprint)).write_pdf()
+
+
+def render_pdf(document_html: str, pdf_path: Path) -> Path:
+    """Makes a PDF of an HTML document with WeasyPrint, and saves it.
 
     :raises PDFExportError: If WeasyPrint or Pango is not installed.
     :return: Where the PDF was saved.
     """
-    weasyprint = import_weasyprint()
-
+    pdf = make_pdf(document_html)
     pdf_path = Path(pdf_path)
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    weasyprint.HTML(string=document_html, url_fetcher=url_fetcher(weasyprint)).write_pdf(pdf_path)
+    pdf_path.write_bytes(pdf)
 
     return pdf_path

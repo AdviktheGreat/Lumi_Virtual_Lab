@@ -128,6 +128,19 @@ image, a table, or text, whichever it is. Only the first 200 KB of a file is rea
 shows its first 200 rows and 40 columns, and a file that is not text is offered for download instead. The list is read
 again when a turn makes or changes a file, once the stream has been quiet for a moment.
 
+## Saving a conversation
+
+The Save button in the header saves the conversation as a document: a web page (HTML) that opens in any browser with its
+figures in it, or a PDF. The server lays it out (`GET /api/chats/{id}/export?format=html|pdf`, from
+`virtual_lab.export_chat`, as the Python package saves a conversation), and the page fetches it, and then hands it to the
+browser to save under the name the server gave it, from the title (`src/lib/export.ts`). It is fetched, and not a link
+that downloads, so that what the server says when it cannot make the document is shown above the composer, and is not
+saved as a file. A PDF needs WeasyPrint and the Pango library on the machine that runs the server (see the root README);
+without them the server answers `pdf_unavailable`, and the page says to save the web page and print that. There is
+nothing to save until the conversation has a turn, so the button waits for one. A conversation that is still going is
+saved as far as it has got. Only one document is made at a time, and one that is still being made when the conversation
+is left is not saved.
+
 ## A team in the conversation
 
 When the lead brings the team in (`convene_team`) or asks one scientist (`consult`), the call that did it opens to what
@@ -170,6 +183,7 @@ a word in it:
 | `code:hello`, `error`, `two`, `plot`, `long`, `big`, `slow` | Runs code in the conversation's session first, as the word says, and answers once it has run |
 | `code:files` | Runs code that writes one of each kind of file the panel shows differently: a long table, a wide one, a long log, a file that is not text, and an empty one |
 | `tool:unknown`, `tool:resources` | Calls a tool it does not have, or looks for resources |
+| `pdf:unavailable` | Has saving the conversation as a PDF fail, as it does where WeasyPrint is not installed (the PDF is otherwise made by a stand-in that needs no WeasyPrint) |
 | `lab:team` | Brings in the team for a round of discussion, in which the scientists answer as the script says |
 | `lab:consult` | Asks one scientist, reviewed by the critic |
 | `lab:code` | Asks one scientist, who runs code in the session before they reply |

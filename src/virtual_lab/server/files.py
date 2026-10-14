@@ -8,9 +8,11 @@ not a file at all.
 
 import mimetypes
 import os
+import re
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from starlette.responses import FileResponse
 
@@ -44,6 +46,9 @@ HIDDEN_NAMES = frozenset({"__pycache__", ".ipynb_checkpoints"})
 HIDDEN_PREFIXES = (".upload.",)
 
 CONTENT_SECURITY_POLICY = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"
+
+# The most characters of a title that a file saved from it is named by
+MAX_DOWNLOAD_NAME_CHARS = 80
 
 
 def resolve_inside(root: Path, relative: str, shown: Collection[str] | None = None) -> Path:
@@ -134,3 +139,21 @@ def file_response(path: Path, download: bool = False) -> FileResponse:
     response.headers["X-Content-Type-Options"] = "nosniff"
 
     return response
+
+
+def download_headers(title: str, extension: str) -> dict[str, str]:
+    """The headers that have a page save what it is sent as a file named for a conversation, which keeps what
+    cannot be in a file name out of it, and names it as a browser reads names that are not ASCII.
+
+    :param title: The conversation's title.
+    :param extension: What the file is, as pdf or html.
+    """
+    stem = re.sub(r"[^\w .,()+-]+", "-", title)
+    stem = " ".join(stem.split()).strip(" .-")[:MAX_DOWNLOAD_NAME_CHARS].strip(" .-") or "conversation"
+
+    return {
+        "Content-Disposition": f"attachment; filename*=utf-8''{quote(f'{stem}.{extension}')}",
+        "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+    }

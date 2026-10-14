@@ -16,6 +16,10 @@ from a script: no key is needed, and every run says the same. What it says depen
   "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
 - Anything else is answered with a short reply that repeats the question.
 
+A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
+WeasyPrint is needed and every run says the same. "pdf:unavailable" anywhere in the conversation has it fail as it does
+where WeasyPrint is not installed.
+
     python e2e/scripted_server.py --port 8799 --static-dir out
 
 With --setup-control-port, Docker and the place the data lake is fetched from are stand-ins too (see
@@ -46,6 +50,8 @@ from openai.types.chat.chat_completion_message_tool_call import Function  # noqa
 from setup_fakes import Bucket, FakeDocker  # noqa: E402
 
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
+from virtual_lab.export import PDFExportError  # noqa: E402
+from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
 from virtual_lab.ui.workspace import Workspace  # noqa: E402
 
@@ -475,6 +481,13 @@ def serve_control(setup: FakeSetup, port: int) -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
+def stand_in_pdf(page: str) -> bytes:
+    if "pdf:unavailable" in page:
+        raise PDFExportError("Making a PDF needs WeasyPrint. (ImportError: the stand-in is told to fail)")
+
+    return b"%PDF-1.7\n% made by the stand-in\n" + page.encode("utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="The server the interface's end-to-end tests run against.")
     parser.add_argument("--port", type=int, default=8799)
@@ -489,6 +502,7 @@ def main() -> None:
     parser.add_argument("--max-upload-bytes", type=int, default=MAX_UPLOAD_BYTES)
     options = parser.parse_args()
 
+    server_app.make_pdf = stand_in_pdf
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     setup = None
     stand_ins: dict[str, Any] = {}

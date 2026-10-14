@@ -218,12 +218,15 @@ def title_of(text: str, files: Sequence[Attachment]) -> str:
     return line
 
 
-def read_json_lines(path: Path) -> list[dict[str, Any]]:
+def read_json_lines(path: Path, repair: bool = True) -> list[dict[str, Any]]:
     """Reads a file of JSON objects, one to a line, as the conversation saved it.
 
     A last line cut short, as a process killed while writing leaves, is dropped, and the file
     made whole again so that what is written next starts a line of its own.
 
+    :param repair: Whether to make the file whole, and to warn of the line that was cut short. A reader
+        that is not the conversation leaves the file alone, and takes the last line, which the
+        conversation may be writing as it reads, to be unfinished, not cut short.
     :raises ValueError: If any other line is not JSON, which is not what a crash does.
     """
     if not path.is_file():
@@ -245,10 +248,11 @@ def read_json_lines(path: Path) -> list[dict[str, Any]]:
         except json.JSONDecodeError as error:
             if number < len(lines):
                 raise ValueError(f"Line {number} of {path} is not JSON: {error}") from error
-            print(f"Warning: the last line of {path} was cut short, and is left out")
+            if repair:
+                print(f"Warning: the last line of {path} was cut short, and is left out")
             mend = True
 
-    if mend:
+    if mend and repair:
         write_atomically(path, "".join(json_line(item) for item in items).encode("utf-8"))
 
     return items

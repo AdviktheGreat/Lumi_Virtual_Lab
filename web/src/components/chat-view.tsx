@@ -7,6 +7,7 @@ import { NoteChip } from "@/components/activity";
 import { CaughtUpProvider } from "@/components/caught-up";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
+import { ExportMenu } from "@/components/export-menu";
 import { ChatFilesProvider } from "@/components/chat-files";
 import { FilesButton, FilesPanel } from "@/components/files-panel";
 import { LeadBlock, Notice, ProblemNotice, TurnView } from "@/components/messages";
@@ -177,6 +178,7 @@ export function ChatView({ id }: { id: string }) {
               {transcript.maxCost !== null && ` of ${formatCost(transcript.maxCost)}`}
             </span>
           )}
+          <ExportMenu id={id} disabled={transcript.turns.length === 0} onProblem={setProblem} />
           <FilesButton count={listed.loaded ? listed.files.length : null} open={filesOpen} onToggle={() => setFilesOpen((was) => !was)} />
         </PageHeader>
 
