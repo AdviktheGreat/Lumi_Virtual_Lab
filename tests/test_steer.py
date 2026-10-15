@@ -2,11 +2,13 @@
 
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from virtual_lab import llm as llm_module
 from virtual_lab.agent import Agent
 from virtual_lab.constants import HUMAN_SPEAKER
 from virtual_lab.events import MeetingEvent, NextTurn
@@ -241,7 +243,77 @@ class TestPausingAndStopping:
             individual(team_member, tmp_path, steer="Focus on stability.")
 
 
+class TestInterrupting:
+    def test_interrupt_must_be_a_function(self, fake_client: FakeClient, team_member: Agent, tmp_path: Path) -> None:
+        with pytest.raises(TypeError, match="interrupt is a function that may raise, not str"):
+            individual(team_member, tmp_path, interrupt="stop")
+
+        assert fake_client.completions.calls == []
+
+    def test_an_exception_from_interrupt_stops_a_meeting_whose_model_says_nothing(
+        self, fake_client: FakeClient, team_member: Agent, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(llm_module, "INTERRUPT_POLL_SECONDS", 0.01)
+        gate = threading.Event()
+        create = fake_client.completions.create
+
+        def create_when_let_go(**kwargs: Any) -> Any:
+            assert gate.wait(20), "The model was never let go"
+            return create(**kwargs)
+
+        fake_client.completions.create = create_when_let_go  # type: ignore[method-assign]
+        waits: list[int] = []
+        events: list[MeetingEvent] = []
+
+        def interrupt() -> None:
+            waits.append(1)
+            if len(waits) == 5:
+                raise KeyboardInterrupt
+
+        began = time.monotonic()
+        with pytest.raises(KeyboardInterrupt):
+            individual(team_member, tmp_path, interrupt=interrupt, on_event=events.append)
+
+        assert time.monotonic() - began < 5
+        assert events[-1].kind == "failed"
+        assert (tmp_path / "partial" / "discussion.json").is_file()
+        assert fake_client.completions.calls == []
+        gate.set()
+        deadline = time.monotonic() + 5
+        while len(fake_client.completions.calls) < 1 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        # What the model said when it did was not read, so the meeting asked nothing more of it
+        time.sleep(0.1)
+        assert len(fake_client.completions.calls) == 1
+
+    def test_a_meeting_that_is_not_interrupted_goes_on_as_it_would(
+        self, fake_client: FakeClient, team_member: Agent, tmp_path: Path
+    ) -> None:
+        waits: list[int] = []
+
+        result = individual(team_member, tmp_path / "interruptible", num_rounds=1, interrupt=lambda: waits.append(1))
+        plain = individual(team_member, tmp_path / "plain", num_rounds=1)
+
+        assert len(fake_client.completions.calls) == 6
+        assert result.discussion == plain.discussion
+
+
 class TestProjects:
+    def test_interrupt_given_to_a_meeting_of_a_project_is_not_an_input(
+        self, fake_client: FakeClient, team_member: Agent, tmp_path: Path
+    ) -> None:
+        first = Project(tmp_path, GOAL).meeting(
+            "individual", "Compute a number.", name="first", team_member=team_member, interrupt=lambda: None
+        )
+        calls = len(fake_client.completions.calls)
+
+        again = Project(tmp_path, GOAL).meeting(
+            "individual", "Compute a number.", name="first", team_member=team_member
+        )
+
+        assert again.discussion == first.discussion
+        assert len(fake_client.completions.calls) == calls
+
     def test_steer_given_to_a_project_steers_its_meetings_and_is_not_an_input(
         self, fake_client: FakeClient, team_member: Agent, tmp_path: Path
     ) -> None:

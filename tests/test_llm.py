@@ -1,5 +1,8 @@
 """Tests for reaching models from any provider through LangChain."""
 
+import contextvars
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -12,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from conftest import FakeClient, fake_llm
 from virtual_lab.agent import Agent
+from virtual_lab import llm as llm_module
 from virtual_lab.completions import MODELS_WITHOUT_TEMPERATURE, rejects_temperature
 from virtual_lab.constants import DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_RETRIES, MAX_TOOL_ITERATIONS
 from virtual_lab.llm import (
@@ -643,4 +647,157 @@ class TestPrices:
 
     def test_gemini_is_priced(self) -> None:
         assert compute_token_cost("gemini-2.5-flash", 10**6, 10**6) == pytest.approx(2.8)
+
+
+class SilentChatModel(ScriptedChatModel):
+    """A model that says nothing until it is let go, and notes which thread it was asked on."""
+
+    gate: Any = None
+    asked_on: list[Any] = Field(default_factory=list)
+    seen: list[Any] = Field(default_factory=list)
+
+    def _generate(
+        self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any
+    ) -> ChatResult:
+        self.asked_on.append(threading.current_thread())
+        self.seen.append(WHAT.get())
+        if self.gate is not None:
+            assert self.gate.wait(20), "The model was never let go"
+
+        return super()._generate(messages, stop, run_manager, **kwargs)
+
+
+WHAT = contextvars.ContextVar("what", default="nothing")
+
+
+class Stopped(Exception):
+    pass
+
+
+def request_threads() -> list[threading.Thread]:
+    return [thread for thread in threading.enumerate() if thread.name == "model-request"]
+
+
+def wait_for(condition: Any, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "Waited for something that did not happen"
+        time.sleep(0.005)
+
+
+@pytest.fixture
+def quick(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm_module, "INTERRUPT_POLL_SECONDS", 0.01)
+
+
+@pytest.mark.usefixtures("quick")
+class TestGivingUpOnARequest:
+    def test_a_request_with_nothing_to_interrupt_it_is_asked_on_the_thread_that_asks(self) -> None:
+        model = SilentChatModel(replies=[answer("Fine.")])
+
+        reply = ask(model, [{"role": "user", "content": "Hi"}], temperature=None)
+
+        assert reply.content == "Fine."
+        assert model.asked_on == [threading.current_thread()]
+
+    def test_a_request_that_is_waited_for_is_asked_on_a_thread_of_its_own_and_answers_as_it_would(self) -> None:
+        model = SilentChatModel(replies=[answer("Fine.")])
+
+        reply = ask(model, [{"role": "user", "content": "Hi"}], temperature=None, interrupt=lambda: None)
+
+        assert reply.content == "Fine."
+        assert reply.usage is not None and reply.usage.completion_tokens == 40
+        assert model.asked_on != [threading.current_thread()]
+        wait_for(lambda: not request_threads())
+
+    def test_what_the_caller_set_for_its_thread_is_there_on_the_thread_of_the_request(self) -> None:
+        model = SilentChatModel(replies=[answer("Fine.")])
+        WHAT.set("this")
+
+        ask(model, [{"role": "user", "content": "Hi"}], temperature=None, interrupt=lambda: None)
+
+        assert model.seen == ["this"]
+
+    def test_the_interrupt_is_called_while_the_request_waits_and_not_after_it_answers(self) -> None:
+        gate = threading.Event()
+        model = SilentChatModel(replies=[answer("Fine.")], gate=gate)
+        calls: list[int] = []
+
+        def interrupt() -> None:
+            calls.append(1)
+            if len(calls) == 3:
+                gate.set()
+
+        ask(model, [{"role": "user", "content": "Hi"}], temperature=None, interrupt=interrupt)
+
+        assert len(calls) >= 3
+        settled = len(calls)
+        time.sleep(0.1)
+        assert len(calls) == settled
+
+    def test_what_the_interrupt_raises_ends_the_wait_at_once_and_the_request_is_left_to_end_alone(self) -> None:
+        gate = threading.Event()
+        model = SilentChatModel(replies=[answer("Never read.")], gate=gate)
+        began = time.monotonic()
+
+        def interrupt() -> None:
+            if time.monotonic() - began > 0.1:
+                raise Stopped("Stop")
+
+        with pytest.raises(Stopped, match="Stop"):
+            ask(model, [{"role": "user", "content": "Hi"}], temperature=None, interrupt=interrupt)
+
+        assert time.monotonic() - began < 2
+        # The model has still said nothing, and it is not waited for, even when the process is ended
+        assert [thread.daemon for thread in request_threads()] == [True]
+        gate.set()
+        wait_for(lambda: not request_threads())
+
+    def test_a_reply_that_comes_after_it_was_given_up_on_is_dropped_without_a_trace(self) -> None:
+        gate = threading.Event()
+        model = SilentChatModel(replies=[answer("Late.")], gate=gate)
+        told: list[str] = []
+
+        def interrupt() -> None:
+            raise Stopped
+
+        with pytest.raises(Stopped):
+            ask(model, [{"role": "user", "content": "Hi"}], temperature=None, on_text=told.append, interrupt=interrupt)
+        gate.set()
+        wait_for(lambda: not request_threads())
+
+        assert told == []
+
+    def test_a_reply_that_is_written_as_it_comes_is_still_told_of_while_it_is_waited_for(self) -> None:
+        model = SilentChatModel(replies=[answer("Early.")])
+        told: list[str] = []
+
+        reply = ask(
+            model, [{"role": "user", "content": "Hi"}], temperature=None, on_text=told.append, interrupt=lambda: None
+        )
+
+        assert told == ["Early."]
+        assert reply.content == "Early."
+
+    def test_what_a_request_raises_is_raised_to_the_caller_as_it_was(self) -> None:
+        refused = provider_error(401, "Incorrect API key")
+        model = SilentChatModel(replies=[refused])
+
+        with pytest.raises(Exception) as caught:
+            ask(model, [{"role": "user", "content": "Hi"}], temperature=None, interrupt=lambda: None)
+
+        assert caught.value is refused
+        wait_for(lambda: not request_threads())
+
+    def test_an_interrupt_that_is_not_an_exception_ends_the_wait_too(self) -> None:
+        gate = threading.Event()
+        model = SilentChatModel(replies=[answer("Never read.")], gate=gate)
+
+        def interrupt() -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            ask(model, [{"role": "user", "content": "Hi"}], temperature=None, interrupt=interrupt)
+        gate.set()
+        wait_for(lambda: not request_threads())
 

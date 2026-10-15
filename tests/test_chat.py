@@ -14,6 +14,7 @@ from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
 
 from virtual_lab import chat as chat_module
+from virtual_lab import llm as llm_module
 from virtual_lab.agent import Agent
 from virtual_lab.chat import (
     STOPPED_REPLY,
@@ -1118,7 +1119,114 @@ class TestBudget:
             make_chat(tmp_path, max_cost=limit)
 
 
+class Silence:
+    """A model that says nothing to the nth request until it is let go, and then answers it as it would have."""
+
+    def __init__(self, fake_client: FakeClient, number: int = 1) -> None:
+        self.reached = threading.Event()
+        self.finished = threading.Event()
+        self._release = threading.Event()
+        self._asked = 0
+        create = fake_client.completions.create
+
+        def create_when_let_go(**kwargs: Any) -> Any:
+            self._asked += 1
+            held = self._asked == number
+            if held:
+                self.reached.set()
+                assert self._release.wait(20), "The model was never let go"
+            try:
+                return create(**kwargs)
+            finally:
+                if held:
+                    self.finished.set()
+
+        fake_client.completions.create = create_when_let_go  # type: ignore[method-assign]
+
+    def release(self) -> None:
+        self._release.set()
+        assert self.finished.wait(10)
+
+
+def sent_in_thread(chat: Chat, text: str) -> tuple[threading.Thread, list[ChatReply]]:
+    replies: list[ChatReply] = []
+    turn = threading.Thread(target=lambda: replies.append(chat.send(text)))
+    turn.start()
+
+    return turn, replies
+
+
 class TestSteering:
+    @pytest.fixture(autouse=True)
+    def quick_polls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(llm_module, "INTERRUPT_POLL_SECONDS", 0.01)
+
+    def test_a_stop_ends_a_request_to_a_model_that_says_nothing_and_what_it_says_later_is_dropped(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        silence = Silence(fake_client)
+        chat = make_chat(tmp_path)
+        turn, replies = sent_in_thread(chat, "Go")
+        assert silence.reached.wait(10)
+
+        assert chat.stop()
+        turn.join(10)
+
+        assert not turn.is_alive()
+        assert replies[0].status == "stopped"
+        assert chat.state == "idle"
+        assert chat.messages[-1]["content"] == STOPPED_REPLY
+        before = len(chat.events_since())
+
+        silence.release()
+        time.sleep(0.1)
+
+        assert len(chat.events_since()) == before
+        assert chat.usage.num_calls == 0
+        # What it said was not kept, and the conversation goes on from where it was stopped
+        fake_client.completions.responses = [text_response("Back again.")]
+        assert chat.send("Hello again").text == "Back again."
+        assert request_messages(fake_client, 1)[-2]["content"] == STOPPED_REPLY
+
+    def test_a_stop_ends_a_reply_that_was_to_be_written_as_it_came_and_none_of_it_is_told_later(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("Nanobodies are small antibodies.")]
+        silence = Silence(fake_client)
+        chat = make_chat(tmp_path, stream=True)
+        turn, replies = sent_in_thread(chat, "What is a nanobody?")
+        assert silence.reached.wait(10)
+
+        chat.stop()
+        turn.join(10)
+        silence.release()
+        time.sleep(0.1)
+
+        assert replies[0].status == "stopped"
+        assert of(chat.events_since(), "writing") == []
+
+    def test_a_stop_ends_a_team_session_whose_model_says_nothing_and_says_so_to_the_lead(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [team_meeting(rounds=1), text_response("Opening.")]
+        silence = Silence(fake_client, number=2)
+        chat = make_chat(tmp_path)
+        turn, replies = sent_in_thread(chat, "Go")
+        assert silence.reached.wait(10)
+
+        chat.stop()
+        turn.join(10)
+        silence.release()
+
+        assert not turn.is_alive()
+        assert replies[0].status == "stopped"
+        events = chat.events_since()
+        assert lab_events(events, "failed")[0].data["details"]["type"] == "ChatStopped"
+        assert of(events, "tool_output")[0].text == (
+            "The researcher stopped the team before it finished, so there is no summary."
+        )
+        assert chat.state == "idle"
+
     def test_a_stopped_turn_ends_before_the_next_call_and_leaves_a_conversation_that_goes_on(
         self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
     ) -> None:

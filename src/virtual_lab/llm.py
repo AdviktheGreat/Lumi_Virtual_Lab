@@ -17,8 +17,10 @@ OpenAI chat format it has always saved, and the providers, which each want somet
 different. What comes back is normalised to one shape, ModelReply, whatever answered.
 """
 
+import contextvars
 import json
 import os
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -50,6 +52,9 @@ BEDROCK_PREFIXES = ("anthropic.claude-", "amazon.titan-", "meta.llama-", "mistra
 AZURE_API_VERSION = "2024-12-01-preview"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+# How often a request that is waited on is asked whether to go on waiting
+INTERRUPT_POLL_SECONDS = 0.2
 
 
 def detect_source(model: str, base_url: str | None = None) -> SourceType:
@@ -597,6 +602,42 @@ def streamed(runnable: Any, messages: list[BaseMessage], on_text: Callable[[str]
     return message
 
 
+class RequestAbandoned(Exception):
+    """Raised in a request that is no longer waited for, to end it the next time it would tell of text."""
+
+
+def waited_for(send: Callable[[], Any], interrupt: Callable[[], None], abandoned: threading.Event) -> Any:
+    """Sends a request on a thread of its own, and calls interrupt every INTERRUPT_POLL_SECONDS while it waits.
+
+    A provider that has said nothing cannot be made to answer or give up, so what interrupt raises ends the wait and
+    not the request: that goes on until the provider ends it, and what it gets is dropped. Having been given up on,
+    it is told so, by abandoned, which has a streamed reply end at its next text.
+    """
+    outcome: dict[str, Any] = {}
+    done = threading.Event()
+    context = contextvars.copy_context()
+
+    def run() -> None:
+        try:
+            outcome["message"] = context.run(send)
+        except BaseException as error:  # noqa: BLE001
+            outcome["error"] = error
+        finally:
+            done.set()
+
+    threading.Thread(target=run, name="model-request", daemon=True).start()
+    try:
+        while not done.wait(INTERRUPT_POLL_SECONDS):
+            interrupt()
+    except BaseException:
+        abandoned.set()
+        raise
+    if "error" in outcome:
+        raise outcome["error"]
+
+    return outcome["message"]
+
+
 def ask(
     llm: BaseChatModel,
     messages: list[ChatCompletionMessageParam],
@@ -605,6 +646,7 @@ def ask(
     max_tokens: int | None = None,
     reader: str | None = None,
     on_text: Callable[[str], None] | None = None,
+    interrupt: Callable[[], None] | None = None,
 ) -> ModelReply:
     """Sends a meeting's messages to a model and normalises what comes back.
 
@@ -616,6 +658,9 @@ def ask(
     :param reader: The name of the agent being asked, for models that cannot read names.
     :param on_text: Called with the text of the reply so far each time more of it arrives, which
         has the reply streamed. A model that cannot stream sends it all at once.
+    :param interrupt: Called about every fifth of a second while the reply is waited for, which is how a request
+        to a provider that says nothing can be given up on: what it raises is raised from here, at once, and the
+        request is left to end as it will, with what it gets dropped.
     :return: The reply.
     """
     model = configure(llm, temperature, max_tokens)
@@ -629,7 +674,19 @@ def ask(
     speaker_names = reads_speaker_names(llm)
     # OpenAI accepts earlier tool calls in a request that offers no tools; others may not
     converted = to_langchain_messages(messages, reader, speaker_names, tool_blocks=bool(tools) or speaker_names)
-    message = runnable.invoke(converted) if on_text is None else streamed(runnable, converted, on_text)
+    abandoned = threading.Event()
+    told = on_text
+    if on_text is not None and interrupt is not None:
+
+        def told(text: str) -> None:
+            if abandoned.is_set():
+                raise RequestAbandoned()
+            on_text(text)
+
+    def send() -> Any:
+        return runnable.invoke(converted) if told is None else streamed(runnable, converted, told)
+
+    message = send() if interrupt is None else waited_for(send, interrupt, abandoned)
 
     if not isinstance(message, AIMessage):
         raise TypeError(f"Expected an AIMessage from the model, got {type(message).__name__}")

@@ -75,7 +75,7 @@ REPAIR_OPTIONS = frozenset(
 # it is asked, so changing one does not make a finished step a different step. A person steering
 # a meeting can change what it produces, but what they said is in its transcript
 NOT_INPUTS = frozenset(
-    {"max_cost", "on_usage", "before_request", "max_retries", "chat_model", "on_event", "stream", "steer"}
+    {"max_cost", "on_usage", "before_request", "max_retries", "chat_model", "on_event", "stream", "steer", "interrupt"}
 )
 
 
