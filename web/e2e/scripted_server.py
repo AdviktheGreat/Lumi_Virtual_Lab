@@ -31,6 +31,9 @@ where WeasyPrint is not installed.
 
 With --setup-control-port, Docker and the place the data lake is fetched from are stand-ins too (see
 tests/setup_fakes.py), which a test arranges and looks at by POSTing JSON to that port; see FakeSetup.control.
+
+The keys a test gives are kept in a keychain that is a dictionary in this process, called the Test Keychain, so that the
+machine's own is never touched. --no-keychain has the server keep none, as one on a machine without a keychain does.
 """
 
 import argparse
@@ -63,6 +66,7 @@ from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
+from virtual_lab.server.keychain import Keychain  # noqa: E402
 from virtual_lab.server.workspace import Workspace  # noqa: E402
 
 TOKEN = "e2e-token"
@@ -533,6 +537,22 @@ def serve_control(setup: FakeSetup, port: int) -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
+class MemoryKeyring:
+    """Stands in for a backend of the keyring package, and keeps what it is given only as long as the server runs."""
+
+    def __init__(self) -> None:
+        self.kept: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, name: str) -> str | None:
+        return self.kept.get((service, name))
+
+    def set_password(self, service: str, name: str, value: str) -> None:
+        self.kept[(service, name)] = value
+
+    def delete_password(self, service: str, name: str) -> None:
+        del self.kept[(service, name)]
+
+
 def stand_in_pdf(page: str) -> bytes:
     if "pdf:unavailable" in page:
         raise PDFExportError("Making a PDF needs WeasyPrint. (ImportError: the stand-in is told to fail)")
@@ -552,6 +572,7 @@ def main() -> None:
     parser.add_argument("--static-dir", default=str(ROOT / "web" / "out"))
     parser.add_argument("--word-delay", type=float, default=WORD_DELAY)
     parser.add_argument("--max-upload-bytes", type=int, default=MAX_UPLOAD_BYTES)
+    parser.add_argument("--no-keychain", action="store_true", help="keep the keys given only until the server stops")
     options = parser.parse_args()
 
     server_app.make_pdf = stand_in_pdf
@@ -577,6 +598,7 @@ def main() -> None:
             check_keys=False,
             client=ScriptedClient(options.word_delay),
             max_upload_bytes=options.max_upload_bytes,
+            keychain=False if options.no_keychain else Keychain(MemoryKeyring(), "Test Keychain"),
             **stand_ins,
         )
     finally:

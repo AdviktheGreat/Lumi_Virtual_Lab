@@ -234,8 +234,10 @@ export const api = {
   changeSettings: (changes: SettingsChange) => request<Settings>("PATCH", "/settings", changes),
   models: (signal?: AbortSignal) => request<Models>("GET", "/models", undefined, signal),
   keys: (signal?: AbortSignal) => request<KeyStatuses>("GET", "/keys", undefined, signal),
-  // A key is kept by the server until it stops, and is never given back: what comes back is which are set
-  setKey: (name: string, value: string) => request<KeyStatuses>("PUT", `/keys/${encodeURIComponent(name)}`, { value }),
+  // A key is kept in the server's keychain, or by the server until it stops, and is never given back: what comes back is
+  // which are set. False for remember keeps it until the server stops alone; undefined is left out of the body, which is as the keychain allows.
+  setKey: (name: string, value: string, remember?: boolean) =>
+    request<KeyStatuses>("PUT", `/keys/${encodeURIComponent(name)}`, { value, remember }),
   removeKey: (name: string) => request<KeyStatuses>("DELETE", `/keys/${encodeURIComponent(name)}`),
   scientists: async (signal?: AbortSignal) =>
     (await request<{ scientists: LibraryScientist[] }>("GET", "/scientists", undefined, signal)).scientists,

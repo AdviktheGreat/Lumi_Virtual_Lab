@@ -14,6 +14,7 @@ import uvicorn
 
 from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_UPLOAD_BYTES
 from virtual_lab.server.app import create_app
+from virtual_lab.server.keychain import Keychain
 from virtual_lab.server.security import LOCAL_HOSTS, new_token
 from virtual_lab.server.workspace import DEFAULT_WORKSPACE
 
@@ -85,6 +86,7 @@ def serve(
     max_upload_bytes: int = MAX_UPLOAD_BYTES,
     docker_command: Sequence[str] = ("docker",),
     release_url: str = BIOMNI_RELEASE_URL,
+    keychain: Keychain | bool = True,
 ) -> None:
     """Starts the server and waits until it is stopped.
 
@@ -104,6 +106,9 @@ def serve(
     :param max_upload_bytes: The most bytes of one file that may be attached to a message.
     :param docker_command: How the setup invokes Docker, which is for tests: code runs with "docker".
     :param release_url: Where the setup fetches the data lake from, which is for tests.
+    :param keychain: Where the keys a person gives the interface are kept, so that they are there when the server is
+        started again: True for this machine's own keychain, if it has one, False to keep them only until the server
+        stops, or a Keychain, which is for tests.
     :raises ValueError: If it would listen beyond this machine without being told what it is reached by.
     :raises OSError: If the port is not free.
     """
@@ -125,6 +130,7 @@ def serve(
         max_upload_bytes=max_upload_bytes,
         docker_command=docker_command,
         release_url=release_url,
+        keychain=keychain if isinstance(keychain, Keychain) else (Keychain.system() if keychain else None),
     )
     sock = listen(host, port)
     address = address_of(host, sock)
@@ -166,6 +172,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--static-dir", default=None, help="the built pages of the interface to serve")
     parser.add_argument("--no-browser", action="store_true", help="do not open the page in a browser")
+    parser.add_argument(
+        "--no-keychain",
+        action="store_true",
+        help="keep the keys given in the page only until the server stops, rather than in this machine's keychain",
+    )
     options = parser.parse_args(argv)
 
     try:
@@ -177,6 +188,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             allowed_hosts=options.allowed_host,
             static_dir=options.static_dir,
             open_browser=not options.no_browser,
+            keychain=not options.no_keychain,
         )
     except (ValueError, OSError) as error:
         parser.error(str(error))

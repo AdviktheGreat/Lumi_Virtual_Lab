@@ -357,6 +357,7 @@ class TestCommandLine:
             "allowed_hosts": ["lab.example", "other.example"],
             "static_dir": str(tmp_path / "pages"),
             "open_browser": False,
+            "keychain": True,
         }
 
     def test_the_defaults_are_this_machine_and_a_port_that_is_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -434,6 +435,7 @@ class TestInstalling:
         assert project["scripts"]["virtual-lab-server"] == "virtual_lab.server:main"
         assert {requirement.split(">=")[0] for requirement in project["optional-dependencies"]["server"]} == {
             "fastapi",
+            "keyring",
             "uvicorn",
         }
         assert any("server" in requirement for requirement in project["optional-dependencies"]["dev"])

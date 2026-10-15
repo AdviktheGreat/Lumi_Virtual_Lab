@@ -184,7 +184,7 @@ function ServerRow({
           {keys.map((key) => (
             <KeyForm
               key={key.name}
-              row={{ name: key.name, provider: server.title, set: key.set }}
+              row={{ name: key.name, provider: server.title, set: key.set, source: null }}
               onChanged={() => {
                 forget();
                 onKeysChanged();

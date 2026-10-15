@@ -202,6 +202,57 @@ for (const theme of ["light", "dark"] as const) {
         await expect(row.getByRole("alert").filter({ hasText: "Could not connect" })).toBeVisible();
         await looksRight(page, "why a check of a server found it could not be connected to");
       });
+
+      test("what the Keys settings show of where the keys are kept, and of a keychain that would not keep one, have nothing wrong and fit the window", async ({
+        page,
+      }) => {
+        await themed(page, theme, size);
+        await page.route("**/api/keys", async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          body.providers = body.providers.map((provider: { variables: string[] }) => ({ ...provider, missing: [], ready: true }));
+          body.sources = {
+            OPENAI_API_KEY: "keychain",
+            ANTHROPIC_API_KEY: "session",
+            GEMINI_API_KEY: "environment",
+            GROQ_API_KEY: "keychain",
+          };
+          body.keychain = {
+            available: true,
+            name: "Test Keychain",
+            problem: `Keys kept earlier were not read. The Test Keychain did not answer in 5 seconds: it may be waiting to be unlocked. ${"x".repeat(120)}`,
+          };
+          await route.fulfill({ response, json: body });
+        });
+        await page.route("**/api/keys/GROQ_API_KEY", (route) =>
+          route.fulfill({
+            json: {
+              settable: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"],
+              providers: [{ provider: "Groq", variables: ["GROQ_API_KEY"], missing: [], ready: true }],
+              keychain: { available: true, name: "Test Keychain", problem: null },
+              sources: { GROQ_API_KEY: "session" },
+              problem: `The key is set until the server stops. The Test Keychain would not keep the key: ${"y".repeat(150)}`,
+            },
+          }),
+        );
+        if (size.name === "phone") await page.getByRole("button", { name: "Show the conversations" }).click();
+        await page.getByRole("button", { name: "Settings" }).first().click();
+        await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCSS("opacity", "1");
+        await page.getByRole("tab", { name: "Keys" }).click();
+        const dialog = page.getByRole("dialog", { name: "Settings" });
+        await expect(dialog.getByTestId("key-source-OPENAI_API_KEY")).toHaveText("In the Test Keychain");
+        await expect(dialog.getByTestId("key-source-GEMINI_API_KEY")).toHaveText("From the server's environment");
+        await expect(dialog.getByTestId("keychain-problem")).toBeVisible();
+        await looksRight(page, "keys that are kept in the keychain, for the session, and in the environment, with a warning");
+
+        await dialog.getByLabel("Groq key", { exact: true }).fill("gsk-test");
+        await dialog.getByRole("button", { name: "Save", exact: true }).nth(3).click();
+        await expect(dialog.getByTestId("key-warning-GROQ_API_KEY")).toBeVisible();
+        await looksRight(page, "a key that the keychain would not keep");
+
+        await dialog.getByRole("checkbox", { name: /Keep keys in the Test Keychain/ }).uncheck();
+        await looksRight(page, "the choice not to keep keys in the keychain");
+      });
     });
   }
 }

@@ -208,6 +208,9 @@ test.describe("the settings", () => {
               ready: false,
             },
           ],
+          keychain: { available: false, name: null, problem: null },
+          sources: {},
+          problem: null,
         },
       }),
     );
@@ -367,7 +370,9 @@ test.describe("the keys", () => {
       await expect(dialog.getByLabel(`${provider} key`, { exact: true })).toBeVisible();
       await expect(dialog.getByTestId(`key-state-${name}`)).toHaveText("Not set");
     }
-    await expect(dialog.getByText("It is not written to disk")).toBeVisible();
+    await expect(dialog.getByText("A key you give here is kept in the Test Keychain")).toBeVisible();
+    await expect(dialog.getByRole("checkbox", { name: /Keep keys in the Test Keychain/ })).toBeChecked();
+    await expect(dialog.getByTestId(/^key-source-/)).toHaveCount(0);
   });
 
   test("keep a key for the server, which is never shown again, and which makes its models ready", async ({ page }) => {
@@ -385,7 +390,8 @@ test.describe("the keys", () => {
 
     expect(await (await answered).text()).not.toContain(secret);
     await expect(dialog.getByTestId("key-state-OPENAI_API_KEY")).toHaveText("Set");
-    await expect(dialog.getByText("Saved", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Saved in the Test Keychain.", { exact: true })).toBeVisible();
+    await expect(dialog.getByTestId("key-source-OPENAI_API_KEY")).toHaveText("In the Test Keychain");
     await expect(key).toHaveValue("");
     await expect(dialog).not.toContainText(secret);
     expect(await (await page.request.get("/api/keys")).text()).not.toContain(secret);
@@ -401,7 +407,8 @@ test.describe("the keys", () => {
     await dialog.getByRole("tab", { name: "Keys" }).click();
     await dialog.getByRole("button", { name: "Remove the OpenAI key" }).click();
     await expect(dialog.getByTestId("key-state-OPENAI_API_KEY")).toHaveText("Not set");
-    await expect(dialog.getByText("Removed", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Removed.", { exact: true })).toBeVisible();
+    await expect(dialog.getByTestId("key-source-OPENAI_API_KEY")).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "Remove the OpenAI key" })).toHaveCount(0);
 
     await dialog.getByRole("tab", { name: "Model" }).click();

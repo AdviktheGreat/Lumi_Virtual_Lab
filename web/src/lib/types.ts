@@ -134,10 +134,27 @@ export interface ProviderStatus {
   ready: boolean;
 }
 
+// How a key that is set came to be: from the keychain, given in the page for the session alone, or in the environment the
+// server was started with
+export type KeySource = "keychain" | "session" | "environment";
+
+export interface Keychain {
+  // Whether the server has a keychain to keep keys in, and what it is called, as "macOS Keychain"
+  available: boolean;
+  name: string | null;
+  // Why there is none, or why the keys kept in it were not read
+  problem: string | null;
+}
+
 export interface KeyStatuses {
   // The keys that can be given
   settable: string[];
   providers: ProviderStatus[];
+  keychain: Keychain;
+  // Where each key that is set came from
+  sources: Record<string, KeySource>;
+  // What went wrong with the keychain in a change that was made all the same, which only a change says
+  problem: string | null;
 }
 
 // A scientist of the library: the lab's own, or one that the person described
