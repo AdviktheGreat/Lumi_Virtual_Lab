@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, and the scientists; and what there is to set up for code in Docker, and the jobs that build and fetch it |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, the scientists, and the tools; and what there is to set up for code in Docker, and the jobs that build and fetch it |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -60,7 +60,7 @@ already is as good as deleted.
 
 ## Settings
 
-The gear at the foot of the sidebar opens the settings, in four parts. What is set is what conversations started from then
+The gear at the foot of the sidebar opens the settings, in five parts. What is set is what conversations started from then
 on begin with; one already begun keeps what it began with.
 
 - **Model** has the model, which is chosen from those the server can reach, grouped by whose they are, or named when it is
@@ -74,10 +74,16 @@ on begin with; one already begun keeps what it began with.
   code back, and has the Python to run it with.
 - **Scientists** has the library the lead draws on. The lab's own cannot be deleted; editing one keeps your own version
   under its title, and deleting that gives the lab's back. A new scientist cannot take the title of one that exists.
+- **Tools** lists the library's tools by what they are for, each with a box. A box is kept as it is ticked
+  (`PUT /api/tools`, which is sent the tools that are off, so that one the library gains later is on), and shows at once
+  as it was ticked, whether or not the server has answered; changes are kept one after another, so two in quick succession
+  do not undo each other, and the boxes (and the focus on them) are never disabled while one is kept. If the server refuses,
+  the box goes back and the reason is shown. A conversation is given the tools that are on when it begins. The one tool that
+  is only of use where code runs says so.
 
 Save changes sends only what was changed (`PATCH /api/settings`), so a setting changed meanwhile by another page is not
 undone, and shows what the server refuses beside the button. Closing with something changed and not saved asks first,
-and a scientist that is half written counts as not saved. A conversation that cannot start because its model's key is not set says which key,
+and a scientist that is half written counts as not saved. Keys, scientists, and tools are kept as each is given. A conversation that cannot start because its model's key is not set says which key,
 and offers to go and set it (`src/lib/errors.ts` tells those from other errors by the server's `missing_keys` code).
 
 ## Setting up for code in Docker
@@ -159,7 +165,7 @@ The tests run the real server with the built pages and a script where the model 
 port, which is 8799. The scripted server takes 20 KiB as the most for a file, so that the tests of the limit need only
 small files; `--max-upload-bytes` changes it.
 
-The tests of the settings, the keys, and the scientists (`e2e/own-server`) change what every conversation is made with, so
+The tests of the settings, the keys, the scientists, and the tools (`e2e/own-server`) change what every conversation is made with, so
 they run in a project of their own, against a second scripted server on the next port (8800). Each file of them puts
 back what it changed before each test, and neither touches what the other does. They run in order within a file, and a
 test that needs a key puts it there itself, since the server keeps none.
@@ -184,6 +190,8 @@ a word in it:
 | `code:hello`, `error`, `two`, `plot`, `long`, `big`, `slow` | Runs code in the conversation's session first, as the word says, and answers once it has run |
 | `code:files` | Runs code that writes one of each kind of file the panel shows differently: a long table, a wide one, a long log, a file that is not text, and an empty one |
 | `tool:unknown`, `tool:resources` | Calls a tool it does not have, or looks for resources |
+| `tool:files` | Looks at the file attached to the conversation, `counts.csv`, with the library's own tools for that |
+| `tool:offered` | Answers with the names of the tools the model was offered, which is how a test sees what the settings gave it |
 | `pdf:unavailable` | Has saving the conversation as a PDF fail, as it does where WeasyPrint is not installed (the PDF is otherwise made by a stand-in that needs no WeasyPrint) |
 | `lab:team` | Brings in the team for a round of discussion, in which the scientists answer as the script says |
 | `lab:consult` | Asks one scientist, reviewed by the critic |

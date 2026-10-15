@@ -16,6 +16,7 @@ import type {
   Settings,
   SettingsChange,
   SetupStatus,
+  ToolInfo,
 } from "./types";
 
 // What the server's error says: its code is a word to act on, its message is for a person, and the rest is
@@ -239,6 +240,9 @@ export const api = {
     (await request<{ scientists: LibraryScientist[] }>("PUT", "/scientists", scientist)).scientists,
   removeScientist: async (title: string) =>
     (await request<{ scientists: LibraryScientist[] }>("DELETE", `/scientists/${encodeURIComponent(title)}`)).scientists,
+  tools: async (signal?: AbortSignal) => (await request<{ tools: ToolInfo[] }>("GET", "/tools", undefined, signal)).tools,
+  // The tools a new conversation is not given, which is all that is turned off, and the tools are given back as they now are
+  saveTools: async (disabled: string[]) => (await request<{ tools: ToolInfo[] }>("PUT", "/tools", { disabled })).tools,
   // Docker, the images, the data lake, the jobs, and what is left to do. Asking is not quick, since Docker is asked.
   setup: (signal?: AbortSignal) => request<SetupStatus>("GET", "/setup", undefined, signal),
   // Starts building a stage of the image, which goes on as a job

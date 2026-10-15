@@ -28,6 +28,7 @@ from virtual_lab.server.config import ChatConfig, load_config, resolve_config, s
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.library import missing_keys
 from virtual_lab.server.setup import Setup
+from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
 from virtual_lab.session import Session
 from virtual_lab.utils import CostUnknownError
@@ -349,6 +350,7 @@ class Conversations:
         handle = ChatHandle(directory, config, self.loop, keyless)
         session = config.code.session(directory / WORK_DIR_NAME)
         chat_models = MissingKeysModel(needs=tuple(self.missing_keys(config))) if keyless else self.chat_models
+        available = conversation_tools(directory, session.directory if session is not None else None)
         try:
             handle.chat = Chat(
                 directory,
@@ -358,6 +360,7 @@ class Conversations:
                 client=self.client,
                 chat_models=chat_models,
                 title=title,
+                tools=tuple(available[name] for name in config.tools if name in available),
                 max_cost=config.max_cost,
                 stream=config.stream,
                 resources=config.code.resources if session is not None else "none",

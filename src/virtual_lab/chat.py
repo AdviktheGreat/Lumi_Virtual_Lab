@@ -103,6 +103,10 @@ CONVENE_TOOL_NAME = "convene_team"
 CONSULT_TOOL_NAME = "consult"
 RESERVED_TOOL_NAMES = frozenset({CODE_TOOL_NAME, FIND_RESOURCES_TOOL_NAME, CONVENE_TOOL_NAME, CONSULT_TOOL_NAME})
 
+# The tool of the library's that looks inside a table, which a conversation with no session can be given, and which
+# then tells the lead that the files attached can be looked into
+INSPECT_FILE_TOOL_NAME = "inspect_data_file"
+
 # The events of a team session that a stop interrupts, since they are told of before the work
 # they announce, in the thread that does it
 STOPPABLE_LAB_EVENTS = frozenset({"turn", "writing", "message", "tool_calls", "code"})
@@ -970,7 +974,9 @@ class Chat:
             return text
 
         attached = chat_attachments_prompt(
-            [(file.path, describe_size(file.size)) for file in files], can_open=self.session is not None
+            [(file.path, describe_size(file.size)) for file in files],
+            can_open=self.session is not None,
+            can_inspect=any(tool.name == INSPECT_FILE_TOOL_NAME for tool in self.tools),
         )
 
         return f"{text}\n\n{attached}" if text else attached

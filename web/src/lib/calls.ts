@@ -40,6 +40,55 @@ function titles(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
 }
 
+// What each of the library's tools is shown as: what it does as it is called and once it has been, and which of what it
+// was given says what it is about
+interface Lookup {
+  now: string;
+  done: string;
+  about: (args: Record<string, unknown>) => string | null;
+}
+
+const asked = (field: string) => (args: Record<string, unknown>) => oneLine(args[field], 120);
+
+function lookup(now: string, done: string, about: Lookup["about"]): Lookup {
+  return { now, done, about };
+}
+
+const LOOKUPS: Record<string, Lookup> = {
+  pubmed_search: lookup("Searching PubMed", "Searched PubMed", asked("query")),
+  europepmc_search: lookup("Searching Europe PMC", "Searched Europe PMC", asked("query")),
+  europepmc_lookup: lookup("Looking up an article", "Looked up an article", asked("identifier")),
+  europepmc_fulltext: lookup("Reading an article", "Read an article", asked("pmcid")),
+  arxiv_search: lookup("Searching arXiv", "Searched arXiv", asked("query")),
+  uniprot_search: lookup("Searching UniProt", "Searched UniProt", asked("query")),
+  uniprot_lookup: lookup("Looking up a protein", "Looked up a protein", asked("accession")),
+  pdb_lookup: lookup("Looking up a structure", "Looked up a structure", asked("pdb_id")),
+  alphafold_lookup: lookup("Looking up a predicted structure", "Looked up a predicted structure", asked("accession")),
+  fetch_structure_file: lookup("Downloading a structure", "Downloaded a structure", (args) => {
+    const identifier = oneLine(args.identifier, 60);
+    const source = oneLine(args.source, 20);
+
+    return identifier === null ? null : source === null ? identifier : `${identifier} from ${source}`;
+  }),
+  pubchem_lookup: lookup("Looking up a molecule", "Looked up a molecule", asked("identifier")),
+  chembl_search: lookup("Searching ChEMBL", "Searched ChEMBL", asked("query")),
+  chembl_lookup: lookup("Looking up a compound", "Looked up a compound", asked("chembl_id")),
+  chembl_target_search: lookup("Searching ChEMBL for a target", "Searched ChEMBL for a target", asked("query")),
+  chembl_activities: lookup("Getting measured activities", "Got measured activities", (args) => {
+    const subject = oneLine(args.target_chembl_id, 60) ?? oneLine(args.molecule_chembl_id, 60);
+    const type = oneLine(args.activity_type, 30);
+
+    return [subject, type].filter(Boolean).join(" · ") || null;
+  }),
+  data_files: lookup("Listing the attached files", "Listed the attached files", () => null),
+  inspect_data_file: lookup("Inspecting a data file", "Inspected a data file", (args) => {
+    const file = oneLine(args.filename, 100);
+    const sheet = oneLine(args.sheet, 40);
+
+    return file === null ? null : sheet === null ? file : `${file} · ${sheet}`;
+  }),
+};
+
 export function summarize(call: Pick<Call, "name" | "arguments" | "status">): CallSummary {
   const args = parseArguments(call.arguments) ?? {};
   const now = call.status === "running";
@@ -77,6 +126,10 @@ export function summarize(call: Pick<Call, "name" | "arguments" | "status">): Ca
       };
     }
     default: {
+      const known = LOOKUPS[call.name];
+      if (known !== undefined) {
+        return { title: now ? known.now : known.done, detail: known.about(args), code: null };
+      }
       const given = oneLine(call.arguments, 100);
 
       return {

@@ -32,12 +32,17 @@ export async function resetScientists(page: Page): Promise<void> {
   }
 }
 
+// Turns every tool back on, which is how the server begins
+export async function resetTools(page: Page): Promise<void> {
+  expect((await page.request.put("/api/tools", { data: { disabled: [] } })).ok()).toBe(true);
+}
+
 export async function settings(page: Page): Promise<typeof INITIAL & { workspace: string }> {
   return (await page.request.get("/api/settings")).json();
 }
 
 // Opens the settings from the sidebar, at one of the parts of them if it is named
-export async function openSettings(page: Page, tab?: "Model" | "Keys" | "Code" | "Scientists"): Promise<Locator> {
+export async function openSettings(page: Page, tab?: "Model" | "Keys" | "Code" | "Scientists" | "Tools"): Promise<Locator> {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Settings" });
   await expect(dialog).toBeVisible();

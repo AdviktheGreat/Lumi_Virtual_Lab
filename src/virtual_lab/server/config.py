@@ -20,6 +20,7 @@ from virtual_lab.schemas import normalize_title
 from virtual_lab.scientists import SCIENTISTS
 from virtual_lab.server.code import CodeSetup
 from virtual_lab.server.library import SETTABLE_KEYS, missing_keys, models, provider_of
+from virtual_lab.server.tools import check_tool_names, tool_names
 from virtual_lab.server.workspace import SCIENTIST_FIELDS, Settings, Workspace, read_json
 from virtual_lab.utils import write_atomically
 
@@ -75,6 +76,8 @@ class ChatConfig:
     :param max_cost: The most the conversation may spend in USD, or None for no limit.
     :param stream: Whether replies are shown as they are written.
     :param commercial_mode: Whether to leave out data and know-how that may not be used commercially.
+    :param tools: The names of the library's tools the lead and the team may call, as the settings list them. Those
+        that need code to run are given only where it does.
     """
 
     model: str
@@ -84,6 +87,7 @@ class ChatConfig:
     max_cost: float | None
     stream: bool
     commercial_mode: bool
+    tools: tuple[str, ...] = ()
 
     def lead_agent(self) -> Agent:
         return agent_from({**self.lead, "model": self.model})
@@ -108,6 +112,7 @@ class ChatConfig:
             "max_cost": self.max_cost,
             "stream": self.stream,
             "commercial_mode": self.commercial_mode,
+            "tools": list(self.tools),
         }
 
     @classmethod
@@ -120,6 +125,8 @@ class ChatConfig:
             max_cost=data["max_cost"],
             stream=bool(data["stream"]),
             commercial_mode=bool(data["commercial_mode"]),
+            # A conversation begun before the lead had tools of the library's has none, and goes on without
+            tools=tuple(str(name) for name in data.get("tools", ())),
         )
 
 
@@ -237,7 +244,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
 
     :param request: What the person chose. A key left out is taken from the settings, or the library: "model",
         "lead" and each of "team", by title or described, "code" with any of where, sandbox, network, python,
-        and resources, "max_cost" (null for no limit), "stream", and "commercial_mode".
+        and resources, "max_cost" (null for no limit), "stream", "commercial_mode", and "tools", the names of the
+        library's tools to give, which are all but those the workspace has turned off.
     :raises ValueError: If something chosen cannot be used.
     """
     scientists = library(workspace)
@@ -260,6 +268,11 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
             raise ValueError(f"max_cost must be a finite amount, zero or more, not {max_cost}")
 
     stream = request["stream"] if request.get("stream") is not None else settings.stream
+    if request.get("tools") is not None:
+        tools = check_tool_names(request["tools"])
+    else:
+        disabled = workspace.load_disabled_tools()
+        tools = [name for name in tool_names() if name not in disabled]
 
     return ChatConfig(
         model=model,
@@ -269,6 +282,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         max_cost=max_cost,
         stream=bool(stream),
         commercial_mode=bool(request.get("commercial_mode") or False),
+        tools=tuple(tools),
     )
 
 

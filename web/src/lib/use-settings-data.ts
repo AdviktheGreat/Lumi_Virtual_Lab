@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { KeyStatuses, LibraryScientist, Models } from "./types";
+import type { KeyStatuses, LibraryScientist, Models, ToolInfo } from "./types";
 
 export type Loaded<T> = { kind: "loading" } | { kind: "ready"; value: T } | { kind: "failed"; error: unknown };
 
@@ -12,20 +12,23 @@ export interface SettingsData {
   models: Loaded<Models>;
   keys: Loaded<KeyStatuses>;
   scientists: Loaded<LibraryScientist[]>;
-  // What a change to the keys or the scientists gives back, which is what is shown from then on
+  tools: Loaded<ToolInfo[]>;
+  // What a change to the keys, the scientists, or the tools gives back, which is what is shown from then on
   setKeys: (keys: KeyStatuses) => void;
   setScientists: (scientists: LibraryScientist[]) => void;
+  setTools: (tools: ToolInfo[]) => void;
   // Asks which models can be reached again, as they can be once a key is given or taken away. What was shown stays if the
   // server cannot say.
   refreshModels: () => Promise<void>;
 }
 
-// What the settings offer to choose from: the models, which keys are set, and the library's scientists. They are asked
-// for once, when the settings open, and each is shown as it comes.
+// What the settings offer to choose from: the models, which keys are set, the library's scientists, and its tools. They
+// are asked for once, when the settings open, and each is shown as it comes.
 export function useSettingsData(): SettingsData {
   const [models, setModels] = useState<Loaded<Models>>(loading);
   const [keys, setKeys] = useState<Loaded<KeyStatuses>>(loading);
   const [scientists, setScientists] = useState<Loaded<LibraryScientist[]>>(loading);
+  const [tools, setTools] = useState<Loaded<ToolInfo[]>>(loading);
   // The models are asked for more than once, and an answer may come after a later one, which it must not replace. Each
   // question is numbered as it is asked, and an answer is shown only if no later question has been answered.
   const asked = useRef(0);
@@ -51,6 +54,7 @@ export function useSettingsData(): SettingsData {
     load(api.models, (loaded) => showModels(number, loaded));
     load(api.keys, setKeys);
     load(api.scientists, setScientists);
+    load(api.tools, setTools);
 
     return () => abort.abort();
   }, [showModels]);
@@ -66,6 +70,16 @@ export function useSettingsData(): SettingsData {
 
   const showKeys = useCallback((value: KeyStatuses) => setKeys({ kind: "ready", value }), []);
   const showScientists = useCallback((value: LibraryScientist[]) => setScientists({ kind: "ready", value }), []);
+  const showTools = useCallback((value: ToolInfo[]) => setTools({ kind: "ready", value }), []);
 
-  return { models, keys, scientists, setKeys: showKeys, setScientists: showScientists, refreshModels };
+  return {
+    models,
+    keys,
+    scientists,
+    tools,
+    setKeys: showKeys,
+    setScientists: showScientists,
+    setTools: showTools,
+    refreshModels,
+  };
 }

@@ -536,6 +536,44 @@ class TestFiles:
         )
         assert chat.title == "counts.csv"
 
+    def test_without_a_session_the_lead_is_told_of_the_tool_that_looks_inside_a_table_if_it_has_it(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        inspect = Tool(
+            name="inspect_data_file",
+            description="Looks inside a table.",
+            parameters={"type": "object", "properties": {}},
+            function=lambda: "A table.",
+        )
+        chat = make_chat(tmp_path, tools=(inspect,))
+        chat.save_upload("counts.csv", b"abc")
+
+        chat.send("", attachments=["counts.csv"])
+
+        assert request_messages(fake_client, 0)[-1]["content"] == (
+            "The researcher attached these files. There is no session to run code on them, but inspect_data_file "
+            "can look inside a table or a spreadsheet:\n- uploads/counts.csv (3 bytes)"
+        )
+
+    def test_with_a_session_the_lead_is_told_the_files_are_in_it_whether_or_not_it_has_that_tool(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        inspect = Tool(
+            name="inspect_data_file",
+            description="Looks inside a table.",
+            parameters={"type": "object", "properties": {}},
+            function=lambda: "A table.",
+        )
+        chat = make_chat(tmp_path, session=session, tools=(inspect,))
+        chat.save_upload("counts.csv", b"abc")
+
+        chat.send("", attachments=["counts.csv"])
+
+        assert request_messages(fake_client, 0)[-1]["content"] == (
+            "The researcher attached these files, which are in the session's working directory:\n"
+            "- uploads/counts.csv (3 bytes)"
+        )
+
     def test_a_link_that_code_made_is_not_a_file_that_was_attached(self, tmp_path: Path) -> None:
         chat = make_chat(tmp_path)
         chat.save_upload("counts.csv", b"abc")
