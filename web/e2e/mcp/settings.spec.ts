@@ -95,6 +95,7 @@ test.describe("the servers of the library", () => {
     await row(dialog, "paperclip").getByRole("button", { name: "Save" }).click();
 
     await expect(row(dialog, "paperclip").getByTestId("key-state-PAPERCLIP_API_KEY")).toHaveText("Set");
+    await expect(row(dialog, "paperclip").getByText("Saved in the Test Keychain.", { exact: true })).toBeVisible();
     await expect(key).toHaveValue("");
     const kept = await describeOf(page, "paperclip");
     expect(kept.missing).toEqual([]);
@@ -106,6 +107,20 @@ test.describe("the servers of the library", () => {
 
     await expect(row(dialog, "paperclip").getByTestId("key-state-PAPERCLIP_API_KEY")).toHaveText("Not set");
     expect((await describeOf(page, "paperclip")).missing).toEqual([{ name: "PAPERCLIP_API_KEY", settable: true }]);
+  });
+
+  test("that need a key keep it as the choice about the keychain says, as the Keys settings do", async ({ page }) => {
+    await page.evaluate(() => localStorage.setItem("virtual-lab.keep-keys", "no"));
+    const dialog = await openTools(page);
+    await box(dialog, "paperclip", "Paperclip").click();
+    await row(dialog, "paperclip").getByLabel("Paperclip key", { exact: true }).fill("gxl_for-now");
+    const sent = page.waitForRequest((request) => request.method() === "PUT" && request.url().endsWith("/api/keys/PAPERCLIP_API_KEY"));
+
+    await row(dialog, "paperclip").getByRole("button", { name: "Save" }).click();
+
+    expect((await sent).postDataJSON()).toEqual({ value: "gxl_for-now", remember: false });
+    await expect(row(dialog, "paperclip").getByText("Saved until the server stops.", { exact: true })).toBeVisible();
+    expect((await (await page.request.get("/api/keys")).json()).sources).toEqual({ PAPERCLIP_API_KEY: "session" });
   });
 
   test("that can be signed in to are chosen between a key and the researcher's account", async ({ page }) => {

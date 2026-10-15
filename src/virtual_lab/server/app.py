@@ -64,6 +64,7 @@ from virtual_lab.server.config import describe_models, library, public_settings,
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.files import download_headers, file_response, list_files, resolve_inside
+from virtual_lab.server.keychain import Keychain, KeychainError, recall
 from virtual_lab.server.library import SETTABLE_KEYS, provider_statuses
 from virtual_lab.server.mcp import (
     MAX_SERVERS,
@@ -201,6 +202,8 @@ class NoteBody(RequestModel):
 
 class KeyBody(RequestModel):
     value: str = Field(max_length=MAX_KEY_CHARS)
+    # Whether to keep it in the keychain, or only until the server stops; None is as the keychain allows
+    remember: bool | None = None
 
 
 class DataLakeBody(RequestModel):
@@ -291,6 +294,7 @@ def create_app(
     docker_command: Sequence[str] = ("docker",),
     release_url: str = BIOMNI_RELEASE_URL,
     max_upload_bytes: int = MAX_UPLOAD_BYTES,
+    keychain: Keychain | None = None,
 ) -> FastAPI:
     """The server's application.
 
@@ -312,6 +316,9 @@ def create_app(
     :param release_url: Where the data lake is fetched from, which is for tests.
     :param max_upload_bytes: The most bytes of one file that may be attached to a message, which the settings tell
         the interface, so that it does not send a file the server would turn away.
+    :param keychain: Where the keys a person gives are kept, so that they are there when the server is started
+        again, and are read from now, or None to keep them only until the server stops. It is never the machine's
+        own unless it is given: virtual_lab.server.serve gives it.
     """
     store = Workspace(Path(workspace))
     setup = Setup(store, docker_command, release_url)
@@ -323,6 +330,12 @@ def create_app(
         setup=setup if check_setup else None,
         max_upload_bytes=max_upload_bytes,
     )
+    vault = keychain if keychain is not None else Keychain.missing()
+    # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
+    # key that is not here was in the environment the server was started with
+    kept: dict[str, str] = {}
+    recalled, unread = recall(vault, (*SETTABLE_KEYS, *service_keys()))
+    kept.update(dict.fromkeys(recalled, "keychain"))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -391,7 +404,9 @@ def create_app(
     def get_models() -> dict[str, Any]:
         return {"default": store.load_settings().model, "models": describe_models()}
 
-    def key_statuses() -> dict[str, Any]:
+    def key_statuses(problem: str | None = None) -> dict[str, Any]:
+        """What the keys are, without any of them. A problem is what went wrong with the keychain in a change that
+        was otherwise made."""
         return {
             "settable": list(SETTABLE_KEYS),
             "providers": [
@@ -403,6 +418,17 @@ def create_app(
                 }
                 for status in provider_statuses()
             ],
+            "keychain": {
+                "available": vault.available,
+                "name": vault.name if vault.available else None,
+                "problem": unread or (None if vault.available else vault.problem),
+            },
+            "sources": {
+                name: kept.get(name, "environment")
+                for name in (*SETTABLE_KEYS, *service_keys())
+                if os.environ.get(name)
+            },
+            "problem": problem,
         }
 
     @api.get("/keys")
@@ -418,18 +444,36 @@ def create_app(
         value = body.value.strip()
         if not value or any(ord(character) < 32 or ord(character) == 127 for character in value):
             raise ApiError(422, "invalid", "A key is on one line, with nothing else in it")
-        # It is kept for the rest of this process, and no further: it is never written down or told to a page
+        # It is never told to a page. It is kept in the keychain if that is wanted, and for the rest of this process
+        # in any case
         os.environ[name] = value
+        remember = body.remember if body.remember is not None else vault.available
+        problem = None
+        try:
+            if remember:
+                vault.write(name, value)
+            elif vault.available:
+                # A key kept earlier would come back, in place of this one, when the server is started again
+                vault.erase(name)
+        except KeychainError as error:
+            problem = f"The key is set until the server stops. {error}"
+        kept[name] = "keychain" if remember and problem is None else "session"
 
-        return key_statuses()
+        return key_statuses(problem)
 
     @api.delete("/keys/{name}")
     def remove_key(name: str) -> dict[str, Any]:
         if name not in (*SETTABLE_KEYS, *service_keys()):
             raise ApiError(422, "invalid", f"A key is one of {', '.join((*SETTABLE_KEYS, *service_keys()))}")
         os.environ.pop(name, None)
+        problem = None
+        if vault.available:
+            try:
+                vault.erase(name)
+            except KeychainError as error:
+                problem = f"The key is taken away until the server is started again, and may be back then. {error}"
 
-        return key_statuses()
+        return key_statuses(problem)
 
     @api.get("/setup")
     def get_setup() -> dict[str, Any]:

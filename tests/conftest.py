@@ -1,6 +1,7 @@
 """Shared fixtures for building fake OpenAI and HTTP responses without hitting either."""
 
 import json
+import os
 import re
 from importlib import import_module
 from typing import Any
@@ -31,6 +32,10 @@ from virtual_lab.literature import Article, ArticleText
 from virtual_lab.records import RecordNotFoundError
 
 TEST_MODEL = "gpt-4o-2024-08-06"
+
+# The server keeps the keys a person gives it in this machine's keychain, which a test must never read or write: the
+# keyring package is told to find none, before anything asks it
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
 
 
 def make_usage(

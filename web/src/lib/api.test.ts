@@ -113,6 +113,19 @@ describe("the API", () => {
     );
   });
 
+  it("says whether a key is to be kept in the keychain only when it is said, and then in the body", async () => {
+    const fetch = stub(answer({ settable: [], providers: [] }));
+
+    await api.setKey("OPENAI_API_KEY", "sk-secret", false);
+    await api.setKey("OPENAI_API_KEY", "sk-secret", true);
+
+    const bodies = (fetch.mock.calls as unknown as [string, RequestInit][]).map(([, init]) => init.body);
+    expect(bodies).toEqual([
+      JSON.stringify({ value: "sk-secret", remember: false }),
+      JSON.stringify({ value: "sk-secret", remember: true }),
+    ]);
+  });
+
   it("names a key in the address as it is, whatever is in its name", async () => {
     const fetch = stub(answer({ settable: [], providers: [] }));
 

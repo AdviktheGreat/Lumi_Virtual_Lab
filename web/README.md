@@ -66,9 +66,14 @@ on begin with; one already begun keeps what it began with.
 - **Model** has the model, which is chosen from those the server can reach, grouped by whose they are, or named when it is
   not one of them ("Another model…"). A model whose key is not set says so, with a button that goes to the keys. It also
   has the most one conversation may spend, in dollars (empty for no limit), and whether replies show as they are written.
-- **Keys** has a box for each key the server can take, which says whether it is set and never shows it. A key is kept by
-  the server until it stops, and is sent from the box once, as a password; Remove takes one away, including one the server
-  was started with.
+- **Keys** has a box for each key the server can take, which says whether it is set and never shows it. A key is sent from
+  the box once, as a password, and is kept in the server's keychain, so that it is there when the server is started again;
+  beside each key that is set is where it is kept (in the keychain, until the server stops, or from the environment the
+  server was started with). A box says where a key was kept as it is saved, and what went wrong if the keychain would not
+  keep it, in which case it is kept until the server stops. "Keep keys in the keychain" can be unchecked, which this browser
+  remembers (`src/lib/keys.ts`), and then a key is kept until the server stops and one kept before is forgotten. The
+  keys of the MCP servers follow it. Where the server has no keychain, or could not read the one it has, the tab says so
+  and why. Remove takes a key away, including one the server was started with, and from the keychain too.
 - **Code** has where the lab runs code. In a Docker container it has the image, whether the code can reach the network,
   the data lake (for Biomni's images), and which keys the code can read. On this computer it warns that nothing holds the
   code back, and has the Python to run it with.
@@ -212,7 +217,11 @@ small files; `--max-upload-bytes` changes it.
 The tests of the settings, the keys, the scientists, and the tools (`e2e/own-server`) change what every conversation is made with, so
 they run in a project of their own, against a second scripted server on the next port (8800). Each file of them puts
 back what it changed before each test, and neither touches what the other does. They run in order within a file, and a
-test that needs a key puts it there itself, since the server keeps none.
+test that needs a key puts it there itself, since the server keeps none. The keys they give are kept in a keychain that is
+a dictionary in the scripted server, the Test Keychain, and never in the machine's (`--no-keychain` has the server have
+none, as one on a machine without a keychain does). `e2e/own-server/keychain.spec.ts` tests what the page shows of it.
+It gives and takes away the same keys as the tests of the settings, so it has a project of its own (`--project=keychain`)
+that begins when the others of the server are done, and a run of it runs them first (`--no-deps` leaves them out).
 
 The tests of the setup (`e2e/setup`) have a third scripted server, on the port after that (8801), which is given stand-ins
 for Docker and for the place the data lake is fetched from, so that nothing is built or downloaded: a Docker that says

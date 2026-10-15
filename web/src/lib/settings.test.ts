@@ -27,6 +27,9 @@ const models: Models = {
 
 const keys: KeyStatuses = {
   settable: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+  keychain: { available: false, name: null, problem: null },
+  sources: {},
+  problem: null,
   providers: [
     { provider: "OpenAI", variables: ["OPENAI_API_KEY"], missing: ["OPENAI_API_KEY"], ready: false },
     { provider: "Anthropic", variables: ["ANTHROPIC_API_KEY"], missing: [], ready: true },

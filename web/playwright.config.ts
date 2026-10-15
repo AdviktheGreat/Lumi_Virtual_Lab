@@ -42,6 +42,15 @@ export default defineConfig({
     {
       name: "own-server",
       testMatch: "**/own-server/**/*.spec.ts",
+      testIgnore: "**/own-server/keychain.spec.ts",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${ownPort}` },
+    },
+    {
+      name: "keychain",
+      testMatch: "**/own-server/keychain.spec.ts",
+      // These give and take away the keys that the tests of the settings do, on the same server, so they begin when those
+      // are done and are not run beside them
+      dependencies: ["own-server"],
       use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${ownPort}` },
     },
     {
