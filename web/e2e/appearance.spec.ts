@@ -160,6 +160,48 @@ for (const theme of ["light", "dark"] as const) {
         await expect(page.getByTestId("question")).toBeVisible();
         await looksRight(page, "a question that asks the researcher to go to a page");
       });
+
+      test("what the settings show of a server that was checked, and is signed in to, has nothing wrong and fits the window", async ({
+        page,
+      }) => {
+        await themed(page, theme, size);
+        await page.route("**/api/mcp", async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          body.servers = body.servers.map((server: { name: string }) => (server.name === "proto_hosted" ? { ...server, signed_in: true } : server));
+          await route.fulfill({ response, json: body });
+        });
+        let release: () => void = () => undefined;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        let found: object = { ok: true, tools: Array.from({ length: 14 }, (_, at) => `proto_hosted_a_tool_with_a_long_name_${at}`), reason: null };
+        await page.route("**/api/mcp/servers/proto_hosted/check", async (route) => {
+          await held;
+          await route.fulfill({ json: found });
+        });
+        if (size.name === "phone") await page.getByRole("button", { name: "Show the conversations" }).click();
+        await page.getByRole("button", { name: "Settings" }).first().click();
+        await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCSS("opacity", "1");
+        await page.getByRole("tab", { name: "Tools" }).click();
+        const row = page.getByTestId("mcp-proto_hosted");
+        await expect(row.getByRole("button", { name: "Sign out of Proto, hosted" })).toBeVisible();
+        await looksRight(page, "a server that is signed in to");
+
+        await row.getByRole("button", { name: "Check connection to Proto, hosted" }).click();
+        await expect(row.getByRole("status").filter({ hasText: "Connecting…" })).toBeVisible();
+        await looksRight(page, "a server being connected to, to be looked at");
+        release();
+        await expect(row.getByRole("status").filter({ hasText: "Connected." })).toBeVisible();
+        await looksRight(page, "what a check of a server found");
+
+        found = {
+          ok: false,
+          tools: [],
+          reason: `Could not connect to the MCP server proto_hosted (at https://mcp.example.org/mcp): it did not answer within 30 seconds.\n${"x".repeat(150)}`,
+        };
+        await row.getByRole("button", { name: "Check connection to Proto, hosted" }).click();
+        await expect(row.getByRole("alert").filter({ hasText: "Could not connect" })).toBeVisible();
+        await looksRight(page, "why a check of a server found it could not be connected to");
+      });
     });
   }
 }

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { describeTransport, howManyOn, keysToGive, keysToSetElsewhere, nameProblem, readEntry } from "./mcp";
+import {
+  MOST_TOOLS_NAMED,
+  describeCheck,
+  describeSignIn,
+  describeTransport,
+  howManyOn,
+  keysToGive,
+  keysToSetElsewhere,
+  nameProblem,
+  readEntry,
+} from "./mcp";
 import type { McpServer } from "./types";
 
 const server = (name: string, fields: Partial<McpServer> = {}): McpServer => ({
@@ -14,6 +24,7 @@ const server = (name: string, fields: Partial<McpServer> = {}): McpServer => ({
   transport: "http",
   target: "https://example.com/mcp",
   asks: false,
+  signed_in: null,
   missing: [],
   keys_set: [],
   problem: null,
@@ -111,5 +122,47 @@ describe("the keys of a server", () => {
   it("are none for a server that asks for none", () => {
     expect(keysToSetElsewhere(server("a"))).toEqual([]);
     expect(keysToGive(server("a"))).toEqual([]);
+  });
+});
+
+describe("what a check of a server found", () => {
+  it("is the names of the tools, counted", () => {
+    expect(describeCheck({ ok: true, tools: ["genes_echo", "genes_count"], reason: null })).toEqual({
+      text: "Connected. It gives 2 tools:",
+      tools: ["genes_echo", "genes_count"],
+      more: 0,
+    });
+    expect(describeCheck({ ok: true, tools: ["genes_echo"], reason: null }).text).toBe("Connected. It gives 1 tool:");
+  });
+
+  it("says so when the server gives no tools", () => {
+    expect(describeCheck({ ok: true, tools: [], reason: null })).toEqual({ text: "Connected, but it gives no tools.", tools: [], more: 0 });
+  });
+
+  it("names only so many tools, and says how many more there are", () => {
+    const tools = Array.from({ length: MOST_TOOLS_NAMED + 5 }, (_, at) => `t${at}`);
+
+    const found = describeCheck({ ok: true, tools, reason: null });
+
+    expect(found.tools).toEqual(tools.slice(0, MOST_TOOLS_NAMED));
+    expect(found.more).toBe(5);
+    expect(found.text).toBe(`Connected. It gives ${MOST_TOOLS_NAMED + 5} tools:`);
+    expect(describeCheck({ ok: true, tools: tools.slice(0, MOST_TOOLS_NAMED), reason: null }).more).toBe(0);
+  });
+
+  it("is why it could not be connected to, and names no tools", () => {
+    expect(describeCheck({ ok: false, tools: ["ignored"], reason: "Refused." })).toEqual({ text: "Refused.", tools: [], more: 0 });
+    expect(describeCheck({ ok: false, tools: [], reason: null }).text).toBe("It could not be connected to.");
+  });
+});
+
+describe("a server's sign-in", () => {
+  it("is said for a server that is signed in to, whether or not it has been", () => {
+    expect(describeSignIn(server("a", { signed_in: true }))).toBe("Signed in. Conversations use it without asking you.");
+    expect(describeSignIn(server("a", { signed_in: false }))).toMatch(/^Not signed in yet\. A conversation .* when you send its first message\.$/);
+  });
+
+  it("is not said for a server that is not signed in to", () => {
+    expect(describeSignIn(server("a", { signed_in: null }))).toBeNull();
   });
 });

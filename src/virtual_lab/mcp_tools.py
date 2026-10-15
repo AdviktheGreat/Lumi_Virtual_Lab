@@ -739,12 +739,14 @@ class MCPConnection:
         approve: Approve = approve_in_terminal,
         answer: Answer = answer_in_terminal,
         on_sign_in: Callable[[str, str], None] | None = None,
+        may_sign_in: bool = True,
     ) -> None:
         self.server = server
         self.loop = loop
         self.approve = approve
         self.answer = answer
         self.on_sign_in = on_sign_in
+        self.may_sign_in = may_sign_in
         self.log_path = log_dir / f"{server.prefix}.log" if server.transport == "stdio" else None
         self.timeout = timeout
         self.start_timeout = start_timeout
@@ -855,7 +857,9 @@ class MCPConnection:
         # registered, at a port that is free
         if server.auth == "oauth" and (self.sign_in is None or self.sign_in.stale):
             on_page = None if self.on_sign_in is None else partial(self.on_sign_in, server.name)
-            self.sign_in = SignIn(server.name, server.url, self.signing_in, on_page)  # type: ignore[arg-type]
+            self.sign_in = SignIn(  # type: ignore[arg-type]
+                server.name, server.url, self.signing_in, on_page, self.may_sign_in
+            )
             self.auth = self.sign_in.provider()
         if server.transport == "sse":
             from mcp.client.sse import sse_client
@@ -1224,6 +1228,7 @@ def connect_mcp(
     approve: Approve | None = None,
     answer: Answer | None = None,
     on_sign_in: Callable[[str, str], None] | None = None,
+    may_sign_in: bool = True,
 ) -> MCPTools:
     """Starts, or connects to, the MCP servers a config lists, and makes tools of their tools,
     for a meeting's agents to call, or for code in a session to call, or both, as Biomni's
@@ -1307,6 +1312,9 @@ def connect_mcp(
         for a server that is signed in to, so that whatever shows the person what is going on can offer the address
         too. A browser is opened at it as well, and where none can be opened, the sign-in waits for the person to
         go to the address rather than failing for want of a browser.
+    :param may_sign_in: False to have a server that needs a person to sign in fail, saying so, rather than send them to
+        its sign-in page, as a check that only looks at the servers would. A server whose sign-in is kept is connected
+        to as usual, and its sign-in refreshed.
     :raises ImportError: If the MCP SDK is not installed: pip install "virtual-lab[mcp]".
     :raises ValueError: If the config is not one, or uses a variable that is not set, or names
         a preset that is not one, or two tools would share a name.
@@ -1328,6 +1336,8 @@ def connect_mcp(
             raise TypeError(f"{what} is a function, or None to ask at the terminal, not {type(value).__name__}")
     if on_sign_in is not None and not callable(on_sign_in):
         raise TypeError(f"on_sign_in is a function, or None, not {type(on_sign_in).__name__}")
+    if not isinstance(may_sign_in, bool):
+        raise TypeError(f"may_sign_in is True or False, not {type(may_sign_in).__name__}")
 
     if config is None and presets is None:
         raise ValueError("connect_mcp connects to the servers of a config, or to presets, or both: give one")
@@ -1392,6 +1402,7 @@ def connect_mcp(
             approve=approve if approve is not None else approve_in_terminal,
             answer=answer if answer is not None else answer_in_terminal,
             on_sign_in=on_sign_in,
+            may_sign_in=may_sign_in,
         )
         for parsed in configs
     ]

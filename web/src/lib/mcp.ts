@@ -1,4 +1,4 @@
-import type { McpEntry, McpServer } from "./types";
+import type { McpCheck, McpEntry, McpServer } from "./types";
 
 // What a server's name may be, as the server says: it starts the names of the server's tools
 const SERVER_NAME = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
@@ -67,4 +67,29 @@ export function keysToGive(server: McpServer): { name: string; set: boolean }[] 
     ...server.missing.filter((key) => key.settable).map((key) => ({ name: key.name, set: false })),
     ...server.keys_set.map((name) => ({ name, set: true })),
   ];
+}
+
+// The most tools a check names, so that a server with a great many does not fill the page
+export const MOST_TOOLS_NAMED = 12;
+
+// What a check found, as a person reads it, with the names of the tools to show, which are named in full only so far
+export function describeCheck(check: McpCheck): { text: string; tools: string[]; more: number } {
+  if (!check.ok) return { text: check.reason ?? "It could not be connected to.", tools: [], more: 0 };
+  if (check.tools.length === 0) return { text: "Connected, but it gives no tools.", tools: [], more: 0 };
+  const count = check.tools.length === 1 ? "1 tool" : `${check.tools.length} tools`;
+
+  return {
+    text: `Connected. It gives ${count}:`,
+    tools: check.tools.slice(0, MOST_TOOLS_NAMED),
+    more: Math.max(0, check.tools.length - MOST_TOOLS_NAMED),
+  };
+}
+
+// What a server's sign-in is, for what is shown beside it, or null for a server that is not signed in to
+export function describeSignIn(server: McpServer): string | null {
+  if (server.signed_in === null) return null;
+
+  return server.signed_in
+    ? "Signed in. Conversations use it without asking you."
+    : "Not signed in yet. A conversation that has it on asks you to sign in when you send its first message.";
 }

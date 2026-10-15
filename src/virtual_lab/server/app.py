@@ -20,6 +20,8 @@ and everything else is a request and an answer.
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
+    POST   /api/mcp/servers/{name}/check   connect to it, to say whether it can be and which tools it gives
+    DELETE /api/mcp/servers/{name}/sign-in   forget the sign-in to it, so that the next conversation asks for one
     GET    /api/chats, POST             the conversations, and a new one
     GET    /api/chats/{id}              one conversation, which PATCH renames and DELETE removes
     POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background
@@ -35,6 +37,7 @@ and everything else is a request and an answer.
 
 import asyncio
 import os
+import threading
 from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -55,13 +58,23 @@ from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_CHAT_TITLE_CHARS, MAX_
 from virtual_lab.environment import DATA_LAKE
 from virtual_lab.export import PDFExportError, make_pdf
 from virtual_lab.export_chat import chat_html
+from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.files import download_headers, file_response, list_files, resolve_inside
 from virtual_lab.server.library import SETTABLE_KEYS, provider_statuses
-from virtual_lab.server.mcp import MAX_SERVERS, change_entry, check_entry, describe_servers, service_keys
+from virtual_lab.server.mcp import (
+    MAX_SERVERS,
+    change_entry,
+    check_connection,
+    check_entry,
+    describe_servers,
+    server_title,
+    service_keys,
+    sign_out,
+)
 from virtual_lab.server.security import LOCAL_HOSTS, Guard
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
@@ -525,6 +538,39 @@ def create_app(
     def remove_mcp_server(name: str) -> dict[str, Any]:
         if not store.remove_mcp_server(name):
             raise not_found("server of yours with that name")
+
+        return {"servers": describe_servers(store.load_mcp_servers())}
+
+    def known_mcp_server(name: str) -> dict[str, Any] | None:
+        """What is kept for a server that is set up, or None for a preset that is not; any other name is not found."""
+        entry = store.load_mcp_servers().get(name)
+        if entry is None and name not in MCP_PRESETS:
+            raise not_found("server of yours with that name")
+
+        return entry
+
+    checking: set[str] = set()
+    checking_lock = threading.Lock()
+
+    @api.post("/mcp/servers/{name}/check")
+    def check_mcp_server(name: str) -> dict[str, Any]:
+        entry = known_mcp_server(name)
+        with checking_lock:
+            if name in checking:
+                raise ApiError(409, "busy", f"{server_title(name, entry)} is being checked")
+            checking.add(name)
+        try:
+            return check_connection(name, entry)
+        finally:
+            with checking_lock:
+                checking.discard(name)
+
+    @api.delete("/mcp/servers/{name}/sign-in")
+    def sign_out_of_mcp_server(name: str) -> dict[str, Any]:
+        try:
+            sign_out(name, known_mcp_server(name))
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
 
         return {"servers": describe_servers(store.load_mcp_servers())}
 
