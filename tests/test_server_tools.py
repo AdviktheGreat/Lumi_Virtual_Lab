@@ -251,6 +251,12 @@ class TestWhatAConversationIsSetUpWith:
 
         assert ChatConfig.from_dict(saved).tools == ()
 
+    def test_a_name_written_twice_in_what_was_kept_is_one_tool(self, workspace: Workspace) -> None:
+        saved = resolve_config({}, workspace.load_settings(), workspace).to_dict()
+        saved["tools"] = ["pubmed_search", "arxiv_search", "pubmed_search"]
+
+        assert ChatConfig.from_dict(saved).tools == ("pubmed_search", "arxiv_search")
+
 
 class TestWhatTheLeadIsGiven:
     def test_a_conversation_without_code_is_given_the_tools_but_the_one_that_fetches_a_structure(

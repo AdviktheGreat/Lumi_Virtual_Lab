@@ -125,8 +125,9 @@ class ChatConfig:
             max_cost=data["max_cost"],
             stream=bool(data["stream"]),
             commercial_mode=bool(data["commercial_mode"]),
-            # A conversation begun before the lead had tools of the library's has none, and goes on without
-            tools=tuple(str(name) for name in data.get("tools", ())),
+            # A conversation begun before the lead had tools of the library's has none, and goes on without. A name
+            # written twice by hand is one tool, since the lead cannot be given two of a name.
+            tools=tuple(dict.fromkeys(str(name) for name in data.get("tools", ()))),
         )
 
 
