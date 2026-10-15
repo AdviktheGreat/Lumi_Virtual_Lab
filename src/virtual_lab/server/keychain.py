@@ -118,6 +118,9 @@ class Keychain:
     def call(self, action: Callable[..., Any], what: str, *arguments: Any, secret: str | None = None) -> Any:
         """Calls the keychain, giving up if it does not answer, and saying what went wrong without the key.
 
+        A call that did not answer is not stopped, since it is the keychain's own. It may finish later, so a key written
+        by one that was waiting for an unlock can be kept after it was said not to be, or after it was taken away.
+
         :param what: What was asked of it, as the message completes "The keychain would not".
         :param secret: A value the message must not repeat.
         """
