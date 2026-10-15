@@ -17,11 +17,16 @@ and everything else is a request and an answer.
     GET    /api/scientists, PUT         the library and the scientists the person described
     DELETE /api/scientists/{title}      one of those the person described
     GET    /api/tools, PUT              the library's tools a conversation can be given, and which are turned off
+    GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
+    PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
+    PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
     GET    /api/chats, POST             the conversations, and a new one
     GET    /api/chats/{id}              one conversation, which PATCH renames and DELETE removes
     POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background
     POST   /api/chats/{id}/note         a note for the lead or the team, which they read as they work
     POST   /api/chats/{id}/pause        also resume and stop, steering the turn that is running
+    POST   /api/chats/{id}/approvals/{request}   allow or decline a call that waits for it, which the events tell of
+    POST   /api/chats/{id}/questions/{request}   answer or decline what an MCP server asks, which the events tell of
     GET    /api/chats/{id}/events       the events of the conversation, as they happen
     POST   /api/chats/{id}/uploads      a file for the conversation, as the body, named by ?name=
     GET    /api/chats/{id}/files        what the conversation made or was given, and /files/{path} one of them
@@ -39,7 +44,7 @@ import anyio.to_thread
 from fastapi import APIRouter, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
@@ -50,11 +55,13 @@ from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_CHAT_TITLE_CHARS, MAX_
 from virtual_lab.environment import DATA_LAKE
 from virtual_lab.export import PDFExportError, make_pdf
 from virtual_lab.export_chat import chat_html
+from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.files import download_headers, file_response, list_files, resolve_inside
 from virtual_lab.server.library import SETTABLE_KEYS, provider_statuses
+from virtual_lab.server.mcp import MAX_SERVERS, change_entry, check_entry, describe_servers, service_keys
 from virtual_lab.server.security import LOCAL_HOSTS, Guard
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
@@ -121,6 +128,7 @@ class ChatBody(RequestModel):
     stream: bool | None = None
     commercial_mode: bool = False
     tools: list[str] | None = Field(None, max_length=MAX_TOOLS)
+    mcp: list[str] | None = Field(None, max_length=MAX_SERVERS)
 
 
 class SettingsBody(RequestModel):
@@ -139,6 +147,30 @@ class ToolsBody(RequestModel):
     """The tools a new conversation is not given, which are none until some are turned off."""
 
     disabled: list[str] = Field(default_factory=list, max_length=MAX_TOOLS)
+
+
+class McpServerBody(RequestModel):
+    """How to reach an MCP server, as a config gives it, or {"preset": ...} for one of the library's."""
+
+    entry: dict[str, Any]
+
+
+class McpChangeBody(RequestModel):
+    """A change to a server that is set up, or is a preset: any of these, and what is not given is left as it is."""
+
+    enabled: StrictBool | None = None
+    auth: Literal["key", "oauth"] | None = None
+
+
+class ApprovalBody(RequestModel):
+    # Strictly true or false: a call is not to be made because a word was read as a yes
+    allow: StrictBool
+
+
+class AnswerBody(RequestModel):
+    """What an MCP server asked: the form's fields by name, or {} for what was answered at a web page; null declines."""
+
+    answer: dict[str, Any] | None
 
 
 class RenameBody(RequestModel):
@@ -366,8 +398,10 @@ def create_app(
 
     @api.put("/keys/{name}")
     def set_key(name: str, body: KeyBody) -> dict[str, Any]:
-        if name not in SETTABLE_KEYS:
-            raise ApiError(422, "invalid", f"A key is one of {', '.join(SETTABLE_KEYS)}")
+        # The keys of the services the MCP presets reach are given the same way, and nothing else is: a name that is
+        # not one of these is not a variable the process may be told to change
+        if name not in (*SETTABLE_KEYS, *service_keys()):
+            raise ApiError(422, "invalid", f"A key is one of {', '.join((*SETTABLE_KEYS, *service_keys()))}")
         value = body.value.strip()
         if not value or any(ord(character) < 32 or ord(character) == 127 for character in value):
             raise ApiError(422, "invalid", "A key is on one line, with nothing else in it")
@@ -378,8 +412,8 @@ def create_app(
 
     @api.delete("/keys/{name}")
     def remove_key(name: str) -> dict[str, Any]:
-        if name not in SETTABLE_KEYS:
-            raise ApiError(422, "invalid", f"A key is one of {', '.join(SETTABLE_KEYS)}")
+        if name not in (*SETTABLE_KEYS, *service_keys()):
+            raise ApiError(422, "invalid", f"A key is one of {', '.join((*SETTABLE_KEYS, *service_keys()))}")
         os.environ.pop(name, None)
 
         return key_statuses()
@@ -457,6 +491,43 @@ def create_app(
 
         return {"tools": describe_tools(disabled)}
 
+    @api.get("/mcp")
+    def get_mcp() -> dict[str, Any]:
+        return {"servers": describe_servers(store.load_mcp_servers())}
+
+    @api.put("/mcp/servers/{name}")
+    def set_mcp_server(name: str, body: McpServerBody) -> dict[str, Any]:
+        try:
+            entry = check_entry(name, body.entry)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        stored = store.load_mcp_servers()
+        if name not in stored and len(stored) >= MAX_SERVERS:
+            raise ApiError(422, "invalid", f"At most {MAX_SERVERS} servers can be set up")
+        store.put_mcp_server(name, entry)
+
+        return {"servers": describe_servers(store.load_mcp_servers())}
+
+    @api.patch("/mcp/servers/{name}")
+    def change_mcp_server(name: str, body: McpChangeBody) -> dict[str, Any]:
+        if body.enabled is None and body.auth is None:
+            raise ApiError(422, "invalid", "Say what to change: enabled, or auth")
+        try:
+            store.update_mcp_server(name, lambda entry: change_entry(name, entry, body.enabled, body.auth))
+        except KeyError:
+            raise not_found("server of yours with that name") from None
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+
+        return {"servers": describe_servers(store.load_mcp_servers())}
+
+    @api.delete("/mcp/servers/{name}")
+    def remove_mcp_server(name: str) -> dict[str, Any]:
+        if not store.remove_mcp_server(name):
+            raise not_found("server of yours with that name")
+
+        return {"servers": describe_servers(store.load_mcp_servers())}
+
     @api.get("/chats")
     def list_chats() -> dict[str, Any]:
         return {"chats": conversations.summaries()}
@@ -513,7 +584,23 @@ def create_app(
 
     @api.post("/chats/{chat_id}/stop")
     def stop(chat_id: str) -> dict[str, bool]:
-        return {"accepted": conversations.get(chat_id).chat.stop()}
+        return {"accepted": conversations.get(chat_id).stop()}
+
+    @api.post("/chats/{chat_id}/approvals/{request_id}")
+    def approve_call(chat_id: str, request_id: str, body: ApprovalBody) -> dict[str, str]:
+        connections = conversations.get(chat_id).connections
+        if connections is None:
+            raise not_waiting(request_id)
+
+        return {"state": connections.asker.approval(request_id, body.allow)}
+
+    @api.post("/chats/{chat_id}/questions/{request_id}")
+    def answer_question(chat_id: str, request_id: str, body: AnswerBody) -> dict[str, str]:
+        connections = conversations.get(chat_id).connections
+        if connections is None:
+            raise not_waiting(request_id)
+
+        return {"state": connections.asker.reply(request_id, body.answer)}
 
     @api.get("/chats/{chat_id}/events")
     async def follow_chat(

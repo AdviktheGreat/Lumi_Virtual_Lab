@@ -26,6 +26,7 @@ import { useAttachments } from "@/lib/use-attachments";
 import { useChat } from "@/lib/use-chat";
 import { useFiles } from "@/lib/use-files";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
+import { waitingOnYou } from "@/lib/transcript";
 import type { ChatState } from "@/lib/types";
 
 const STATE_LABELS: Record<ChatState, string | null> = {
@@ -155,7 +156,8 @@ export function ChatView({ id }: { id: string }) {
     );
   }
 
-  const label = STATE_LABELS[state];
+  // What the lead waits for from the researcher is what the conversation is waiting for, which is not work
+  const label = waitingOnYou(transcript.turns) > 0 ? "Waiting for you" : STATE_LABELS[state];
   const cost = formatCost(transcript.spent);
   const model = status.kind === "ready" ? status.info.config.model : null;
 

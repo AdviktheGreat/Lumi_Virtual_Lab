@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyTranscript, isThinking, reduce, replay } from "./transcript";
+import { emptyTranscript, isThinking, reduce, replay, waitingOnYou } from "./transcript";
 import type { ChatEvent, ChatEventKind } from "./types";
 
 let next = 0;
@@ -583,5 +583,239 @@ describe("when the lead is thinking", () => {
     expect(isThinking(turnOf(event("answer", 1, { text: "Done" })), true)).toBe(false);
     expect(isThinking(turnOf(event("stopped", 1, { text: "Stopped" })), true)).toBe(false);
     expect(isThinking(turnOf(event("failed", 1, { text: "Broke" })), true)).toBe(false);
+  });
+});
+
+describe("what the lead's servers and tools ask of the researcher", () => {
+  // The events are numbered as they come, after the researcher's message
+  const play = (...events: ChatEvent[]) => replay([event("user", 1), ...events].map((one, at) => ({ ...one, id: at + 1 })));
+  const turnOf = (...events: ChatEvent[]) => play(...events).turns[0];
+  const connection = (state: string, fields: Partial<ChatEvent> = {}, data: Record<string, unknown> = {}) =>
+    event("connection", 1, { data: { server: "lit", title: "Literature", state, ...data }, ...fields });
+  const asking = (request: string, fields: Record<string, unknown> = {}) =>
+    event("approval", 1, {
+      data: {
+        request,
+        state: "waiting",
+        tool: "order",
+        server: "lit",
+        title: "Literature",
+        description: "Orders a sample.",
+        arguments: '{\n  "n": 2\n}',
+        ...fields,
+      },
+    });
+  const approval = (request: string, state: string) => event("approval", 1, { data: { request, state, server: "lit", title: "Literature" } });
+  const question = (request: string, fields: Partial<ChatEvent> = {}, data: Record<string, unknown> = {}) =>
+    event("question", 1, {
+      text: "How many?",
+      data: { request, state: "waiting", server: "lit", title: "Literature", fields: { n: { type: "integer" } }, required: ["n"], url: null, ...data },
+      ...fields,
+    });
+  const ended = (request: string, state: string) => event("question", 1, { data: { request, state, server: "lit", title: "Literature" } });
+
+  it("shows a server as it is connected to, and what came of it", () => {
+    expect(turnOf(connection("connecting")).steps).toEqual([
+      {
+        kind: "connection",
+        key: "connection-2",
+        connection: { server: "lit", title: "Literature", state: "connecting", url: null, tools: null, text: "" },
+      },
+    ]);
+    const steps = turnOf(connection("connecting"), connection("signing_in", {}, { url: "https://sign.in/x" }), connection("ready", {}, { tools: 4 })).steps;
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ kind: "connection", connection: { state: "ready", tools: 4, url: null } });
+  });
+
+  it("has the sign-in page while the server waits for the researcher to sign in", () => {
+    const [step] = turnOf(connection("connecting"), connection("signing_in", {}, { url: "https://sign.in/x" })).steps;
+
+    expect(step).toMatchObject({ connection: { state: "signing_in", url: "https://sign.in/x" } });
+  });
+
+  it("says why a server could not be connected to", () => {
+    const [step] = turnOf(connection("connecting"), connection("failed", { text: "It refused the connection." })).steps;
+
+    expect(step).toMatchObject({ connection: { state: "failed", text: "It refused the connection." } });
+  });
+
+  it("keeps the servers apart, and shows one that is tried again as a new connection", () => {
+    const steps = turnOf(
+      connection("connecting"),
+      connection("connecting", {}, { server: "geo", title: "Gene expression" }),
+      connection("failed", { text: "Down." }),
+      connection("ready", {}, { server: "geo", title: "Gene expression", tools: 2 }),
+      connection("connecting"),
+    ).steps;
+
+    expect(steps.map((step) => step.kind === "connection" && [step.connection.server, step.connection.state])).toEqual([
+      ["lit", "failed"],
+      ["geo", "ready"],
+      ["lit", "connecting"],
+    ]);
+  });
+
+  it("is not thinking while a server is being connected to, and is once it has been", () => {
+    expect(isThinking(turnOf(connection("connecting")), true)).toBe(false);
+    expect(isThinking(turnOf(connection("connecting"), connection("signing_in", {}, { url: "https://sign.in/x" })), true)).toBe(false);
+    expect(isThinking(turnOf(connection("connecting"), connection("ready", {}, { tools: 1 })), true)).toBe(true);
+  });
+
+  it("does not leave a server being connected to when the turn ends", () => {
+    const [step] = turnOf(connection("connecting"), event("stopped", 1, { text: "Stopped." })).steps;
+
+    expect(step).toMatchObject({ connection: { state: "failed", text: "Not connected: the turn ended before it was." } });
+  });
+
+  it("asks whether a call may be made, and shows how it was answered", () => {
+    const [step] = turnOf(asking("r1")).steps;
+
+    expect(step).toEqual({
+      kind: "approval",
+      key: "approval-r1",
+      approval: {
+        request: "r1",
+        state: "waiting",
+        tool: "order",
+        server: "lit",
+        title: "Literature",
+        description: "Orders a sample.",
+        arguments: '{\n  "n": 2\n}',
+      },
+    });
+    for (const state of ["approved", "declined", "withdrawn"]) {
+      const [ended] = turnOf(asking("r1"), approval("r1", state)).steps;
+
+      expect(ended).toMatchObject({ approval: { request: "r1", state, tool: "order", arguments: '{\n  "n": 2\n}' } });
+    }
+  });
+
+  it("answers the request an event is of, and no other", () => {
+    const steps = turnOf(asking("r1"), asking("r2", { tool: "buy" }), approval("r2", "approved")).steps;
+
+    expect(steps.map((step) => step.kind === "approval" && [step.approval.request, step.approval.state])).toEqual([
+      ["r1", "waiting"],
+      ["r2", "approved"],
+    ]);
+  });
+
+  it("is not shown an end for a request that was never told of, and shows a request told of twice once", () => {
+    expect(turnOf(approval("r9", "approved")).steps).toEqual([]);
+    expect(turnOf(ended("r9", "answered")).steps).toEqual([]);
+    expect(turnOf(asking("r1"), asking("r1")).steps).toHaveLength(1);
+    expect(turnOf(question("q1"), question("q1")).steps).toHaveLength(1);
+  });
+
+  it("shows what a server asks, and how it ended", () => {
+    const [step] = turnOf(question("q1")).steps;
+
+    expect(step).toEqual({
+      kind: "question",
+      key: "question-q1",
+      question: {
+        request: "q1",
+        state: "waiting",
+        server: "lit",
+        title: "Literature",
+        text: "How many?",
+        fields: { n: { type: "integer" } },
+        required: ["n"],
+        url: null,
+      },
+    });
+    for (const state of ["answered", "declined", "withdrawn"]) {
+      const [over] = turnOf(question("q1"), ended("q1", state)).steps;
+
+      expect(over).toMatchObject({ question: { state, text: "How many?", fields: { n: { type: "integer" } }, required: ["n"] } });
+    }
+  });
+
+  it("shows a question that was declined without being asked, with what it said", () => {
+    const [step] = turnOf(event("question", 1, { text: "Go to it.\n\nIt was declined.", data: { request: "q2", state: "declined", server: "lit", title: "Literature" } })).steps;
+
+    expect(step).toMatchObject({ kind: "question", question: { request: "q2", state: "declined", text: "Go to it.\n\nIt was declined." } });
+  });
+
+  it("has the page a question asks the researcher to go to", () => {
+    const [step] = turnOf(question("q1", {}, { url: "https://x.org/consent", fields: {}, required: [] })).steps;
+
+    expect(step).toMatchObject({ question: { url: "https://x.org/consent", fields: {}, required: [] } });
+  });
+
+  it("does not take a fields entry that is not a schema for one", () => {
+    const [step] = turnOf(question("q1", {}, { fields: { n: 4, m: null, k: { type: "string" } } })).steps;
+
+    expect(step).toMatchObject({ question: { fields: { n: {}, m: {}, k: { type: "string" } } } });
+  });
+
+  it("takes a connection that was waiting for the researcher to sign in as not made when the turn ends", () => {
+    const [step] = turnOf(connection("connecting"), connection("signing_in", {}, { url: "https://sign.in/x" }), event("stopped", 1, { text: "Stopped." })).steps;
+
+    expect(step).toMatchObject({ connection: { state: "failed", text: "Not connected: the turn ended before it was." } });
+  });
+
+  it("takes a state it does not know to be the first of its kind: waiting for a request, connecting for a server", () => {
+    const [connecting] = turnOf(connection("mystery")).steps;
+    const [approving] = turnOf(asking("r1"), approval("r1", "mystery")).steps;
+    const [questioning] = turnOf(question("q1"), ended("q1", "mystery")).steps;
+
+    expect(connecting).toMatchObject({ connection: { state: "connecting" } });
+    expect(approving).toMatchObject({ approval: { state: "waiting" } });
+    expect(questioning).toMatchObject({ question: { state: "waiting" } });
+  });
+
+  it("calls a server by its name when it gave no title", () => {
+    const [connecting] = turnOf(connection("connecting", {}, { title: undefined })).steps;
+    const [approving] = turnOf(asking("r1", { title: undefined })).steps;
+    const [questioning] = turnOf(question("q1", {}, { title: undefined })).steps;
+
+    expect(connecting).toMatchObject({ connection: { title: "lit" } });
+    expect(approving).toMatchObject({ approval: { title: "lit" } });
+    expect(questioning).toMatchObject({ question: { title: "lit" } });
+  });
+
+  it("withdraws what still waits when the turn ends, however it ends", () => {
+    for (const end of ["answer", "stopped", "failed"] as const) {
+      const steps = turnOf(asking("r1"), question("q1"), asking("r2"), approval("r2", "approved"), event(end, 1, { text: "Over." })).steps;
+
+      expect(steps.map((step) => (step.kind === "approval" ? step.approval.state : step.kind === "question" ? step.question.state : null))).toEqual([
+        "withdrawn",
+        "withdrawn",
+        "approved",
+      ]);
+    }
+  });
+
+  it("counts what waits for the researcher in the turns that are going on", () => {
+    const read = (...events: ChatEvent[]) => waitingOnYou(play(...events).turns);
+
+    expect(read()).toBe(0);
+    expect(read(asking("r1"), question("q1"))).toBe(2);
+    expect(read(asking("r1"), question("q1"), approval("r1", "approved"))).toBe(1);
+    expect(read(asking("r1"), question("q1"), event("stopped", 1, { text: "Stopped." }))).toBe(0);
+  });
+
+  it("counts a sign-in that is waited for, until it is made, and not a connection that is only being made", () => {
+    const read = (...events: ChatEvent[]) => waitingOnYou(play(...events).turns);
+
+    expect(read(connection("connecting"))).toBe(0);
+    expect(read(connection("connecting"), connection("signing_in", {}, { url: "https://x.org/in" }))).toBe(1);
+    expect(read(connection("connecting"), connection("signing_in"), connection("ready"))).toBe(0);
+    expect(read(connection("connecting"), connection("signing_in"), connection("failed"))).toBe(0);
+    expect(read(connection("connecting"), connection("signing_in"), asking("r1"))).toBe(2);
+  });
+
+  it("makes nothing of what happens outside a turn", () => {
+    const outside = [event("connection", 0, { data: { server: "lit", state: "connecting" } }), { ...asking("r1"), turn: 0 }];
+
+    expect(replay(outside.map((one, at) => ({ ...one, id: at + 1 }))).turns).toEqual([]);
+  });
+
+  it("is not changed by an event it has read", () => {
+    const events = [event("user", 1), asking("r1"), approval("r1", "approved")].map((one, at) => ({ ...one, id: at + 1 }));
+    const once = replay(events);
+
+    expect(replay(events, once)).toBe(once);
   });
 });

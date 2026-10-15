@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChevronRight, Library, Loader2, StickyNote, Terminal } from "lucide-react";
+import { ApprovalCard, ConnectionCard, QuestionCard } from "@/components/asking";
 import { CallIcon } from "@/components/call-icon";
 import { useCaughtUp } from "@/components/caught-up";
 import { CodeBlock } from "@/components/code";
@@ -252,6 +253,12 @@ export function Steps({ steps }: { steps: Step[] }) {
             return <ResourcesCard key={step.key} resources={step.resources} />;
           case "note":
             return <NoteChip key={step.key} text={step.text} to={step.to} read={step.read} />;
+          case "connection":
+            return <ConnectionCard key={step.key} connection={step.connection} />;
+          case "approval":
+            return <ApprovalCard key={step.key} approval={step.approval} />;
+          case "question":
+            return <QuestionCard key={step.key} question={step.question} />;
         }
       })}
     </div>

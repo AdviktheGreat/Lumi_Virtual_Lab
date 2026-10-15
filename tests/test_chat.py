@@ -398,6 +398,175 @@ class TestCode:
         assert of(chat.events_since(), "tool_output")[0].text == "Found KP.3."
 
 
+def looking_up(name: str = "look_up", instructions: str | None = None) -> Tool:
+    return Tool(
+        name=name,
+        description="Looks something up.",
+        parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+        function=lambda query: f"Found {query}.",
+        instructions=instructions,
+    )
+
+
+class TestToolsThatCannotBeHadBeforeTheFirstMessage:
+    def test_they_are_asked_for_once_with_the_first_message_and_the_lead_is_given_them(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        asked: list[int] = []
+
+        def late() -> tuple[Tool, ...]:
+            asked.append(1)
+
+            return (looking_up(instructions="Look things up sparingly."),)
+
+        fake_client.completions.responses = [
+            tool_call_response("look_up", {"query": "KP.3"}),
+            text_response("Done."),
+            text_response("Again."),
+        ]
+        chat = make_chat(tmp_path, late_tools=late)
+        assert asked == []
+
+        chat.send("Go")
+        chat.send("Once more")
+
+        assert asked == [1]
+        assert [tool["function"]["name"] for tool in fake_client.completions.calls[0]["tools"]][0] == "look_up"
+        assert "Look things up sparingly." in request_messages(fake_client, 0)[0]["content"]
+        assert of(chat.events_since(), "tool_output")[0].text == "Found KP.3."
+        assert [tool.name for tool in chat.tools] == ["look_up"]
+
+    def test_they_are_added_to_the_tools_the_conversation_was_given(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("Done.")]
+        chat = make_chat(tmp_path, tools=(looking_up("first"),), late_tools=lambda: [looking_up("second")])
+
+        chat.send("Go")
+
+        names = [tool["function"]["name"] for tool in fake_client.completions.calls[0]["tools"]]
+        assert names[:2] == ["first", "second"]
+
+    def test_the_team_is_given_them_too(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("consult", {"member": "Immunologist", "agenda": "Is it immunogenic?", "rounds": 1}),
+            text_response("A first answer."),
+            text_response("A critique."),
+            text_response("A better answer."),
+            text_response("Not immunogenic."),
+        ]
+        chat = make_chat(tmp_path, late_tools=lambda: (looking_up(),))
+
+        chat.send("Is it immunogenic?")
+
+        scientist = fake_client.completions.calls[1]
+        assert [tool["function"]["name"] for tool in scientist["tools"]] == ["look_up"]
+
+    def test_a_turn_fails_before_anything_is_spent_when_they_cannot_be_had_and_the_next_asks_again(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        attempts: list[int] = []
+
+        def late() -> tuple[Tool, ...]:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise ConnectionError("The server did not answer")
+
+            return (looking_up(),)
+
+        fake_client.completions.responses = [text_response("Done.")]
+        chat = make_chat(tmp_path, late_tools=late)
+
+        failed = chat.send("Go")
+
+        assert failed.status == "failed"
+        assert failed.error == "ConnectionError: The server did not answer"
+        assert fake_client.completions.calls == []
+        assert chat.tools == ()
+
+        answered = chat.send("Try again")
+
+        assert answered.status == "answered"
+        assert len(attempts) == 2
+        assert [tool.name for tool in chat.tools] == ["look_up"]
+
+    def test_a_turn_ends_as_stopped_when_what_supplies_them_says_it_was(self, tmp_path: Path) -> None:
+        def late() -> tuple[Tool, ...]:
+            raise chat_module.ChatStopped()
+
+        chat = make_chat(tmp_path, late_tools=late)
+
+        reply = chat.send("Go")
+
+        assert reply.status == "stopped"
+        assert kinds(chat.events_since())[-1] == "stopped"
+
+    @pytest.mark.parametrize(
+        ("given", "message"),
+        [
+            (lambda: ("not a tool",), "A conversation's tools are Tools, not str"),
+            (lambda: (looking_up("consult"),), "has tools of its own named consult"),
+            (lambda: (looking_up("look_up"), looking_up("look_up")), "look_up is given more than once"),
+        ],
+    )
+    def test_a_tool_that_cannot_be_given_fails_the_turn_and_none_of_them_is_kept(
+        self, fake_client: FakeClient, tmp_path: Path, given: Any, message: str
+    ) -> None:
+        chat = make_chat(tmp_path, late_tools=given)
+
+        reply = chat.send("Go")
+
+        assert reply.status == "failed"
+        assert message in (reply.error or "")
+        assert chat.tools == ()
+        assert fake_client.completions.calls == []
+
+    def test_a_name_the_conversation_already_has_cannot_be_given_again(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path, tools=(looking_up(),), late_tools=lambda: (looking_up(),))
+
+        reply = chat.send("Go")
+
+        assert reply.status == "failed"
+        assert "look_up is given more than once" in (reply.error or "")
+
+
+class TestTellingOfWhatTheToolsDo:
+    def test_an_event_is_numbered_kept_and_passed_on_like_the_others(self, tmp_path: Path) -> None:
+        told: list[ChatEvent] = []
+        chat = make_chat(tmp_path, on_event=told.append)
+
+        event = chat.tell("approval", "Waits for you", request="a1", state="waiting")
+
+        assert (event.kind, event.text, dict(event.data)) == (
+            "approval",
+            "Waits for you",
+            {"request": "a1", "state": "waiting"},
+        )
+        assert told == [event]
+        assert chat.events_since() == [event]
+        saved = [json.loads(line) for line in (tmp_path / "chat" / "events.jsonl").read_text().splitlines()]
+        assert [(item["kind"], item["id"]) for item in saved] == [("approval", event.id)]
+
+    @pytest.mark.parametrize("kind", ["connection", "approval", "question"])
+    def test_a_connection_an_approval_and_a_question_can_be_told_of(self, tmp_path: Path, kind: str) -> None:
+        chat = make_chat(tmp_path)
+
+        assert chat.tell(kind).kind == kind  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("kind", ["user", "answer", "stopped", "failed", "status", "writing", "nonsense"])
+    def test_what_the_researcher_and_the_lead_say_and_how_a_turn_ends_cannot_be_told_of_from_outside(
+        self, tmp_path: Path, kind: str
+    ) -> None:
+        chat = make_chat(tmp_path)
+
+        with pytest.raises(ValueError, match="can be told of from outside"):
+            chat.tell(kind)  # type: ignore[arg-type]
+
+        assert chat.events_since() == []
+
+
 class TestFiles:
     def test_a_file_is_saved_where_the_session_finds_it_under_a_name_that_is_safe(
         self, session: LocalSession, tmp_path: Path

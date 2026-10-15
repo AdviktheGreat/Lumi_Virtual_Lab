@@ -36,12 +36,62 @@ export interface Resources {
   task: string | null;
 }
 
+export type ConnectionState = "connecting" | "signing_in" | "ready" | "failed";
+
+// A server whose tools the lead is to be given, as it is being connected to
+export interface Connection {
+  // Its name, which is what the settings call it, and what to call it
+  server: string;
+  title: string;
+  state: ConnectionState;
+  // The page to sign in at, when it waits for the researcher to
+  url: string | null;
+  // How many tools it gave, once it has
+  tools: number | null;
+  // Why it could not be connected to
+  text: string;
+}
+
+// "withdrawn" is a request that no one answered before the turn ended
+export type ApprovalState = "waiting" | "approved" | "declined" | "withdrawn";
+export type QuestionState = "waiting" | "answered" | "declined" | "withdrawn";
+
+// A call to a tool that waits for the researcher to allow it
+export interface Approval {
+  // What the page answers it by
+  request: string;
+  state: ApprovalState;
+  tool: string;
+  server: string;
+  title: string;
+  description: string;
+  // What it is to be called with, as text
+  arguments: string;
+}
+
+// What a server asks while one of its tools runs
+export interface Question {
+  request: string;
+  state: QuestionState;
+  server: string;
+  title: string;
+  text: string;
+  // The form's fields, each as the JSON schema the server gave, and which of them must be filled in
+  fields: Record<string, Record<string, unknown>>;
+  required: string[];
+  // The page it asks the researcher to go to, for one that is answered there
+  url: string | null;
+}
+
 // What the lead did in a turn, in the order it did it
 export type Step =
   | { kind: "say"; key: string; text: string }
   | { kind: "call"; key: string; call: Call }
   | { kind: "resources"; key: string; resources: Resources }
-  | { kind: "note"; key: string; text: string; to: "lead" | "lab" | null; read: boolean };
+  | { kind: "note"; key: string; text: string; to: "lead" | "lab" | null; read: boolean }
+  | { kind: "connection"; key: string; connection: Connection }
+  | { kind: "approval"; key: string; approval: Approval }
+  | { kind: "question"; key: string; question: Question };
 
 export interface Turn {
   number: number;
@@ -138,18 +188,112 @@ function hasCall(turn: Turn, id: string): boolean {
   return turn.steps.some((step) => step.kind === "call" && step.call.id === id);
 }
 
+const CONNECTION_STATES: readonly string[] = ["connecting", "signing_in", "ready", "failed"];
+const APPROVAL_STATES: readonly string[] = ["waiting", "approved", "declined", "withdrawn"];
+const QUESTION_STATES: readonly string[] = ["waiting", "answered", "declined", "withdrawn"];
+
+function connectionOf(event: ChatEvent): Connection {
+  const state = asText(event.data.state);
+  const url = asText(event.data.url);
+
+  return {
+    server: asText(event.data.server),
+    title: asText(event.data.title, asText(event.data.server)),
+    state: (CONNECTION_STATES.includes(state) ? state : "connecting") as ConnectionState,
+    url: url === "" ? null : url,
+    tools: typeof event.data.tools === "number" ? event.data.tools : null,
+    text: event.text,
+  };
+}
+
+function approvalOf(event: ChatEvent): Approval {
+  const state = asText(event.data.state);
+  const server = asText(event.data.server);
+
+  return {
+    request: asText(event.data.request),
+    state: (APPROVAL_STATES.includes(state) ? state : "waiting") as ApprovalState,
+    tool: asText(event.data.tool),
+    server,
+    title: asText(event.data.title, server),
+    description: asText(event.data.description),
+    arguments: asText(event.data.arguments),
+  };
+}
+
+function questionOf(event: ChatEvent): Question {
+  const state = asText(event.data.state);
+  const server = asText(event.data.server);
+  const fields: Record<string, Record<string, unknown>> = {};
+  for (const [name, schema] of Object.entries(asRecord(event.data.fields))) fields[name] = asRecord(schema);
+  const url = asText(event.data.url);
+
+  return {
+    request: asText(event.data.request),
+    state: (QUESTION_STATES.includes(state) ? state : "waiting") as QuestionState,
+    server,
+    title: asText(event.data.title, server),
+    text: event.text,
+    fields,
+    required: asStrings(event.data.required),
+    url: url === "" ? null : url,
+  };
+}
+
+// Whether the step is the approval or the question that a request is of
+function hasRequest(step: Step, kind: "approval" | "question", request: string): boolean {
+  if (step.kind !== kind) return false;
+
+  return (step.kind === "approval" ? step.approval.request : step.question.request) === request;
+}
+
 // A turn that is over has no call still running: one that was answered was left unfinished by an event that was lost,
-// and one that was stopped or failed was cut short
+// and one that was stopped or failed was cut short. Nor does it wait for the researcher, or for a server, and what it
+// waited for was never answered or connected.
 function settle(turn: Turn, to: CallStatus): Turn {
   return {
     ...turn,
-    steps: turn.steps.map((step) => {
-      if (step.kind !== "call") return step;
-      const lab = step.call.lab === null ? null : settleLab(step.call.lab);
+    steps: turn.steps.map((step): Step => {
+      switch (step.kind) {
+        case "call": {
+          const lab = step.call.lab === null ? null : settleLab(step.call.lab);
 
-      return { ...step, call: { ...step.call, status: step.call.status === "running" ? to : step.call.status, lab } };
+          return { ...step, call: { ...step.call, status: step.call.status === "running" ? to : step.call.status, lab } };
+        }
+        case "approval":
+          return step.approval.state === "waiting" ? { ...step, approval: { ...step.approval, state: "withdrawn" } } : step;
+        case "question":
+          return step.question.state === "waiting" ? { ...step, question: { ...step.question, state: "withdrawn" } } : step;
+        case "connection": {
+          const open = step.connection.state === "connecting" || step.connection.state === "signing_in";
+
+          return open
+            ? { ...step, connection: { ...step.connection, state: "failed", text: "Not connected: the turn ended before it was." } }
+            : step;
+        }
+        default:
+          return step;
+      }
     }),
   };
+}
+
+// How many things wait for the researcher in a turn that is still going on: calls to allow, questions to answer, and
+// sign-ins to make
+export function waitingOnYou(turns: Turn[]): number {
+  return turns
+    .filter((turn) => turn.outcome === "running")
+    .reduce(
+      (count, turn) =>
+        count +
+        turn.steps.filter(
+          (step) =>
+            (step.kind === "approval" && step.approval.state === "waiting") ||
+            (step.kind === "question" && step.question.state === "waiting") ||
+            (step.kind === "connection" && step.connection.state === "signing_in"),
+        ).length,
+      0,
+    );
 }
 
 // Between what the lead has done and what it does next, it is thinking: it has nothing it is writing to show, and no
@@ -159,7 +303,12 @@ export function isThinking(turn: Turn, working: boolean): boolean {
     turn.outcome === "running" &&
     working &&
     turn.writing === "" &&
-    !turn.steps.some((step) => step.kind === "call" && step.call.status === "running")
+    !turn.steps.some(
+      (step) =>
+        (step.kind === "call" && step.call.status === "running") ||
+        // A server being connected to is what is waited for, and is shown as it is
+        (step.kind === "connection" && (step.connection.state === "connecting" || step.connection.state === "signing_in")),
+    )
   );
 }
 
@@ -261,6 +410,65 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
           },
         ],
       }));
+    case "connection":
+      return inTurn((turn) => {
+        const server = asText(event.data.server);
+        const at = turn.steps.findLastIndex((step) => step.kind === "connection" && step.connection.server === server);
+        const found = at === -1 ? null : turn.steps[at];
+        // A server that is connected to again, as a retry is, is shown as a new connection, and what it says after is
+        // of that one
+        if (found === null || found.kind !== "connection" || event.data.state === "connecting") {
+          const step: Step = { kind: "connection", key: `connection-${event.id}`, connection: connectionOf(event) };
+
+          return { ...turn, steps: [...turn.steps, step] };
+        }
+
+        return {
+          ...turn,
+          steps: turn.steps.map((step, place) =>
+            place === at && step.kind === "connection" ? { ...step, connection: connectionOf(event) } : step,
+          ),
+        };
+      });
+    case "approval":
+      return inTurn((turn) => {
+        const request = asText(event.data.request);
+        if (!turn.steps.some((step) => hasRequest(step, "approval", request))) {
+          // What it asked is said when it asked, so an end with nothing to end has nothing to show
+          if (event.data.state !== "waiting") return turn;
+          const step: Step = { kind: "approval", key: `approval-${request || event.id}`, approval: approvalOf(event) };
+
+          return { ...turn, steps: [...turn.steps, step] };
+        }
+        const state = approvalOf(event).state;
+
+        return {
+          ...turn,
+          steps: turn.steps.map((step) =>
+            hasRequest(step, "approval", request) && step.kind === "approval" ? { ...step, approval: { ...step.approval, state } } : step,
+          ),
+        };
+      });
+    case "question":
+      return inTurn((turn) => {
+        const request = asText(event.data.request);
+        if (!turn.steps.some((step) => hasRequest(step, "question", request))) {
+          // A question that was declined without being asked is told of in one event, with what it asked. Anything
+          // else that ends has said what it asked already, so one that has nothing to end is not shown.
+          if (event.data.state !== "waiting" && event.text === "") return turn;
+          const step: Step = { kind: "question", key: `question-${request || event.id}`, question: questionOf(event) };
+
+          return { ...turn, steps: [...turn.steps, step] };
+        }
+        const state = questionOf(event).state;
+
+        return {
+          ...turn,
+          steps: turn.steps.map((step) =>
+            hasRequest(step, "question", request) && step.kind === "question" ? { ...step, question: { ...step.question, state } } : step,
+          ),
+        };
+      });
     case "answer":
     case "stopped":
     case "failed": {

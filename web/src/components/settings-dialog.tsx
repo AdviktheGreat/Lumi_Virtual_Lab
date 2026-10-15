@@ -4,6 +4,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { CodeTab } from "@/components/settings-code";
 import { KeysTab } from "@/components/settings-keys";
+import { McpSection } from "@/components/settings-mcp";
 import { ModelTab } from "@/components/settings-model";
 import { ScientistsTab, useScientistEditor } from "@/components/settings-scientists";
 import { ToolsTab } from "@/components/settings-tools";
@@ -163,7 +164,10 @@ export function SettingsDialog({
             <ScientistsTab library={data.scientists} editor={editor} onChanged={data.setScientists} />
           </TabsContent>
           <TabsContent value="tools" className="overflow-y-auto pr-1">
-            <ToolsTab tools={data.tools} onChanged={data.setTools} />
+            <div className="flex flex-col gap-8">
+              <ToolsTab tools={data.tools} onChanged={data.setTools} />
+              <McpSection servers={data.mcp} onChanged={data.setMcp} />
+            </div>
           </TabsContent>
         </Tabs>
 

@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { accessibilityProblems, pastTheEdge } from "./axe";
 import { answered, ask, askWhereCodeRuns, expect, HOME_HEADING, test } from "./fixtures";
-import { calling, lead, tell, user, type Told } from "./replay";
+import { approval, asked, calling, connection, ended, lead, ORDER_FIELDS, tell, user, type Told } from "./replay";
 
 const SIZES = [
   { name: "desktop", width: 1280, height: 800 },
@@ -118,6 +118,47 @@ for (const theme of ["light", "dark"] as const) {
           await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
           await looksRight(page, `the ${tab} part of the setup`);
         }
+      });
+
+      test("what a conversation asks of the researcher, and the servers it is connected to, have nothing wrong and fit the window", async ({
+        page,
+      }) => {
+        await themed(page, theme, size);
+        const running: Told = { kind: "status", turn: 0, data: { state: "running" } };
+        await tell(page, [
+          user("Order it, and say what the echo gives"),
+          connection("connecting"),
+          connection("ready", { tools: 12 }),
+          connection("connecting", { server: "vault", title: "Vault" }),
+          connection("signing_in", { server: "vault", title: "Vault", url: "https://sign.example.org/authorize?client=a-long-address&state=" + "x".repeat(120) }),
+          connection("connecting", { server: "gone", title: "Gone" }),
+          connection("failed", { server: "gone", title: "Gone" }, "The server did not answer within 30 seconds, which is long enough to wrap on a narrow window."),
+          calling("c1", "genes_echo", { text: "ab" }),
+          approval("waiting", "a"),
+          approval("approved", "a"),
+          approval("waiting", "b"),
+          approval("declined", "b"),
+          approval("waiting", "c"),
+          approval("withdrawn", "d"),
+          asked({ request: "q0", text: "Go ahead?" }),
+          ended("answered", "q0"),
+          asked({ request: "q1", fields: ORDER_FIELDS, required: ["name", "kind"] }),
+          running,
+        ]);
+        await expect(page.getByTestId("question").filter({ has: page.getByLabel("Sample name") })).toBeVisible();
+        await looksRight(page, "the cards of calls to allow, of questions, and of connections");
+
+        await page.getByTestId("question").getByRole("button", { name: "Send" }).click();
+        await expect(page.getByText("Sample name must be filled in")).toBeVisible();
+        await looksRight(page, "a question that was sent with what must be filled in left out");
+
+        await tell(page, [
+          user("Pay for it"),
+          asked({ request: "q2", url: "https://pay.example.org/a/long/address/for/the/page/that/is/asked/for/" + "y".repeat(80), text: "Pay for the test at this page." }),
+          running,
+        ]);
+        await expect(page.getByTestId("question")).toBeVisible();
+        await looksRight(page, "a question that asks the researcher to go to a page");
       });
     });
   }

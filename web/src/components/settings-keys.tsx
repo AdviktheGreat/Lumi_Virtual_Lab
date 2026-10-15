@@ -13,7 +13,7 @@ import { keyProblem, keyRows, type KeyRow } from "@/lib/keys";
 import type { KeyStatuses } from "@/lib/types";
 import type { Loaded } from "@/lib/use-settings-data";
 
-function KeyForm({ row, onChanged }: { row: KeyRow; onChanged: (statuses: KeyStatuses) => void }) {
+export function KeyForm({ row, onChanged }: { row: KeyRow; onChanged: (statuses: KeyStatuses) => void }) {
   const { report } = useServer();
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);

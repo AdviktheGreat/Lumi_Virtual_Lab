@@ -370,6 +370,80 @@ class TestSigningIn:
         assert len(browser.opened) == 1
 
 
+class TestOfferingTheSignInPage:
+    """What shows a person what is going on, such as a web page, is given the address of the sign-in page."""
+
+    def test_the_page_is_passed_on_with_the_servers_name_as_the_browser_is_sent_to_it(
+        self, oauth_server: OAuthServer, browser: Browser
+    ) -> None:
+        offered: list[tuple[str, str]] = []
+
+        with connect_mcp(
+            oauth_server.config(), start_timeout=30, on_sign_in=lambda name, url: offered.append((name, url))
+        ) as tools:
+            assert authorization(tools).startswith("Bearer ")
+
+        assert offered == [("genes", browser.opened[0])]
+        assert offered[0][1].startswith(f"{oauth_server.origin}/")
+
+    def test_it_is_not_passed_on_where_the_sign_in_is_kept_from_before_nor_for_a_server_not_signed_in_to(
+        self, oauth_server: OAuthServer, browser: Browser
+    ) -> None:
+        with connect_mcp(oauth_server.config(), start_timeout=30):
+            pass
+        offered: list[tuple[str, str]] = []
+
+        with connect_mcp(oauth_server.config(), start_timeout=30, on_sign_in=lambda *page: offered.append(page)):
+            pass
+        with connect_mcp(
+            {"mcp_servers": {"genes": {"command": [sys.executable, SERVER]}}},
+            start_timeout=30,
+            on_sign_in=lambda *page: offered.append(page),
+        ):
+            pass
+
+        assert offered == []
+
+    def test_where_no_browser_opens_the_sign_in_waits_for_the_person_to_go_to_the_page_that_was_passed_on(
+        self, oauth_server: OAuthServer, browser: Browser, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        browser.works = False
+        monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+        visited: list[threading.Thread] = []
+
+        def offered(name: str, url: str) -> None:
+            def go() -> None:
+                time.sleep(0.5)
+                status, location, _ = get(url)
+                assert status in (302, 307) and location is not None
+                get(location)
+
+            visited.append(threading.Thread(target=go))
+            visited[-1].start()
+
+        with connect_mcp(oauth_server.config(), start_timeout=30, on_sign_in=offered) as tools:
+            assert authorization(tools).startswith("Bearer ")
+        visited[0].join(10)
+
+        assert oauth_server.stats()["signed_in"] == 1
+
+    def test_a_page_that_cannot_be_passed_on_does_not_fail_the_sign_in_and_is_warned_of(
+        self, oauth_server: OAuthServer, browser: Browser
+    ) -> None:
+        def broken(name: str, url: str) -> None:
+            raise RuntimeError("the page is gone")
+
+        with pytest.warns(UserWarning, match="sign-in page of the MCP server genes could not be passed on: the page"):
+            with connect_mcp(oauth_server.config(), start_timeout=30, on_sign_in=broken) as tools:
+                assert authorization(tools).startswith("Bearer ")
+
+        assert len(browser.opened) == 1
+
+    def test_something_that_is_not_a_function_is_refused(self, oauth_server: OAuthServer) -> None:
+        with pytest.raises(TypeError, match="on_sign_in is a function, or None, not str"):
+            connect_mcp(oauth_server.config(), on_sign_in="no")  # type: ignore[arg-type]
+
+
 class TestConfig:
     def test_auth_is_oauth_or_left_out(self) -> None:
         with pytest.raises(ValueError, match='The auth of the MCP server s is "oauth"'):

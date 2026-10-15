@@ -92,7 +92,8 @@ class MCPPreset:
     """A ready-made config for one MCP server.
 
     :param entry: The server's entry in a config.
-    :param about: What the server is, in a few words.
+    :param title: The server's name as a person says it, to name it by where it is shown.
+    :param about: What it is for, in a few words, without its title.
     :param setup: What to do before connecting, said when it cannot be connected to.
     :param credential: The header that carries the server's API key, which is left out where
         the server is signed in to instead, with auth: oauth; or None.
@@ -101,6 +102,7 @@ class MCPPreset:
     """
 
     entry: dict[str, Any] = field(repr=False)
+    title: str
     about: str
     setup: str = field(repr=False)
     credential: str | None = field(default=None, repr=False)
@@ -131,7 +133,8 @@ MCP_PRESETS: MappingProxyType[str, MCPPreset] = MappingProxyType(
                 "headers": {"X-API-Key": "${PAPERCLIP_API_KEY}"},
                 "instructions": PAPERCLIP_INSTRUCTIONS,
             },
-            about="Paperclip: search and read papers, trials, patents, and regulatory documents",
+            title="Paperclip",
+            about="Search and read papers, trials, patents, and regulatory documents",
             setup=(
                 "Paperclip needs an API key, which starts gxl_, in PAPERCLIP_API_KEY, in the environment or the .env "
                 "file. Make one at https://paperclip.gxl.ai/keys, or sign in instead, with auth: oauth in the "
@@ -148,7 +151,8 @@ MCP_PRESETS: MappingProxyType[str, MCPPreset] = MappingProxyType(
                 "approval": ADAPTYV_APPROVAL,
                 "instructions": ADAPTYV_INSTRUCTIONS,
             },
-            about="Adaptyv Foundry: have proteins made and tested in a lab, which costs money",
+            title="Adaptyv Foundry",
+            about="Have proteins made and tested in a lab, which costs money",
             setup=(
                 "Adaptyv's Foundry needs an API token in FOUNDRY_API_TOKEN, in the environment or the .env file. Make "
                 "one in the Foundry portal, https://foundry.adaptyvbio.com, under Organization, Settings, Tokens. A "
@@ -170,7 +174,8 @@ MCP_PRESETS: MappingProxyType[str, MCPPreset] = MappingProxyType(
                     "calls out."
                 ),
             },
-            about="Adaptyv Foundry's testing sandbox, where nothing is ordered or charged",
+            title="Adaptyv Foundry testing sandbox",
+            about="Try Adaptyv's calls out where nothing is ordered or charged",
             setup=(
                 "Adaptyv's testing sandbox needs a token of its own, in FOUNDRY_TESTING_TOKEN, in the environment or "
                 "the .env file. Make an account and a token at https://foundry.testing.adaptyvbio.com, or sign in "
@@ -185,7 +190,8 @@ MCP_PRESETS: MappingProxyType[str, MCPPreset] = MappingProxyType(
                 "approval": {"ask": ["*"], "allow": list(PROTO_ALLOWED)},
                 "instructions": PROTO_INSTRUCTIONS,
             },
-            about="Proto: run tools for protein and sequence design on your own Modal account",
+            title="Proto, run here",
+            about="Run tools for protein and sequence design on your own Modal account, with the server installed here",
             setup=(
                 "Proto's server runs here, with proto-tools-mcp, and runs tools on your Modal account. Install it with "
                 'uv tool install "proto-tools[mcp] @ git+https://github.com/evo-design/proto-tools.git", sign in to '
@@ -200,7 +206,8 @@ MCP_PRESETS: MappingProxyType[str, MCPPreset] = MappingProxyType(
                 "approval": {"ask": ["*"], "allow": list(PROTO_ALLOWED)},
                 "instructions": PROTO_HOSTED_INSTRUCTIONS,
             },
-            about="Proto's hosted server: its tools with nothing installed here, signed in to with a Proto account",
+            title="Proto, hosted",
+            about="The same tools with nothing installed here, signed in to with a Proto account",
             setup=signing_in("Proto's hosted server", "a Proto account, from https://proto.evodesign.org"),
         ),
     }
@@ -214,7 +221,7 @@ def preset_entry(server: str, entry: dict[str, Any]) -> tuple[dict[str, Any], MC
         return entry, None
     name = entry["preset"]
     if not isinstance(name, str) or name not in MCP_PRESETS:
-        listed = "; ".join(f"{key} ({preset.about})" for key, preset in MCP_PRESETS.items())
+        listed = "; ".join(f"{key} ({preset.title}: {preset.about})" for key, preset in MCP_PRESETS.items())
         raise ValueError(f"The MCP server {server} uses the preset {name!r}, which is not one. The presets are: {listed}")
     preset = MCP_PRESETS[name]
 

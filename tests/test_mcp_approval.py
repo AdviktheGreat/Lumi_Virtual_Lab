@@ -804,6 +804,22 @@ class TestPresets:
         with pytest.raises(TypeError):
             MCP_PRESETS["mine"] = MCP_PRESETS["proto"]  # type: ignore[index]
 
+    def test_a_preset_has_a_title_of_its_own_and_an_about_that_does_not_repeat_it(self) -> None:
+        titles = [preset.title for preset in MCP_PRESETS.values()]
+
+        assert all(titles)
+        assert len(set(titles)) == len(titles)
+        for key, preset in MCP_PRESETS.items():
+            assert not preset.about.startswith(preset.title), key
+            assert preset.about[:1].isupper() and not preset.about.endswith("."), key
+
+    def test_a_preset_that_is_not_one_is_listed_with_the_titles_of_those_that_are(self, mcp_tools: Any) -> None:
+        with pytest.raises(ValueError) as raised:
+            mcp_tools.parse_server("papers", {"preset": "nothing"})
+
+        for key, preset in MCP_PRESETS.items():
+            assert f"{key} ({preset.title}: {preset.about})" in str(raised.value)
+
 
 class TestConnectingToPresets:
     def test_neither_a_config_nor_presets_is_refused(self, mcp_tools: Any) -> None:

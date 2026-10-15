@@ -10,6 +10,9 @@ import type {
   Job,
   KeyStatuses,
   LibraryScientist,
+  McpChange,
+  McpEntry,
+  McpServer,
   Models,
   NewChat,
   Scientist,
@@ -243,6 +246,16 @@ export const api = {
   tools: async (signal?: AbortSignal) => (await request<{ tools: ToolInfo[] }>("GET", "/tools", undefined, signal)).tools,
   // The tools a new conversation is not given, which is all that is turned off, and the tools are given back as they now are
   saveTools: async (disabled: string[]) => (await request<{ tools: ToolInfo[] }>("PUT", "/tools", { disabled })).tools,
+  // The MCP servers: the presets, whether or not they are set up, and then those the person described
+  mcp: async (signal?: AbortSignal) => (await request<{ servers: McpServer[] }>("GET", "/mcp", undefined, signal)).servers,
+  // Turns a server on or off, or chooses how a preset is signed in to, and gives the servers back as they now are
+  changeMcpServer: async (name: string, change: McpChange) =>
+    (await request<{ servers: McpServer[] }>("PATCH", `/mcp/servers/${encodeURIComponent(name)}`, change)).servers,
+  // Sets a server up in full, in place of any it had under the name
+  saveMcpServer: async (name: string, entry: McpEntry) =>
+    (await request<{ servers: McpServer[] }>("PUT", `/mcp/servers/${encodeURIComponent(name)}`, { entry })).servers,
+  removeMcpServer: async (name: string) =>
+    (await request<{ servers: McpServer[] }>("DELETE", `/mcp/servers/${encodeURIComponent(name)}`)).servers,
   // Docker, the images, the data lake, the jobs, and what is left to do. Asking is not quick, since Docker is asked.
   setup: (signal?: AbortSignal) => request<SetupStatus>("GET", "/setup", undefined, signal),
   // Starts building a stage of the image, which goes on as a job
@@ -270,6 +283,13 @@ export const api = {
   pause: (id: string) => request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/pause`),
   resume: (id: string) => request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/resume`),
   stop: (id: string) => request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/stop`),
+  // Whether a call that waits for the researcher's approval is made. The answer says how it ended, which the
+  // conversation tells of as well; one that was answered already, or withdrawn, is refused.
+  approve: (id: string, requestId: string, allow: boolean) =>
+    request<{ state: string }>("POST", `/chats/${encodeURIComponent(id)}/approvals/${encodeURIComponent(requestId)}`, { allow }),
+  // What a server asked: the form's fields by name, {} for what was answered at a web page, or null to decline
+  answer: (id: string, requestId: string, answer: Record<string, unknown> | null) =>
+    request<{ state: string }>("POST", `/chats/${encodeURIComponent(id)}/questions/${encodeURIComponent(requestId)}`, { answer }),
   upload: uploadFile,
   // What the conversation made or was given
   files: (id: string, signal?: AbortSignal) => request<ChatFiles>("GET", `/chats/${encodeURIComponent(id)}/files`, undefined, signal),

@@ -5,6 +5,7 @@ one workspace directory.
         settings.json                                    what every new conversation starts with
         scientists.json                                  the scientists the person described
         tools.json                                       which of the library's tools a new conversation is not given
+        mcp.json                                         the MCP servers the person set up, each as a config gives it
         chats/2026-10-07_1500_what-is-a-nanobody/        a conversation with the head of a lab, as Chat saves it
         data_lake/                                       Biomni's data lake, unless the settings keep it elsewhere
 
@@ -13,6 +14,8 @@ A conversation is shown from the files it was saved in.
 
 import json
 import re
+import threading
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +37,9 @@ SCIENTIST_FIELDS = ("title", "expertise", "goal", "role")
 
 # The tools the person turned off, to leave out of a new conversation
 TOOLS_FILE_NAME = "tools.json"
+
+# The MCP servers the person set up, by name, each as a config gives it
+MCP_FILE_NAME = "mcp.json"
 
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
@@ -100,6 +106,8 @@ class Workspace:
     def __init__(self, root: Path = DEFAULT_WORKSPACE) -> None:
         self.root = Path(root).expanduser().resolve()
         self.chats_dir.mkdir(parents=True, exist_ok=True)
+        # Held while the MCP servers are read, changed, and written back, so that two changes do not undo each other
+        self._mcp_lock = threading.Lock()
 
     @property
     def chats_dir(self) -> Path:
@@ -168,6 +176,49 @@ class Workspace:
 
     def save_disabled_tools(self, names: list[str]) -> None:
         write_atomically(self.tools_path, json.dumps({"disabled": names}, indent=4).encode("utf-8"))
+
+    @property
+    def mcp_path(self) -> Path:
+        return self.root / MCP_FILE_NAME
+
+    def load_mcp_servers(self) -> dict[str, dict[str, Any]]:
+        """The MCP servers the person set up, by name, in the order they were set up. A preset is kept as the entry
+        {"preset": its name}, with whether it is on and how it is signed in to."""
+        data = read_json(self.mcp_path)
+        servers = data.get("servers") if isinstance(data, dict) else None
+        if not isinstance(servers, dict):
+            return {}
+
+        return {name: entry for name, entry in servers.items() if isinstance(name, str) and isinstance(entry, dict)}
+
+    def put_mcp_server(self, name: str, entry: dict[str, Any]) -> None:
+        """Keeps a server's entry, in place of any it had, or after the others if it had none."""
+        with self._mcp_lock:
+            servers = self.load_mcp_servers()
+            servers[name] = entry
+            write_atomically(self.mcp_path, json.dumps({"servers": servers}, indent=4).encode("utf-8"))
+
+    def update_mcp_server(self, name: str, change: Callable[[dict[str, Any] | None], dict[str, Any]]) -> dict[str, Any]:
+        """Changes a server's entry as `change` says, which is given what is kept for it, or None, and what to keep. A
+        change made at the same time by another is not lost, and one that fails keeps nothing."""
+        with self._mcp_lock:
+            servers = self.load_mcp_servers()
+            entry = change(servers.get(name))
+            servers[name] = entry
+            write_atomically(self.mcp_path, json.dumps({"servers": servers}, indent=4).encode("utf-8"))
+
+        return entry
+
+    def remove_mcp_server(self, name: str) -> bool:
+        """Forgets a server. Whether there was one."""
+        with self._mcp_lock:
+            servers = self.load_mcp_servers()
+            if name not in servers:
+                return False
+            del servers[name]
+            write_atomically(self.mcp_path, json.dumps({"servers": servers}, indent=4).encode("utf-8"))
+
+        return True
 
     def new_chat_directory(self, title: str, now: datetime | None = None) -> Path:
         """A new directory for a conversation, named after when it began and what it is called.

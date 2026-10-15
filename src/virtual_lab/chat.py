@@ -107,6 +107,9 @@ RESERVED_TOOL_NAMES = frozenset({CODE_TOOL_NAME, FIND_RESOURCES_TOOL_NAME, CONVE
 # then tells the lead that the files attached can be looked into
 INSPECT_FILE_TOOL_NAME = "inspect_data_file"
 
+# The events that whatever supplies the lead's tools tells of, with Chat.tell
+TOLD_BY_TOOLS = frozenset({"connection", "approval", "question"})
+
 # The events of a team session that a stop interrupts, since they are told of before the work
 # they announce, in the thread that does it
 STOPPABLE_LAB_EVENTS = frozenset({"turn", "writing", "message", "tool_calls", "code"})
@@ -302,6 +305,14 @@ class Chat:
     :param tools: Tools the lead, and the team in its sessions, may call, as hold_meeting takes
         them. The tool that runs code is added if there is a session.
     :param pubmed_search: Whether to add the PubMed tool to them.
+    :param late_tools: Gives more tools of the same kind, for those that cannot be had until the
+        first message, such as those of servers that have to be connected to, which may take a
+        person's sign-in. It is called once, in the thread that answers the first message, after the
+        session has started and before the first request, and the tools it gives join tools, for
+        the lead and the team. What it raises fails that turn before anything is spent, as a
+        session that cannot start does, and it is called again for the next message, so it must
+        be safe to call again, and none of what it gave is kept. Raising ChatStopped ends the turn
+        as stopped.
     :param resources: What of Biomni's environment the lead is told of in the session: with
         "retrieve", that it has a find_resources tool, which asks which suit a task, at the cost of
         one request of about 12,000 tokens when it does; with "all", every one, which is about
@@ -346,6 +357,7 @@ class Chat:
         max_retries: int = DEFAULT_MAX_RETRIES,
         tools: tuple[Tool, ...] = (),
         pubmed_search: bool = False,
+        late_tools: Callable[[], Iterable[Tool]] | None = None,
         resources: Literal["retrieve", "all", "none"] | Resources = "retrieve",
         commercial_mode: bool = False,
         max_tool_iterations: int | None = None,
@@ -423,6 +435,8 @@ class Chat:
         self.on_event = on_event
         self.max_upload_bytes = max_upload_bytes
         self.tools = chat_tools
+        self._late_tools = late_tools
+        self._late_tools_added = False
 
         # Built before the first request, so that a model whose provider cannot be worked out, or
         # whose package is not installed, fails here, before anything is spent
@@ -578,6 +592,22 @@ class Chat:
             self.on_event(event)
 
         return event
+
+    def tell(self, kind: Literal["connection", "approval", "question"], /, text: str = "", **data: Any) -> ChatEvent:
+        """Tells of something that happens round the lead's work, which only a tool or the code that supplies tools
+        knows of: a server being connected to, a call that waits for the researcher, or a question a server asks.
+        The event is numbered, kept, and passed on as the rest are.
+
+        :param kind: "connection", "approval", or "question", as ChatEvent describes them.
+        :param text: What it says, as ChatEvent describes for the kind.
+        :param data: The rest, as ChatEvent describes for the kind.
+        :raises ValueError: If it is not one of those kinds, so that what the lead and the researcher said, and how
+            a turn ended, cannot be told of from outside.
+        """
+        if kind not in TOLD_BY_TOOLS:
+            raise ValueError(f"Only {', '.join(sorted(TOLD_BY_TOOLS))} can be told of from outside, not {kind!r}")
+
+        return self._emit(kind, text=text, **data)
 
     def _emit_ending(self, kind: ChatEventKind, text: str, **data: Any) -> None:
         """Tells of what ends a turn, which has been done and paid for by now, so that a caller's
@@ -1013,6 +1043,7 @@ class Chat:
             elif self.resources != "none":
                 catalog = available_resources(session, commercial_mode=self.commercial_mode)
 
+        self._add_late_tools()
         tools: list[Tool] = list(self.tools)
         delegating = bool(self._consultants) and self.max_delegations > 0
         parts = [lab_chat_prompt(self.lead, self.team if delegating else (), can_run_code=session is not None)]
@@ -1051,6 +1082,23 @@ class Chat:
 
         self._lead_tools = tuple(tools)
         self._system = "\n\n".join(parts)
+
+    def _add_late_tools(self) -> None:
+        """Asks for the tools that could not be had before the first message, and adds them to the lead's and the
+        team's."""
+        if self._late_tools is None or self._late_tools_added:
+            return
+        given = tuple(self._late_tools())
+        if not_tools := [type(tool).__name__ for tool in given if not isinstance(tool, Tool)]:
+            raise TypeError(f"A conversation's tools are Tools, not {', '.join(not_tools)}")
+        if taken := sorted({tool.name for tool in given} & RESERVED_TOOL_NAMES):
+            raise ValueError(f"A conversation has tools of its own named {', '.join(taken)}, so no other may be")
+        names = [tool.name for tool in (*self.tools, *given)]
+        if duplicated := sorted({name for name in names if names.count(name) > 1}):
+            raise ValueError(f"Tool names must be unique, but {', '.join(duplicated)} is given more than once")
+        self.tools = (*self.tools, *given)
+        self.project.meeting_options["tools"] = self.tools
+        self._late_tools_added = True
 
     # The lead's turn
 
