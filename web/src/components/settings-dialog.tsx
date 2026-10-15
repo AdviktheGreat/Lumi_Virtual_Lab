@@ -6,6 +6,7 @@ import { CodeTab } from "@/components/settings-code";
 import { KeysTab } from "@/components/settings-keys";
 import { ModelTab } from "@/components/settings-model";
 import { ScientistsTab, useScientistEditor } from "@/components/settings-scientists";
+import { ToolsTab } from "@/components/settings-tools";
 import { useServer } from "@/components/server-provider";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,13 +18,14 @@ import { changesOf, draftOf, type Draft } from "@/lib/settings";
 import type { KeyStatuses, Settings } from "@/lib/types";
 import { useSettingsData } from "@/lib/use-settings-data";
 
-export type SettingsTab = "model" | "keys" | "code" | "scientists";
+export type SettingsTab = "model" | "keys" | "code" | "scientists" | "tools";
 
 const TABS: { value: SettingsTab; label: string }[] = [
   { value: "model", label: "Model" },
   { value: "keys", label: "Keys" },
   { value: "code", label: "Code" },
   { value: "scientists", label: "Scientists" },
+  { value: "tools", label: "Tools" },
 ];
 
 function isTab(value: string): value is SettingsTab {
@@ -31,7 +33,7 @@ function isTab(value: string): value is SettingsTab {
 }
 
 // What the settings of a new conversation are, and what can be chosen for them. What is changed is kept when Save is
-// pressed, and asked about if it would be lost on closing. Keys and scientists are kept as each is given.
+// pressed, and asked about if it would be lost on closing. Keys, scientists, and tools are kept as each is given.
 export function SettingsDialog({
   settings,
   tab: first,
@@ -159,6 +161,9 @@ export function SettingsDialog({
           </TabsContent>
           <TabsContent value="scientists" className="overflow-y-auto pr-1">
             <ScientistsTab library={data.scientists} editor={editor} onChanged={data.setScientists} />
+          </TabsContent>
+          <TabsContent value="tools" className="overflow-y-auto pr-1">
+            <ToolsTab tools={data.tools} onChanged={data.setTools} />
           </TabsContent>
         </Tabs>
 

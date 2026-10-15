@@ -4,6 +4,7 @@ one workspace directory.
     virtual_lab_workspace/
         settings.json                                    what every new conversation starts with
         scientists.json                                  the scientists the person described
+        tools.json                                       which of the library's tools a new conversation is not given
         chats/2026-10-07_1500_what-is-a-nanobody/        a conversation with the head of a lab, as Chat saves it
         data_lake/                                       Biomni's data lake, unless the settings keep it elsewhere
 
@@ -30,6 +31,9 @@ DATA_LAKE_DIR_NAME = "data_lake"
 # The scientists the person described, to put on a team beside the library's
 SCIENTISTS_FILE_NAME = "scientists.json"
 SCIENTIST_FIELDS = ("title", "expertise", "goal", "role")
+
+# The tools the person turned off, to leave out of a new conversation
+TOOLS_FILE_NAME = "tools.json"
 
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
@@ -147,6 +151,23 @@ class Workspace:
     def remove_scientist(self, title: str) -> None:
         kept = [item for item in self.load_scientists() if item["title"].casefold() != title.casefold()]
         write_atomically(self.scientists_path, json.dumps(kept, indent=4).encode("utf-8"))
+
+    @property
+    def tools_path(self) -> Path:
+        return self.root / TOOLS_FILE_NAME
+
+    def load_disabled_tools(self) -> list[str]:
+        """The names of the tools that a new conversation is not given, which is none until some are turned off.
+
+        Those turned off are kept, and not those on, so that a tool the library gains later is on.
+        """
+        data = read_json(self.tools_path)
+        disabled = data.get("disabled") if isinstance(data, dict) else None
+
+        return [name for name in disabled if isinstance(name, str)] if isinstance(disabled, list) else []
+
+    def save_disabled_tools(self, names: list[str]) -> None:
+        write_atomically(self.tools_path, json.dumps({"disabled": names}, indent=4).encode("utf-8"))
 
     def new_chat_directory(self, title: str, now: datetime | None = None) -> Path:
         """A new directory for a conversation, named after when it began and what it is called.

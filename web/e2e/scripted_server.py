@@ -12,7 +12,9 @@ from a script: no key is needed, and every run says the same. What it says depen
   page, so that what scrolls in a reply can be reached from a keyboard.
 - "code:" and a word (hello, error, two, plot, long, big, slow, files) make it run code in the conversation's session
   first, as the word says, and answer once the code has run. "tool:unknown" makes it call a tool it does not have, and
-  "tool:resources" makes it look for resources, and choose the know-how documents there are. "lab:team" makes it bring
+  "tool:resources" makes it look for resources, and choose the know-how documents there are. "tool:files" makes it
+  look at the files attached to the conversation, with the library's own tools for that, and "tool:offered" makes it
+  answer with the names of the tools the model was offered. "lab:team" makes it bring
   in the team for a round of discussion, and "lab:consult" ask one scientist, whose replies the script writes too.
   "lab:code" brings in one scientist who runs code in the session, if the conversation has one, before they reply.
   "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
@@ -175,6 +177,10 @@ SCENARIOS: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
     "code:files": [("Writing some files.", "run_code", {"code": FILES_CODE})],
     "tool:unknown": [("", "mystery_tool", {"target": "TP53"})],
     "tool:resources": [("Looking for what suits it.", "find_resources", {"task": "Score a gene's expression"})],
+    "tool:files": [
+        ("Seeing what was attached.", "data_files", {}),
+        ("Looking inside it.", "inspect_data_file", {"filename": "uploads/counts.csv"}),
+    ],
     "lab:team": [
         (
             "Bringing in the team.",
@@ -299,6 +305,11 @@ def scientist_of(kwargs: dict[str, Any]) -> str | None:
     return found.group(1) if found else None
 
 
+def offered(kwargs: dict[str, Any]) -> list[str]:
+    """The names of the tools a request offers the model."""
+    return sorted(tool["function"]["name"] for tool in kwargs.get("tools") or [])
+
+
 def runs_code(title: str, kwargs: dict[str, Any]) -> bool:
     """Whether a scientist is to run code before they reply: when the agenda says so, and they have a tool to."""
     tools = {tool["function"]["name"] for tool in kwargs.get("tools") or []}
@@ -389,6 +400,8 @@ class ScriptedCompletions(FakeCompletions):
             response = text_response(f"That is done: {len(steps)} step{'s' if len(steps) != 1 else ''} ran.")
         elif "wide:" in question:
             response = text_response(WIDE_REPLY)
+        elif "tool:offered" in question:
+            response = text_response("Offered: " + " ".join(offered(kwargs)))
         else:
             response = text_response(reply_to(question))
         if kwargs.get("stream"):

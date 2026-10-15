@@ -98,6 +98,39 @@ describe("what a call is shown as", () => {
     expect(summarize(call("", "")).title).toBe("Called a tool");
   });
 
+  it("is what a library tool does, with what it is about", () => {
+    expect(summarize(call("pubmed_search", { query: "TP53\n nanobody", num_articles: 5 }, "running"))).toEqual({
+      title: "Searching PubMed",
+      detail: "TP53 nanobody",
+      code: null,
+    });
+    expect(summarize(call("pubmed_search", { query: "TP53", num_articles: 5 }))).toMatchObject({ title: "Searched PubMed" });
+    expect(summarize(call("uniprot_lookup", { accession: "P04637" }))).toMatchObject({
+      title: "Looked up a protein",
+      detail: "P04637",
+    });
+    expect(summarize(call("fetch_structure_file", { identifier: "1TUP", source: "pdb" }, "running"))).toMatchObject({
+      title: "Downloading a structure",
+      detail: "1TUP from pdb",
+    });
+    expect(summarize(call("fetch_structure_file", { identifier: "1TUP" })).detail).toBe("1TUP");
+    expect(summarize(call("chembl_activities", { molecule_chembl_id: "CHEMBL25", activity_type: "IC50" })).detail).toBe(
+      "CHEMBL25 · IC50",
+    );
+    expect(summarize(call("chembl_activities", { target_chembl_id: "CHEMBL1", molecule_chembl_id: "CHEMBL25" })).detail).toBe("CHEMBL1");
+    expect(summarize(call("chembl_activities", {})).detail).toBeNull();
+    expect(summarize(call("inspect_data_file", { filename: "uploads/a.xlsx", sheet: "Counts" }))).toMatchObject({
+      title: "Inspected a data file",
+      detail: "uploads/a.xlsx · Counts",
+    });
+    expect(summarize(call("data_files", {}, "running"))).toEqual({ title: "Listing the attached files", detail: null, code: null });
+  });
+
+  it("is a library tool with nothing about it when what it was given is broken", () => {
+    expect(summarize(call("europepmc_search", "{broken"))).toEqual({ title: "Searched Europe PMC", detail: null, code: null });
+    expect(summarize(call("europepmc_search", { query: 4 })).detail).toBeNull();
+  });
+
   it("is in the past once the call is not running, whether it was answered or cut short", () => {
     expect(summarize(call("run_code", {}, "interrupted")).title).toBe("Ran Python code");
     expect(summarize(call("consult", { member: "A" }, "interrupted")).title).toBe("Consulted A");

@@ -16,6 +16,7 @@ and everything else is a request and an answer.
     POST   /api/setup/jobs/{id}/stop    ask a job to stop
     GET    /api/scientists, PUT         the library and the scientists the person described
     DELETE /api/scientists/{title}      one of those the person described
+    GET    /api/tools, PUT              the library's tools a conversation can be given, and which are turned off
     GET    /api/chats, POST             the conversations, and a new one
     GET    /api/chats/{id}              one conversation, which PATCH renames and DELETE removes
     POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background
@@ -57,6 +58,7 @@ from virtual_lab.server.library import SETTABLE_KEYS, provider_statuses
 from virtual_lab.server.security import LOCAL_HOSTS, Guard
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
+from virtual_lab.server.tools import check_tool_names, describe_tools
 from virtual_lab.server.workspace import DEFAULT_WORKSPACE, Settings, Workspace
 
 # The most characters of a message, which no one writes by hand
@@ -70,6 +72,9 @@ MAX_KEY_CHARS = 4096
 
 # The most characters of a path a page may give
 MAX_PATH_CHARS = 4096
+
+# The most tools a request may name, which is more than there are
+MAX_TOOLS = 64
 
 # What a page of the interface is given to keep: what has a hash in its name never changes
 IMMUTABLE_PREFIX = "_next/static/"
@@ -115,6 +120,7 @@ class ChatBody(RequestModel):
     max_cost: float | None = None
     stream: bool | None = None
     commercial_mode: bool = False
+    tools: list[str] | None = Field(None, max_length=MAX_TOOLS)
 
 
 class SettingsBody(RequestModel):
@@ -127,6 +133,12 @@ class SettingsBody(RequestModel):
     python: str = ""
     data_lake: str = Field("", max_length=MAX_PATH_CHARS)
     forward_keys: list[str] = Field(default_factory=list, max_length=len(SETTABLE_KEYS))
+
+
+class ToolsBody(RequestModel):
+    """The tools a new conversation is not given, which are none until some are turned off."""
+
+    disabled: list[str] = Field(default_factory=list, max_length=MAX_TOOLS)
 
 
 class RenameBody(RequestModel):
@@ -430,6 +442,20 @@ def create_app(
         store.remove_scientist(title)
 
         return {"scientists": library(store)}
+
+    @api.get("/tools")
+    def get_tools() -> dict[str, Any]:
+        return {"tools": describe_tools(store.load_disabled_tools())}
+
+    @api.put("/tools")
+    def change_tools(body: ToolsBody) -> dict[str, Any]:
+        try:
+            disabled = check_tool_names(body.disabled)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        store.save_disabled_tools(disabled)
+
+        return {"tools": describe_tools(disabled)}
 
     @api.get("/chats")
     def list_chats() -> dict[str, Any]:

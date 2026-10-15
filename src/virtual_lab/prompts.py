@@ -567,14 +567,20 @@ def chat_note_prompt(note: str) -> str:
     return f"The human researcher added a note while you were working:\n\n{note}"
 
 
-def chat_attachments_prompt(files: Iterable[tuple[str, str]], can_open: bool) -> str:
+def chat_attachments_prompt(files: Iterable[tuple[str, str]], can_open: bool, can_inspect: bool = False) -> str:
     """Tells the lead which files the human researcher attached to their message.
 
     :param files: Each file's path in the session's working directory, and its size as a person reads it.
     :param can_open: Whether there is a session to open them in.
+    :param can_inspect: Whether, with no session, the lead can still look inside a table with inspect_data_file.
     """
     listed = "\n".join(f"- {path} ({size})" for path, size in files)
     if can_open:
         return f"The researcher attached these files, which are in the session's working directory:\n{listed}"
+    if can_inspect:
+        return (
+            "The researcher attached these files. There is no session to run code on them, but inspect_data_file "
+            f"can look inside a table or a spreadsheet:\n{listed}"
+        )
 
     return f"The researcher attached these files, but there is no session to open them in:\n{listed}"

@@ -150,6 +150,22 @@ describe("the API", () => {
     expect(calls[1][1].body).toBe(JSON.stringify({ title: "Chemist", expertise: "Bonds", goal: "Make", role: "Bench" }));
   });
 
+  it("lists the tools from what the server wraps them in, and takes them from what a change gives back", async () => {
+    const tool = { name: "pubmed_search", group: "Literature", summary: "Find", needs_code: false, enabled: false };
+    const fetch = vi.fn(async () => answer({ tools: [tool] }));
+    vi.stubGlobal("fetch", fetch);
+
+    expect(await api.tools()).toEqual([tool]);
+    expect(await api.saveTools(["pubmed_search"])).toEqual([tool]);
+
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([address, options]) => [address, options.method])).toEqual([
+      ["/api/tools", "GET"],
+      ["/api/tools", "PUT"],
+    ]);
+    expect(calls[1][1].body).toBe(JSON.stringify({ disabled: ["pubmed_search"] }));
+  });
+
   it("asks for the setup, and for the data lake, with nothing in the request", async () => {
     const fetch = vi.fn(async () => answer({ steps: [], files: [] }));
     vi.stubGlobal("fetch", fetch);

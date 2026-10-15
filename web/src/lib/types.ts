@@ -43,6 +43,8 @@ export interface ChatConfig {
   max_cost: number | null;
   stream: boolean;
   commercial_mode: boolean;
+  // The names of the library's tools the lead may call
+  tools: string[];
 }
 
 // A conversation as the list of them shows it
@@ -87,6 +89,7 @@ export interface NewChat {
   max_cost?: number | null;
   stream?: boolean;
   commercial_mode?: boolean;
+  tools?: string[];
 }
 
 export interface Settings {
@@ -137,6 +140,19 @@ export interface KeyStatuses {
 // A scientist of the library: the lab's own, or one that the person described
 export interface LibraryScientist extends Scientist {
   builtin: boolean;
+}
+
+// One of the library's tools that the lead can be given, as the settings list them
+export interface ToolInfo {
+  name: string;
+  // What the tools it is listed with are for
+  group: string;
+  // What it does, in a sentence
+  summary: string;
+  // Whether it is only given where code can run
+  needs_code: boolean;
+  // Whether a new conversation is given it
+  enabled: boolean;
 }
 
 export interface Health {

@@ -103,7 +103,7 @@ for (const theme of ["light", "dark"] as const) {
 
         await page.getByRole("button", { name: "Settings" }).first().click();
         await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCSS("opacity", "1");
-        for (const tab of ["Model", "Keys", "Code", "Scientists"]) {
+        for (const tab of ["Model", "Keys", "Code", "Scientists", "Tools"]) {
           await page.getByRole("tab", { name: tab }).click();
           await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
           await looksRight(page, `the ${tab} settings`);
