@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, the scientists, and the tools; and what there is to set up for code in Docker, and the jobs that build and fetch it |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, the scientists, and the tools; and what there is to set up for code in Docker, and the jobs that build and fetch it; and the MCP servers, and what they and their tools ask of the researcher |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -79,12 +79,47 @@ on begin with; one already begun keeps what it began with.
   as it was ticked, whether or not the server has answered; changes are kept one after another, so two in quick succession
   do not undo each other, and the boxes (and the focus on them) are never disabled while one is kept. If the server refuses,
   the box goes back and the reason is shown. A conversation is given the tools that are on when it begins. The one tool that
-  is only of use where code runs says so.
+  is only of use where code runs says so. Under them are the MCP servers (see [Servers, calls to allow, and
+  questions](#servers-calls-to-allow-and-questions)).
 
 Save changes sends only what was changed (`PATCH /api/settings`), so a setting changed meanwhile by another page is not
 undone, and shows what the server refuses beside the button. Closing with something changed and not saved asks first,
 and a scientist that is half written counts as not saved. Keys, scientists, and tools are kept as each is given. A conversation that cannot start because its model's key is not set says which key,
 and offers to go and set it (`src/lib/errors.ts` tells those from other errors by the server's `missing_keys` code).
+
+## Servers, calls to allow, and questions
+
+An MCP server gives the lead more tools. The library's servers (Paperclip, Adaptyv, Proto) are listed at the foot of the
+Tools settings, and a server of one's own is added there by what a config of any other tool says of it (`url`, or
+`command` and `args`), with a warning that one that starts a program runs it on this computer. Each is kept as it is
+chosen, as the tools are (`PATCH /api/mcp/servers/{name}`), and shows at once as it was chosen. A server that is signed in
+to with a key takes it in a box, as the Keys settings do (the server only takes the keys of the library's own servers; a
+key a server of one's own asks for is set where the server was started, which the row says), and one that can be signed in
+to with an account says so, and which is chosen. A server that cannot work as it is says why on its row, and one of one's
+own is removed after asking.
+
+A conversation is given the servers that are on when it begins, which `POST /api/chats` takes as `mcp` when it is to have
+others, and connects to them when its first message is sent, since that is when the lead needs the tools. It keeps the
+servers it was begun with while it is open, so one changed in the settings is for the conversations that begin after.
+What happens around the lead's work is told in the conversation, so that it is on the page for whoever opens it, and is
+answered from any window:
+
+- **Connecting** is a line: Connecting to a server, then Connected to it with how many tools it gave. A server that cannot
+  be connected to is a notice that says why, with a button to the settings; the turn ends without anything spent, and the
+  next message tries again. A server that needs the researcher to sign in is a card with a link to its sign-in page, which
+  opens in another tab; the lead goes on once they have. The link is only made of a web address.
+- **A call to a tool that asks** (`approval` in the server's entry, and the library's servers that spend money or cannot be
+  undone) is a card with the tool, what it is for, and what it is to be called with, and Allow and Decline
+  (`POST /api/chats/{id}/approvals/{request}`). It waits for as long as the researcher does, and the badge in the header
+  says "Waiting for you". Once answered it is a line, whoever answered it, and a call that was declined is not made, which
+  the lead is told so that it does not make it again unchanged.
+- **A question a server asks** while a tool runs is a form with a field for each thing it asks (text, numbers, yes or no,
+  one choice, several, or a list), checked as it is sent, with what is wrong shown beside the field and the first taken
+  to (`POST /api/chats/{id}/questions/{request}`). What was typed is never kept in the conversation. A question that is
+  answered at a web page is a link to it and a button to say it was done.
+
+Stopping a turn, or its ending in any other way, withdraws what still waits, and the cards become lines that say so
+(`src/lib/transcript.ts`). `src/lib/asking.ts` reads a question's schema into a form and an answer back out of it.
 
 ## Setting up for code in Docker
 
@@ -178,6 +213,14 @@ the port after (8802, `--setup-control-port`; `e2e/setup/state.ts` is the client
 be seen. These run in a project of their own (`--project=setup`), one test at a time, and put the stand-ins back as they
 were before each test.
 
+The tests of the MCP servers (`e2e/mcp`) set servers up, and every conversation made without being told which to have is
+given them, so they have a fourth scripted server, on the port after the setup's control port (8803), and run in a project of
+their own (`--project=mcp`). The servers are real: the test server of the library's own tests (`tests/mcp_test_server.py`) is
+started as a program for a conversation, or as a server over HTTP that is signed in to with OAuth, whose authorization
+server signs anyone in at once. Nothing opens a browser; a test follows the sign-in link the page shows, as a person would,
+and the sign-ins are kept in a folder of the scripted server's own. The tests of each file run in order, and name the
+servers their conversations are given, since the files run beside each other.
+
 The scripted model answers a question with a short reply that repeats it. What else a message makes it do depends on
 a word in it:
 
@@ -192,6 +235,7 @@ a word in it:
 | `tool:unknown`, `tool:resources` | Calls a tool it does not have, or looks for resources |
 | `tool:files` | Looks at the file attached to the conversation, `counts.csv`, with the library's own tools for that |
 | `tool:offered` | Answers with the names of the tools the model was offered, which is how a test sees what the settings gave it |
+| `mcp:echo`, `count`, `both`, `order`, `confirm`, `signed` | Calls the tools of the test server that the tests of `e2e/mcp` set up as `genes` (or `vault`, for `signed`): `echo`, `count`, `count` and then `echo`, `order` (which asks what to order), and `confirm` (which asks yes or no) |
 | `pdf:unavailable` | Has saving the conversation as a PDF fail, as it does where WeasyPrint is not installed (the PDF is otherwise made by a stand-in that needs no WeasyPrint) |
 | `lab:team` | Brings in the team for a round of discussion, in which the scientists answer as the script says |
 | `lab:consult` | Asks one scientist, reviewed by the critic |
@@ -200,7 +244,8 @@ a word in it:
 
 Code runs on this machine, so a test that wants it makes its conversation through the server with `code: {where:
 "local"}`, as `askWhereCodeRuns` in `e2e/fixtures.ts` does. `e2e/replay.spec.ts` replaces a conversation's event stream
-with events written in the test, for what the scripted lead does not do, such as a turn that is cut short.
+with events written in the test, for what the scripted lead does not do, such as a turn that is cut short, and
+`e2e/asking.spec.ts` uses it to show every way a call, a question, and a connection can stand.
 
 ## How the pages look, and who can use them
 

@@ -18,6 +18,8 @@ from a script: no key is needed, and every run says the same. What it says depen
   in the team for a round of discussion, and "lab:consult" ask one scientist, whose replies the script writes too.
   "lab:code" brings in one scientist who runs code in the session, if the conversation has one, before they reply.
   "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
+- "mcp:" and a word (echo, count, both, order, confirm, signed) make it call the tools of the MCP servers that the tests
+  of mcp/ set up, which are the test server of tests/mcp_test_server.py under the names genes and vault.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -32,12 +34,14 @@ tests/setup_fakes.py), which a test arranges and looks at by POSTing JSON to tha
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
 import tempfile
 import threading
 import time
+import webbrowser
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -53,6 +57,7 @@ from openai.types.chat.chat_completion_message_tool_call import Function  # noqa
 
 from setup_fakes import Bucket, FakeDocker  # noqa: E402
 
+from virtual_lab.constants import MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
@@ -175,6 +180,12 @@ SCENARIOS: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
     ],
     "code:slow": [("This will take a moment.", "run_code", {"code": "import time\ntime.sleep(3)\nprint('slept')"})],
     "code:files": [("Writing some files.", "run_code", {"code": FILES_CODE})],
+    "mcp:echo": [("Echoing it.", "genes_echo", {"text": "ab"})],
+    "mcp:count": [("Counting.", "genes_count", {})],
+    "mcp:both": [("Counting first.", "genes_count", {}), ("Then echoing.", "genes_echo", {"text": "cd"})],
+    "mcp:order": [("Placing the order.", "genes_order", {})],
+    "mcp:confirm": [("Checking first.", "genes_confirm", {})],
+    "mcp:signed": [("Echoing it, signed in.", "vault_echo", {"text": "ef"})],
     "tool:unknown": [("", "mystery_tool", {"target": "TP53"})],
     "tool:resources": [("Looking for what suits it.", "find_resources", {"task": "Score a gene's expression"})],
     "tool:files": [
@@ -543,6 +554,11 @@ def main() -> None:
 
     server_app.make_pdf = stand_in_pdf
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
+    # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened
+    # for one: a test follows the link the page shows, as a person would
+    sign_ins = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-sign-ins-"))
+    os.environ[MCP_AUTH_DIRECTORY_VARIABLE] = str(sign_ins)
+    webbrowser.open = lambda *arguments, **keywords: False  # type: ignore[assignment]
     setup = None
     stand_ins: dict[str, Any] = {}
     if options.setup_control_port is not None:
@@ -563,6 +579,7 @@ def main() -> None:
         )
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
+        shutil.rmtree(sign_ins, ignore_errors=True)
         if setup is not None:
             shutil.rmtree(setup.docker.directory, ignore_errors=True)
             setup.bucket.close()

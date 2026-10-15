@@ -13,7 +13,7 @@ import shutil
 import threading
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -24,9 +24,12 @@ from virtual_lab.chat import Chat
 from virtual_lab.constants import CHAT_FILE_NAME, CHAT_UPLOADS_DIR_NAME, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
 from virtual_lab.events import ChatEvent
 from virtual_lab.llm import ModelSource
+from virtual_lab.server.asking import Asker
 from virtual_lab.server.config import ChatConfig, load_config, resolve_config, save_config
+from virtual_lab.server.connections import Connections
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.library import missing_keys
+from virtual_lab.server.mcp import is_on, server_title
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
@@ -86,6 +89,9 @@ class ChatHandle:
         self.id = directory.name
         self.chat: Chat
         self.session: Session | None = None
+        # What connects to its MCP servers, and asks the researcher what they and their tools wait to be told, or None
+        # for a conversation that has none
+        self.connections: Connections | None = None
         self.keyless = keyless
         self.closed = False
         self._loop = loop
@@ -133,17 +139,42 @@ class ChatHandle:
     def info(self) -> dict[str, Any]:
         return {**self.chat.describe(), "config": self.config.to_dict()}
 
+    def tell(self, kind: Literal["connection", "approval", "question"], text: str = "", **data: Any) -> None:
+        """Tells of what happens round the lead's work, as Chat.tell does."""
+        self.chat.tell(kind, text, **data)
+
+    def stopping(self) -> bool:
+        """Whether the turn is being stopped."""
+        return self.chat.state == "stopping"
+
+    def stop(self) -> bool:
+        """Ends the turn at the next point it can be, which includes the end of whatever it waits for the researcher
+        to say. False if no turn is running."""
+        accepted = self.chat.stop()
+        if accepted and self.connections is not None:
+            self.connections.asker.withdraw()
+
+        return accepted
+
     def close(self) -> None:
-        """Ends the turn that is running, if one is, and closes the session, keeping the files."""
+        """Ends the turn that is running, if one is, closes the MCP servers and the session, keeping the files."""
         if self.closed:
             return
         self.closed = True
         try:
+            self.chat.stop()
+            # Before the turn is waited for, which something it waits to be told by the researcher would hold up
+            if self.connections is not None:
+                self.connections.interrupt()
             self.chat.close(timeout=CLOSE_TIMEOUT)
         finally:
-            if self.session is not None:
-                self.session.close()
-            self.notify()
+            try:
+                if self.connections is not None:
+                    self.connections.close()
+            finally:
+                if self.session is not None:
+                    self.session.close()
+                self.notify()
 
 
 class Conversations:
@@ -351,6 +382,13 @@ class Conversations:
         session = config.code.session(directory / WORK_DIR_NAME)
         chat_models = MissingKeysModel(needs=tuple(self.missing_keys(config))) if keyless else self.chat_models
         available = conversation_tools(directory, session.directory if session is not None else None)
+        # Those still set up and on, and not those it was begun with that have been turned off since, which may be why
+        # it is being opened again
+        stored = self.workspace.load_mcp_servers()
+        servers = {name: stored[name] for name in config.mcp if name in stored and is_on(stored[name])}
+        if servers and not keyless:
+            asker = Asker(handle.tell, handle.stopping, lambda name: server_title(name, servers.get(name)))
+            handle.connections = Connections(servers, handle.tell, handle.stopping, asker)
         try:
             handle.chat = Chat(
                 directory,
@@ -361,6 +399,7 @@ class Conversations:
                 chat_models=chat_models,
                 title=title,
                 tools=tuple(available[name] for name in config.tools if name in available),
+                late_tools=handle.connections.tools if handle.connections is not None else None,
                 max_cost=config.max_cost,
                 stream=config.stream,
                 resources=config.code.resources if session is not None else "none",

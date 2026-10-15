@@ -8,6 +8,9 @@ const ownPort = port + 1;
 // tests arrange, through the port after it (see e2e/setup/state.ts)
 const setupPort = port + 2;
 const controlPort = port + 3;
+// The server of the tests of the MCP servers, which are set up on it and given to every conversation made there that is
+// not told which to have, so no other test is run on it
+const mcpPort = port + 4;
 // The Python that has virtual-lab[server] installed, which is whatever is on the path unless it is told
 const python = process.env.VIRTUAL_LAB_PYTHON ?? "python3";
 
@@ -35,11 +38,16 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [
-    { name: "chromium", testIgnore: ["**/own-server/**", "**/setup/**"], use: { ...devices["Desktop Chrome"] } },
+    { name: "chromium", testIgnore: ["**/own-server/**", "**/setup/**", "**/mcp/**"], use: { ...devices["Desktop Chrome"] } },
     {
       name: "own-server",
       testMatch: "**/own-server/**/*.spec.ts",
       use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${ownPort}` },
+    },
+    {
+      name: "mcp",
+      testMatch: "**/mcp/**/*.spec.ts",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${mcpPort}` },
     },
     {
       name: "setup",
@@ -49,5 +57,5 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${setupPort}` },
     },
   ],
-  webServer: [server(port), server(ownPort), server(setupPort, `--setup-control-port ${controlPort}`)],
+  webServer: [server(port), server(ownPort), server(setupPort, `--setup-control-port ${controlPort}`), server(mcpPort)],
 });

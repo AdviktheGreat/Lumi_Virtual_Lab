@@ -51,6 +51,9 @@ ChatEventKind = Literal[
     "cell",
     "lab",
     "note",
+    "connection",
+    "approval",
+    "question",
     "usage",
     "answer",
     "stopped",
@@ -174,6 +177,20 @@ class ChatEvent:
         - "note": the researcher's note was read, or was not. text is the note, and data holds to,
           "lead" or "lab" for who read it, and read, which is False, with to None, for a note that
           arrived too late for anyone to.
+        - "connection": a server whose tools the lead is to be given is being connected to. data["server"]
+          is its name, data["title"] what to call it, and data["state"] is "connecting", then "signing_in"
+          for a server that needs the researcher to sign in, with data["url"], the sign-in page, and
+          then "ready", with data["tools"], how many tools it gave, or "failed", with text, why.
+        - "approval": a call to a tool that waits for the researcher's approval. data["request"]
+          is its id, which each of its events carries, and data["state"] is "waiting", and then
+          "approved", "declined", or "withdrawn" (for one nobody answered before the turn ended).
+          "waiting" also has data["tool"], the tool's name, data["server"], data["title"], data["description"],
+          and data["arguments"], which is what it is to be called with, as text.
+        - "question": what a server asks the researcher while one of its tools runs. data["request"]
+          is its id, which each of its events carries, and data["state"] is "waiting", and then
+          "answered", "declined", or "withdrawn". "waiting" also has data["server"], data["title"], text,
+          what it asks, data["fields"] and data["required"] for a question answered with a form, and
+          data["url"] for one answered at a web page. What was answered is never kept.
         - "usage": a response came back. data is the usage of the whole conversation, as
           MeetingUsage.to_dict gives it, with its cost, or None if that is not known, and
           max_cost.

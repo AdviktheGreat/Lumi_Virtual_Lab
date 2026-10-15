@@ -44,3 +44,38 @@ export const calling = (id: string, name: string, args: unknown): Told => ({
   text: "Starting.",
   data: { calls: [{ id, name, arguments: JSON.stringify(args) }] },
 });
+
+// The events of a server, and of what it and its tools ask of the researcher, for a conversation that tells of them
+export const server = { server: "genes", title: "Gene tools" };
+export const approval = (state: string, request = "r1"): Told => ({
+  kind: "approval",
+  data: {
+    request,
+    state,
+    ...server,
+    ...(state === "waiting"
+      ? { tool: "genes_echo", description: "Says the text back.", arguments: JSON.stringify({ text: "ab" }, null, 2) }
+      : {}),
+  },
+});
+export const asked = (over: { fields?: object; required?: string[]; url?: string | null; text?: string; request?: string } = {}): Told => ({
+  kind: "question",
+  text: over.text ?? "What is to be ordered?",
+  data: { request: over.request ?? "q1", state: "waiting", ...server, fields: over.fields ?? {}, required: over.required ?? [], url: over.url ?? null },
+});
+export const ended = (state: string, request = "q1"): Told => ({ kind: "question", data: { request, state, ...server } });
+export const connection = (state: string, data: Record<string, unknown> = {}, text = ""): Told => ({
+  kind: "connection",
+  text,
+  data: { ...server, state, ...data },
+});
+
+// What a server asks for an order, as a form
+export const ORDER_FIELDS = {
+  name: { type: "string", title: "Sample name", description: "What to call it." },
+  kind: { type: "string", enum: ["protein", "dna"], title: "Kind" },
+  copies: { type: "integer", default: 1 },
+  fresh: { type: "boolean", title: "Fresh sample" },
+  tags: { type: "array", items: { type: "string" } },
+  picks: { type: "array", items: { enum: ["a", "b", "c"] }, title: "Pick some" },
+};

@@ -25,6 +25,7 @@ import threading
 import time
 import warnings
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -267,12 +268,22 @@ def first_values(query: str) -> dict[str, str]:
 
 class SignIn:
     """Signs a person in to one MCP server: what the SDK's OAuth provider is given to send them
-    to the server's sign-in page, and to receive where the browser is sent back to."""
+    to the server's sign-in page, and to receive where the browser is sent back to.
 
-    def __init__(self, server: str, url: str, clock: PausedClock) -> None:
+    :param server: The server's name, to say whose sign-in it is.
+    :param url: The server's URL.
+    :param clock: Stopped while the person signs in, so that the time it takes is not counted.
+    :param on_page: Called with the address of the sign-in page as the browser is sent to it, so that
+        whatever shows the person what is going on can offer it too, for a browser that did not open.
+        Where it is given, a sign-in that opens no browser waits for the person to go to the page rather
+        than failing for want of one.
+    """
+
+    def __init__(self, server: str, url: str, clock: PausedClock, on_page: Callable[[str], None] | None = None) -> None:
         self.server = server
         self.url = url
         self.clock = clock
+        self.on_page = on_page
         self.storage = SignInStorage(url)
         self.port = callback_port(self.storage)
         self.redirect_uri = f"http://{CALLBACK_HOST}:{self.port}{CALLBACK_PATH}"
@@ -351,7 +362,19 @@ class SignIn:
                 f"\nThe MCP server {self.server} needs you to sign in. Its sign-in page is opening in your browser; "
                 f"if it does not open, go to:\n{authorization_url}\n"
             )
+            if self.on_page is not None:
+                try:
+                    self.on_page(authorization_url)
+                except Exception as error:  # noqa: BLE001
+                    # What shows the page failing does not fail the sign-in, which the terminal still shows
+                    warnings.warn(
+                        f"The sign-in page of the MCP server {self.server} could not be passed on: {error}",
+                        UserWarning,
+                        stacklevel=1,
+                    )
             if await asyncio.to_thread(open_browser, authorization_url):
+                return
+            if self.on_page is not None:
                 return
             if not terminal_available():
                 raise SignInError(

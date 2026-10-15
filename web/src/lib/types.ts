@@ -45,6 +45,8 @@ export interface ChatConfig {
   commercial_mode: boolean;
   // The names of the library's tools the lead may call
   tools: string[];
+  // The names of the MCP servers whose tools the lead may be given, which it connects to with its first message
+  mcp: string[];
 }
 
 // A conversation as the list of them shows it
@@ -90,6 +92,7 @@ export interface NewChat {
   stream?: boolean;
   commercial_mode?: boolean;
   tools?: string[];
+  mcp?: string[];
 }
 
 export interface Settings {
@@ -155,6 +158,53 @@ export interface ToolInfo {
   enabled: boolean;
 }
 
+// A key an MCP server asks for, which is the name of the environment variable it is kept in
+export interface McpKey {
+  name: string;
+  // Whether this page may give it, which it may for the keys of the services of the presets and no other
+  settable: boolean;
+}
+
+export type McpAuth = "key" | "oauth";
+
+// One of the MCP servers a conversation can be given the tools of, as the settings list it: a preset of the library's,
+// or one the person described
+export interface McpServer {
+  name: string;
+  // What to call it
+  title: string;
+  // What it is for, which only a preset says
+  about: string | null;
+  preset: boolean;
+  // Whether it is set up, which a preset need not be to be listed
+  added: boolean;
+  enabled: boolean;
+  // How it is signed in to or given a key, and how a preset may be: null where it takes neither
+  auth: McpAuth | null;
+  auth_choices: McpAuth[];
+  transport: "stdio" | "http" | "sse" | null;
+  // Where it is reached: its address, or the program that is started
+  target: string | null;
+  // Whether some of its tools wait for the researcher's approval of each call
+  asks: boolean;
+  // The keys it asks for that are not set, and those of them this page may give
+  missing: McpKey[];
+  keys_set: string[];
+  // Why it cannot work as it is, if it cannot
+  problem: string | null;
+  // What to do before it can be connected to, which only a preset says
+  setup: string | null;
+}
+
+// What an MCP server of one's own is set up with, as a config gives it
+export type McpEntry = Record<string, unknown>;
+
+// A change to a server that is set up, or is a preset: any of these, and the rest is left as it was
+export interface McpChange {
+  enabled?: boolean;
+  auth?: McpAuth;
+}
+
 export interface Health {
   status: string;
   version: string;
@@ -170,6 +220,9 @@ export type ChatEventKind =
   | "cell"
   | "lab"
   | "note"
+  | "connection"
+  | "approval"
+  | "question"
   | "usage"
   | "answer"
   | "stopped"
