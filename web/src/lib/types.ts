@@ -187,6 +187,9 @@ export interface McpServer {
   target: string | null;
   // Whether some of its tools wait for the researcher's approval of each call
   asks: boolean;
+  // Whether a sign-in to it is kept, which a conversation then uses and refreshes without asking anyone: null where it is
+  // not signed in to, or where its address is not known
+  signed_in: boolean | null;
   // The keys it asks for that are not set, and those of them this page may give
   missing: McpKey[];
   keys_set: string[];
@@ -200,6 +203,13 @@ export interface McpServer {
 export type McpEntry = Record<string, unknown>;
 
 // A change to a server that is set up, or is a preset: any of these, and the rest is left as it was
+// What connecting to a server to look at it came to: the names of the tools the lead would be given, or why not
+export interface McpCheck {
+  ok: boolean;
+  tools: string[];
+  reason: string | null;
+}
+
 export interface McpChange {
   enabled?: boolean;
   auth?: McpAuth;

@@ -32,6 +32,7 @@ from virtual_lab.mcp_auth import (  # noqa: E402
     SignInStorage,
     auth_directory,
     callback_port,
+    has_sign_in,
     sign_in_path,
 )
 from virtual_lab.mcp_presets import preset_entry  # noqa: E402
@@ -442,6 +443,105 @@ class TestOfferingTheSignInPage:
     def test_something_that_is_not_a_function_is_refused(self, oauth_server: OAuthServer) -> None:
         with pytest.raises(TypeError, match="on_sign_in is a function, or None, not str"):
             connect_mcp(oauth_server.config(), on_sign_in="no")  # type: ignore[arg-type]
+
+
+class TestNotSendingAnyoneToSignIn:
+    """A connection that only looks at a server, as the settings do, is not to send a person to a sign-in page."""
+
+    def test_a_server_not_signed_in_to_fails_saying_so_and_no_page_is_opened(
+        self, oauth_server: OAuthServer, browser: Browser
+    ) -> None:
+        offered: list[tuple[str, str]] = []
+
+        with pytest.raises(MCPServerError, match="needs you to sign in, which this connection does not ask of you"):
+            connect_mcp(
+                oauth_server.config(),
+                start_timeout=30,
+                on_sign_in=lambda *page: offered.append(page),
+                may_sign_in=False,
+            )
+
+        assert browser.opened == [] and offered == []
+        # The client is registered before the page is to be gone to, which is kept for when a person does sign in
+        assert oauth_server.stats()["signed_in"] == 0
+        assert has_sign_in(oauth_server.url) is False
+
+    def test_a_sign_in_kept_is_used_and_nobody_is_sent_anywhere(
+        self, oauth_server: OAuthServer, browser: Browser
+    ) -> None:
+        with connect_mcp(oauth_server.config(), start_timeout=30) as tools:
+            first = authorization(tools)
+
+        with connect_mcp(oauth_server.config(), start_timeout=30, may_sign_in=False) as tools:
+            assert authorization(tools) == first
+
+        assert len(browser.opened) == 1
+
+    def test_a_token_that_has_expired_is_refreshed(
+        self, oauth_server: OAuthServer, browser: Browser, auth_dir: Path
+    ) -> None:
+        with connect_mcp(oauth_server.config(), start_timeout=30) as tools:
+            first = authorization(tools)
+        path, kept = stored(auth_dir)
+        path.write_text(json.dumps({**kept, "expires_at": time.time() - 10}))
+
+        with connect_mcp(oauth_server.config(), start_timeout=30, may_sign_in=False) as tools:
+            assert authorization(tools) != first
+
+        assert len(browser.opened) == 1
+        assert oauth_server.stats()["refreshed"] == 1
+
+    def test_a_sign_in_that_cannot_be_refreshed_fails_saying_so_and_is_not_begun_again(
+        self, oauth_server: OAuthServer, browser: Browser, auth_dir: Path
+    ) -> None:
+        with connect_mcp(oauth_server.config(), start_timeout=30):
+            pass
+        path, kept = stored(auth_dir)
+        tokens = {key: value for key, value in kept["tokens"].items() if key != "refresh_token"}
+        path.write_text(json.dumps({**kept, "tokens": tokens, "expires_at": time.time() - 10}))
+
+        with pytest.raises(MCPServerError, match="needs you to sign in, which this connection does not ask of you"):
+            connect_mcp(oauth_server.config(), start_timeout=30, may_sign_in=False)
+
+        assert len(browser.opened) == 1
+        assert oauth_server.stats()["signed_in"] == 1
+
+    def test_a_server_that_is_not_signed_in_to_is_connected_to_as_usual(self) -> None:
+        config = {"mcp_servers": {"genes": {"command": [sys.executable, SERVER]}}}
+
+        with connect_mcp(config, may_sign_in=False) as tools:
+            assert "genes_echo" in {tool.name for tool in tools.tools}
+
+    def test_something_that_is_not_true_or_false_is_refused(self, oauth_server: OAuthServer) -> None:
+        with pytest.raises(TypeError, match="may_sign_in is True or False, not str"):
+            connect_mcp(oauth_server.config(), may_sign_in="no")  # type: ignore[arg-type]
+
+    def test_a_sign_in_is_kept_once_made_and_forgotten_when_signed_out(
+        self, oauth_server: OAuthServer, browser: Browser, auth_dir: Path
+    ) -> None:
+        assert has_sign_in(oauth_server.url) is False
+        with connect_mcp(oauth_server.config(), start_timeout=30):
+            pass
+        assert has_sign_in(oauth_server.url) is True
+        assert has_sign_in(oauth_server.url + "/other") is False
+
+        sign_out_mcp(oauth_server.url)
+
+        assert has_sign_in(oauth_server.url) is False
+
+    def test_tokens_that_are_not_there_or_a_file_that_cannot_be_read_are_no_sign_in(
+        self, oauth_server: OAuthServer, browser: Browser, auth_dir: Path
+    ) -> None:
+        with connect_mcp(oauth_server.config(), start_timeout=30):
+            pass
+        path, kept = stored(auth_dir)
+
+        path.write_text(json.dumps({**kept, "tokens": None}))
+        assert has_sign_in(oauth_server.url) is False
+
+        with pytest.warns(UserWarning, match="could not be read"):
+            path.write_text("{not json")
+            assert has_sign_in(oauth_server.url) is False
 
 
 class TestConfig:

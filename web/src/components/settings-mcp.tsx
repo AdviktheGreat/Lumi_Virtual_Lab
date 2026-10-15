@@ -23,25 +23,102 @@ import { Radio } from "@/components/ui/radio";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { describeError } from "@/lib/errors";
-import { describeTransport, howManyOn, keysToGive, keysToSetElsewhere, nameProblem, readEntry } from "@/lib/mcp";
-import type { McpChange, McpServer } from "@/lib/types";
+import {
+  describeCheck,
+  describeSignIn,
+  describeTransport,
+  howManyOn,
+  keysToGive,
+  keysToSetElsewhere,
+  nameProblem,
+  readEntry,
+} from "@/lib/mcp";
+import type { McpChange, McpCheck, McpServer } from "@/lib/types";
 import type { Loaded } from "@/lib/use-settings-data";
+
+// What looking at a server, by connecting to it, has come to
+type Check = { kind: "idle" } | { kind: "checking" } | { kind: "found"; check: McpCheck } | { kind: "failed"; problem: string };
+
+function CheckResult({ check }: { check: Check }) {
+  if (check.kind === "checking") {
+    return (
+      <p role="status" className="text-xs text-muted-foreground">
+        Connecting…
+      </p>
+    );
+  }
+  if (check.kind === "failed") {
+    return (
+      <p role="alert" className="text-xs text-destructive">
+        {check.problem}
+      </p>
+    );
+  }
+  if (check.kind === "idle") return null;
+  const { text, tools, more } = describeCheck(check.check);
+  if (!check.check.ok) {
+    return (
+      <p role="alert" className="text-xs whitespace-pre-wrap break-words text-destructive">
+        {text}
+      </p>
+    );
+  }
+
+  return (
+    <p role="status" className="text-xs break-words text-muted-foreground">
+      {text}
+      {tools.map((tool, at) => (
+        <span key={tool}>
+          {at === 0 ? " " : ", "}
+          <code>{tool}</code>
+        </span>
+      ))}
+      {more > 0 && ` and ${more} more`}
+    </p>
+  );
+}
 
 function ServerRow({
   server,
   onChange,
   onKeysChanged,
   onRemove,
+  onSignOut,
 }: {
   server: McpServer;
   onChange: (change: McpChange) => void;
   onKeysChanged: () => void;
   onRemove: (button: HTMLButtonElement) => void;
+  onSignOut: () => void;
 }) {
+  const { report } = useServer();
   const id = useId();
   const transport = describeTransport(server);
   const elsewhere = keysToSetElsewhere(server);
   const keys = keysToGive(server);
+  const signIn = describeSignIn(server);
+  const [check, setCheck] = useState<Check>({ kind: "idle" });
+  // Which check is the latest, so that what an earlier one found, after the server was changed, is not shown
+  const latest = useRef(0);
+
+  // What was found is of the server as it was, so a change to it takes the finding away
+  function forget() {
+    latest.current += 1;
+    setCheck({ kind: "idle" });
+  }
+
+  async function look() {
+    latest.current += 1;
+    const mine = latest.current;
+    setCheck({ kind: "checking" });
+    try {
+      const found = await api.checkMcpServer(server.name);
+      if (mine === latest.current) setCheck({ kind: "found", check: found });
+    } catch (error) {
+      report(error);
+      if (mine === latest.current) setCheck({ kind: "failed", problem: describeError(error) });
+    }
+  }
 
   return (
     <li className="flex flex-col gap-3 rounded-lg border border-border p-3" data-testid={`mcp-${server.name}`}>
@@ -78,11 +155,25 @@ function ServerRow({
         <fieldset className="flex flex-col gap-1.5 pl-6.5">
           <legend className="pb-1 text-xs font-medium text-muted-foreground">How it is signed in to</legend>
           <label className="flex items-center gap-2 text-sm">
-            <Radio name={`${id}-auth`} checked={server.auth === "key"} onChange={() => onChange({ auth: "key" })} />
+            <Radio
+              name={`${id}-auth`}
+              checked={server.auth === "key"}
+              onChange={() => {
+                forget();
+                onChange({ auth: "key" });
+              }}
+            />
             An API key
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <Radio name={`${id}-auth`} checked={server.auth === "oauth"} onChange={() => onChange({ auth: "oauth" })} />
+            <Radio
+              name={`${id}-auth`}
+              checked={server.auth === "oauth"}
+              onChange={() => {
+                forget();
+                onChange({ auth: "oauth" });
+              }}
+            />
             Your account, signed in to in the browser
           </label>
         </fieldset>
@@ -91,7 +182,14 @@ function ServerRow({
       {keys.length > 0 && (
         <div className="flex flex-col gap-2 pl-6.5">
           {keys.map((key) => (
-            <KeyForm key={key.name} row={{ name: key.name, provider: server.title, set: key.set }} onChanged={onKeysChanged} />
+            <KeyForm
+              key={key.name}
+              row={{ name: key.name, provider: server.title, set: key.set }}
+              onChanged={() => {
+                forget();
+                onKeysChanged();
+              }}
+            />
           ))}
         </div>
       )}
@@ -112,6 +210,41 @@ function ServerRow({
         <p role="alert" className="pl-6.5 text-xs text-destructive">
           {server.problem}
         </p>
+      )}
+
+      {signIn !== null && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-6.5 text-xs text-muted-foreground">
+          <span data-testid={`mcp-${server.name}-sign-in`}>{signIn}</span>
+          {server.signed_in && (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              aria-label={`Sign out of ${server.title}`}
+              onClick={() => {
+                forget();
+                onSignOut();
+              }}
+            >
+              Sign out
+            </Button>
+          )}
+        </div>
+      )}
+
+      {server.missing.length === 0 && (
+        <div className="flex flex-col items-start gap-1.5 pl-6.5">
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            disabled={check.kind === "checking"}
+            onClick={() => void look()}
+          >
+            Check connection<span className="sr-only"> to {server.title}</span>
+          </Button>
+          <CheckResult check={check} />
+        </div>
       )}
 
       {server.setup !== null && (
@@ -278,6 +411,18 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
     }
   }
 
+  async function signOut(server: McpServer) {
+    setProblem(null);
+    setDone(null);
+    try {
+      onChanged(await api.signOutMcpServer(server.name));
+      setDone(`Signed out of ${server.title}. A conversation that has it on asks you to sign in again.`);
+    } catch (error) {
+      report(error);
+      setProblem(describeError(error));
+    }
+  }
+
   async function remove(server: McpServer) {
     setProblem(null);
     setDone(null);
@@ -328,6 +473,7 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
                 server={server}
                 onChange={(what) => change(server.name, what)}
                 onKeysChanged={() => void refresh()}
+                onSignOut={() => void signOut(server)}
                 onRemove={(button) => {
                   asker.current = button;
                   setRemoving(server);

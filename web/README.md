@@ -10,7 +10,7 @@ API they talk to, so there is nothing to run but the server.
 | --- | --- |
 | `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
-| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, the scientists, and the tools; and what there is to set up for code in Docker, and the jobs that build and fetch it; and the MCP servers, and what they and their tools ask of the researcher |
+| `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, the scientists, and the tools; and what there is to set up for code in Docker, and the jobs that build and fetch it; and the MCP servers, what a check of one found and whether it is signed in to, and what they and their tools ask of the researcher |
 | `e2e` | Playwright tests, and the scripted server they run against |
 
 A conversation is named in the query of an address, not in its path, because the pages are exported as they are and
@@ -97,6 +97,15 @@ to with a key takes it in a box, as the Keys settings do (the server only takes 
 key a server of one's own asks for is set where the server was started, which the row says), and one that can be signed in
 to with an account says so, and which is chosen. A server that cannot work as it is says why on its row, and one of one's
 own is removed after asking.
+
+A server that can work as it is has **Check connection**, which connects to it as a conversation would and says how many
+tools it gave and what some of them are, or why it could not (`POST /api/mcp/servers/{name}/check`, which a second check
+of the same server is refused while the first is going, with `busy`). A check never opens a sign-in page, since nobody is
+there to be sent to one, and never allows a call or answers a question: a server that is not signed in to says so, and that
+the sign-in is asked for where a conversation uses the server. Its result stays until what it was of changes (a key, the
+choice of key or account, or a sign-out), and one that comes back after that is dropped. A server signed in to with an
+account says whether it is signed in (`signed_in` in `GET /api/mcp`; `null` where that does not apply or is not known), and
+**Sign out** forgets the sign-in (`DELETE /api/mcp/servers/{name}/sign-in`), so the next conversation asks again.
 
 A conversation is given the servers that are on when it begins, which `POST /api/chats` takes as `mcp` when it is to have
 others, and connects to them when its first message is sent, since that is when the lead needs the tools. It keeps the
@@ -219,7 +228,8 @@ their own (`--project=mcp`). The servers are real: the test server of the librar
 started as a program for a conversation, or as a server over HTTP that is signed in to with OAuth, whose authorization
 server signs anyone in at once. Nothing opens a browser; a test follows the sign-in link the page shows, as a person would,
 and the sign-ins are kept in a folder of the scripted server's own. The tests of each file run in order, and name the
-servers their conversations are given, since the files run beside each other.
+servers their conversations are given, since the files run beside each other. The check of a server, and its sign-in, are
+tested there too (`e2e/mcp/check.spec.ts`), and `appearance.spec.ts` looks at what they show in the dark and on a phone.
 
 The scripted model answers a question with a short reply that repeats it. What else a message makes it do depends on
 a word in it:
@@ -235,7 +245,7 @@ a word in it:
 | `tool:unknown`, `tool:resources` | Calls a tool it does not have, or looks for resources |
 | `tool:files` | Looks at the file attached to the conversation, `counts.csv`, with the library's own tools for that |
 | `tool:offered` | Answers with the names of the tools the model was offered, which is how a test sees what the settings gave it |
-| `mcp:echo`, `count`, `both`, `order`, `confirm`, `signed` | Calls the tools of the test server that the tests of `e2e/mcp` set up as `genes` (or `vault`, for `signed`): `echo`, `count`, `count` and then `echo`, `order` (which asks what to order), and `confirm` (which asks yes or no) |
+| `mcp:echo`, `count`, `both`, `order`, `confirm`, `signed`, `gated` | Calls the tools of the test server that the tests of `e2e/mcp` set up as `genes` (or `vault`, for `signed`, and `gate`, for `gated`): `echo`, `count`, `count` and then `echo`, `order` (which asks what to order), and `confirm` (which asks yes or no) |
 | `pdf:unavailable` | Has saving the conversation as a PDF fail, as it does where WeasyPrint is not installed (the PDF is otherwise made by a stand-in that needs no WeasyPrint) |
 | `lab:team` | Brings in the team for a round of discussion, in which the scientists answer as the script says |
 | `lab:consult` | Asks one scientist, reviewed by the critic |

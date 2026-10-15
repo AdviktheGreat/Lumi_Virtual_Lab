@@ -11,18 +11,23 @@ import json
 import os
 import re
 import shutil
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from virtual_lab.mcp_auth import has_sign_in, sign_out_mcp
 from virtual_lab.mcp_presets import MCP_PRESETS, preset_entry
-from virtual_lab.mcp_tools import SERVER_KEYS, VARIABLE, MCPServerConfig, parse_server
+from virtual_lab.mcp_tools import SERVER_KEYS, VARIABLE, MCPServerConfig, MCPTools, connect_mcp, parse_server
 
 # What a server's name may be, which its tools' names start with, so that it is one of letters, digits, and "_"
 SERVER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 
 # The most servers a person may set up, which is more than anyone would
 MAX_SERVERS = 64
+
+# Seconds a check of a server waits for it to start, or to answer, which is less than a conversation waits, since a
+# person is watching for the answer
+CHECK_TIMEOUT = 30.0
 
 
 def with_defaults(value: Any) -> Any:
@@ -73,12 +78,14 @@ def server_title(name: str, entry: Mapping[str, Any] | None) -> str:
     return name
 
 
-def read_server(name: str, entry: Mapping[str, Any]) -> MCPServerConfig:
+def read_server(name: str, entry: Mapping[str, Any], strict: bool = False) -> MCPServerConfig:
     """How to reach a server, as connect_mcp reads its entry, whether or not it is on.
 
     A variable that is not set is read as if it were, since a key is given after a server is turned on, and a setting
     that is not used, because of a typo, is an error, where connect_mcp would only warn of it.
 
+    :param strict: Whether a variable that is not set is an error, as it is to connect_mcp, for what depends on what the
+        variables are.
     :raises ValueError: If the entry is not one connect_mcp would read, saying what is wrong.
     """
     if unknown := sorted(str(key) for key in set(entry) - SERVER_KEYS):
@@ -87,7 +94,9 @@ def read_server(name: str, entry: Mapping[str, Any]) -> MCPServerConfig:
     try:
         # A preset is filled in first, so that the variables its entry asks for are given defaults too
         filled, preset = preset_entry(name, shape)
-        parsed = parse_server(name, {**with_defaults(filled), **({"preset": shape["preset"]} if preset else {})})
+        parsed = parse_server(
+            name, {**(filled if strict else with_defaults(filled)), **({"preset": shape["preset"]} if preset else {})}
+        )
     except (ValueError, TypeError, OSError) as error:
         raise ValueError(str(error)) from None
     assert parsed is not None
@@ -177,7 +186,8 @@ def describe_server(name: str, entry: Mapping[str, Any] | None) -> dict[str, Any
     :param entry: What is kept for it, or None for a preset that has not been set up.
     :return: Its title, what it is for, whether it is on, how it is signed in to or given a key and which keys are
         missing, which of the keys the interface may give are set, whether it has tools that wait for the researcher's
-        approval, and, if it cannot work as it is, why.
+        approval, whether a sign-in to it is kept (None for a server that is not signed in to), and, if it cannot work
+        as it is, why.
     """
     preset = MCP_PRESETS.get(name)
     if preset is not None and (entry is None or entry.get("preset") == name):
@@ -214,6 +224,7 @@ def describe_server(name: str, entry: Mapping[str, Any] | None) -> dict[str, Any
         "transport": parsed.transport if parsed is not None else None,
         "target": parsed.shown if parsed is not None else None,
         "asks": bool(parsed is not None and parsed.ask),
+        "signed_in": sign_in_kept(name, given) if signs_in else None,
         "missing": missing,
         "keys_set": [
             variable for variable in variables_in(filled) if variable in os.environ and variable in service_keys()
@@ -221,6 +232,87 @@ def describe_server(name: str, entry: Mapping[str, Any] | None) -> dict[str, Any
         "problem": problem,
         "setup": preset.setup_for(dict(given)) if preset is not None else None,
     }
+
+
+def sign_in_url(name: str, entry: Mapping[str, Any] | None) -> str | None:
+    """The address of a server that is signed in to, as its entry and the environment make it, or None for one that is
+    not signed in to.
+
+    :param entry: What is kept for it, or None for a preset that has not been set up.
+    :raises ValueError: If the entry cannot be read, as read_server says.
+    """
+    given = entry if entry is not None else {"preset": name}
+    parsed = read_server(name, given)
+    if parsed.auth != "oauth":
+        return None
+    # A variable in the address that is not set is read as a placeholder, which would name another server's sign-in
+    if variables_in(preset_entry(name, dict(given))[0].get("url")):
+        return read_server(name, given, strict=True).url
+
+    return parsed.url
+
+
+def sign_in_kept(name: str, entry: Mapping[str, Any] | None) -> bool | None:
+    """Whether a sign-in to a server is kept, or None where that is not known, because the server's address is not."""
+    try:
+        url = sign_in_url(name, entry)
+    except ValueError:
+        return None
+
+    return None if url is None else has_sign_in(url)
+
+
+def sign_out(name: str, entry: Mapping[str, Any] | None) -> bool:
+    """Forgets the sign-in to a server, so that the next conversation to use it asks the researcher to sign in again.
+
+    :param entry: What is kept for it, or None for a preset that has not been set up.
+    :raises ValueError: If the server is not one that is signed in to, or its address cannot be read.
+    :return: Whether there was a sign-in to forget.
+    """
+    url = sign_in_url(name, entry)
+    if url is None:
+        raise ValueError(f"{server_title(name, entry)} is not signed in to")
+
+    return sign_out_mcp(url)
+
+
+def check_connection(
+    name: str, entry: Mapping[str, Any] | None, connect: Callable[..., MCPTools] = connect_mcp
+) -> dict[str, Any]:
+    """Connects to a server as a conversation would, to say whether it can be, and which tools it gives.
+
+    The server is connected to whether or not it is on. Nobody is sent to a sign-in page: a server that is signed in to
+    is connected to with the sign-in it has, and is said to need one where it has none. Nothing is called, and the
+    connection is closed again.
+
+    :param entry: What is kept for it, or None for a preset that has not been set up.
+    :param connect: What connects to a server, as connect_mcp does, which is for tests.
+    :return: Whether it was connected to, the names of the tools it gives, which the lead is given, and, if it was not,
+        why.
+    """
+    title = server_title(name, entry)
+    given = {key: value for key, value in (entry or {"preset": name}).items() if key not in ("enabled", "disabled")}
+    failed = {"ok": False, "tools": []}
+    try:
+        if sign_in_kept(name, given) is False:
+            return {
+                **failed,
+                "reason": f"{title} is not signed in to yet. A conversation that has it on asks you to sign in, "
+                "when you send its first message.",
+            }
+        opened = connect(
+            {"mcpServers": {name: given}},
+            start_timeout=CHECK_TIMEOUT,
+            approve=lambda request: False,
+            answer=lambda question: None,
+            may_sign_in=False,
+        )
+    except Exception as error:  # noqa: BLE001
+        return {**failed, "reason": str(error) or type(error).__name__}
+    try:
+        return {"ok": True, "tools": [tool.name for tool in opened.tools], "reason": None}
+    finally:
+        opened.close()
 
 
 def describe_servers(stored: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:

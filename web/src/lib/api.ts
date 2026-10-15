@@ -11,6 +11,7 @@ import type {
   KeyStatuses,
   LibraryScientist,
   McpChange,
+  McpCheck,
   McpEntry,
   McpServer,
   Models,
@@ -256,6 +257,9 @@ export const api = {
     (await request<{ servers: McpServer[] }>("PUT", `/mcp/servers/${encodeURIComponent(name)}`, { entry })).servers,
   removeMcpServer: async (name: string) =>
     (await request<{ servers: McpServer[] }>("DELETE", `/mcp/servers/${encodeURIComponent(name)}`)).servers,
+  checkMcpServer: (name: string) => request<McpCheck>("POST", `/mcp/servers/${encodeURIComponent(name)}/check`),
+  signOutMcpServer: async (name: string) =>
+    (await request<{ servers: McpServer[] }>("DELETE", `/mcp/servers/${encodeURIComponent(name)}/sign-in`)).servers,
   // Docker, the images, the data lake, the jobs, and what is left to do. Asking is not quick, since Docker is asked.
   setup: (signal?: AbortSignal) => request<SetupStatus>("GET", "/setup", undefined, signal),
   // Starts building a stage of the image, which goes on as a job

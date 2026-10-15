@@ -277,13 +277,23 @@ class SignIn:
         whatever shows the person what is going on can offer it too, for a browser that did not open.
         Where it is given, a sign-in that opens no browser waits for the person to go to the page rather
         than failing for want of one.
+    :param may_sign_in: False to fail where a person would have to sign in, rather than send them to the page, as
+        a connection that only looks at a server does.
     """
 
-    def __init__(self, server: str, url: str, clock: PausedClock, on_page: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        server: str,
+        url: str,
+        clock: PausedClock,
+        on_page: Callable[[str], None] | None = None,
+        may_sign_in: bool = True,
+    ) -> None:
         self.server = server
         self.url = url
         self.clock = clock
         self.on_page = on_page
+        self.may_sign_in = may_sign_in
         self.storage = SignInStorage(url)
         self.port = callback_port(self.storage)
         self.redirect_uri = f"http://{CALLBACK_HOST}:{self.port}{CALLBACK_PATH}"
@@ -344,6 +354,11 @@ class SignIn:
     async def redirect(self, authorization_url: str) -> None:
         """Sends the person to the server's sign-in page, having first begun to listen where the
         browser is sent back to."""
+        if not self.may_sign_in:
+            raise SignInError(
+                f"The MCP server {self.server} needs you to sign in, which this connection does not ask of you: "
+                "sign in where a conversation uses the server."
+            )
         self.clock.pause()
         try:
             self.state = first_values(urlsplit(authorization_url).query).get("state")
@@ -497,6 +512,12 @@ class SignIn:
         if self.listener is not None:
             self.listener.close()
             self.listener = None
+
+
+def has_sign_in(url: str) -> bool:
+    """Whether a sign-in to the MCP server at a URL is kept, which a connection to it then uses, and refreshes, rather
+    than send a person to the server's page."""
+    return isinstance(SignInStorage(url).read().get("tokens"), dict)
 
 
 def sign_out_mcp(server: str) -> bool:
