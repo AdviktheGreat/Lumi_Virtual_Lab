@@ -15,6 +15,9 @@ from dataclasses import dataclass
 
 # How much of a provider's own message is kept beside the advice
 DETAIL_LIMIT = 240
+# How much of a page a gateway sent is read for its words. Taking the markup out of a very long one, with many tags
+# that are never closed, would otherwise take seconds
+PAGE_LIMIT = 40_000
 
 CONTEXT_PHRASES = (
     "context_length_exceeded",
@@ -143,6 +146,7 @@ def status_of(error: BaseException) -> int | None:
 def shorten(text: str, limit: int = DETAIL_LIMIT) -> str:
     """Puts a provider's message on one line, without the markup of a page a gateway sent in its place."""
     if re.search(r"<(?:!doctype|html|body)\b", text, re.IGNORECASE):
+        text = text[:PAGE_LIMIT]
         text = re.sub(r"<(script|style|head)\b.*?</\1\s*>", " ", text, flags=re.IGNORECASE | re.DOTALL)
         text = re.sub(r"<[^>]*>", " ", text)
     text = " ".join(text.split())

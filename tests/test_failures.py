@@ -1,5 +1,6 @@
 """Tests for telling a researcher what a model provider's failure means, and what to do about it."""
 
+import time
 from typing import Any
 
 import anthropic
@@ -8,7 +9,7 @@ import openai
 import pytest
 
 from virtual_lab import failures
-from virtual_lab.failures import DETAIL_LIMIT, Failure, describe_failure, shorten, status_of
+from virtual_lab.failures import DETAIL_LIMIT, PAGE_LIMIT, Failure, describe_failure, shorten, status_of
 
 REQUEST = httpx.Request("POST", "https://api.example.test/v1/chat/completions")
 
@@ -272,6 +273,28 @@ class TestShorten:
     def test_a_page_is_known_by_its_tags_in_any_case(self) -> None:
         assert shorten("Error code: 502 - <HTML><BODY>Bad Gateway</BODY></HTML>") == "Error code: 502 - Bad Gateway"
         assert shorten("<!DOCTYPE html>Bad Gateway") == "Bad Gateway"
+
+    def test_only_the_first_40000_characters_of_a_page_are_read(self) -> None:
+        assert PAGE_LIMIT == 40_000
+        opening = "<html><p>"
+
+        read = shorten(opening + "a" * PAGE_LIMIT + " tail</p></html>", limit=PAGE_LIMIT * 2)
+
+        assert read == "a" * (PAGE_LIMIT - len(opening))
+
+    def test_only_a_page_is_cut_at_that_length_and_not_other_text(self) -> None:
+        text = "word " * 20_000
+
+        assert shorten(text, limit=200_000) == text.strip()
+
+    @pytest.mark.parametrize("tag", ["script", "style", "head"])
+    def test_a_page_of_tags_that_are_never_closed_does_not_take_long_to_read(self, tag: str) -> None:
+        began = time.monotonic()
+
+        shorten(f"<html>{f'<{tag} ' * 20_000}")
+
+        # Without a limit on the page this takes about nine seconds
+        assert time.monotonic() - began < 5
 
     def test_the_head_and_the_scripts_of_a_page_are_not_part_of_what_it_says(self) -> None:
         page = "<html><HEAD><title>t</title></HEAD><body>Hello<SCRIPT type='x'>\nvar a;\n</SCRIPT> there</body></html>"
