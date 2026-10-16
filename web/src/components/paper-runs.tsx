@@ -27,7 +27,7 @@ import {
   type RunDraft,
 } from "@/lib/papers";
 import type { PaperRunEntry, PapersList } from "@/lib/types";
-import { useAttempt } from "@/lib/use-papers";
+import { useAttempt } from "@/lib/use-looked";
 
 // The page of a run, which is named in the address's query, as a conversation is
 export const runAddress = (id: string) => `/papers?id=${encodeURIComponent(id)}`;

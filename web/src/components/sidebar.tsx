@@ -3,7 +3,18 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Container, Database, FileText, PanelLeftClose, Search as SearchIcon, Settings, SquarePen, X, type LucideIcon } from "lucide-react";
+import {
+  Container,
+  Database,
+  FileText,
+  Gauge,
+  PanelLeftClose,
+  Search as SearchIcon,
+  Settings,
+  SquarePen,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { Brand } from "@/components/brand";
 import { ChatRow, LIST_ID } from "@/components/chat-row";
 import { useChats } from "@/components/chats-provider";
@@ -23,6 +34,7 @@ import { cn } from "@/lib/utils";
 const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/data", label: "Data", icon: Database },
   { href: "/papers", label: "Papers", icon: FileText },
+  { href: "/benchmarks", label: "Benchmarks", icon: Gauge },
 ];
 
 function Search({ typed, onTyped }: { typed: string; onTyped: (typed: string) => void }) {

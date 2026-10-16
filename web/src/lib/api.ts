@@ -2,6 +2,10 @@ import { exportNameOf, type ExportFormat } from "./export";
 import { fileUrl } from "./files";
 import type {
   Attachment,
+  BenchmarkQuestion,
+  BenchmarkRun,
+  BenchmarksList,
+  BenchmarkStartOptions,
   ChatFiles,
   ChatInfo,
   ChatSummary,
@@ -15,6 +19,7 @@ import type {
   McpEntry,
   McpServer,
   Models,
+  NewBenchmarkRun,
   NewChat,
   NewPaperRun,
   Own,
@@ -376,6 +381,24 @@ export const api = {
     request<PaperRun>("DELETE", `/papers/runs/${encodeURIComponent(id)}/functions/${encodeURIComponent(name)}`),
   // Whether the functions of a run are given to the conversations that are made from now on
   giveFunctions: (id: string, given: boolean) => request<PaperRun>("PATCH", `/papers/runs/${encodeURIComponent(id)}`, { given }),
+  // The runs that answer a benchmark's questions, and what a new one is asked for
+  benchmarks: (signal?: AbortSignal) => request<BenchmarksList>("GET", "/benchmarks", undefined, signal),
+  // Fetches the benchmarks' files, which takes a few moments, and gives back what is then known of them
+  fetchBenchmarkFiles: () => request<BenchmarksList>("POST", "/benchmarks/files"),
+  makeBenchmarkRun: (run: NewBenchmarkRun) => request<BenchmarkRun>("POST", "/benchmarks/runs", run),
+  benchmarkRun: (id: string, signal?: AbortSignal) =>
+    request<BenchmarkRun>("GET", `/benchmarks/runs/${encodeURIComponent(id)}`, undefined, signal),
+  deleteBenchmarkRun: (id: string) => request<BenchmarksList>("DELETE", `/benchmarks/runs/${encodeURIComponent(id)}`),
+  // Starts answering the questions that are not answered, which goes on as a job
+  startBenchmarkRun: (id: string, options: BenchmarkStartOptions) =>
+    request<Job>("POST", `/benchmarks/runs/${encodeURIComponent(id)}/start`, options),
+  benchmarkQuestion: (id: string, task: string, number: number, signal?: AbortSignal) =>
+    request<BenchmarkQuestion>(
+      "GET",
+      `/benchmarks/runs/${encodeURIComponent(id)}/questions/${encodeURIComponent(task)}/${number}`,
+      undefined,
+      signal,
+    ),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),

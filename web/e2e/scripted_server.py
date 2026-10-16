@@ -26,6 +26,10 @@ from a script: no key is needed, and every run says the same. What it says depen
   DESeq2 is found to use RNA-seq differential expression, one that names Scanpy single-cell clustering, and one that
   names neither the first. "slow:" in a paper's text makes reading it take a while, so that the work can be followed or
   stopped, and "fail:" makes reading it fail. A function asked for is written, whatever it is for.
+- Benchmarks' questions are answered from stand-ins for their files, whose questions the script answers right or wrong
+  by their number, so that every run scores the same: of LAB-Bench's, the even ones right, and of Biomni-Eval1's, what
+  its tasks' stand-ins make of one answer each. "pause:" in a question makes answering it take a while, so that a run
+  can be followed or stopped.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -75,13 +79,16 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice  # noqa: E4
 from openai.types.chat.chat_completion_message_tool_call import Function  # noqa: E402
 
 from setup_fakes import Bucket, FakeDocker  # noqa: E402
+from test_benchmarks import benchmark_files, parquet_bytes, sha256  # noqa: E402
 from test_papers import database, findings, package, task  # noqa: E402
 
-from virtual_lab.constants import MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
+from virtual_lab.benchmarks import MultipleChoiceOutput  # noqa: E402
+from virtual_lab.constants import BENCHMARK_FILES, MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab.papers import PaperFindings  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
+from virtual_lab.server import benchmarks as benchmark_runs  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
 from virtual_lab.server.keychain import Keychain  # noqa: E402
 from virtual_lab.server.workspace import Workspace  # noqa: E402
@@ -102,6 +109,39 @@ PAPER_TASKS = (
     ("Single-cell clustering with Scanpy", "Scanpy"),
 )
 PAPER_DELAY = 2.0
+
+# How long answering a question that says "pause:" takes, and the stand-in for Humanity's Last Exam, whose questions
+# say it
+BENCHMARK_DELAY = 1.5
+HLE_FILE = "hle/test_sampled_biology_medicine.parquet"
+HLE_ROWS = [
+    {
+        "id": f"h{number}",
+        "question": f"pause: Which of these is {name}? Answer Choices: A. the first B. the second",
+        "image": "data:image/png;base64,AAAA" if number == 3 else "",
+        "answer": answer,
+        "answer_type": "multipleChoice",
+        "category": "Biology/Medicine",
+    }
+    for number, (name, answer) in enumerate(
+        [
+            ("a ligase", "B. the second"),
+            ("a helicase", "B. the second"),
+            ("a kinase", "A. the first"),
+            ("a drawn one", "B. the second"),
+        ]
+    )
+]
+
+# What Biomni-Eval1's tasks are answered with, whatever is asked: the answer of the first question of each task, which
+# is wrong for the second question of crispr_delivery
+EVAL1_ANSWERS = {
+    "CrisprDeliveryOutput": {"choice": "e"},
+    "GeneOutput": {"gene": "HNF1A"},
+    "VariantOutput": {"variant": "rs4253311"},
+    "RareDiseaseOutput": {"disease_name": "Gordon syndrome", "OMIM_ID": "114300"},
+    "PatientGeneOutput": {"causal_gene": ["ENSG1"]},
+}
 
 # What a function that is asked for is written as
 FUNCTION_CODE = """```python
@@ -381,6 +421,28 @@ def lab_reply(title: str, messages: list[dict[str, Any]]) -> str:
     return LAB_REPLIES.get(title, f"As the {title}, I have nothing to add.")
 
 
+def choice_for(question: str) -> str:
+    """The letter the script answers a multiple choice question with. LAB-Bench's stand-ins have their right option
+    written "right N" and a wrong one "wrong N.0", and are answered right when N is even, and wrong when it is odd. The
+    others are answered B."""
+    found = re.search(r"Question (\d+)\?", question)
+    if found is None:
+        return "B"
+    number = int(found.group(1))
+    text = f"right {number}" if number % 2 == 0 else f"wrong {number}.0"
+    option = re.search(rf"^([A-Z])\.{re.escape(text)}$", question, re.MULTILINE)
+
+    return option.group(1) if option else "B"
+
+
+def benchmark_output(schema: Any, question: str) -> Any:
+    """The answer the script reads out of an attempt, in the schema of the question's benchmark."""
+    if schema is MultipleChoiceOutput:
+        return MultipleChoiceOutput(choice=choice_for(question))
+
+    return schema.model_validate(EVAL1_ANSWERS[schema.__name__])
+
+
 def paper_findings(text: str) -> PaperFindings:
     """What a paper is found to use, from the words in its text."""
     names = [name for name, word in PAPER_TASKS if word in text] or [PAPER_TASKS[0][0]]
@@ -466,6 +528,11 @@ class ScriptedCompletions(FakeCompletions):
         written = function_named(kwargs)
         if written is not None:
             response = text_response(function_code(written))
+        elif "pause:" in question or "[ANSWER] and [/ANSWER]" in question:
+            if "pause:" in question:
+                time.sleep(BENCHMARK_DELAY)
+            letter = choice_for(question)
+            response = text_response(f"Working through the options, the answer is [ANSWER]{letter}[/ANSWER].")
         elif steps is not None and done < len(steps):
             narration, name, arguments = steps[done]
             response = call_response(narration, name, arguments, f"call_{done + 1}")
@@ -491,7 +558,13 @@ class ScriptedCompletions(FakeCompletions):
         return response
 
     def parse(self, **kwargs: Any) -> Any:
-        if kwargs["response_format"] is not PaperFindings:
+        schema = kwargs["response_format"]
+        if schema.__module__ == "virtual_lab.benchmarks":
+            # What the answer is read from is the question, which the request that reads it gives as what it is for
+            system = next(str(message["content"]) for message in kwargs["messages"] if message["role"] == "system")
+
+            return parsed_response(benchmark_output(schema, system))
+        if schema is not PaperFindings:
             return super().parse(**kwargs)
         text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")
         if "slow:" in text:
@@ -626,6 +699,23 @@ class MemoryKeyring:
         del self.kept[(service, name)]
 
 
+def stand_in_benchmark_files() -> None:
+    """Pins small stand-ins for the benchmarks' files in place of the real ones, and has fetching the files put the
+    stand-ins where they are kept, so that nothing is fetched."""
+    files = benchmark_files()
+    files[HLE_FILE] = parquet_bytes(HLE_ROWS)
+    for name, data in files.items():
+        BENCHMARK_FILES[name] = sha256(data)
+
+    def download(directory: Path) -> None:
+        for name, data in files.items():
+            path = directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+
+    benchmark_runs.download_benchmarks = download
+
+
 def stand_in_pdf(page: str) -> bytes:
     if "pdf:unavailable" in page:
         raise PDFExportError("Making a PDF needs WeasyPrint. (ImportError: the stand-in is told to fail)")
@@ -649,6 +739,7 @@ def main() -> None:
     options = parser.parse_args()
 
     server_app.make_pdf = stand_in_pdf
+    stand_in_benchmark_files()
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened
     # for one: a test follows the link the page shows, as a person would
