@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileCode, FileDown, FileText, Loader2 } from "lucide-react";
+import { BookOpen, FileCode, FileDown, FileText, Loader2 } from "lucide-react";
 import { useServer } from "@/components/server-provider";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -9,9 +9,9 @@ import { api } from "@/lib/api";
 import { problemOf, type Problem } from "@/lib/errors";
 import { EXPORT_CHOICES, saveFile, type ExportFormat } from "@/lib/export";
 
-const ICONS = { html: FileCode, pdf: FileText } satisfies Record<ExportFormat, typeof FileText>;
+const ICONS = { html: FileCode, pdf: FileText, ipynb: BookOpen } satisfies Record<ExportFormat, typeof FileText>;
 
-// What saves the conversation as a document: a web page, or a PDF. The document is made by the server, which can fail to
+// What saves the conversation as a document: a web page, a PDF, or a notebook. The document is made by the server, which can fail to
 // make a PDF, so what it says is given to onProblem, to be shown where the page shows what went wrong.
 export function ExportMenu({
   id,

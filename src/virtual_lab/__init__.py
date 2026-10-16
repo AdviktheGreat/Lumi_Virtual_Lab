@@ -88,6 +88,7 @@ from virtual_lab.export import (
     save_project_pdf,
 )
 from virtual_lab.export_chat import chat_html, save_chat_html, save_chat_pdf
+from virtual_lab.export_notebook import chat_notebook, save_chat_notebook
 from virtual_lab.execution import (
     DockerExecutor,
     DockerUnavailableError,
@@ -446,6 +447,7 @@ __all__ = [
     "sandbox_image",
     "save_artifacts",
     "save_chat_html",
+    "save_chat_notebook",
     "save_chat_pdf",
     "save_execution_record",
     "save_meeting_html",
