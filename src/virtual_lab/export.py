@@ -186,13 +186,24 @@ def money(cost: float | None) -> str:
     return f"${rounded:,.4f}"
 
 
-def image_uri(directory: Path, name: str) -> str | None:
-    """A figure saved in a session's directory as a data URI, so that the document carries it, or
-    None if it cannot be read or is not in the directory."""
+def figure_file(directory: Path, name: str) -> tuple[str, Path] | None:
+    """A figure saved in a session's directory as its media type and where it is, or None if it is not an
+    image or is not in the directory."""
     path = (directory / name).resolve()
     kind = IMAGE_TYPES.get(path.suffix.lower())
     if kind is None or not path.is_relative_to(directory.resolve()) or not path.is_file():
         return None
+
+    return kind, path
+
+
+def image_uri(directory: Path, name: str) -> str | None:
+    """A figure saved in a session's directory as a data URI, so that the document carries it, or
+    None if it cannot be read or is not in the directory."""
+    found = figure_file(directory, name)
+    if found is None:
+        return None
+    kind, path = found
 
     return f"data:{kind};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
 

@@ -59,7 +59,7 @@ and everything else is a request and an answer.
     GET    /api/chats/{id}/events       the events of the conversation, as they happen
     POST   /api/chats/{id}/uploads      a file for the conversation, as the body, named by ?name=
     GET    /api/chats/{id}/files        what the conversation made or was given, and /files/{path} one of them
-    GET    /api/chats/{id}/export       the conversation as a document to save, as ?format=html, the default, or pdf
+    GET    /api/chats/{id}/export       the conversation to save, as ?format=html (the default), pdf, or ipynb
 """
 
 import asyncio
@@ -86,6 +86,7 @@ from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_CHAT_TITLE_CHARS, MAX_
 from virtual_lab.environment import DATA_LAKE
 from virtual_lab.export import PDFExportError, make_pdf
 from virtual_lab.export_chat import chat_html
+from virtual_lab.export_notebook import chat_notebook, notebook_text
 from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.benchmarks import BenchmarkRuns
@@ -1125,8 +1126,16 @@ def create_app(
         return file_response(resolve_inside(handle.files_root, path, handle.files_shown), download=download)
 
     @api.get("/chats/{chat_id}/export")
-    def export_chat(chat_id: str, kind: Literal["html", "pdf"] = Query("html", alias="format")) -> Response:
+    def export_chat(chat_id: str, kind: Literal["html", "pdf", "ipynb"] = Query("html", alias="format")) -> Response:
         handle = conversations.get(chat_id)
+        if kind == "ipynb":
+            notebook = notebook_text(chat_notebook(handle.directory, files_dir=handle.files_root))
+
+            return Response(
+                notebook.encode("utf-8"),
+                media_type="application/x-ipynb+json",
+                headers=download_headers(handle.chat.title, kind),
+            )
         page = chat_html(handle.directory, files_dir=handle.files_root)
         if kind == "html":
             content, media_type = page.encode("utf-8"), "text/html; charset=utf-8"

@@ -1829,6 +1829,23 @@ class TestExport:
         assert "Nanobodies are small antibodies." in response.text
         assert client.get(f"/api/chats/{chat_id}/export", params={"format": "html"}).content == response.content
 
+    def test_a_conversation_is_sent_as_a_notebook(self, client: TestClient, fake_client: FakeClient) -> None:
+        chat_id = self.talk(client, fake_client)
+
+        response = client.get(f"/api/chats/{chat_id}/export", params={"format": "ipynb"})
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/x-ipynb+json"
+        assert response.headers["content-disposition"] == (
+            "attachment; filename=\"What is a nanobody.ipynb\"; filename*=utf-8''What%20is%20a%20nanobody.ipynb"
+        )
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["cache-control"] == "no-store"
+        notebook = response.json()
+        assert notebook["nbformat"] == 4
+        assert "What is a nanobody?" in "".join("".join(item["source"]) for item in notebook["cells"])
+        assert "Nanobodies are small antibodies." in "".join("".join(item["source"]) for item in notebook["cells"])
+
     def test_a_conversation_is_sent_as_a_pdf_when_one_can_be_made(
         self, client: TestClient, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:

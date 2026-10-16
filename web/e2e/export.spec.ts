@@ -11,7 +11,7 @@ const htmlExport = /\/api\/chats\/[^/]+\/export\?format=html$/;
 
 // Opens the menu and chooses the format. The menu is waited for to be gone first if it was open, since one that is opened
 // while the last is still closing is closed by it, which is something no one clicks fast enough to do.
-async function saveAs(page: Page, format: "html" | "pdf"): Promise<Download> {
+async function saveAs(page: Page, format: "html" | "pdf" | "ipynb"): Promise<Download> {
   await expect(page.getByRole("menu")).toHaveCount(0);
   const saved = page.waitForEvent("download");
   await toggle(page).click();
@@ -73,6 +73,21 @@ test.describe("saving a conversation as a document", () => {
     const saved = await contentOf(download);
     expect(saved.startsWith("%PDF-1.7")).toBe(true);
     expect(saved).toContain("You asked: Save as a PDF please");
+  });
+
+  test("a notebook is saved with the code that ran and the figure it drew", async ({ page }) => {
+    await askWhereCodeRuns(page, "code:plot save the notebook");
+    await answered(page, "That is done: 1 step ran.", 30_000);
+
+    const download = await saveAs(page, "ipynb");
+
+    expect(download.suggestedFilename()).toBe("code-plot save the notebook.ipynb");
+    const notebook = JSON.parse(await contentOf(download));
+    expect(notebook.nbformat).toBe(4);
+    const code = notebook.cells.filter((cell: { cell_type: string }) => cell.cell_type === "code");
+    expect(code).toHaveLength(1);
+    expect(code[0].outputs.some((output: { output_type: string }) => output.output_type === "display_data")).toBe(true);
+    expect(JSON.stringify(notebook.cells)).toContain("code:plot save the notebook");
   });
 
   test("the code that ran, what it printed, and the figure it drew are in the page", async ({ page }) => {

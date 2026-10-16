@@ -178,12 +178,13 @@ hold_meeting(..., steer=steer)
 Biomni saves its agent's conversation as a PDF. A meeting can be saved as one too, or as a page of HTML, laid out as a meeting: its agenda, team, and summary first, then the discussion round by round, each agent in a colour of its own, with the code each agent ran, what it printed, and the figures it drew, then what the meeting cost. A project is saved as its report, with every meeting it finished after it if asked for, each from a new page. A conversation with the head of a lab, as the web interface has it, is saved as what was asked and answered, turn by turn.
 
 ```python
-from virtual_lab import save_chat_html, save_chat_pdf, save_meeting_html, save_meeting_pdf, save_project_pdf
+from virtual_lab import save_chat_html, save_chat_notebook, save_chat_pdf, save_meeting_html, save_meeting_pdf, save_project_pdf
 
 save_meeting_pdf("results/discussion.json")            # results/discussion.pdf
 save_meeting_html("results/discussion.json")           # results/discussion.html, which needs no extra
 save_project_pdf("project", meetings=True)             # project/report.pdf
 save_chat_pdf("workspace/chats/2025-03-04_0912_nanobodies")   # conversation.pdf in that folder
+save_chat_notebook("workspace/chats/2025-03-04_0912_nanobodies")   # conversation.ipynb, which needs no extra
 ```
 
 - A PDF needs WeasyPrint, which `pip install "virtual-lab[pdf]"` installs, and the Pango library it draws text with, which pip cannot: `brew install pango` on macOS, or `apt install libpango-1.0-0 libpangoft2-1.0-0` on Debian and Ubuntu. Without them a PDF is refused with `PDFExportError`, saying what to install, and HTML can still be saved.
@@ -192,7 +193,8 @@ save_chat_pdf("workspace/chats/2025-03-04_0912_nanobodies")   # conversation.pdf
 - What the agents wrote is rendered as Markdown, with any HTML in it shown as text, and the document carries its figures, so neither the HTML nor the PDF fetches anything: an image an agent linked to, on the web or on disk, is shown as a link to it. A figure is read only from the session's own directory.
 - `meeting_html`, `project_html`, and `chat_html` return the document rather than saving it.
 - A conversation is saved as it went. Each turn has what the researcher wrote and attached, then what the lead did, in order: what it said, the code it ran with what it printed and the figures it drew, the files it made, and the tools it called with what they gave back. Each time the lead brought in the team, the call links to the team's session, which is added after the conversation as a meeting is. A conversation that is still going is saved as far as it has got, and saving it changes nothing in what it saved.
-- A conversation is read from its folder under the workspace's `chats/`, so `save_chat_html` and `save_chat_pdf` take that folder and save `conversation.html` or `conversation.pdf` in it unless told where. The figures are read from the session's directory, which is where the conversation says it was; if the folder has been moved, `files_dir` says where it is now.
+- A conversation can also be saved as a Jupyter notebook, as Biomni's agent works: what the researcher and the lead wrote are Markdown cells, each piece of code the lead ran is a code cell holding what it printed, the value it came to, and the figures it drew as its outputs, and what else the lead called is told in Markdown. R and shell code is a cell that starts with `%%R` (which needs rpy2) or `%%bash`. `chat_notebook` returns the notebook rather than saving it.
+- A conversation is read from its folder under the workspace's `chats/`, so `save_chat_html`, `save_chat_pdf`, and `save_chat_notebook` take that folder and save `conversation.html`, `conversation.pdf`, or `conversation.ipynb` in it unless told where. The figures are read from the session's directory, which is where the conversation says it was; if the folder has been moved, `files_dir` says where it is now.
 
 
 ## Running the code that agents write

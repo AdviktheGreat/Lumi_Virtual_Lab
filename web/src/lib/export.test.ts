@@ -39,6 +39,7 @@ describe("the name a document is saved as", () => {
   it("is made for what it is where the server sent none", () => {
     expect(exportNameOf(null, "html")).toBe("conversation.html");
     expect(exportNameOf(null, "pdf")).toBe("conversation.pdf");
+    expect(exportNameOf(null, "ipynb")).toBe("conversation.ipynb");
     expect(exportNameOf("attachment", "pdf")).toBe("conversation.pdf");
     expect(exportNameOf("attachment; filename=", "pdf")).toBe("conversation.pdf");
     expect(exportNameOf('attachment; filename=""', "pdf")).toBe("conversation.pdf");
@@ -46,8 +47,8 @@ describe("the name a document is saved as", () => {
 });
 
 describe("what it can be saved as", () => {
-  it("is a page and a PDF, each with what it is for", () => {
-    expect(EXPORT_CHOICES.map((choice) => choice.format)).toEqual(["html", "pdf"]);
+  it("is a page, a PDF, and a notebook, each with what it is for", () => {
+    expect(EXPORT_CHOICES.map((choice) => choice.format)).toEqual(["html", "pdf", "ipynb"]);
     for (const choice of EXPORT_CHOICES) {
       expect(choice.label).not.toBe("");
       expect(choice.hint).not.toBe("");

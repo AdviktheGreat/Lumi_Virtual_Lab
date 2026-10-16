@@ -298,8 +298,9 @@ again when a turn makes or changes a file, once the stream has been quiet for a 
 ## Saving a conversation
 
 The Save button in the header saves the conversation as a document: a web page (HTML) that opens in any browser with its
-figures in it, or a PDF. The server lays it out (`GET /api/chats/{id}/export?format=html|pdf`, from
-`virtual_lab.export_chat`, as the Python package saves a conversation), and the page fetches it, and then hands it to the
+figures in it, a PDF, or a Jupyter notebook (`.ipynb`) whose code cells hold the code the lead ran, with what it printed and
+the figures it drew as their outputs. The server lays it out (`GET /api/chats/{id}/export?format=html|pdf|ipynb`, from
+`virtual_lab.export_chat` and `virtual_lab.export_notebook`, as the Python package saves a conversation), and the page fetches it, and then hands it to the
 browser to save under the name the server gave it, from the title (`src/lib/export.ts`). It is fetched, and not a link
 that downloads, so that what the server says when it cannot make the document is shown above the composer, and is not
 saved as a file. A PDF needs WeasyPrint and the Pango library on the machine that runs the server (see the root README);

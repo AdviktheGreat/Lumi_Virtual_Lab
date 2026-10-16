@@ -1,7 +1,7 @@
 // Saving a conversation as a document: what it can be saved as, the name the server gives the file, and handing the file
 // to the browser to be saved
 
-export type ExportFormat = "html" | "pdf";
+export type ExportFormat = "html" | "pdf" | "ipynb";
 
 export interface ExportChoice {
   format: ExportFormat;
@@ -12,6 +12,7 @@ export interface ExportChoice {
 export const EXPORT_CHOICES: ExportChoice[] = [
   { format: "html", label: "A web page", hint: "Opens in any browser, with the figures in it" },
   { format: "pdf", label: "A PDF", hint: "To print, or to send" },
+  { format: "ipynb", label: "A notebook", hint: "Opens in Jupyter, with the code, what it printed, and the figures" },
 ];
 
 // What the server sent the file's name as, if it did, taken from the header that says how the file is to be saved.
