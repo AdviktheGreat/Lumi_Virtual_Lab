@@ -161,6 +161,7 @@ def hold_meeting(
     on_event: OnMeetingEvent | None = None,
     stream: bool = False,
     steer: Steer | None = None,
+    interrupt: Callable[[], None] | None = None,
 ) -> MeetingResult:
     """Runs a meeting with LLM agents and returns everything it produced.
 
@@ -251,6 +252,9 @@ def hold_meeting(
         steer does, which is how it is paused, and an exception it raises stops the meeting the
         way any other failure does. It is asked only between turns, so a turn in which an agent
         runs code or calls tools is carried through before the meeting can be paused.
+    :param interrupt: Called about every fifth of a second while a request waits for its reply, so that a meeting can
+        be stopped while a provider says nothing. What it raises ends the meeting at once, the way any other failure
+        does; the request is left to end as it will, and what it gets is dropped.
     :raises BudgetExceededError: Before a request, if the meeting has already spent max_cost.
     :raises CostUnknownError: If max_cost is given and a model's cost, or a response's usage,
         cannot be known.
@@ -287,6 +291,8 @@ def hold_meeting(
 
     if steer is not None and not callable(steer):
         raise TypeError(f"steer is a function that returns a note or None, not {type(steer).__name__}")
+    if interrupt is not None and not callable(interrupt):
+        raise TypeError(f"interrupt is a function that may raise, not {type(interrupt).__name__}")
 
     if isinstance(resources, Resources):
         if session is None:
@@ -452,6 +458,7 @@ def hold_meeting(
                 max_tokens=max_completion_tokens,
                 reader=agent.name,
                 on_text=on_text,
+                interrupt=interrupt,
             ),
             model=agent.model,
             temperature=temperature,

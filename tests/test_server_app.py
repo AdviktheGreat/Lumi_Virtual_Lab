@@ -1214,10 +1214,30 @@ class TestSteering:
         assert client.get(url).json()["state"] == "running"
         assert client.post(f"{url}/resume").json() == {"accepted": False}
         assert client.post(f"{url}/stop").json() == {"accepted": True}
-        assert client.get(url).json()["state"] == "stopping"
+        # A model that is asked and does not answer is given up on, so the turn may already be over
+        assert client.get(url).json()["state"] in ("stopping", "idle")
         gate.release()
 
         assert wait_idle(client, made["id"])["state"] == "idle"
+
+    def test_stopping_does_not_wait_for_a_model_that_says_nothing(
+        self, client: TestClient, app: FastAPI, fake_client: FakeClient
+    ) -> None:
+        made = new_chat(client)
+        gate = hold_the_model(fake_client)
+        url = f"/api/chats/{made['id']}"
+        client.post(f"{url}/messages", json={"text": "Go"})
+        wait_until(gate.reached.is_set)
+
+        try:
+            assert client.post(f"{url}/stop").json() == {"accepted": True}
+            info = wait_idle(client, made["id"])
+            kinds = [event.kind for event in handle_of(app, made["id"]).chat.events_since(0)]
+        finally:
+            gate.release()
+
+        assert info["state"] == "idle"
+        assert "stopped" in kinds and "failed" not in kinds
 
     def test_a_note_needs_something_in_it(self, client: TestClient) -> None:
         made = new_chat(client)
