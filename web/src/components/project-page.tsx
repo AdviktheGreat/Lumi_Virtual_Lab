@@ -106,7 +106,8 @@ function ProjectBody({ project, list, jobs }: { project: Project; list: Projects
       <WorkStatus job={job} last={lastProjectJob(all, project.id)} jobs={jobs} />
       <Outcome project={project} />
       <PageSection title="Work on it">
-        <StartForm project={project} limits={list.limits} working={working} jobs={jobs} />
+        {/* Begun again when the project's standing changes, since what it may be asked to spend is more than it has spent */}
+        <StartForm key={project.state} project={project} limits={list.limits} working={working} jobs={jobs} />
       </PageSection>
       <PageSection title="Team and plan" intro="Who works on it, and the tasks the team made of the goal.">
         <Team project={project} />
