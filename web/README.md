@@ -140,6 +140,36 @@ is, and its page has these parts.
 A model that has no key, or no price, and Docker where code runs in it, are refused with what to do about it, as a
 conversation is. `src/lib/benchmarks.ts` checks what is written before it is sent, as the server does.
 
+## Projects
+
+The Projects page (`/projects`) is where the lead scientist is given a goal to carry out. It has the projects, the latest
+first, each with how it stands (not started, working, finished, out of budget, out of rounds, stalled, stopped, failed, or
+interrupted), how many rounds it took, how much of its plan is done, and what it has spent; and the making of one: its goal
+(which may run over lines), a title (blank is the start of the goal), who works on it (the lead chooses the team, or the whole
+lab is the team), how each step is told of what was found (the lead picks, the best matches, or every summary, and, for the
+best matches, how many findings a step is given), the most scientists on the team, and the rounds of discussion in a meeting.
+A project keeps the model, the lead, and where code runs as the settings have them when it is made, which the form says. A
+project is named in the address's query (`/projects?id=...`), as a conversation is, and its page has these parts.
+
+- **What is being done** is the work that is going on, or how the last of it ended, with the round it is in, what it has
+  spent, and the way to stop it. It is the setup's job, so what is begun here is followed in the setup as well. Nothing else
+  is done to a project while it is worked on. A stop is asked about before each round, and what was done is kept.
+- **How it ended** says why a project that is not at work ended, what to do to carry it on, the answer the critic accepted (or
+  the last one it did not, with what it objected to), why it failed if it did, and the report to save.
+- **Work on it** asks for the most it may spend, which is always said and is over all the times the project is worked on, and
+  may ask for the most rounds, and the most rounds in a row without more of the plan done. A project that stopped, or ran out,
+  or failed, carries on from where it was, with the limit that ended it raised; one that has finished has nothing left to do.
+- **Team and plan** is who is on the project, the lead and the critic among them, and the tasks the team made of the goal,
+  with how far each has got.
+- **Rounds** is what the lead decided each round (a meeting, code to write and run, a change to the team, or an answer put to
+  the critic), why, and how it went.
+- **Findings** is what the meetings and the code showed, each as a claim with what shows it, fifty at a time.
+- **Steps** is each meeting and each run of code, with what it cost and how long it took. Opening one reads it from the
+  server, with what it produced and what was said in it, or the code that was run and what it printed.
+
+A model that has no key, or no price, and Docker where code runs in it, are refused with what to do about it, as a
+conversation is. `src/lib/projects.ts` checks what is written before it is sent, as the server does.
+
 ## Settings
 
 The gear at the foot of the sidebar opens the settings, in five parts. What is set is what conversations started from then

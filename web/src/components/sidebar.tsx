@@ -7,6 +7,7 @@ import {
   Container,
   Database,
   FileText,
+  FlaskConical,
   Gauge,
   PanelLeftClose,
   Search as SearchIcon,
@@ -34,6 +35,7 @@ import { cn } from "@/lib/utils";
 const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/data", label: "Data", icon: Database },
   { href: "/papers", label: "Papers", icon: FileText },
+  { href: "/projects", label: "Projects", icon: FlaskConical },
   { href: "/benchmarks", label: "Benchmarks", icon: Gauge },
 ];
 

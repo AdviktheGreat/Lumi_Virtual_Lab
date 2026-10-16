@@ -2,27 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { Looked } from "@/components/looked";
+import { Text, Turns } from "@/components/said";
 import { useServer } from "@/components/server-provider";
 import { api } from "@/lib/api";
 import { usageText } from "@/lib/benchmarks";
 import { formatDuration } from "@/lib/format";
 import type { BenchmarkQuestion, BenchmarkQuestionRow } from "@/lib/types";
 import type { Loaded } from "@/lib/use-settings-data";
-
-function Text({ label, children }: { label: string; children: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <h3 className="text-xs font-medium">{label}</h3>
-      <pre
-        tabIndex={0}
-        aria-label={label}
-        className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/60 p-2 font-sans text-xs outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        {children}
-      </pre>
-    </div>
-  );
-}
 
 function Detail({ question }: { question: BenchmarkQuestion }) {
   const usage = usageText(question.usage);
@@ -63,24 +49,7 @@ function Detail({ question }: { question: BenchmarkQuestion }) {
       )}
       {question.output && <Text label="What was read from it">{JSON.stringify(question.output, null, 2)}</Text>}
       {question.turns !== null && question.turns.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <h3 className="text-xs font-medium">What was said in answering it</h3>
-          <ol aria-label="What was said in answering it" className="flex flex-col gap-2">
-            {question.turns.map((turn, number) => (
-              <li key={number} className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-muted-foreground">{turn.agent}</span>
-                <pre
-                  tabIndex={0}
-                  aria-label={`${turn.agent} said`}
-                  className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/60 p-2 font-sans text-xs outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                >
-                  {turn.message}
-                </pre>
-              </li>
-            ))}
-          </ol>
-          {question.truncated && <p className="text-xs text-muted-foreground">What was said is cut short here.</p>}
-        </div>
+        <Turns label="What was said in answering it" turns={question.turns} truncated={question.truncated} />
       )}
     </div>
   );

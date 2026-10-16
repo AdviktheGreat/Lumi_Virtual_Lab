@@ -30,6 +30,10 @@ from a script: no key is needed, and every run says the same. What it says depen
   by their number, so that every run scores the same: of LAB-Bench's, the even ones right, and of Biomni-Eval1's, what
   its tasks' stand-ins make of one answer each. "pause:" in a question makes answering it take a while, so that a run
   can be followed or stopped.
+- A project's lead chooses an Immunologist, plans two tasks, holds one meeting with them, and then puts its answer to
+  the critic, who agrees, so that every project goes the same way. "hold:" in its goal makes each decision take a while,
+  so that the work can be followed or stopped, "fail:" makes it fail, and "object:" has the critic not accept the first
+  answer.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -81,12 +85,16 @@ from openai.types.chat.chat_completion_message_tool_call import Function  # noqa
 from setup_fakes import Bucket, FakeDocker  # noqa: E402
 from test_benchmarks import benchmark_files, parquet_bytes, sha256  # noqa: E402
 from test_papers import database, findings, package, task  # noqa: E402
+from test_planning import found, plan, review, roster, step  # noqa: E402
 
 from virtual_lab.benchmarks import MultipleChoiceOutput  # noqa: E402
 from virtual_lab.constants import BENCHMARK_FILES, MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
+from virtual_lab.memory import Findings  # noqa: E402
 from virtual_lab.papers import PaperFindings  # noqa: E402
+from virtual_lab.planning import NextStep, PlanTask, ResearchPlan, Review  # noqa: E402
+from virtual_lab.schemas import TeamRoster  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import benchmarks as benchmark_runs  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
@@ -142,6 +150,15 @@ EVAL1_ANSWERS = {
     "RareDiseaseOutput": {"disease_name": "Gordon syndrome", "OMIM_ID": "114300"},
     "PatientGeneOutput": {"causal_gene": ["ENSG1"]},
 }
+
+# What a project is scripted to do: its plan, what its one meeting finds, its answer, and how long each decision takes
+# when its goal says "hold:"
+PROJECT_TASKS = ("Compare how strongly the two nanobodies bind KP.3", "Check that the comparison holds")
+PROJECT_FINDING = "Nanobody A binds KP.3 more strongly than nanobody B."
+PROJECT_ANSWER = "Nanobody A binds KP.3 better, as the comparison shows."
+PROJECT_OBJECTION = "Show the affinities that were measured."
+PROJECT_DELAY = 1.5
+PROJECT_SCHEMAS = (TeamRoster, ResearchPlan, NextStep, Findings, Review)
 
 # What a function that is asked for is written as
 FUNCTION_CODE = """```python
@@ -450,6 +467,58 @@ def paper_findings(text: str) -> PaperFindings:
     return findings([task(name) for name in names], [database("GEO")], [package("STAR")])
 
 
+def project_decision(number: int) -> NextStep:
+    """What the lead decides in a round: one meeting with the Immunologist, and then to finish."""
+
+    def tasks(done: int) -> list[PlanTask]:
+        return [
+            PlanTask(task=task, status="done" if index < done else "to do") for index, task in enumerate(PROJECT_TASKS)
+        ]
+
+    if number == 1:
+        return step(
+            "individual_meeting",
+            plan=tasks(0),
+            participants=["Immunologist"],
+            agenda="Compare how strongly the two nanobodies bind KP.3.",
+            agenda_questions=["Which has the lower dissociation constant?"],
+            rationale="The comparison is the first task.",
+            progress="Nothing has been established yet.",
+        )
+
+    return step(
+        "finish",
+        plan=tasks(2),
+        findings=["F1"],
+        rationale="The comparison is done, and it holds.",
+        progress="Nanobody A binds better.",
+        answer=PROJECT_ANSWER,
+    )
+
+
+def project_response(schema: Any, kwargs: dict[str, Any]) -> Any:
+    """What the lead and the critic say, as a project asks it, from what is asked of them: the team, the plan, the next
+    step, the findings of a meeting, and the critic's review."""
+    text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] != "system")
+    if "fail:" in text:
+        raise RuntimeError("The scripted model failed, as it was asked to")
+    if schema is TeamRoster:
+        return roster("Immunologist")
+    if schema is ResearchPlan:
+        return plan(*PROJECT_TASKS)
+    if schema is Findings:
+        return found(PROJECT_FINDING)
+    if schema is Review:
+        # The first answer is not accepted when the goal says so, and what is said of the answer after is its objection
+        met = "object:" not in text or "did not accept" in text
+        return review(met, *([] if met else [PROJECT_OBJECTION]))
+    if "hold:" in text:
+        time.sleep(PROJECT_DELAY)
+    number = re.search(r"This is round (\d+) of the project", text)
+
+    return parsed_response(parsed=project_decision(int(number.group(1)) if number else 1))
+
+
 def function_named(kwargs: dict[str, Any]) -> str | None:
     """The name of the function a request asks the model to write, if it asks for one."""
     system = next((message["content"] for message in kwargs["messages"] if message["role"] == "system"), "")
@@ -564,6 +633,8 @@ class ScriptedCompletions(FakeCompletions):
             system = next(str(message["content"]) for message in kwargs["messages"] if message["role"] == "system")
 
             return parsed_response(benchmark_output(schema, system))
+        if schema in PROJECT_SCHEMAS:
+            return project_response(schema, kwargs)
         if schema is not PaperFindings:
             return super().parse(**kwargs)
         text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")

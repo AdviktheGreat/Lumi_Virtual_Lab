@@ -359,6 +359,12 @@ export interface JobProgress {
   functions?: number;
   questions?: number;
   finished?: number;
+  // What working on a project counts: the round it is in, of the most it may take, and what it has spent, of the most it
+  // may spend
+  round?: number;
+  max_rounds?: number;
+  spent?: number;
+  max_cost?: number;
   current?: string | null;
   bytes?: number;
   bytes_total?: number | null;
@@ -716,4 +722,174 @@ export interface BenchmarkStartOptions {
   max_cost: number;
   max_cost_per_question: number | null;
   retry_failed: boolean;
+}
+
+export type ProjectState =
+  | "new"
+  | "running"
+  | "finished"
+  | "out_of_budget"
+  | "out_of_rounds"
+  | "stalled"
+  | "stopped"
+  | "failed"
+  | "interrupted";
+
+export type ProjectTeam = "chosen" | "lab";
+
+export type ProjectMemory = "pick" | "bm25" | "summaries";
+
+export type ProjectLimitName = "max_team_size" | "meeting_rounds" | "findings_per_step" | "max_rounds" | "max_stalled_rounds";
+
+// A project as a list shows it: what it is for, how it stands, and what it has spent
+export interface ProjectEntry {
+  id: string;
+  title: string;
+  goal: string;
+  created_at: string;
+  model: string | null;
+  state: ProjectState;
+  rounds_taken: number;
+  tasks: number;
+  tasks_done: number;
+  spent: number;
+  // The most it may spend over all the times it is worked on, which is null until it is first worked on
+  max_cost: number | null;
+  // The job at work on it
+  job: string | null;
+}
+
+export interface ProjectsList {
+  projects: ProjectEntry[];
+  teams: { id: ProjectTeam; title: string; summary: string }[];
+  memories: { id: ProjectMemory; title: string; summary: string }[];
+  limits: Record<ProjectLimitName, { label: string; default: number; least: number; most: number }>;
+  default_team: ProjectTeam;
+  default_memory: ProjectMemory;
+  max_goal_chars: number;
+  // The model that works on a project made now, where its code runs, who leads it, and the scientists of the lab
+  model: string;
+  code: { where: string; sandbox: string };
+  lead: string | null;
+  team: string[];
+}
+
+export interface ProjectMember {
+  title: string;
+  expertise: string;
+}
+
+export interface ProjectTask {
+  task: string;
+  status: string;
+}
+
+export type ProjectAction = "team_meeting" | "individual_meeting" | "write_code" | "change_team" | "finish";
+
+// A round: what the lead decided to do, and how it went
+export interface ProjectRound {
+  number: number;
+  action: ProjectAction | "";
+  participants: string[];
+  agenda: string;
+  questions: string[];
+  rationale: string;
+  progress: string;
+  // The answer the lead proposed to end with, if it did
+  answer: string;
+  outcome: string;
+  note: string;
+  steps: string[];
+  tasks_done: number;
+  // The findings the round's step was given, and the findings it made, by id
+  findings: string[];
+  found: string[];
+}
+
+export interface ProjectFinding {
+  id: string;
+  claim: string;
+  evidence: string;
+  source: string;
+  round: number | null;
+}
+
+// A step as a list shows it: a meeting, or code that was written and run
+export interface ProjectStepRow {
+  name: string;
+  kind: string;
+  status: string;
+  round: number | null;
+  cost: number | null;
+  elapsed: number | null;
+  started_at: string | null;
+  error: string | null;
+}
+
+export interface Project extends ProjectEntry {
+  team_mode: ProjectTeam;
+  max_team_size: number;
+  meeting_rounds: number;
+  memory: ProjectMemory;
+  findings_per_step: number;
+  code: { where: string | null; sandbox: string | null; network: string | null; resources: string | null };
+  lead: ProjectMember | null;
+  critic: ProjectMember | null;
+  team: ProjectMember[];
+  plan: ProjectTask[];
+  rounds: ProjectRound[];
+  findings: ProjectFinding[];
+  // The answer the critic accepted, or the last it did not, with what it objected to
+  answer: string | null;
+  proposed_answer: string | null;
+  objections: string[];
+  // Why it ended, in a sentence
+  reason: string | null;
+  // Whether there is a report of how it ended, to save
+  report: boolean;
+  error: string | null;
+  steps: ProjectStepRow[];
+}
+
+export interface ProjectStepCode {
+  filename: string;
+  language: string;
+  contents: string;
+  output: string | null;
+}
+
+// One step, with what it produced, and what was said in it, or the code that was run
+export interface ProjectStep extends ProjectStepRow {
+  usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    reasoning_tokens?: number;
+    num_calls?: number;
+    cost?: number | null;
+  } | null;
+  turns: { agent: string; message: string }[] | null;
+  // Whether what was said is cut short
+  truncated: boolean;
+  output: unknown;
+  code: ProjectStepCode[] | null;
+  attempts: number | null;
+  succeeded: boolean | null;
+}
+
+// What a new project is asked for: its goal, and how it is worked on, of which what is not given is the default
+export interface NewProject {
+  goal: string;
+  title?: string;
+  team?: ProjectTeam;
+  max_team_size?: number;
+  meeting_rounds?: number;
+  memory?: ProjectMemory;
+  findings_per_step?: number;
+}
+
+// What working on a project may spend, in dollars, over all the times it is worked on, and how many rounds it may take
+export interface ProjectStartOptions {
+  max_cost: number;
+  max_rounds?: number;
+  max_stalled_rounds?: number;
 }

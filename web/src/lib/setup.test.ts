@@ -186,6 +186,23 @@ describe("what a job has counted", () => {
   });
 });
 
+describe("the work on a project", () => {
+  it("counts the round it is in, of the most it may take, and what it has spent, of the most it may spend", () => {
+    const working = job({ kind: "project", progress: { round: 2, max_rounds: 10, spent: 0.1234, max_cost: 3 } });
+
+    expect(jobCounts(working)).toBe("Round 2 of at most 10 · spent $0.12 of $3.00");
+    expect(jobFraction(working)).toBeNull();
+  });
+
+  it("says nothing of a round before the first, or of what is not known", () => {
+    expect(jobCounts(job({ kind: "project", progress: { round: 0, max_rounds: 10, spent: 0, max_cost: 3 } }))).toBe(
+      "spent $0.00 of $3.00",
+    );
+    expect(jobCounts(job({ kind: "project", progress: { round: 1 } }))).toBe("Round 1");
+    expect(jobCounts(job({ kind: "project", progress: {} }))).toBe("");
+  });
+});
+
 describe("the papers a job reads and the functions it writes", () => {
   it("counts the papers dealt with, of those there are, and the functions", () => {
     const reading = job({ kind: "papers", progress: { papers: 4, finished: 1 } });
