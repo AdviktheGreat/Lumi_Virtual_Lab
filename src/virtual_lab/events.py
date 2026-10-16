@@ -143,6 +143,18 @@ class ProjectEvent:
     data: Mapping[str, Any] = field(default_factory=dict)
 
 
+# What each part of a saved event is, as the types it may be and as it is told of, for what is read back to be checked
+SAVED_EVENT_PARTS: dict[str, tuple[tuple[type, ...], str]] = {
+    "kind": ((str,), "text"),
+    "id": ((int,), "a whole number"),
+    "turn": ((int,), "a whole number"),
+    "speaker": ((str, type(None)), "text or null"),
+    "text": ((str,), "text"),
+    "data": ((dict,), "an object"),
+    "time": ((int, float), "a number"),
+}
+
+
 @dataclass(frozen=True)
 class ChatEvent:
     """Something that happened in a conversation with the head of a lab.
@@ -235,7 +247,20 @@ class ChatEvent:
 
     @classmethod
     def from_dict(cls, saved: Mapping[str, Any]) -> "ChatEvent":
-        """Rebuilds the event to_dict described."""
+        """Rebuilds the event to_dict described.
+
+        :raises ValueError: If what is given is not an event as to_dict describes it, which a file that was
+            changed, or is not a conversation's, can hold.
+        """
+        if not isinstance(saved, Mapping):
+            raise ValueError(f"An event is an object, not {type(saved).__name__}")
+        for name, (kinds, described) in SAVED_EVENT_PARTS.items():
+            if name not in saved:
+                raise ValueError(f"An event has no {name}")
+            value = saved[name]
+            if not isinstance(value, kinds) or isinstance(value, bool):
+                raise ValueError(f"An event's {name} should be {described}, not {type(value).__name__}")
+
         return cls(
             kind=saved["kind"],
             id=saved["id"],

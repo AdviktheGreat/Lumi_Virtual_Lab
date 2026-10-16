@@ -19,6 +19,8 @@ from virtual_lab.server.conversations import (
     Conversations,
     KeysNotSetError,
     MissingKeysModel,
+    number_or_none,
+    text_or_none,
 )
 from virtual_lab.server.errors import ApiError
 from virtual_lab.server.setup import Setup
@@ -360,6 +362,20 @@ class TestListing:
         (handle.directory / CONFIG_FILE_NAME).unlink()
 
         assert conversations.summaries()[0]["model"] is None
+
+
+class TestWhatAListTakesFromWhatWasSaved:
+    @pytest.mark.parametrize(
+        ("saved", "shown"),
+        [(0, 0), (3, 3), (0.25, 0.25), (True, None), (float("nan"), None), (float("inf"), None), ("3", None), (None, None)],
+    )
+    def test_an_amount_is_shown_only_if_it_is_a_finite_number(self, saved: Any, shown: Any) -> None:
+        assert number_or_none(saved) == shown
+        assert type(number_or_none(saved)) is type(shown)
+
+    @pytest.mark.parametrize(("saved", "shown"), [("a", "a"), ("", ""), (5, None), (None, None), (["a"], None)])
+    def test_text_is_shown_only_if_it_is_text(self, saved: Any, shown: Any) -> None:
+        assert text_or_none(saved) == shown
 
 
 class TestClosing:

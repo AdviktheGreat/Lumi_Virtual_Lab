@@ -13,6 +13,7 @@ A conversation is shown from the files it was saved in.
 """
 
 import json
+import math
 import re
 import threading
 from collections.abc import Callable
@@ -45,6 +46,26 @@ MCP_FILE_NAME = "mcp.json"
 MAX_SLUG_CHARS = 48
 
 
+def is_text(value: Any) -> bool:
+    return isinstance(value, str)
+
+
+def is_flag(value: Any) -> bool:
+    return isinstance(value, bool)
+
+
+def is_budget(value: Any) -> bool:
+    """Whether it is None, for no limit, or an amount of money."""
+    if value is None:
+        return True
+
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+
+
+def is_names(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(name, str) for name in value)
+
+
 @dataclass
 class Settings:
     """What every new conversation starts with, kept in the workspace's settings.json.
@@ -74,8 +95,25 @@ class Settings:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Settings":
+        """The settings a file holds. A value that is not of the kind its setting is, which a file edited by hand can
+        have, is left out and takes the default, so that one cannot make every change to the settings fail."""
         known = {item.name for item in fields(cls)}
-        return cls(**{key: value for key, value in data.items() if key in known})
+
+        return cls(**{key: value for key, value in data.items() if key in known and SETTING_KINDS[key](value)})
+
+
+# What each setting is, for what a file holds to be checked against
+SETTING_KINDS: dict[str, Callable[[Any], bool]] = {
+    "model": lambda value: is_text(value) and bool(value.strip()),
+    "stream": is_flag,
+    "max_cost": is_budget,
+    "code": is_text,
+    "sandbox": is_text,
+    "network": is_flag,
+    "python": is_text,
+    "data_lake": is_text,
+    "forward_keys": is_names,
+}
 
 
 def slug(text: str) -> str:

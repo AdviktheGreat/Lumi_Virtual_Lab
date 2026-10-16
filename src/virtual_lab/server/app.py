@@ -62,7 +62,7 @@ from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
-from virtual_lab.server.errors import ApiError, not_found
+from virtual_lab.server.errors import ApiError, file_error, not_found
 from virtual_lab.server.files import download_headers, file_response, list_files, resolve_inside
 from virtual_lab.server.keychain import Keychain, KeychainError, recall
 from virtual_lab.server.library import SETTABLE_KEYS, provider_statuses
@@ -369,6 +369,15 @@ def create_app(
         body = ApiError(error.status_code, codes.get(error.status_code, "error"), message).body()
 
         return JSONResponse(body, status_code=error.status_code, headers=error.headers)
+
+    @app.exception_handler(OSError)
+    async def file_trouble(request: Request, error: OSError) -> JSONResponse:
+        problem = file_error(error)
+        if problem is None:
+            # Left to be what it was, and to be logged as any other is
+            raise error
+
+        return await api_error(request, problem)
 
     @app.exception_handler(Exception)
     async def unexpected(request: Request, error: Exception) -> JSONResponse:

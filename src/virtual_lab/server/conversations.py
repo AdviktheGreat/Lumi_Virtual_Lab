@@ -8,6 +8,7 @@ and kept open, with the session its code runs in, until the server stops or it i
 """
 
 import asyncio
+import math
 import re
 import shutil
 import threading
@@ -20,7 +21,7 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatResult
 from openai import OpenAI, OpenAIError
 
-from virtual_lab.chat import Chat
+from virtual_lab.chat import Chat, is_count
 from virtual_lab.constants import CHAT_FILE_NAME, CHAT_UPLOADS_DIR_NAME, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
 from virtual_lab.events import ChatEvent
 from virtual_lab.llm import ModelSource
@@ -44,6 +45,19 @@ CHAT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 # Seconds to wait for a turn to end when a conversation is closed
 CLOSE_TIMEOUT = 15.0
+
+
+def text_or_none(value: Any) -> str | None:
+    """What a conversation saved as text, for a list to show, or None where a file holds something else."""
+    return value if isinstance(value, str) else None
+
+
+def number_or_none(value: Any) -> float | None:
+    """What a conversation saved as an amount, for a list to show, or None where a file holds something else."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return value
+
+    return None
 
 
 class KeysNotSetError(RuntimeError):
@@ -240,13 +254,13 @@ class Conversations:
             found.append(
                 {
                     "id": directory.name,
-                    "title": info.get("title") or "",
-                    "created_at": info.get("created_at"),
-                    "updated_at": info.get("updated_at"),
+                    "title": info["title"] if isinstance(info.get("title"), str) else "",
+                    "created_at": text_or_none(info.get("created_at")),
+                    "updated_at": text_or_none(info.get("updated_at")),
                     "state": state,
-                    "turns": info.get("turns", 0),
-                    "spent": info.get("spent"),
-                    "max_cost": info.get("max_cost"),
+                    "turns": info["turns"] if is_count(info.get("turns")) else 0,
+                    "spent": number_or_none(info.get("spent")),
+                    "max_cost": number_or_none(info.get("max_cost")),
                     "model": config.model if config is not None else None,
                 }
             )
