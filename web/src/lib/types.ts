@@ -47,6 +47,9 @@ export interface ChatConfig {
   tools: string[];
   // The names of the MCP servers whose tools the lead may be given, which it connects to with its first message
   mcp: string[];
+  // The names of the data and software the person gave the lab that the conversation is given, where there is code
+  data: string[];
+  software: string[];
 }
 
 // A conversation as the list of them shows it
@@ -93,6 +96,8 @@ export interface NewChat {
   commercial_mode?: boolean;
   tools?: string[];
   mcp?: string[];
+  data?: string[];
+  software?: string[];
 }
 
 export interface Settings {
@@ -391,3 +396,39 @@ export interface SetupStatus {
   jobs: Job[];
   steps: SetupStep[];
 }
+
+// A piece of data the person gave the lab: a file or folder that was uploaded, and so is kept in the workspace, or one
+// that is pointed to where it is on the server's machine, which is left there
+export interface OwnData {
+  // What code finds it by: the name of its file
+  name: string;
+  // What it is, which the lead is told
+  description: string;
+  source: "uploaded" | "path";
+  // Where it is, for what was pointed to
+  path: string | null;
+  kind: "file" | "folder" | "missing";
+  bytes: number | null;
+  // Seconds since the epoch
+  modified: number | null;
+}
+
+export interface OwnSoftware {
+  name: string;
+  description: string;
+}
+
+// What the person gave the lab to use in every conversation that runs code
+export interface Own {
+  data: OwnData[];
+  software: OwnSoftware[];
+  // The most bytes of a file that can be uploaded
+  max_upload_bytes: number;
+}
+
+// The start of a piece of data, as far as it is worth showing
+export type OwnPreview =
+  | { kind: "text"; lines: string[]; truncated: boolean }
+  | { kind: "binary" }
+  | { kind: "folder"; entries: { name: string; folder: boolean }[]; more: number }
+  | { kind: "missing" };

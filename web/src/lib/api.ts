@@ -16,6 +16,8 @@ import type {
   McpServer,
   Models,
   NewChat,
+  Own,
+  OwnPreview,
   Scientist,
   Settings,
   SettingsChange,
@@ -101,8 +103,15 @@ interface UploadOptions {
 }
 
 // Sends a file as the body of a request, which is read by hand rather than with fetch, since fetch cannot say how much
-// of a body has gone
-function uploadFile(chatId: string, file: File, { onProgress, signal }: UploadOptions = {}): Promise<Attachment> {
+// of a body has gone. What the server answers with is taken by `accept`, which gives back what it is, or undefined if it
+// is not what was to be answered with, which `unclear` then says.
+function sendFile<T>(
+  address: string,
+  file: File,
+  accept: (parsed: unknown) => T | undefined,
+  unclear: string,
+  { onProgress, signal }: UploadOptions = {},
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const aborted = () => new DOMException("Aborted", "AbortError");
     if (signal?.aborted) {
@@ -111,7 +120,7 @@ function uploadFile(chatId: string, file: File, { onProgress, signal }: UploadOp
       return;
     }
     const upload = new XMLHttpRequest();
-    upload.open("POST", `/api/chats/${encodeURIComponent(chatId)}/uploads?name=${encodeURIComponent(file.name)}`);
+    upload.open("POST", address);
     upload.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(1, event.loaded / event.total));
     };
@@ -124,10 +133,10 @@ function uploadFile(chatId: string, file: File, { onProgress, signal }: UploadOp
       }
       if (upload.status < 200 || upload.status >= 300) {
         reject(errorFrom(upload.status, parsed));
-      } else if (isAttachment(parsed)) {
-        resolve(parsed);
       } else {
-        reject(new ApiError(upload.status, "error", "The server did not say where it kept the file"));
+        const accepted = accept(parsed);
+        if (accepted !== undefined) resolve(accepted);
+        else reject(new ApiError(upload.status, "error", unclear));
       }
     };
     // The browser says nothing of why, and a folder, which has nothing to read, fails the same way as a lost connection
@@ -136,6 +145,34 @@ function uploadFile(chatId: string, file: File, { onProgress, signal }: UploadOp
     signal?.addEventListener("abort", () => upload.abort(), { once: true });
     upload.send(file);
   });
+}
+
+function uploadFile(chatId: string, file: File, options: UploadOptions = {}): Promise<Attachment> {
+  return sendFile(
+    `/api/chats/${encodeURIComponent(chatId)}/uploads?name=${encodeURIComponent(file.name)}`,
+    file,
+    (parsed) => (isAttachment(parsed) ? parsed : undefined),
+    "The server did not say where it kept the file",
+    options,
+  );
+}
+
+function isOwn(value: unknown): value is Own {
+  if (typeof value !== "object" || value === null) return false;
+  const { data, software, max_upload_bytes: limit } = value as Record<string, unknown>;
+
+  return Array.isArray(data) && Array.isArray(software) && typeof limit === "number";
+}
+
+// Gives the lab a file, kept by the server under the name it has, and what the person gave is given back as it now is
+function uploadOwnData(file: File, description: string, options: UploadOptions = {}): Promise<Own> {
+  return sendFile(
+    `/api/own/data/files?name=${encodeURIComponent(file.name)}&description=${encodeURIComponent(description)}`,
+    file,
+    (parsed) => (isOwn(parsed) ? parsed : undefined),
+    "The server did not say what it kept",
+    options,
+  );
 }
 
 // What a request that is not for JSON is answered with, once it is known to have gone well: what went wrong is told in
@@ -274,6 +311,21 @@ export const api = {
   job: (id: string, logFrom: number, signal?: AbortSignal) =>
     request<Job>("GET", `/setup/jobs/${encodeURIComponent(id)}?log_from=${logFrom}`, undefined, signal),
   stopJob: (id: string) => request<Job>("POST", `/setup/jobs/${encodeURIComponent(id)}/stop`),
+  // The data and software the person gave the lab to use in every conversation that runs code. Each change gives back
+  // all of it as it now is.
+  own: (signal?: AbortSignal) => request<Own>("GET", "/own", undefined, signal),
+  uploadOwnData,
+  // Points to a file or folder where it is on the server's machine, by its full path, which is left there
+  addOwnPath: (path: string, description: string) => request<Own>("POST", "/own/data/paths", { path, description }),
+  describeOwnData: (name: string, description: string) =>
+    request<Own>("PATCH", `/own/data/${encodeURIComponent(name)}`, { description }),
+  // A file that was uploaded is deleted, and what was pointed to is left where it is
+  removeOwnData: (name: string) => request<Own>("DELETE", `/own/data/${encodeURIComponent(name)}`),
+  previewOwnData: (name: string, signal?: AbortSignal) =>
+    request<OwnPreview>("GET", `/own/data/${encodeURIComponent(name)}/preview`, undefined, signal),
+  // Some software and what it is for, in place of any with the name
+  saveOwnSoftware: (name: string, description: string) => request<Own>("PUT", "/own/software", { name, description }),
+  removeOwnSoftware: (name: string) => request<Own>("DELETE", `/own/software/${encodeURIComponent(name)}`),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),

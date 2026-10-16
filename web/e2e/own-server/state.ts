@@ -50,3 +50,15 @@ export async function openSettings(page: Page, tab?: "Model" | "Keys" | "Code" |
 
   return dialog;
 }
+
+// Takes away the data and the software that were given to the lab, which are the workspace's, so that no conversation made
+// after is given them
+export async function resetOwn(page: Page): Promise<void> {
+  const own = await (await page.request.get("/api/own")).json();
+  for (const data of own.data) {
+    expect((await page.request.delete(`/api/own/data/${encodeURIComponent(data.name)}`)).ok()).toBe(true);
+  }
+  for (const software of own.software) {
+    expect((await page.request.delete(`/api/own/software/${encodeURIComponent(software.name)}`)).ok()).toBe(true);
+  }
+}

@@ -5,17 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { isActive, jobCounts, jobFraction } from "@/lib/setup";
 import type { Job } from "@/lib/types";
-
-// What the setup can be asked to do: each starts something on the server, or asks it to stop, and none can be asked
-// while another is being asked
-export interface SetupActions {
-  busy: boolean;
-  build: (stage: string) => void;
-  fetch: (names?: string[]) => void;
-  stop: (job: Job) => void;
-  // Shows what a job printed
-  showLog: (job: Job) => void;
-}
+import type { JobActions } from "@/lib/use-setup-actions";
 
 // How far a job at work has got, and what it is doing
 export function JobProgress({ job }: { job: Job }) {
@@ -31,7 +21,7 @@ export function JobProgress({ job }: { job: Job }) {
 }
 
 // Asks a job at work to stop, which it does in a moment, and is said to be doing until it has
-export function StopButton({ job, actions }: { job: Job; actions: SetupActions }) {
+export function StopButton({ job, actions }: { job: Job; actions: JobActions }) {
   const stopping = job.state === "stopping";
 
   return (

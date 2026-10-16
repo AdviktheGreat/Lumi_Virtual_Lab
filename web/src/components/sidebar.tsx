@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Container, PanelLeftClose, Search as SearchIcon, Settings, SquarePen, X } from "lucide-react";
+import { Container, Database, PanelLeftClose, Search as SearchIcon, Settings, SquarePen, X, type LucideIcon } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { ChatRow, LIST_ID } from "@/components/chat-row";
 import { useChats } from "@/components/chats-provider";
@@ -17,6 +17,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { inDays, matchingTitles, SEARCH_FROM } from "@/lib/history";
+import { cn } from "@/lib/utils";
+
+// The pages besides the conversations, which are reached from the sidebar
+const PAGES: { href: string; label: string; icon: LucideIcon }[] = [{ href: "/data", label: "Data", icon: Database }];
 
 function Search({ typed, onTyped }: { typed: string; onTyped: (typed: string) => void }) {
   return (
@@ -51,6 +55,36 @@ function Search({ typed, onTyped }: { typed: string; onTyped: (typed: string) =>
         )}
       </div>
     </div>
+  );
+}
+
+function PageLinks() {
+  const pathname = usePathname();
+
+  return (
+    <nav aria-label="Pages" className="px-3 pb-2">
+      <ul className="flex flex-col gap-0.5">
+        {PAGES.map(({ href, label, icon: Icon }) => {
+          const active = pathname === href;
+
+          return (
+            <li key={href}>
+              <Link
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "flex h-8 items-center gap-2 rounded-lg px-2.5 text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+                  active && "bg-sidebar-accent text-sidebar-accent-foreground",
+                )}
+              >
+                <Icon className="size-4" aria-hidden />
+                {label}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 
@@ -131,6 +165,7 @@ export function Sidebar() {
           </Link>
         </Button>
       </div>
+      <PageLinks />
       <nav id={LIST_ID} tabIndex={-1} aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none">
         <ChatList />
       </nav>

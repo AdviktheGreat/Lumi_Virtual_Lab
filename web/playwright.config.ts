@@ -64,8 +64,8 @@ export default defineConfig({
     {
       name: "setup",
       testMatch: "**/setup/**/*.spec.ts",
-      // What they arrange is shared by all of them, so they are run one after another
-      fullyParallel: false,
+      // What they arrange is shared by all of them, in every file, so they are run one after another
+      workers: 1,
       use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${setupPort}` },
     },
   ],

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Search } from "lucide-react";
 import { Aside, Section } from "@/components/settings-fields";
-import { JobProgress, StopButton, type SetupActions } from "@/components/setup-job";
+import { JobProgress, StopButton } from "@/components/setup-job";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,6 +14,7 @@ import { formatBytes } from "@/lib/files";
 import { activeJob, DATA_LAKE_BYTES, filterFiles, missingNames, roomWarning } from "@/lib/setup";
 import type { DataLake, DataLakeFile, DataLakeSummary, Job } from "@/lib/types";
 import type { Loaded } from "@/lib/use-settings-data";
+import type { JobActions } from "@/lib/use-setup-actions";
 
 // What is to be fetched, which is asked about first when it is a good deal
 interface Plan {
@@ -53,7 +54,7 @@ function Confirm({
 }: {
   plan: Plan;
   lake: DataLakeSummary;
-  actions: SetupActions;
+  actions: JobActions;
   onDone: () => void;
 }) {
   const warning = roomWarning(lake);
@@ -84,7 +85,7 @@ function Confirm({
   );
 }
 
-function FileRow({ file, canFetch, actions }: { file: DataLakeFile; canFetch: boolean; actions: SetupActions }) {
+function FileRow({ file, canFetch, actions }: { file: DataLakeFile; canFetch: boolean; actions: JobActions }) {
   return (
     <li className="flex items-start gap-2 py-2">
       <div className="min-w-0 flex-1">
@@ -120,7 +121,7 @@ function Files({
 }: {
   files: DataLakeFile[];
   fetching: Job | undefined;
-  actions: SetupActions;
+  actions: JobActions;
 }) {
   const [typed, setTyped] = useState("");
   const [onlyMissing, setOnlyMissing] = useState(false);
@@ -162,7 +163,7 @@ function Files({
   );
 }
 
-function Ready({ lake, jobs, actions }: { lake: DataLake; jobs: readonly Job[]; actions: SetupActions }) {
+function Ready({ lake, jobs, actions }: { lake: DataLake; jobs: readonly Job[]; actions: JobActions }) {
   const [plan, setPlan] = useState<Plan | null>(null);
   const fetching = activeJob(jobs, "data_lake");
   const missing = missingNames(lake.files);
@@ -217,7 +218,7 @@ export function LakeTab({
 }: {
   lake: Loaded<DataLake>;
   jobs: readonly Job[];
-  actions: SetupActions;
+  actions: JobActions;
   onRetry: () => void;
 }) {
   return (
