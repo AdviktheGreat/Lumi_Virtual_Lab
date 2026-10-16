@@ -244,6 +244,7 @@ export interface Health {
 
 export type ChatEventKind =
   | "user"
+  | "withdrawn"
   | "title"
   | "resources"
   | "writing"

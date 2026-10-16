@@ -1306,6 +1306,33 @@ class TestMessages:
         gate.release()
         assert wait_idle(client, made["id"])["turns"] == 1
 
+    def test_a_message_can_take_the_place_of_the_last_one(self, client: TestClient, fake_client: FakeClient) -> None:
+        made = new_chat(client)
+        url = f"/api/chats/{made['id']}/messages"
+        refused = client.post(url, json={"text": "Hello", "replace_last": True})
+        assert refused.status_code == 422 and error_of(refused)["code"] == "invalid"
+        assert client.get(f"/api/chats/{made['id']}").json()["turns"] == 0
+
+        fake_client.completions.responses.extend([text_response("Nanobodies."), text_response("Antibodies.")])
+        client.post(url, json={"text": "What is a nanobody?"})
+        wait_idle(client, made["id"])
+
+        response = client.post(url, json={"text": "What is an antibody?", "replace_last": True})
+
+        assert response.status_code == 202 and response.json()["turn"] == 1
+        info = wait_idle(client, made["id"])
+        assert (info["turns"], info["title"]) == (1, "What is an antibody?")
+        events = handle_of(client.app, made["id"]).chat.events_since()
+        assert [event.kind for event in events if event.kind in ("user", "withdrawn", "answer")] == [
+            "withdrawn",
+            "user",
+            "answer",
+        ]
+        assert [event.text for event in events if event.kind in ("user", "answer")] == [
+            "What is an antibody?",
+            "Antibodies.",
+        ]
+
     @pytest.mark.parametrize(
         "body",
         [{}, {"text": ""}, {"text": "  \n "}, {"text": "x", "attachments": ["missing.csv"]}, {"attachments": ["a"]}],

@@ -332,6 +332,12 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
   switch (event.kind) {
     case "user":
       return inTurn((turn) => ({ ...turn, user: { text: event.text, attachments: attachmentsOf(event) } }));
+    case "withdrawn": {
+      // The turn is begun again by the event that follows, so what it had is not kept
+      const number = typeof event.data.turn === "number" ? event.data.turn : event.turn;
+
+      return { ...next, turns: next.turns.filter((turn) => turn.number !== number) };
+    }
     case "title":
       return { ...next, title: event.text };
     case "status":

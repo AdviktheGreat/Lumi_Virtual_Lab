@@ -48,6 +48,48 @@ test.describe("a conversation with the lead", () => {
     await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue("");
   });
 
+  test("the last message can be sent again, or changed, in place of its answer", async ({ page }) => {
+    await ask(page, "First question for the lead");
+    await answered(page, "You asked: First question for the lead");
+
+    await page.getByRole("button", { name: "Retry" }).click();
+
+    await expect(page.getByTestId("user-message")).toHaveText("First question for the lead");
+    await expect(page.getByTestId("lead-message")).toHaveCount(1);
+    await expect(page.getByTestId("chat-state")).toHaveCount(0);
+    await answered(page, "You asked: First question for the lead");
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByRole("textbox", { name: "Edit message" }).fill("A better question for the lead");
+    await page.getByRole("button", { name: "Send again" }).click();
+
+    await expect(page.getByTestId("user-message")).toHaveText("A better question for the lead");
+    await answered(page, "You asked: A better question for the lead");
+    await expect(page.getByTestId("lead-message")).toHaveCount(1);
+    // The title came from the message that was changed, so it is the one that replaces it
+    await expect(page.getByTestId("chat-title")).toHaveText("A better question for the lead");
+
+    // What is kept is the conversation as it stands, without what was taken out of it
+    await page.reload();
+    await expect(page.getByTestId("user-message")).toHaveText("A better question for the lead");
+    await expect(page.getByTestId("lead-message")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(1);
+  });
+
+  test("only the last message can be sent again, and not while the lead is at work", async ({ page }) => {
+    await ask(page, "First question for the lead");
+    await answered(page, "You asked: First question for the lead");
+    await page.getByRole("textbox", { name: "Message" }).fill("slow: write a long reply");
+    await page.getByRole("textbox", { name: "Message" }).press("Enter");
+
+    await expect(page.getByTestId("chat-state")).toHaveText("Working");
+    await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    await answered(page, "word250", 30_000);
+
+    await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(1);
+  });
+
   test("Shift+Enter writes a new line and does not send", async ({ page }) => {
     const box = page.getByRole("textbox", { name: "Message" });
     await box.fill("line one");
