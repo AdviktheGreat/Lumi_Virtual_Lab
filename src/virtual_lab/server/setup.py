@@ -23,6 +23,7 @@ from virtual_lab.environment import (
     sandbox_image_exists,
 )
 from virtual_lab.resources import commercial_data_lake
+from virtual_lab.server.code import CodeSetup
 from virtual_lab.server.config import ChatConfig, data_lake_directory
 from virtual_lab.server.errors import ApiError
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
@@ -324,12 +325,16 @@ class Setup:
 
         Each is an id, "docker" or "image", with what to say of it.
         """
-        if config.code.where != "docker":
+        return self.missing_for(config.code)
+
+    def missing_for(self, code: CodeSetup) -> list[dict[str, str]]:
+        """What code cannot run without, set up as this says, which is nothing unless it runs in Docker."""
+        if code.where != "docker":
             return []
         docker = self.docker()
         if not docker["running"]:
             return [{"id": "docker", "message": docker["message"]}]
-        target = config.code.sandbox
+        target = code.sandbox
         if target in SANDBOX_TARGETS and not sandbox_image_exists(sandbox_image(target), self.docker_command):
             message = (
                 f"Biomni's {target} environment is not built. Build it in the setup, which takes {STAGES[target][1]}"

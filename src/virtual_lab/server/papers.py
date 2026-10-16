@@ -4,6 +4,10 @@ A run is a set of papers, from files uploaded to it, a folder on this machine, o
 kept in a directory of its own in the workspace's papers/. The reading is the library's: each paper's result is saved as
 it is read, so a run that stops, for its budget, a run of failures, or a request to stop, carries on where it stopped
 when it is read again. Reading takes minutes or hours, so it is a job, which a page follows and may stop.
+
+What the papers share can then be made into functions, one for each task that is found in enough of them, which are
+written and saved as the library does, in the run's functions/. They are code a model wrote, so a run's functions are
+given to conversations only when the person says so, and run where a conversation's code runs.
 """
 
 import json
@@ -21,6 +25,18 @@ from typing import Any, BinaryIO
 from virtual_lab.chat import describe_size, safe_filename
 from virtual_lab.constants import BIORXIV_SUBJECTS, MAX_BIORXIV_PAGES, MAX_PAPER_FILE_BYTES
 from virtual_lab.environment import StoppedError
+from virtual_lab.function_generator import (
+    FunctionRunReport,
+    FunctionTask,
+    GeneratedFunction,
+    function_names,
+    function_path,
+    function_tasks,
+    generate_functions,
+    load_function,
+    record_path,
+    saved_functions,
+)
 from virtual_lab.llm import ModelSource
 from virtual_lab.paper_batch import (
     FREQUENCY_FILE,
@@ -37,6 +53,7 @@ from virtual_lab.paper_batch import (
 )
 from virtual_lab.papers import TEXT_SUFFIXES
 from virtual_lab.provenance import utc_timestamp
+from virtual_lab.server.code import CodeSetup
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
 from virtual_lab.server.workspace import Workspace, has_control_character, read_json, slug
@@ -45,11 +62,20 @@ from virtual_lab.utils import CostUnknownError, compute_token_cost, write_atomic
 # What a run is, kept beside what the library saves of it, and where the papers uploaded to it are
 LAB_FILE = "lab.json"
 UPLOADS_DIR = "files"
+FUNCTIONS_DIR = "functions"
+
+# The jobs that work on a run, only one of which is done to it at a time
+JOB_KINDS = ("papers", "functions")
 
 # The most runs, files uploaded to one, and papers asked of bioRxiv for one
 MAX_RUNS = 200
 MAX_RUN_FILES = 500
 MAX_BIORXIV_LIMIT = 500
+
+# How many functions are written at once unless the person says, and the most they may ask for
+DEFAULT_FUNCTIONS = 10
+MAX_FUNCTIONS = 100
+MAX_MIN_PAPERS = 100_000
 
 MAX_TITLE_CHARS = 200
 
@@ -64,6 +90,7 @@ PAPER_KINDS = f"a PDF, or a {', '.join(TEXT_SUFFIXES)} file"
 
 # A run's name is what its title makes, and a number if that is taken, so it is never a place anywhere else
 RUN_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+FUNCTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 # Where papers may come from, and what each is told about itself
@@ -74,9 +101,9 @@ SOURCES = {
 }
 
 
-class StopReading(BaseException):
-    """Raised to leave the reading of papers when a request to stop has come. It is not an Exception so that the
-    reading of a paper does not take it for that paper's failure and save it as one."""
+class StopWork(BaseException):
+    """Raised to leave the reading of papers, or the writing of functions, when a request to stop has come. It is not
+    an Exception so that what is being done to one paper or function is not taken for its failure and saved as one."""
 
 
 def money(amount: float | None) -> str:
@@ -89,6 +116,19 @@ def describe_report(report: PaperRunReport) -> str:
         f"{count} {name}" for count, name in ((report.unavailable, "unavailable"), (report.failed, "failed")) if count
     ]
     line = f"Read {report.read} of {report.papers} papers"
+    if others:
+        line += f" ({', '.join(others)})"
+    line += f", spending {money(report.spent)}."
+    if report.stopped is not None:
+        line += f" Stopped: {report.stopped}"
+
+    return line
+
+
+def describe_functions(report: FunctionRunReport) -> str:
+    """What writing functions did, in a sentence or two."""
+    others = [f"{count} {name}" for count, name in ((report.unverified, "not run"), (report.failed, "failed")) if count]
+    line = f"Wrote {report.verified + report.unverified} of {report.tasks} functions"
     if others:
         line += f" ({', '.join(others)})"
     line += f", spending {money(report.spent)}."
@@ -198,15 +238,47 @@ def check_budget(value: Any, what: str, required: bool) -> float | None:
     return float(value)
 
 
+def check_count(value: Any, what: str, least: int, most: int) -> int:
+    """A whole number in a range.
+
+    :raises ApiError: If it is not one.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or not least <= value <= most:
+        raise ApiError(422, "invalid", f"{what} is a whole number from {least} to {most}, not {value!r}")
+
+    return value
+
+
 def is_lab(value: Any) -> bool:
-    """Whether what a run's file holds is a run's: a title, where its papers come from, and when it was made."""
+    """Whether what a run's file holds is a run's: a title, where its papers come from, when it was made, and, if it
+    says, whether its functions are given to conversations."""
     return (
         isinstance(value, dict)
         and isinstance(value.get("title"), str)
         and isinstance(value.get("created_at"), str)
         and isinstance(value.get("source"), dict)
         and value["source"].get("kind") in SOURCES
+        and isinstance(value.get("given", False), bool)
     )
+
+
+def usable_functions(directory: Path) -> list[GeneratedFunction]:
+    """The functions saved in a run that passed, and so are files."""
+    return [function for function in saved_functions(directory / FUNCTIONS_DIR) if function.usable]
+
+
+def function_row(function: GeneratedFunction) -> dict[str, Any]:
+    """A function as a page lists it, without its code."""
+    return {
+        "name": function.name,
+        "task": function.task.name,
+        "papers": function.task.papers,
+        "status": function.status,
+        "modules": list(function.modules),
+        "error": function.error,
+        "cost": function.cost,
+        "attempts": function.attempts,
+    }
 
 
 def counts_of(result: PaperResult | None) -> dict[str, int]:
@@ -225,6 +297,8 @@ class Papers:
     :param missing_keys: Says which variables a model's provider needs that are not set.
     :param client: An OpenAI client to read with, which is for tests.
     :param chat_models: The chat models to read with, which is for tests.
+    :param docker_missing: Says what code in Docker, set up as it is given, cannot run without, which is what checking
+        a function in a container needs; or None to leave that until the check is made.
     """
 
     def __init__(
@@ -235,6 +309,7 @@ class Papers:
         missing_keys: Callable[[str], list[str]],
         client: Any = None,
         chat_models: ModelSource | None = None,
+        docker_missing: Callable[[CodeSetup], list[dict[str, str]]] | None = None,
     ) -> None:
         self.workspace = workspace
         self.jobs = jobs
@@ -242,7 +317,9 @@ class Papers:
         self.missing_keys = missing_keys
         self.client = client
         self.chat_models = chat_models
-        # Held while a file is put among a run's, so that of two with one name only one is
+        self.docker_missing = docker_missing
+        # Held while a file is put among a run's, and from checking that nothing is being done to a run to starting
+        # something, so that of two with one name only one is, and nothing is begun in a run that is being removed
         self._lock = threading.Lock()
 
     # Runs
@@ -285,7 +362,10 @@ class Papers:
             "failed": report.get("failed"),
             "spent": report.get("spent"),
             "stopped": report.get("stopped"),
+            "function_count": len(usable_functions(directory)),
+            "given": lab.get("given", False),
             "job": job.id if job is not None else None,
+            "job_kind": job.kind if job is not None else None,
         }
 
     def lookup(self, run_id: str) -> tuple[Path, dict[str, Any]]:
@@ -301,8 +381,8 @@ class Papers:
         return directory, lab
 
     def running(self, run_id: str) -> Job | None:
-        """The job that is reading a run, if one is."""
-        return next((job for job in self.jobs.active("papers") if job.subject == run_id), None)
+        """The job that is reading a run's papers or writing its functions, if one is."""
+        return next((job for job in self.jobs.active() if job.kind in JOB_KINDS and job.subject == run_id), None)
 
     def create(self, title: str, source: dict[str, Any]) -> str:
         """Makes a run with nothing read yet.
@@ -376,6 +456,7 @@ class Papers:
             "uploads": uploads,
             "results": papers,
             "summary": self.summary(directory),
+            "functions": [function_row(function) for function in saved_functions(directory / FUNCTIONS_DIR)],
         }
 
     def listed(self, directory: Path, source: dict[str, Any]) -> list[Paper]:
@@ -434,8 +515,8 @@ class Papers:
             shutil.rmtree(directory)
 
     def check_idle(self, run_id: str) -> None:
-        if self.running(run_id) is not None:
-            raise ApiError(409, "busy", "Papers are being read in this run. Stop that first")
+        if (job := self.running(run_id)) is not None:
+            raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
 
     # Files
 
@@ -527,18 +608,7 @@ class Papers:
         budget = check_budget(max_cost, "The most it may spend", required=True)
         per_paper = check_budget(max_cost_per_paper, "The most one paper may spend", required=False)
         again = check_flag(retry_failed, "retry_failed")
-        model = self.workspace.load_settings().model
-        if missing := self.missing_keys(model):
-            raise ApiError(
-                422,
-                "missing_keys",
-                f"{model} needs {', '.join(missing)}, which is not set. Add it in the settings.",
-                missing=missing,
-            )
-        try:
-            compute_token_cost(model, 0, 0)
-        except CostUnknownError as error:
-            raise ApiError(422, "unavailable", f"{error}, so a limit on spending cannot be kept") from error
+        model = self.usable_model()
         earlier = read_json(directory / RUN_FILE)
         if isinstance(earlier, dict) and earlier.get("model") not in (None, model):
             raise ApiError(
@@ -562,6 +632,26 @@ class Papers:
                 raise ApiError(
                     409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
                 ) from error
+
+    def usable_model(self) -> str:
+        """The model in the settings, if what is done with it can be paid for and its spending limited.
+
+        :raises ApiError: If a key it needs is not set, or its price is not known.
+        """
+        model = self.workspace.load_settings().model
+        if missing := self.missing_keys(model):
+            raise ApiError(
+                422,
+                "missing_keys",
+                f"{model} needs {', '.join(missing)}, which is not set. Add it in the settings.",
+                missing=missing,
+            )
+        try:
+            compute_token_cost(model, 0, 0)
+        except CostUnknownError as error:
+            raise ApiError(422, "unavailable", f"{error}, so a limit on spending cannot be kept") from error
+
+        return model
 
     def reader(
         self,
@@ -589,7 +679,7 @@ class Papers:
 
             def progress(line: str) -> None:
                 if job.stop.is_set():
-                    raise StopReading
+                    raise StopWork
                 job.log(line)
                 job.update(line.strip(), finished=finished())
 
@@ -605,13 +695,183 @@ class Papers:
                     client=self.client,
                     on_progress=progress,
                 )
-            except StopReading:
+            except StopWork:
                 raise StoppedError("Stopped. What was read is kept, and reading again carries on from there.") from None
             job.update(finished=finished())
 
             return describe_report(report)
 
         return work
+
+    # Functions
+
+    def generate(
+        self,
+        run_id: str,
+        max_cost: Any,
+        max_cost_per_function: Any,
+        min_papers: Any,
+        limit: Any,
+        retry_failed: Any,
+        verify: Any,
+    ) -> Job:
+        """Starts writing a function for each task that the papers of a run share, the most common first, which is
+        what the library does. A function already written is not written again, so a run that stopped carries on.
+
+        :param max_cost: The most the writing may spend, in USD, in all.
+        :param max_cost_per_function: The most one function may spend, or None for no limit on one.
+        :param min_papers: Only the tasks found in at least this many papers.
+        :param limit: The most functions to write, of those tasks.
+        :param retry_failed: Whether to write again the functions an earlier writing could not make pass.
+        :param verify: Whether to import each function in a container of the sandbox, which Docker must be running
+            for, before keeping it, as well as reading it.
+        :raises ApiError: If there is no run with this id, an option is wrong, a key or a price is missing, the papers
+            have not been read or share no such task, Docker is needed and is not there, or the run is busy.
+        """
+        directory, lab = self.lookup(run_id)
+        budget = check_budget(max_cost, "The most it may spend", required=True)
+        per_function = check_budget(max_cost_per_function, "The most one function may spend", required=False)
+        fewest = check_count(min_papers, "The fewest papers a task is found in", 1, MAX_MIN_PAPERS)
+        most = check_count(limit, "The number of functions", 1, MAX_FUNCTIONS)
+        again = check_flag(retry_failed, "retry_failed")
+        checked = check_flag(verify, "verify")
+        model = self.usable_model()
+        if not (directory / FREQUENCY_FILE).is_file():
+            raise ApiError(
+                422, "invalid", "Read the papers of this run first: functions are written for what they share"
+            )
+        try:
+            tasks = function_tasks(directory, min_papers=fewest, limit=most)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from None
+        if not tasks:
+            raise ApiError(
+                422, "invalid", f"No task was found in {fewest} papers or more, so there is nothing to write"
+            )
+
+        executor = None
+        if checked:
+            settings = self.workspace.load_settings()
+            code = CodeSetup(where="docker", sandbox=settings.sandbox, network=False)
+            if self.docker_missing is not None and (missing := self.docker_missing(code)):
+                raise ApiError(
+                    409,
+                    "setup_needed",
+                    " ".join(issue["message"] for issue in missing),
+                    missing=[issue["id"] for issue in missing],
+                )
+            executor = code.docker_executor()
+
+        work = self.writer(directory, tasks, model, budget, per_function, again, executor)
+        with self._lock:
+            self.lookup(run_id)
+            try:
+                return self.jobs.start(
+                    "functions", run_id, f"Writing functions: {lab['title']}", work, exclusive=f"papers:{run_id}"
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def writer(
+        self,
+        directory: Path,
+        tasks: list[FunctionTask],
+        model: str,
+        max_cost: float | None,
+        max_cost_per_function: float | None,
+        retry_failed: bool,
+        executor: Any,
+    ) -> Callable[[Job], str | None]:
+        """What a job does to write a run's functions: writes each, checks it, saves it, and says how it went."""
+        save_dir = directory / FUNCTIONS_DIR
+        names = function_names(tasks)
+
+        def finished() -> int:
+            return sum(1 for name in names if record_path(save_dir, name).is_file())
+
+        def work(job: Job) -> str | None:
+            if job.stop.is_set():
+                raise StoppedError("Stopped before any function was written.")
+            job.update("Writing the functions", functions=len(tasks), finished=finished())
+
+            def progress(line: str) -> None:
+                if job.stop.is_set():
+                    raise StopWork
+                job.log(line)
+                job.update(line.strip(), finished=finished())
+
+            try:
+                report = generate_functions(
+                    tasks,
+                    save_dir,
+                    model=model,
+                    executor=executor,
+                    max_cost=max_cost,
+                    max_cost_per_function=max_cost_per_function,
+                    retry_failed=retry_failed,
+                    chat_models=self.chat_models,
+                    client=self.client,
+                    on_progress=progress,
+                )
+            except StopWork:
+                raise StoppedError(
+                    "Stopped. What was written is kept, and writing again carries on from there."
+                ) from None
+            job.update(finished=finished())
+
+            return describe_functions(report)
+
+        return work
+
+    def function(self, run_id: str, name: str) -> dict[str, Any]:
+        """A function of a run with its code, for the person to read before relying on it.
+
+        :raises ApiError: If there is no run with this id, or it has no function of that name.
+        """
+        directory, _ = self.lookup(run_id)
+        save_dir = directory / FUNCTIONS_DIR
+        function = load_function(save_dir, name) if FUNCTION_NAME.fullmatch(name) else None
+        if function is None:
+            raise not_found("function of that name in the run")
+        source = function.source
+        if function.usable:
+            try:
+                source = function_path(save_dir, name).read_text(encoding="utf-8")
+            except (OSError, ValueError):
+                source = None
+
+        return {
+            **function_row(function),
+            "brief": function.task.brief,
+            "problems": list(function.problems),
+            "source": source,
+        }
+
+    def remove_function(self, run_id: str, name: str) -> None:
+        """Takes away a function that was written, and what was recorded of it. Writing again writes it again.
+
+        :raises ApiError: If there is no run with this id, something is being done to it, or it has no such function.
+        """
+        with self._lock:
+            directory, _ = self.lookup(run_id)
+            self.check_idle(run_id)
+            save_dir = directory / FUNCTIONS_DIR
+            if not FUNCTION_NAME.fullmatch(name) or load_function(save_dir, name) is None:
+                raise not_found("function of that name in the run")
+            function_path(save_dir, name).unlink(missing_ok=True)
+            record_path(save_dir, name).unlink(missing_ok=True)
+
+    def give(self, run_id: str, given: Any) -> None:
+        """Says whether the functions of a run are given to the conversations that are made from now on.
+
+        :raises ApiError: If there is no run with this id, or what is said is not yes or no.
+        """
+        wanted = check_flag(given, "given")
+        with self._lock:
+            directory, lab = self.lookup(run_id)
+            write_atomically(directory / LAB_FILE, json.dumps({**lab, "given": wanted}, indent=4).encode("utf-8"))
 
     def papers_of(self, directory: Path, source: dict[str, Any]) -> list[Paper]:
         """The papers a run asks for, which for bioRxiv are listed from bioRxiv's own listing now."""

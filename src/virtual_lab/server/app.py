@@ -29,6 +29,9 @@ and everything else is a request and an answer.
     POST   /api/papers/runs/{id}/files  a paper to upload to it, as the body, named by ?name=; DELETE /files/{name}
     POST   /api/papers/runs/{id}/read   read its papers, as a job, with the most it may spend; again to carry on
     GET    /api/papers/runs/{id}/tables/{kind}   what was found, as a table to open in a spreadsheet
+    POST   /api/papers/runs/{id}/functions   write functions for the tasks the papers share, as a job
+    GET    /api/papers/runs/{id}/functions/{name}   one function, with its code; DELETE takes it away
+    PATCH  /api/papers/runs/{id}        whether its functions are given to the conversations that are made from now on
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
@@ -90,7 +93,7 @@ from virtual_lab.server.mcp import (
     sign_out,
 )
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
-from virtual_lab.server.papers import MAX_TITLE_CHARS, Papers
+from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_PAPERS, MAX_TITLE_CHARS, Papers
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
@@ -224,6 +227,21 @@ class PapersReadBody(RequestModel):
     max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
     max_cost_per_paper: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
     retry_failed: StrictBool = False
+
+
+class PapersFunctionsBody(RequestModel):
+    """What writing functions for the tasks a run's papers share may cost, which is always said, and which tasks."""
+
+    max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
+    max_cost_per_function: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+    min_papers: StrictInt = Field(1, ge=1, le=MAX_MIN_PAPERS)
+    limit: StrictInt = Field(DEFAULT_FUNCTIONS, ge=1, le=MAX_FUNCTIONS)
+    retry_failed: StrictBool = False
+    verify: StrictBool = False
+
+
+class PapersGiveBody(RequestModel):
+    given: StrictBool
 
 
 class McpServerBody(RequestModel):
@@ -395,7 +413,13 @@ def create_app(
     )
     own = Own(store, max_upload_bytes)
     papers = Papers(
-        store, setup.jobs, max_upload_bytes, conversations.missing_keys_for, client=client, chat_models=chat_models
+        store,
+        setup.jobs,
+        max_upload_bytes,
+        conversations.missing_keys_for,
+        client=client,
+        chat_models=chat_models,
+        docker_missing=setup.missing_for if check_setup else None,
     )
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
@@ -695,6 +719,12 @@ def create_app(
     def get_paper_run(run_id: str) -> dict[str, Any]:
         return papers.view(run_id)
 
+    @api.patch("/papers/runs/{run_id}")
+    def give_paper_run(run_id: str, body: PapersGiveBody) -> dict[str, Any]:
+        papers.give(run_id, body.given)
+
+        return papers.view(run_id)
+
     @api.delete("/papers/runs/{run_id}")
     def delete_paper_run(run_id: str) -> dict[str, Any]:
         papers.delete(run_id)
@@ -727,6 +757,30 @@ def create_app(
         job = papers.read(run_id, body.max_cost, body.max_cost_per_paper, body.retry_failed)
 
         return job.snapshot(0)
+
+    @api.post("/papers/runs/{run_id}/functions", status_code=202)
+    def write_paper_functions(run_id: str, body: PapersFunctionsBody) -> dict[str, Any]:
+        job = papers.generate(
+            run_id,
+            body.max_cost,
+            body.max_cost_per_function,
+            body.min_papers,
+            body.limit,
+            body.retry_failed,
+            body.verify,
+        )
+
+        return job.snapshot(0)
+
+    @api.get("/papers/runs/{run_id}/functions/{name}")
+    def get_paper_function(run_id: str, name: str) -> dict[str, Any]:
+        return papers.function(run_id, name)
+
+    @api.delete("/papers/runs/{run_id}/functions/{name}")
+    def delete_paper_function(run_id: str, name: str) -> dict[str, Any]:
+        papers.remove_function(run_id, name)
+
+        return papers.view(run_id)
 
     @api.get("/papers/runs/{run_id}/tables/{kind}")
     def paper_table(run_id: str, kind: str) -> FileResponse:

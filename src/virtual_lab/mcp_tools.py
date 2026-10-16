@@ -122,6 +122,12 @@ class MCPServerError(ConnectionError):
     """Raised when an MCP server cannot be started or reached, or stops while a tool runs."""
 
 
+def tool_prefix(server_name: str) -> str:
+    """What the names of a server's tools start with, followed by "_", which is its name with anything that a name
+    cannot have made an underscore."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", server_name)
+
+
 class UnsetVariableError(ValueError):
     """Raised when a config uses an environment variable that is not set, and gives no default."""
 
@@ -421,7 +427,7 @@ def parse_entry(name: str, entry: Mapping[str, Any]) -> MCPServerConfig | None:
             stacklevel=4,
         )
 
-    prefix = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    prefix = tool_prefix(name)
     if not prefix.isidentifier():
         raise ValueError(
             f"The tools of the MCP server {name} are named {prefix}_ and theirs, which must start with a letter "
