@@ -1,5 +1,5 @@
 import { formatBytes } from "./files";
-import { timeAgo } from "./format";
+import { formatCost, timeAgo } from "./format";
 import { SANDBOXES } from "./settings";
 import type { DataLakeFile, DataLakeSummary, Job, JobState, SetupStep, StepState } from "./types";
 
@@ -100,9 +100,24 @@ export function jobFraction(job: Job): number | null {
   return Math.min(Math.max((done + part) / total, 0), 1);
 }
 
+// What the work on a project has counted: the round it is in, of the most it may take, and what it has spent, of the most
+// it may spend. It has no count of what is left to do, since the lead decides when it is done.
+function projectCounts({ round, max_rounds: rounds, spent, max_cost: budget }: Job["progress"]): string {
+  const parts: string[] = [];
+  if (typeof round === "number" && round > 0) {
+    parts.push(typeof rounds === "number" ? `Round ${round} of at most ${rounds}` : `Round ${round}`);
+  }
+  if (typeof spent === "number") {
+    parts.push(typeof budget === "number" ? `spent ${formatCost(spent)} of ${formatCost(budget)}` : `spent ${formatCost(spent)}`);
+  }
+
+  return parts.join(" · ");
+}
+
 // What a job has counted, in words: files, bytes, and the file it is on for a fetch, and papers or functions for the
 // work on a run. A job that counts nothing says nothing.
 export function jobCounts(job: Job): string {
+  if (job.kind === "project") return projectCounts(job.progress);
   const { fetched, bytes, bytes_total: announced, current } = job.progress;
   const parts: string[] = [];
   const sum = counted(job);

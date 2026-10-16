@@ -22,6 +22,7 @@ import type {
   NewBenchmarkRun,
   NewChat,
   NewPaperRun,
+  NewProject,
   Own,
   OwnPreview,
   PaperFunction,
@@ -29,6 +30,10 @@ import type {
   PaperReadOptions,
   PaperRun,
   PapersList,
+  Project,
+  ProjectsList,
+  ProjectStartOptions,
+  ProjectStep,
   Scientist,
   Settings,
   SettingsChange,
@@ -399,6 +404,17 @@ export const api = {
       undefined,
       signal,
     ),
+  // The research projects, and what a new one is asked for
+  projects: (signal?: AbortSignal) => request<ProjectsList>("GET", "/projects", undefined, signal),
+  makeProject: (project: NewProject) => request<Project>("POST", "/projects", project),
+  project: (id: string, signal?: AbortSignal) =>
+    request<Project>("GET", `/projects/${encodeURIComponent(id)}`, undefined, signal),
+  deleteProject: (id: string) => request<ProjectsList>("DELETE", `/projects/${encodeURIComponent(id)}`),
+  // Starts working on a project, or carries it on from where it stopped, which goes on as a job
+  startProject: (id: string, options: ProjectStartOptions) =>
+    request<Job>("POST", `/projects/${encodeURIComponent(id)}/start`, options),
+  projectStep: (id: string, name: string, signal?: AbortSignal) =>
+    request<ProjectStep>("GET", `/projects/${encodeURIComponent(id)}/steps/${encodeURIComponent(name)}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),
