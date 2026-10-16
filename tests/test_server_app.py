@@ -4,6 +4,7 @@ import asyncio
 import errno
 import hashlib
 import json
+import logging
 import os
 import shutil
 import threading
@@ -1249,7 +1250,7 @@ class TestDamagedFiles:
         assert file_error(OSError(errno.EACCES, "Permission denied")) is None
 
     def test_an_error_about_a_file_is_told_with_its_name_and_any_other_is_not_told_to_the_page(
-        self, app: FastAPI, monkeypatch: pytest.MonkeyPatch
+        self, app: FastAPI, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         failures: list[OSError] = [
             OSError(errno.ENOSPC, "No space left on device", "/the/workspace/settings.json"),
@@ -1261,9 +1262,10 @@ class TestDamagedFiles:
 
         monkeypatch.setattr(app.state.conversations, "summaries", broken)
 
-        with TestClient(app, base_url=LOCAL, headers=BEARER, raise_server_exceptions=False) as quiet:
-            full = quiet.get("/api/chats")
-            other = quiet.get("/api/chats")
+        with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+            with TestClient(app, base_url=LOCAL, headers=BEARER, raise_server_exceptions=False) as quiet:
+                full = quiet.get("/api/chats")
+                other = quiet.get("/api/chats")
 
         assert full.status_code == 500 and error_of(full)["code"] == "files"
         assert error_of(full)["message"] == (
@@ -1271,6 +1273,7 @@ class TestDamagedFiles:
         )
         assert other.status_code == 500 and error_of(other)["code"] == "internal"
         assert "secret" not in other.text
+        assert "GET /api/chats: The server could not use /the/workspace/settings.json" in caplog.text
 
 
 class TestMessages:

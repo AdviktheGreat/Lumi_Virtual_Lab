@@ -36,6 +36,7 @@ and everything else is a request and an answer.
 """
 
 import asyncio
+import logging
 import os
 import threading
 from collections.abc import AsyncIterator, Collection, Sequence
@@ -83,6 +84,9 @@ from virtual_lab.server.tools import check_tool_names, describe_tools
 from virtual_lab.server.workspace import DEFAULT_WORKSPACE, Settings, Workspace
 
 # The most characters of a message, which no one writes by hand
+# Where the server's own messages go, which the server shows as it runs
+LOG = logging.getLogger("uvicorn.error")
+
 MAX_MESSAGE_CHARS = 200_000
 
 # Seconds the server waits for the next part of a file that is being uploaded
@@ -376,6 +380,8 @@ def create_app(
         if problem is None:
             # Left to be what it was, and to be logged as any other is
             raise error
+        # What a page is told is all there is to say of it, so this is what the log has
+        LOG.warning("%s %s: %s", request.method, request.url.path, problem.message)
 
         return await api_error(request, problem)
 
