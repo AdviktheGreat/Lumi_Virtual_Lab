@@ -107,8 +107,8 @@ except BudgetExceededError as error:
 
 - `max_cost` is checked before every request, including each tool call and the structured output, so a meeting stops before the request it has no money left for. It can overrun by at most one request, which `max_completion_tokens` bounds.
 - A limit is refused outright if any model in the meeting has no price in `virtual_lab.constants`, and a response that reports no usage stops a limited meeting with `CostUnknownError`. Either would otherwise count as free. Without a limit, `result.cost` is `None` rather than a wrong number.
-- OpenAI, Anthropic, and Gemini models are priced. Gemini models with two rates are priced at the higher one, so their cost is an upper bound.
-- Prices are matched exactly or to a dated snapshot of a listed model (`gpt-4o-2024-08-06`, `claude-sonnet-4-5-20250929`). A name that merely starts with a listed one, such as `gpt-5-pro` or `gpt-5.4`, is unpriced rather than billed at the cheaper model's rate.
+- OpenAI, Anthropic, and Gemini models are priced, as of October 2026. A model with two rates, by how long the prompt is, or with a rise announced for a date, is priced at the higher one, so its cost is an upper bound. `gpt-5.6-sol` is at a promotional price that is to last at least through November 21, 2026.
+- Prices are matched exactly or to a dated snapshot of a listed model (`gpt-4o-2024-08-06`, `claude-sonnet-4-5-20250929`). A name that merely starts with a listed one, such as `gpt-5-codex` or `gpt-5.5-codex`, is unpriced rather than billed at the cheaper model's rate.
 - `on_usage` is called with the running usage after every response, for a caller keeping a total across meetings. An exception it raises stops the meeting like any other failure.
 - `before_request` is called before every request, after `max_cost` is checked. An exception it raises stops the meeting before the request is sent, which is how several meetings sharing one budget are stopped together (see `Project` below).
 - A failed or interrupted meeting, including one stopped by its limit or by Ctrl-C, saves its turns and its record, with the usage up to that point, under `save_dir/partial/`.
