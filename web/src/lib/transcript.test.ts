@@ -62,6 +62,26 @@ describe("a transcript", () => {
     ]);
   });
 
+  it("drops a turn that is withdrawn, and shows the message that begins it again", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1, { text: "one" }),
+      event("answer", 1, { text: "first answer" }),
+      event("user", 2, { text: "two" }),
+      event("failed", 2, { text: "It broke", data: { type: "RuntimeError" } }),
+      event("withdrawn", 2, { data: { turn: 2 } }),
+    ]);
+
+    expect(transcript.turns.map((turn) => turn.number)).toEqual([1]);
+
+    const again = replay([event("user", 2, { text: "two, changed" }), event("answer", 2, { text: "second answer" })], transcript);
+
+    expect(again.turns.map((turn) => [turn.number, turn.user?.text, turn.outcome])).toEqual([
+      [1, "one", "answered"],
+      [2, "two, changed", "answered"],
+    ]);
+  });
+
   it("is not changed by an event it has read, or one before it, so that a stream started again is harmless", () => {
     next = 0;
     const events = [event("user", 1, { text: "hello" }), event("writing", 1, { text: "Hi" }), event("answer", 1, { text: "Hi there" })];

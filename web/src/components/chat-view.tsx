@@ -26,7 +26,7 @@ import { useAttachments } from "@/lib/use-attachments";
 import { useChat } from "@/lib/use-chat";
 import { useFiles } from "@/lib/use-files";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
-import { waitingOnYou } from "@/lib/transcript";
+import { waitingOnYou, type Turn } from "@/lib/transcript";
 import type { ChatState } from "@/lib/types";
 
 const STATE_LABELS: Record<ChatState, string | null> = {
@@ -102,6 +102,22 @@ export function ChatView({ id }: { id: string }) {
       await api.send(id, text, attachedNames(sent));
       setDraft("");
       attachments.remove(sent.map((item) => item.id));
+      jump("instant");
+    } catch (error) {
+      report(error);
+      setProblem(problemOf(error));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // The last message is sent again with the files it had, in place of it and of what came of it
+  async function replace(turn: Turn, text: string) {
+    setSending(true);
+    setProblem(null);
+    try {
+      await api.send(id, text.trim(), (turn.user?.attachments ?? []).map((file) => file.name), true);
+      setSentNotes([]);
       jump("instant");
     } catch (error) {
       report(error);
@@ -202,8 +218,18 @@ export function ChatView({ id }: { id: string }) {
                       <Skeleton className="h-4 w-3/5" />
                     </div>
                   )}
-                  {transcript.turns.map((turn) => (
-                    <TurnView key={turn.number} turn={turn} lead={lead} state={state} />
+                  {transcript.turns.map((turn, at) => (
+                    <TurnView
+                      key={turn.number}
+                      turn={turn}
+                      lead={lead}
+                      state={state}
+                      onReplace={
+                        at === transcript.turns.length - 1 && turn.outcome !== "running" && !working && !sending && caughtUp
+                          ? (text) => void replace(turn, text)
+                          : undefined
+                      }
+                    />
                   ))}
                   {waitingNotes.map((note, at) => (
                     <NoteChip key={`${note.turn}-${at}`} text={note.text} waiting />

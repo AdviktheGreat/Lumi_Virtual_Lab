@@ -1,4 +1,5 @@
-import { CircleAlert, OctagonX, Paperclip, type LucideIcon } from "lucide-react";
+import { useState } from "react";
+import { CircleAlert, OctagonX, Paperclip, Pencil, RotateCcw, type LucideIcon } from "lucide-react";
 import { Steps } from "@/components/activity";
 import { BrandMark } from "@/components/brand";
 import { Markdown } from "@/components/markdown";
@@ -38,6 +39,79 @@ export function UserMessage({ text, attachments }: { text: string; attachments: 
           {text}
         </p>
       )}
+    </div>
+  );
+}
+
+// The last message, which can be sent again as it was or changed, in place of it and of what came of it. Its files go
+// with it.
+function ReplaceableUserMessage({
+  text,
+  attachments,
+  onReplace,
+}: {
+  text: string;
+  attachments: Attachment[];
+  onReplace: (text: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+
+  if (editing) {
+    return (
+      <form
+        className="flex flex-col items-end gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setEditing(false);
+          onReplace(draft);
+        }}
+      >
+        <Files files={attachments} />
+        <textarea
+          aria-label="Edit message"
+          autoFocus
+          rows={3}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setEditing(false);
+          }}
+          className="w-full resize-y rounded-xl border border-input bg-card px-3 py-2 text-[15px] leading-6 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/25"
+        />
+        <div className="flex gap-1.5">
+          <Button type="button" variant="ghost" size="xs" onClick={() => setEditing(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" size="xs" disabled={draft.trim() === "" && attachments.length === 0}>
+            Send again
+          </Button>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <UserMessage text={text} attachments={attachments} />
+      <div className="flex gap-1">
+        <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => onReplace(text)}>
+          <RotateCcw aria-hidden />
+          Retry
+        </Button>
+        <Button
+          variant="ghost"
+          size="xs"
+          className="text-muted-foreground"
+          onClick={() => {
+            setDraft(text);
+            setEditing(true);
+          }}
+        >
+          <Pencil aria-hidden />
+          Edit
+        </Button>
+      </div>
     </div>
   );
 }
@@ -122,7 +196,18 @@ export function ProblemNotice({ problem }: { problem: Problem }) {
   );
 }
 
-export function TurnView({ turn, lead, state }: { turn: Turn; lead: string; state: ChatState }) {
+export function TurnView({
+  turn,
+  lead,
+  state,
+  onReplace,
+}: {
+  turn: Turn;
+  lead: string;
+  state: ChatState;
+  // Given for the last turn, once it is over, so that its message can be sent again
+  onReplace?: (text: string) => void;
+}) {
   const reply = turn.outcome === "answered" ? turn.text : turn.writing;
   const thinking = isThinking(turn, state === "running");
   // The lead is not thinking while it is held, and says so instead
@@ -130,7 +215,12 @@ export function TurnView({ turn, lead, state }: { turn: Turn; lead: string; stat
 
   return (
     <section className="flex flex-col gap-5" aria-label={`Turn ${turn.number}`}>
-      {turn.user && <UserMessage text={turn.user.text} attachments={turn.user.attachments} />}
+      {turn.user &&
+        (onReplace ? (
+          <ReplaceableUserMessage key={turn.user.text} text={turn.user.text} attachments={turn.user.attachments} onReplace={onReplace} />
+        ) : (
+          <UserMessage text={turn.user.text} attachments={turn.user.attachments} />
+        ))}
       {(turn.steps.length > 0 || reply !== "" || thinking || held !== null) && (
         <LeadBlock speaker={lead}>
           <Steps steps={turn.steps} />

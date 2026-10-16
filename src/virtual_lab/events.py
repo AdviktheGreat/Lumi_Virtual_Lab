@@ -43,6 +43,7 @@ ProjectEventKind = Literal["team", "plan", "decided", "code", "round", "finished
 
 ChatEventKind = Literal[
     "user",
+    "withdrawn",
     "title",
     "resources",
     "writing",
@@ -166,7 +167,12 @@ class ChatEvent:
 
         - "user": the researcher said something, which begins a turn. text is what they wrote, and
           data["attachments"] holds the files they attached, each with its name, its path in the
-          session's directory, and its size in bytes.
+          session's directory, and its size in bytes. data["messages_before"] is how many messages the lead
+          had been sent and had said by then, which is where the conversation is cut back to if this one
+          is replaced.
+        - "withdrawn": the researcher replaced the last message, to send it again or changed. The turn it began,
+          which is data["turn"], and all that came of it, is taken out of the conversation, and the new message
+          begins that turn again. Told of just before the "user" event that does.
         - "title": the conversation was given a title, as text.
         - "resources": the resources of Biomni's environment the lead is told of were worked out, or
           it asked for those that suit a task. data holds them as a meeting's record does: its mode,

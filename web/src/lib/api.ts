@@ -421,9 +421,14 @@ export const api = {
   // Gives it another title, which the server tidies, and tells of to whoever follows the conversation
   renameChat: (id: string, title: string) => request<ChatInfo>("PATCH", `/chats/${encodeURIComponent(id)}`, { title }),
   deleteChat: (id: string) => request<void>("DELETE", `/chats/${encodeURIComponent(id)}`),
-  // Attachments are named as the server named them when it was sent the files
-  send: (id: string, text: string, attachments: string[] = []) =>
-    request<{ turn: number; state: string }>("POST", `/chats/${encodeURIComponent(id)}/messages`, { text, attachments }),
+  // Attachments are named as the server named them when it was sent the files. With replaceLast the message takes the
+  // place of the last one, which is taken out of the conversation, to send it again or changed.
+  send: (id: string, text: string, attachments: string[] = [], replaceLast = false) =>
+    request<{ turn: number; state: string }>("POST", `/chats/${encodeURIComponent(id)}/messages`, {
+      text,
+      attachments,
+      ...(replaceLast ? { replace_last: true } : {}),
+    }),
   // What steers a turn that is running is accepted or not: a turn that has ended meanwhile has nothing to steer
   note: (id: string, text: string) =>
     request<{ accepted: boolean }>("POST", `/chats/${encodeURIComponent(id)}/note`, { text }),

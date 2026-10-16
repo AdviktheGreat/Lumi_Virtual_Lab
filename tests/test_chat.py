@@ -2057,6 +2057,148 @@ class TestKeeping:
         )
 
 
+class TestReplacingTheLastMessage:
+    def test_a_failed_turn_is_taken_back_and_sent_again(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            text_response("One."),
+            RuntimeError("The server went away"),
+            text_response("Two."),
+        ]
+        chat = make_chat(tmp_path)
+        chat.send("First")
+        chat.send("Second")
+        failed_ids = [event.id for event in chat.events_since() if event.turn == 2]
+        seen: list[ChatEvent] = []
+        chat.on_event = seen.append
+
+        reply = chat.send("Second", replace_last=True)
+
+        assert reply.text == "Two."
+        assert chat.turns == 2
+        # The lead is told of the first turn, and the message that is sent again, and nothing of the one that failed
+        sent = request_messages(fake_client, 2)
+        assert [(message["role"], message.get("content")) for message in sent[1:]] == [
+            ("user", "First"),
+            ("assistant", "One."),
+            ("user", "Second"),
+        ]
+        assert [(message["role"], message["content"]) for message in chat.messages] == [
+            ("user", "First"),
+            ("assistant", "One."),
+            ("user", "Second"),
+            ("assistant", "Two."),
+        ]
+
+        events = chat.events_since()
+        assert kinds(events) == ["user", "title", "usage", "answer", "withdrawn", "user", "usage", "answer"]
+        assert not set(failed_ids) & {event.id for event in events}
+        (withdrawn,) = of(events, "withdrawn")
+        assert (withdrawn.turn, withdrawn.data) == (2, {"turn": 2})
+        assert [event.turn for event in of(events, "user")] == [1, 2]
+        assert [event.id for event in events] == sorted(event.id for event in events)
+        assert [event.kind for event in seen if event.kind in ("withdrawn", "user")] == ["withdrawn", "user"]
+
+        # What is kept is what is told of, and a conversation that is opened again reads the same
+        directory = tmp_path / "chat"
+        assert lines(directory / "messages.jsonl") == chat.messages
+        assert [ChatEvent.from_dict(item) for item in lines(directory / "events.jsonl")] == [
+            event for event in events if event.kind != "status"
+        ]
+        chat.close()
+        again = make_chat(tmp_path)
+        assert again.messages == chat.messages
+        assert [event.id for event in again.events_since()] == [event.id for event in events if event.kind != "status"]
+        assert again.turns == 2
+
+    def test_an_answer_can_be_taken_back_and_the_message_changed(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [text_response("Nanobodies."), text_response("Antibodies.")]
+        chat = make_chat(tmp_path)
+        chat.save_upload("counts.csv", b"abc")
+        chat.send("What is a nanobody?", attachments=["counts.csv"])
+        assert chat.title == "What is a nanobody?"
+
+        chat.send("What is an antibody?", attachments=["counts.csv"], replace_last=True)
+
+        assert [message["role"] for message in chat.messages] == ["user", "assistant"]
+        assert chat.messages[0]["content"].startswith("What is an antibody?")
+        assert "nanobody" not in json.dumps(request_messages(fake_client, 1)[1:])
+        events = chat.events_since()
+        # The title was the first message's, and is the one that replaces it
+        assert chat.title == "What is an antibody?"
+        assert [event.text for event in of(events, "title")] == ["What is an antibody?"]
+        (user,) = of(events, "user")
+        assert user.data["attachments"][0]["name"] == "counts.csv"
+        assert user.data["messages_before"] == 0
+
+    def test_a_turn_that_left_nothing_to_the_lead_takes_nothing_else_with_it(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("One."), text_response("Two.")]
+        chat = make_chat(tmp_path)
+        chat.send("First")
+        # A turn that failed before the lead was sent anything has no messages of its own
+        chat._begin("Second", ())
+        chat._end_turn()
+
+        chat.send("Second again", replace_last=True)
+
+        assert [message["content"] for message in chat.messages] == ["First", "One.", "Second again", "Two."]
+        assert [event.turn for event in of(chat.events_since(), "user")] == [1, 2]
+
+    def test_nothing_is_taken_back_if_the_message_cannot_be_sent(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        chat = make_chat(tmp_path)
+
+        with pytest.raises(ValueError, match="There is no message to replace"):
+            chat.send("Hello", replace_last=True)
+        assert (chat.turns, chat.messages, chat.events_since()) == (0, [], [])
+
+        fake_client.completions.responses = [text_response("One.")]
+        chat.send("First")
+        before = (chat.turns, chat.messages, chat.events_since())
+        with pytest.raises(ValueError, match="needs something in it"):
+            chat.send("  ", replace_last=True)
+        with pytest.raises(ValueError, match="No file named"):
+            chat.send("Again", attachments=["missing.csv"], replace_last=True)
+
+        assert (chat.turns, chat.messages, chat.events_since()) == before
+
+    def test_a_message_saved_before_messages_could_be_replaced_cannot_be(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("One.")]
+        chat = make_chat(tmp_path)
+        chat.send("First")
+        chat.close()
+        directory = tmp_path / "chat"
+        old = [
+            {**item, "data": {"attachments": []}} if item["kind"] == "user" else item
+            for item in lines(directory / "events.jsonl")
+        ]
+        (directory / "events.jsonl").write_text("".join(json.dumps(item) + "\n" for item in old))
+
+        again = make_chat(tmp_path)
+
+        with pytest.raises(ValueError, match="before messages could be replaced"):
+            again.send("Again", replace_last=True)
+        assert again.messages == chat.messages and again.state == "idle"
+
+    def test_it_waits_for_the_lead_like_any_message(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [text_response("One.")]
+        chat = make_chat(tmp_path)
+        chat.send("First")
+        release = threading.Event()
+        chat.on_event = lambda event: release.wait(10) if event.kind == "usage" else None
+        fake_client.completions.responses = [text_response("Two.")]
+        thread = chat.start("Second")
+
+        with pytest.raises(ChatBusyError):
+            chat.send("Third", replace_last=True)
+        release.set()
+        thread.join(timeout=20)
+
+        assert [message["content"] for message in chat.messages] == ["First", "One.", "Second", "Two."]
+
+
 class TestFailures:
     def test_a_failed_turn_is_told_of_and_the_conversation_goes_on(
         self, fake_client: FakeClient, tmp_path: Path

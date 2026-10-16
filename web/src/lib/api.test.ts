@@ -56,6 +56,15 @@ describe("the API", () => {
     expect(options.body).toBe(JSON.stringify({ text: "Look at these", attachments: ["data.csv", "data (2).csv"] }));
   });
 
+  it("asks for a message to take the place of the last one only when it is meant to", async () => {
+    const fetch = stub(answer({ turn: 1, state: "running" }, 202));
+
+    await api.send("a", "Again", ["data.csv"], true);
+
+    const [, options] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(options.body).toBe(JSON.stringify({ text: "Again", attachments: ["data.csv"], replace_last: true }));
+  });
+
   it("steers a turn with a note, a pause, a resume, or a stop, and says whether it was taken", async () => {
     // A response can be read once, so each request is given its own
     const fetch = vi.fn(async () => answer({ accepted: true }));

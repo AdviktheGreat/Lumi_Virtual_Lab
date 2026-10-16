@@ -51,7 +51,8 @@ and everything else is a request and an answer.
     DELETE /api/mcp/servers/{name}/sign-in   forget the sign-in to it, so that the next conversation asks for one
     GET    /api/chats, POST             the conversations, and a new one
     GET    /api/chats/{id}              one conversation, which PATCH renames and DELETE removes
-    POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background
+    POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background, and
+                                        which with replace_last takes the place of the last one
     POST   /api/chats/{id}/note         a note for the lead or the team, which they read as they work
     POST   /api/chats/{id}/pause        also resume and stop, steering the turn that is running
     POST   /api/chats/{id}/approvals/{request}   allow or decline a call that waits for it, which the events tell of
@@ -331,6 +332,7 @@ class RenameBody(RequestModel):
 class MessageBody(RequestModel):
     text: str = Field("", max_length=MAX_MESSAGE_CHARS)
     attachments: list[str] = Field(default_factory=list, max_length=100)
+    replace_last: bool = False
 
 
 class NoteBody(RequestModel):
@@ -1039,7 +1041,7 @@ def create_app(
     def send_message(chat_id: str, body: MessageBody) -> dict[str, Any]:
         handle = conversations.ready(chat_id)
         try:
-            handle.chat.start(body.text, body.attachments)
+            handle.chat.start(body.text, body.attachments, body.replace_last)
         except ChatBusyError as error:
             raise ApiError(409, "busy", str(error)) from error
         except ChatClosedError as error:

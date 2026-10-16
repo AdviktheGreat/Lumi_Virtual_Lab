@@ -934,31 +934,39 @@ class Chat:
 
     # Sending a message
 
-    def send(self, message: str, attachments: Iterable[Attachment | str] = ()) -> ChatReply:
+    def send(
+        self, message: str, attachments: Iterable[Attachment | str] = (), replace_last: bool = False
+    ) -> ChatReply:
         """Sends the lead a message, and waits for its answer.
 
         :param message: What the researcher says.
         :param attachments: Files attached with save_upload, as it returned them or by name.
+        :param replace_last: Whether this takes the place of the last message, to send it again or changed. That
+            message, and all that came of it, is taken out of the conversation first, so that the lead
+            is not told of it. What it did to the session and to the files of the lab is not undone.
         :raises ChatBusyError: If the last message is still being answered.
         :raises ChatClosedError: If the conversation was closed.
-        :raises ValueError: If there is no message and no file, or a file was not attached.
+        :raises ValueError: If there is no message and no file, or a file was not attached, or there is no
+            message to replace, or the last one was sent before messages could be replaced.
         :return: How the turn ended. A turn that failed is reported in the reply, and told of as an
             event, rather than raised.
         """
-        text, files = self._begin(message, attachments)
+        text, files = self._begin(message, attachments, replace_last)
 
         return self._run_turn(text, files)
 
-    def start(self, message: str, attachments: Iterable[Attachment | str] = ()) -> threading.Thread:
+    def start(
+        self, message: str, attachments: Iterable[Attachment | str] = (), replace_last: bool = False
+    ) -> threading.Thread:
         """Sends the lead a message as send does, but answers in a thread of its own, followed through
         the events, and the last_reply once it has ended. The message is told of before this returns.
 
         :raises ChatBusyError: If the last message is still being answered.
         :raises ChatClosedError: If the conversation was closed.
-        :raises ValueError: If there is no message and no file, or a file was not attached.
+        :raises ValueError: As send says.
         :return: The thread, started.
         """
-        text, files = self._begin(message, attachments)
+        text, files = self._begin(message, attachments, replace_last)
 
         thread = threading.Thread(
             target=self._run_turn, args=(text, files), name=f"virtual-lab-chat-{self.id}", daemon=True
@@ -972,7 +980,9 @@ class Chat:
 
         return thread
 
-    def _begin(self, message: str, attachments: Iterable[Attachment | str]) -> tuple[str, list[Attachment]]:
+    def _begin(
+        self, message: str, attachments: Iterable[Attachment | str], replace_last: bool = False
+    ) -> tuple[str, list[Attachment]]:
         """Takes the conversation for a turn, and tells of the message that begins it."""
         text = message.strip()
         files = self._attachments(attachments)
@@ -984,7 +994,9 @@ class Chat:
                 raise ChatClosedError("This conversation was closed")
             if self._state != "idle":
                 raise ChatBusyError("The lead is still answering the last message")
+            withdrawn = self._withdraw_last_turn() if replace_last else None
             self._turn += 1
+            sent_after = len(self._messages)
             self._paused = False
             self._stopping = False
             self._notes = []
@@ -994,7 +1006,15 @@ class Chat:
         self._tell_state(told)
 
         try:
-            self._emit("user", speaker=HUMAN_SPEAKER, text=text, attachments=[file.to_dict() for file in files])
+            if withdrawn is not None:
+                self._emit("withdrawn", turn=withdrawn)
+            self._emit(
+                "user",
+                speaker=HUMAN_SPEAKER,
+                text=text,
+                attachments=[file.to_dict() for file in files],
+                messages_before=sent_after,
+            )
             if not self.title:
                 self.rename(title_of(text, files))
         except BaseException:
@@ -1002,6 +1022,47 @@ class Chat:
             raise
 
         return text, files
+
+    def _withdraw_last_turn(self) -> int:
+        """Takes the last message, and all that came of it, out of the conversation and its saved files, with
+        self._changed held, so that the turn can begin again.
+
+        :raises ValueError: If there is no message, or it was saved without where the conversation was cut back to.
+        :return: The turn it began.
+        """
+        at = next((i for i in range(len(self._events) - 1, -1, -1) if self._events[i].kind == "user"), None)
+        if at is None:
+            raise ValueError("There is no message to replace")
+        first = self._events[at]
+        before = first.data.get("messages_before")
+        if not is_count(before) or before > len(self._messages):
+            raise ValueError("The last message was sent before messages could be replaced, and cannot be")
+
+        events = self._events[:at]
+        messages = self._messages[:before]
+        # Written before anything is changed, so that a file that cannot be written leaves the conversation as it was
+        write_atomically(
+            self.save_dir / CHAT_EVENTS_FILE_NAME,
+            "".join(json_line(event.to_dict()) for event in events).encode("utf-8"),
+        )
+        write_atomically(
+            self.save_dir / CHAT_MESSAGES_FILE_NAME, "".join(json_line(message) for message in messages).encode("utf-8")
+        )
+
+        # A title that came from this message is not one for what replaces it
+        files = [
+            Attachment(str(file.get("name", "")), "", 0)
+            for file in first.data.get("attachments") or []
+            if isinstance(file, dict)
+        ]
+        if self.title == title_of(first.text, files) and not any(event.kind == "user" for event in events):
+            self.title = ""
+        self._events = events
+        self._messages = messages
+        self._turn = first.turn - 1
+        self._live.clear()
+
+        return first.turn
 
     def _end_turn(self) -> None:
         with self._changed:
