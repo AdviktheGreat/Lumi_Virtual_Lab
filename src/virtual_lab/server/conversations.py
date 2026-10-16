@@ -25,6 +25,7 @@ from virtual_lab.chat import Chat, is_count
 from virtual_lab.constants import CHAT_FILE_NAME, CHAT_UPLOADS_DIR_NAME, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
 from virtual_lab.events import ChatEvent
 from virtual_lab.llm import ModelSource
+from virtual_lab.mcp_tools import tool_prefix
 from virtual_lab.server.asking import Asker
 from virtual_lab.server.config import ChatConfig, load_config, resolve_config, save_config
 from virtual_lab.server.connections import Connections
@@ -405,12 +406,18 @@ class Conversations:
         chat_models = MissingKeysModel(needs=tuple(self.missing_keys(config))) if keyless else self.chat_models
         available = conversation_tools(directory, session.directory if session is not None else None)
         chosen = tuple(available[name] for name in config.tools if name in available)
-        # What the person had it write from papers, which runs where the code does, and so only where there is some
-        written = function_tools(self.workspace, config.functions, session, {tool.name for tool in chosen})
         # Those still set up and on, and not those it was begun with that have been turned off since, which may be why
         # it is being opened again
         stored = self.workspace.load_mcp_servers()
         servers = {name: stored[name] for name in config.mcp if name in stored and is_on(stored[name])}
+        # What the person had it write from papers, which runs where the code does, and so only where there is some
+        written = function_tools(
+            self.workspace,
+            config.functions,
+            session,
+            {tool.name for tool in chosen},
+            [f"{tool_prefix(name)}_" for name in servers],
+        )
         if servers and not keyless:
             asker = Asker(handle.tell, handle.stopping, lambda name: server_title(name, servers.get(name)))
             handle.connections = Connections(servers, handle.tell, handle.stopping, asker)

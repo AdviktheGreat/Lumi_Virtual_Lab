@@ -464,6 +464,17 @@ class TestFunctionsInConversations:
         pubmed = next(tool for tool in handle.chat.tools if tool.name == "pubmed_search")
         assert "Counts the reads" not in pubmed.description
 
+    def test_a_name_that_an_mcp_servers_tools_may_have_is_not_given_so_that_they_can_be_added_later(
+        self, workspace: Workspace, conversations: Conversations
+    ) -> None:
+        saved(workspace, "run-a", "genes_lookup")
+        saved(workspace, "run-a", "count_reads")
+        workspace.put_mcp_server("genes", {"command": "genes-server"})
+
+        names = self.names(conversations, self.local(functions=["run-a"], mcp=["genes"]))
+
+        assert "count_reads" in names and "genes_lookup" not in names
+
     def test_a_function_that_has_gone_or_was_changed_into_nonsense_does_not_stop_the_conversation(
         self, workspace: Workspace, conversations: Conversations
     ) -> None:

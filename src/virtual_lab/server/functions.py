@@ -50,7 +50,11 @@ def check_function_runs(names: object, workspace: Workspace) -> list[str]:
 
 
 def function_tools(
-    workspace: Workspace, runs: Iterable[str], session: Session | None, taken: Collection[str] = ()
+    workspace: Workspace,
+    runs: Iterable[str],
+    session: Session | None,
+    taken: Collection[str] = (),
+    prefixes: Collection[str] = (),
 ) -> tuple[Tool, ...]:
     """The functions of these runs, each as a tool that runs in the session.
 
@@ -59,6 +63,8 @@ def function_tools(
     of two runs with a function of one name, the first is given.
 
     :param taken: The names of the tools the conversation has already.
+    :param prefixes: What the names of the tools it is yet to be given start with, which are those of its MCP servers'
+        tools, and which no function is named from, since they are not known until the servers are connected to.
     """
     if session is None:
         return ()
@@ -69,7 +75,7 @@ def function_tools(
         if not RUN_ID.fullmatch(run) or not is_lab(read_json(directory / LAB_FILE)):
             continue
         for function in usable_functions(directory):
-            if function.name in names:
+            if function.name in names or function.name.startswith(tuple(prefixes)):
                 continue
             path = function_path(Path(directory / FUNCTIONS_DIR), function.name)
             try:
