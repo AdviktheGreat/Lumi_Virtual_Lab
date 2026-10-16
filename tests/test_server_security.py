@@ -1,6 +1,7 @@
 """Tests that the server turns away whoever is not the person who started it."""
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,7 +11,16 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from virtual_lab.server.security import LOCAL_HOSTS, TOKEN_COOKIE, Guard, host_name, new_token
+from virtual_lab.server.security import (
+    LOCAL_HOSTS,
+    TOKEN_COOKIE,
+    Guard,
+    host_name,
+    inline_script_sources,
+    new_token,
+    page_policy,
+    policy_of_file,
+)
 
 TOKEN = "a-token-only-the-owner-has"
 BASE = "http://localhost:8000"
@@ -74,11 +84,43 @@ class TestHost:
             ("[::1]:8000", "[::1]"),
             ("[::1]", "[::1]"),
             ("[FE80::1]:8000", "[fe80::1]"),
+            ("localhost:", "localhost"),
+            ("lab.example:65535", "lab.example"),
             ("", ""),
         ],
     )
     def test_the_name_in_a_host_header_is_what_comes_before_its_port(self, header: str, name: str) -> None:
         assert host_name(header) == name
+
+    @pytest.mark.parametrize(
+        "header",
+        [
+            "localhost:8000@evil.example",
+            "evil.example@localhost",
+            "localhost:8000 evil.example",
+            " localhost",
+            "localhost\t",
+            "localhost:abc",
+            "localhost:123456",
+            "localhost:80:80",
+            "localhost/path",
+            "localhost?x",
+            "localhost#x",
+            "localhost\\evil.example",
+            "[::1]x",
+            "[::1",
+            "[::1]:80:80",
+            "[evil.example]",
+            "[]",
+        ],
+    )
+    def test_a_header_that_is_not_a_name_with_a_port_names_nothing(self, header: str) -> None:
+        assert host_name(header) == ""
+
+        sent = ask_guard(refuse_to_be_reached, "/api/things", headers=((b"host", header.encode()),))
+
+        assert sent[0]["status"] == 403
+        assert b"forbidden_host" in sent[1]["body"]
 
     @pytest.mark.parametrize("base_url", ["http://localhost:8000", "http://127.0.0.1:1234", "http://[::1]:8000"])
     def test_this_machine_may_reach_the_server_by_any_of_its_names(self, base_url: str) -> None:
@@ -277,6 +319,79 @@ class TestToken:
 
         assert len(tokens) == 20
         assert all(len(token) >= 32 for token in tokens)
+
+
+ALERT = "'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI='"
+TWO_LINES = "'sha256-fhj3NzEbLcOy8mndeDlrA1HxT7Zu+oefdoyyMYGIPHg='"
+
+
+class TestPagePolicy:
+    def test_a_script_written_into_a_page_is_named_by_its_hash(self) -> None:
+        assert inline_script_sources("<html><script>alert(1)</script></html>") == [ALERT]
+
+    def test_a_script_in_a_file_is_named_by_nothing(self) -> None:
+        page = '<script src="/a.js"></script><script async SRC = "/b.js">ignored()</script><script src=/c.js></script>'
+
+        assert inline_script_sources(page) == []
+
+    def test_a_script_that_only_has_an_attribute_that_ends_in_src_is_in_the_page(self) -> None:
+        assert inline_script_sources('<script data-src="x" type="module">alert(1)</script>') == [ALERT]
+
+    def test_an_empty_script_needs_nothing(self) -> None:
+        assert inline_script_sources("<script></script><script>alert(1)</script>") == [ALERT]
+
+    def test_a_script_is_found_whatever_the_case_of_its_tags(self) -> None:
+        assert inline_script_sources("<SCRIPT>alert(1)</SCRIPT >") == [ALERT]
+
+    def test_a_script_that_is_more_than_once_in_a_page_is_named_once(self) -> None:
+        assert inline_script_sources("<script>alert(1)</script><p></p><script>alert(1)</script>") == [ALERT]
+
+    def test_scripts_are_named_in_order_of_their_hashes(self) -> None:
+        assert inline_script_sources("<script>a\nb</script><script>alert(1)</script>") == [ALERT, TWO_LINES]
+
+    def test_a_line_break_is_the_newline_a_browser_hashes_whatever_it_was_saved_as(self) -> None:
+        assert inline_script_sources("<script>a\r\nb</script>") == [TWO_LINES]
+        assert inline_script_sources("<script>a\rb</script>") == [TWO_LINES]
+
+    def test_a_script_is_what_is_between_the_tags_exactly(self) -> None:
+        assert inline_script_sources("<script>alert(1) </script>") != [ALERT]
+        assert inline_script_sources("<script>\nalert(1)</script>") != [ALERT]
+
+    def test_a_page_may_run_its_own_files_and_its_own_scripts_and_nothing_else(self) -> None:
+        policy = page_policy("<script>alert(1)</script>")
+
+        directives = dict(part.split(" ", 1) for part in policy.split("; "))
+        assert directives["default-src"] == "'self'"
+        assert directives["script-src"] == f"'self' {ALERT}"
+        assert directives["style-src"] == "'self' 'unsafe-inline'"
+        assert directives["object-src"] == "'none'"
+        assert directives["base-uri"] == "'none'"
+        assert directives["form-action"] == "'self'"
+        assert directives["frame-ancestors"] == "'none'"
+        assert "unsafe-eval" not in policy and "script-src 'self' 'unsafe-inline'" not in policy
+
+    def test_a_page_with_no_script_of_its_own_runs_only_its_files(self) -> None:
+        assert "script-src 'self';" in page_policy("<p>No script</p>")
+
+    def test_the_policy_of_a_file_is_kept_until_the_file_changes(self, tmp_path: Path) -> None:
+        page = tmp_path / "page.html"
+        page.write_text("<script>alert(1)</script>")
+        policy_of_file.cache_clear()
+
+        first = policy_of_file(str(page), page.stat().st_mtime_ns, page.stat().st_size)
+        again = policy_of_file(str(page), page.stat().st_mtime_ns, page.stat().st_size)
+        assert again == first and ALERT in first
+        assert policy_of_file.cache_info().hits == 1
+
+        page.write_text("<script>a\nb</script>")
+        changed = policy_of_file(str(page), page.stat().st_mtime_ns, page.stat().st_size)
+        assert TWO_LINES in changed and ALERT not in changed
+
+    def test_a_page_that_is_not_text_is_read_for_what_can_be(self, tmp_path: Path) -> None:
+        page = tmp_path / "page.html"
+        page.write_bytes(b"<script>alert(1)</script>\xff\xfe")
+
+        assert ALERT in policy_of_file(str(page), 1, 2)
 
 
 class TestHeaders:

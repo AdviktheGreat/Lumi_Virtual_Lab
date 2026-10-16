@@ -44,10 +44,22 @@ export async function answered(page: Page, text: string | RegExp, timeout = 10_0
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible({ timeout });
 }
 
+// What the browser says it refused a page, by the policy the server gives the pages, which a test of any page then
+// must find none of: a page that is too much for the policy is a page that does not work
+export const refusals = new WeakMap<Page, string[]>();
+
 export const test = base.extend({
   page: async ({ page }, provide) => {
+    const refused: string[] = [];
+    refusals.set(page, refused);
+    page.on("console", (message) => {
+      if (message.text().includes("Content Security Policy")) refused.push(message.text());
+    });
+
     await signIn(page);
     await provide(page);
+
+    expect(refused).toEqual([]);
   },
 });
 

@@ -2072,6 +2072,60 @@ class TestPages:
         assert site.get("/index.html").text == "<html>home</html>"
         assert site.get("/_next/static/app.js").text == "console.log(1)"
 
+    def test_a_page_may_run_its_own_files_and_its_own_scripts_and_nothing_else(
+        self, site: TestClient, pages: Path
+    ) -> None:
+        (pages / "scripted.html").write_text("<html><script>alert(1)</script></html>")
+
+        for path in ("/", "/settings", "/chat", "/index.html", "/history", "/scripted"):
+            policy = site.get(path).headers["content-security-policy"]
+            assert "default-src 'self'" in policy and "frame-ancestors 'none'" in policy, path
+        scripts = site.get("/scripted").headers["content-security-policy"]
+        assert "script-src 'self' 'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI='" in scripts
+        assert "script-src 'self';" in site.get("/settings").headers["content-security-policy"]
+        assert site.head("/scripted").headers["content-security-policy"] == scripts
+
+    def test_a_script_added_to_a_page_that_was_served_is_named_the_next_time(
+        self, site: TestClient, pages: Path
+    ) -> None:
+        assert "sha256" not in site.get("/settings").headers["content-security-policy"]
+
+        (pages / "settings.html").write_text("<html><script>alert(1)</script> and more</html>")
+
+        assert "sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI=" in site.get("/settings").headers[
+            "content-security-policy"
+        ]
+
+    def test_a_script_changed_to_one_of_the_same_length_is_named_the_next_time(
+        self, site: TestClient, pages: Path
+    ) -> None:
+        page = pages / "settings.html"
+        page.write_text("<script>run(1)</script>")
+        os.utime(page, ns=(1_000_000_000, 1_000_000_000))
+        first = site.get("/settings").headers["content-security-policy"]
+
+        page.write_text("<script>run(2)</script>")
+        os.utime(page, ns=(2_000_000_000, 2_000_000_000))
+
+        assert site.get("/settings").headers["content-security-policy"] != first
+
+    def test_a_script_changed_to_one_of_another_length_in_the_same_second_is_named_the_next_time(
+        self, site: TestClient, pages: Path
+    ) -> None:
+        page = pages / "settings.html"
+        page.write_text("<script>run(1)</script>")
+        os.utime(page, ns=(1_000_000_000, 1_000_000_000))
+        first = site.get("/settings").headers["content-security-policy"]
+
+        page.write_text("<script>run(10)</script>")
+        os.utime(page, ns=(1_000_000_000, 1_000_000_000))
+
+        assert site.get("/settings").headers["content-security-policy"] != first
+
+    def test_only_a_page_has_a_policy_for_pages(self, site: TestClient) -> None:
+        assert "content-security-policy" not in site.get("/_next/static/app.js").headers
+        assert "content-security-policy" not in site.get("/api/health").headers
+
     def test_a_page_is_asked_for_by_head_as_well_as_by_get(self, site: TestClient) -> None:
         for path in ("/", "/chat", "/_next/static/app.js", "/chat/2026-10-07_1500_what-is-a-nanobody"):
             head = site.head(path)

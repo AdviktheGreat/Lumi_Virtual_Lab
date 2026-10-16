@@ -9,10 +9,18 @@ page open in the same browser can send it requests. So:
   server's own. A page at another address is turned away, whatever it holds.
 - The API wants the token the server was started with, in the cookie the link the server prints sets, or
   as a bearer token. The cookie is SameSite=Strict, so it is not sent for a page at another address either.
+- A page of the interface may run only the scripts that are in the files of the interface, and the few that
+  are written into the page itself, which it names by their hashes. Whatever else gets into a page, such as
+  something a model wrote, cannot run, and what runs cannot send anything to another address.
 """
 
+import base64
+import hashlib
+import re
 import secrets
 from collections.abc import Collection
+from functools import lru_cache
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from starlette.datastructures import Headers
@@ -27,6 +35,10 @@ TOKEN_PARAMETER = "token"
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 
+# A Host header is a name or an address, in brackets if it is IPv6, and a port, which may be left out. Nothing else
+# is one, whatever comes before a port: "localhost:8000@evil.example" and "localhost:8000 evil" are not "localhost".
+HOST_HEADER = re.compile(r"(?P<name>\[[0-9a-fA-F:.]+\]|[^\s:@/\\?#\[\]]+)(?::\d{0,5})?")
+
 # Requests that only look at things, which need no check of where they come from
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -40,11 +52,52 @@ def new_token() -> str:
 
 
 def host_name(host: str) -> str:
-    """A Host header without its port: "localhost:8000" is "localhost", "[::1]:8000" is "[::1]"."""
-    if host.startswith("["):
-        return host[: host.find("]") + 1].lower()
+    """A Host header without its port: "localhost:8000" is "localhost", "[::1]:8000" is "[::1]".
 
-    return host.rsplit(":", 1)[0].lower()
+    A header that is not a name with a port at most is nothing: "".
+    """
+    found = HOST_HEADER.fullmatch(host)
+
+    return found["name"].lower() if found else ""
+
+
+INLINE_SCRIPT = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
+
+
+def inline_script_sources(page: str) -> list[str]:
+    """What a Content-Security-Policy calls each script written into a page, as against one in a file: its hash."""
+    # The browser reads a line break in a page as a newline, whatever it was saved as, and hashes it so
+    page = page.replace("\r\n", "\n").replace("\r", "\n")
+    sources = set()
+    for attributes, script in INLINE_SCRIPT.findall(page):
+        if script and not re.search(r"(?<![\w-])src\s*=", attributes, re.IGNORECASE):
+            sources.add(f"'sha256-{base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()}'")
+
+    return sorted(sources)
+
+
+def page_policy(page: str) -> str:
+    """The Content-Security-Policy for a page of the interface: its own files, its own scripts, and nothing from
+    anywhere else, in a frame, or as a base for its addresses. Styles may be written into the page, since the
+    components it is made of do so."""
+    scripts = " ".join(["'self'", *inline_script_sources(page)])
+    directives = [
+        "default-src 'self'",
+        f"script-src {scripts}",
+        "style-src 'self' 'unsafe-inline'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+
+    return "; ".join(directives)
+
+
+@lru_cache(maxsize=64)
+def policy_of_file(path: str, modified: int, size: int) -> str:
+    """page_policy of a file, kept until the file is changed, which its time and size say."""
+    return page_policy(Path(path).read_text(encoding="utf-8", errors="replace"))
 
 
 class Guard:
