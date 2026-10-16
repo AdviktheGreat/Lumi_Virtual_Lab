@@ -223,6 +223,12 @@ class TestLibrary:
         assert len(set(models)) == len(models)
         assert TEST_MODEL in models
 
+    def test_the_newest_families_are_listed_before_the_older_ones(self) -> None:
+        models = library.models()
+
+        assert models.index("gpt-6-astra") < models.index("gpt-5.5") < models.index("claude-opus-5-5")
+        assert models.index("claude-opus-5-5") < models.index("gemini-4-argon") < models.index("gpt-4.1")
+
     def test_a_provider_is_ready_once_its_variables_are_set_and_no_value_is_read_out(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

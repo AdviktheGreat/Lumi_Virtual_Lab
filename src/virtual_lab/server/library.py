@@ -43,7 +43,7 @@ def models() -> list[str]:
     return list(dict.fromkeys([DEFAULT_MODEL, *sorted(MODEL_TO_INPUT_PRICE_PER_TOKEN, key=model_order)]))
 
 
-MODEL_FAMILIES = ("gpt-5", "claude-", "gemini-", "gpt-4", "o")
+MODEL_FAMILIES = ("gpt-6", "gpt-5", "claude-", "gemini-", "gpt-4", "o")
 
 
 def model_order(model: str) -> tuple[int, str]:
