@@ -10,6 +10,8 @@ one workspace directory.
         own_data/                                        the files the person uploaded, which own.json describes
         chats/2026-10-07_1500_what-is-a-nanobody/        a conversation with the head of a lab, as Chat saves it
         data_lake/                                       Biomni's data lake, unless the settings keep it elsewhere
+        papers/                                          the runs that read papers, each in a directory of its own
+        benchmarks/                                      Biomni's benchmark files, and each run that answers them
 
 A conversation is shown from the files it was saved in.
 """
@@ -50,6 +52,9 @@ OWN_DATA_DIR_NAME = "own_data"
 
 # What the lab was asked to read of papers, a directory for each run
 PAPERS_DIR_NAME = "papers"
+
+# What the lab was asked to answer of Biomni's benchmarks: the files they were fetched into, and each run
+BENCHMARKS_DIR_NAME = "benchmarks"
 
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
@@ -153,6 +158,24 @@ def slug(text: str) -> str:
         name = f"{name}-{word}" if name else word
 
     return name or "untitled"
+
+
+def claim_directory(root: Path, name: str) -> Path:
+    """Makes a directory in root named for text: its slug, and a number if that is taken.
+
+    It is made, not looked for first, so that of two requests that begin at once with one name, one makes it and the
+    other takes the next.
+    """
+    base = slug(name)
+    number = 1
+    while True:
+        directory = root / (base if number == 1 else f"{base}-{number}")
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            number += 1
+        else:
+            return directory
 
 
 def read_json(path: Path) -> Any:
@@ -291,6 +314,11 @@ class Workspace:
     def papers_dir(self) -> Path:
         """Where the runs that read papers are kept, each in a directory of its own."""
         return self.root / PAPERS_DIR_NAME
+
+    @property
+    def benchmarks_dir(self) -> Path:
+        """Where Biomni's benchmark files are kept, in files/, and the runs that answer them, each in runs/."""
+        return self.root / BENCHMARKS_DIR_NAME
 
     @property
     def own_path(self) -> Path:

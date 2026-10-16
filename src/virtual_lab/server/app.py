@@ -32,6 +32,12 @@ and everything else is a request and an answer.
     POST   /api/papers/runs/{id}/functions   write functions for the tasks the papers share, as a job
     GET    /api/papers/runs/{id}/functions/{name}   one function, with its code; DELETE takes it away
     PATCH  /api/papers/runs/{id}        whether its functions are given to the conversations that are made from now on
+    GET    /api/benchmarks              the runs that answer Biomni's benchmarks, and whether their files are there
+    POST   /api/benchmarks/files        fetch the benchmarks' files
+    POST   /api/benchmarks/runs         a run: a benchmark, put to the lead alone or to the team
+    GET    /api/benchmarks/runs/{id}    one run, with how each question was answered; DELETE deletes it
+    POST   /api/benchmarks/runs/{id}/start   answer its questions, as a job, with the most it may spend
+    GET    /api/benchmarks/runs/{id}/questions/{task}/{number}   one question, with its answer and what was said
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
@@ -76,6 +82,7 @@ from virtual_lab.export import PDFExportError, make_pdf
 from virtual_lab.export_chat import chat_html
 from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.server.asking import not_waiting
+from virtual_lab.server.benchmarks import BenchmarkRuns
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.errors import ApiError, file_error, not_found
@@ -242,6 +249,27 @@ class PapersFunctionsBody(RequestModel):
 
 class PapersGiveBody(RequestModel):
     given: StrictBool
+
+
+class BenchmarkRunBody(RequestModel):
+    """A run of a benchmark. Which options are asked for depends on the benchmark, and the server says which."""
+
+    title: str = Field(max_length=MAX_TITLE_CHARS * 4)
+    benchmark: str = Field(max_length=100)
+    solver: str = Field("single", max_length=100)
+    rounds: StrictInt | None = None
+    limit: StrictInt | None = None
+    tasks: list[str] | None = Field(None, max_length=100)
+    subset: str | None = Field(None, max_length=100)
+    leave_out_images: StrictBool | None = None
+
+
+class BenchmarkStartBody(RequestModel):
+    """How much answering a run's questions may cost, which is always said, and whether to ask the failed ones again."""
+
+    max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
+    max_cost_per_question: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+    retry_failed: StrictBool = False
 
 
 class McpServerBody(RequestModel):
@@ -421,6 +449,14 @@ def create_app(
         chat_models=chat_models,
         docker_missing=setup.missing_for if check_setup else None,
     )
+    benchmarks = BenchmarkRuns(
+        store,
+        setup.jobs,
+        conversations.missing_keys_for,
+        client=client,
+        chat_models=chat_models,
+        docker_missing=setup.missing_for if check_setup else None,
+    )
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -443,6 +479,7 @@ def create_app(
     app.state.conversations = conversations
     app.state.setup = setup
     app.state.workspace = store
+    app.state.benchmarks = benchmarks
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
@@ -785,6 +822,41 @@ def create_app(
     @api.get("/papers/runs/{run_id}/tables/{kind}")
     def paper_table(run_id: str, kind: str) -> FileResponse:
         return file_response(papers.summary_file(run_id, kind), download=True)
+
+    @api.get("/benchmarks")
+    def get_benchmarks() -> dict[str, Any]:
+        return benchmarks.describe()
+
+    @api.post("/benchmarks/files")
+    def fetch_benchmark_files() -> dict[str, Any]:
+        return benchmarks.fetch_files()
+
+    @api.post("/benchmarks/runs", status_code=201)
+    def make_benchmark_run(body: BenchmarkRunBody) -> dict[str, Any]:
+        options = body.model_dump(include={"tasks", "subset", "leave_out_images"}, exclude_none=True)
+        run_id = benchmarks.create(body.title, body.benchmark, body.solver, body.rounds, body.limit, options)
+
+        return benchmarks.view(run_id)
+
+    @api.get("/benchmarks/runs/{run_id}")
+    def get_benchmark_run(run_id: str) -> dict[str, Any]:
+        return benchmarks.view(run_id)
+
+    @api.delete("/benchmarks/runs/{run_id}")
+    def delete_benchmark_run(run_id: str) -> dict[str, Any]:
+        benchmarks.delete(run_id)
+
+        return benchmarks.describe()
+
+    @api.post("/benchmarks/runs/{run_id}/start", status_code=202)
+    def start_benchmark_run(run_id: str, body: BenchmarkStartBody) -> dict[str, Any]:
+        job = benchmarks.start(run_id, body.max_cost, body.max_cost_per_question, body.retry_failed)
+
+        return job.snapshot(0)
+
+    @api.get("/benchmarks/runs/{run_id}/questions/{task}/{number}")
+    def get_benchmark_question(run_id: str, task: str, number: str) -> dict[str, Any]:
+        return benchmarks.question(run_id, task, number)
 
     @api.get("/mcp")
     def get_mcp() -> dict[str, Any]:

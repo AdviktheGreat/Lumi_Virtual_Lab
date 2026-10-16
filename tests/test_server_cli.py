@@ -439,6 +439,8 @@ class TestInstalling:
         assert {requirement.split(">=")[0] for requirement in project["optional-dependencies"]["server"]} == {
             "fastapi",
             "keyring",
+            "numpy",
+            "pyarrow",
             "uvicorn",
         }
         assert any("server" in requirement for requirement in project["optional-dependencies"]["dev"])

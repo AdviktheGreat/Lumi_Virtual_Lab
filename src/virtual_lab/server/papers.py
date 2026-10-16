@@ -56,7 +56,7 @@ from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server.code import CodeSetup
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
-from virtual_lab.server.workspace import Workspace, has_control_character, read_json, slug
+from virtual_lab.server.workspace import Workspace, claim_directory, has_control_character, read_json
 from virtual_lab.utils import CostUnknownError, compute_token_cost, write_atomically
 
 # What a run is, kept beside what the library saves of it, and where the papers uploaded to it are
@@ -249,6 +249,26 @@ def check_count(value: Any, what: str, least: int, most: int) -> int:
     return value
 
 
+def check_model(model: str, missing_keys: Callable[[str], list[str]]) -> str:
+    """A model, if what is done with it can be paid for and its spending limited.
+
+    :raises ApiError: If a key it needs is not set, or its price is not known.
+    """
+    if missing := missing_keys(model):
+        raise ApiError(
+            422,
+            "missing_keys",
+            f"{model} needs {', '.join(missing)}, which is not set. Add it in the settings.",
+            missing=missing,
+        )
+    try:
+        compute_token_cost(model, 0, 0)
+    except CostUnknownError as error:
+        raise ApiError(422, "unavailable", f"{error}, so a limit on spending cannot be kept") from error
+
+    return model
+
+
 def is_lab(value: Any) -> bool:
     """Whether what a run's file holds is a run's: a title, where its papers come from, when it was made, and, if it
     says, whether its functions are given to conversations."""
@@ -401,18 +421,7 @@ class Papers:
         if sum(1 for path in root.iterdir() if path.is_dir()) >= MAX_RUNS:
             raise ApiError(409, "too_many", f"No more than {MAX_RUNS} runs can be kept. Delete some first")
 
-        base = slug(named)
-        number = 1
-        while True:
-            # Made, not looked for first: of two requests that begin at once with one name, one makes it and the
-            # other takes the next
-            directory = root / (base if number == 1 else f"{base}-{number}")
-            try:
-                directory.mkdir()
-            except FileExistsError:
-                number += 1
-            else:
-                break
+        directory = claim_directory(root, named)
         try:
             lab = {"title": named, "source": kept, "created_at": utc_timestamp()}
             write_atomically(directory / LAB_FILE, json.dumps(lab, indent=4).encode("utf-8"))
@@ -638,20 +647,7 @@ class Papers:
 
         :raises ApiError: If a key it needs is not set, or its price is not known.
         """
-        model = self.workspace.load_settings().model
-        if missing := self.missing_keys(model):
-            raise ApiError(
-                422,
-                "missing_keys",
-                f"{model} needs {', '.join(missing)}, which is not set. Add it in the settings.",
-                missing=missing,
-            )
-        try:
-            compute_token_cost(model, 0, 0)
-        except CostUnknownError as error:
-            raise ApiError(422, "unavailable", f"{error}, so a limit on spending cannot be kept") from error
-
-        return model
+        return check_model(self.workspace.load_settings().model, self.missing_keys)
 
     def reader(
         self,
