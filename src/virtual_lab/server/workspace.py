@@ -6,6 +6,8 @@ one workspace directory.
         scientists.json                                  the scientists the person described
         tools.json                                       which of the library's tools a new conversation is not given
         mcp.json                                         the MCP servers the person set up, each as a config gives it
+        own.json                                         the data and software the person gave every conversation
+        own_data/                                        the files the person uploaded, which own.json describes
         chats/2026-10-07_1500_what-is-a-nanobody/        a conversation with the head of a lab, as Chat saves it
         data_lake/                                       Biomni's data lake, unless the settings keep it elsewhere
 
@@ -41,6 +43,10 @@ TOOLS_FILE_NAME = "tools.json"
 
 # The MCP servers the person set up, by name, each as a config gives it
 MCP_FILE_NAME = "mcp.json"
+
+# The data and software the person gave the lab to use in every conversation, and where the files they uploaded are kept
+OWN_FILE_NAME = "own.json"
+OWN_DATA_DIR_NAME = "own_data"
 
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
@@ -146,6 +152,8 @@ class Workspace:
         self.chats_dir.mkdir(parents=True, exist_ok=True)
         # Held while the MCP servers are read, changed, and written back, so that two changes do not undo each other
         self._mcp_lock = threading.Lock()
+        # Likewise for the data and software the person gave
+        self._own_lock = threading.Lock()
 
     @property
     def chats_dir(self) -> Path:
@@ -257,6 +265,48 @@ class Workspace:
             write_atomically(self.mcp_path, json.dumps({"servers": servers}, indent=4).encode("utf-8"))
 
         return True
+
+    @property
+    def own_path(self) -> Path:
+        return self.root / OWN_FILE_NAME
+
+    @property
+    def own_data_dir(self) -> Path:
+        """Where the files the person uploaded are kept, each under the name code finds it by."""
+        return self.root / OWN_DATA_DIR_NAME
+
+    def load_own(self) -> dict[str, dict[str, Any]]:
+        """What the person gave the lab, as {"data": {name: {"description": ..., "path": ...}}, "software": {name:
+        description}}. A piece of data has a path if it is somewhere else on this machine, and has none if it was
+        uploaded, and so is in own_data. What a file edited by hand holds that is not of this kind is left out."""
+        data = read_json(self.own_path)
+        if not isinstance(data, dict):
+            data = {}
+        kept_data: dict[str, dict[str, Any]] = {}
+        entries = data.get("data")
+        for name, entry in (entries if isinstance(entries, dict) else {}).items():
+            if not (isinstance(name, str) and name and isinstance(entry, dict)):
+                continue
+            description = entry.get("description")
+            path = entry.get("path")
+            if not (isinstance(description, str) and description.strip()) or not (path is None or is_text(path)):
+                continue
+            kept_data[name] = {"description": description, **({"path": path} if path is not None else {})}
+        kept_software: dict[str, str] = {}
+        entries = data.get("software")
+        for name, description in (entries if isinstance(entries, dict) else {}).items():
+            if isinstance(name, str) and name and isinstance(description, str) and description.strip():
+                kept_software[name] = description
+
+        return {"data": kept_data, "software": kept_software}
+
+    def update_own(self, change: Callable[[dict[str, dict[str, Any]]], None]) -> None:
+        """Changes what the person gave the lab as `change` says, which is given what is kept, to change in place. A
+        change made at the same time by another is not lost, and one that fails keeps nothing."""
+        with self._own_lock:
+            kept = self.load_own()
+            change(kept)
+            write_atomically(self.own_path, json.dumps(kept, indent=4).encode("utf-8"))
 
     def new_chat_directory(self, title: str, now: datetime | None = None) -> Path:
         """A new directory for a conversation, named after when it began and what it is called.

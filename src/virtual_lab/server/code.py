@@ -1,5 +1,6 @@
 """Where the agents' code runs in a conversation, if anywhere."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -63,10 +64,16 @@ class CodeSetup:
             return DockerExecutor(allow_network=self.network, data_lake=data_lake, forward_env=forward_env)
         return session_executor(self.sandbox, data_lake=data_lake, allow_network=self.network, forward_env=forward_env)
 
-    def session(self, directory: Path) -> Session | None:
-        """A session for agents to run code in, in directory, or None where code is not run."""
+    def session(
+        self, directory: Path, data: Mapping[str, str] | None = None, software: Mapping[str, str] | None = None
+    ) -> Session | None:
+        """A session for agents to run code in, in directory, or None where code is not run.
+
+        :param data: Files and folders for the code to read, each by its path, with what it is.
+        :param software: Software the code can use, each by its name, with what it does.
+        """
         if self.where == "docker":
-            return DockerSession(directory, executor=self.docker_executor())
+            return DockerSession(directory, executor=self.docker_executor(), data=data, software=software)
         if self.where == "local":
-            return LocalSession(directory, python=self.python or None, warn=False)
+            return LocalSession(directory, python=self.python or None, warn=False, data=data, software=software)
         return None

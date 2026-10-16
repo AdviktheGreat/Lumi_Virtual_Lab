@@ -17,6 +17,12 @@ and everything else is a request and an answer.
     GET    /api/scientists, PUT         the library and the scientists the person described
     DELETE /api/scientists/{title}      one of those the person described
     GET    /api/tools, PUT              the library's tools a conversation can be given, and which are turned off
+    GET    /api/own                     the data and software the person gave the lab to use in every conversation
+    POST   /api/own/data/files          a file to give, as the body, with ?name= and ?description=
+    POST   /api/own/data/paths          a file or folder to give where it is on this machine
+    PATCH  /api/own/data/{name}         say again what it is; DELETE gives it up, deleting it only if it was uploaded
+    GET    /api/own/data/{name}/preview what is at the start of it
+    PUT    /api/own/software            some software to give, and what it is for; DELETE /software/{name} gives it up
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
@@ -77,6 +83,7 @@ from virtual_lab.server.mcp import (
     service_keys,
     sign_out,
 )
+from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
@@ -147,6 +154,8 @@ class ChatBody(RequestModel):
     commercial_mode: bool = False
     tools: list[str] | None = Field(None, max_length=MAX_TOOLS)
     mcp: list[str] | None = Field(None, max_length=MAX_SERVERS)
+    data: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
+    software: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
 
 
 class SettingsBody(RequestModel):
@@ -165,6 +174,22 @@ class ToolsBody(RequestModel):
     """The tools a new conversation is not given, which are none until some are turned off."""
 
     disabled: list[str] = Field(default_factory=list, max_length=MAX_TOOLS)
+
+
+class OwnPathBody(RequestModel):
+    """A file or folder on this machine to give the lab, and what it is."""
+
+    path: str = Field(min_length=1, max_length=MAX_PATH_CHARS)
+    description: str = Field(max_length=MAX_DESCRIPTION_CHARS * 4)
+
+
+class OwnDescriptionBody(RequestModel):
+    description: str = Field(max_length=MAX_DESCRIPTION_CHARS * 4)
+
+
+class OwnSoftwareBody(RequestModel):
+    name: str = Field(min_length=1, max_length=MAX_SOFTWARE_NAME_CHARS * 4)
+    description: str = Field(max_length=MAX_DESCRIPTION_CHARS * 4)
 
 
 class McpServerBody(RequestModel):
@@ -334,6 +359,7 @@ def create_app(
         setup=setup if check_setup else None,
         max_upload_bytes=max_upload_bytes,
     )
+    own = Own(store, max_upload_bytes)
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -562,6 +588,63 @@ def create_app(
         store.save_disabled_tools(disabled)
 
         return {"tools": describe_tools(disabled)}
+
+    @api.get("/own")
+    def get_own() -> dict[str, Any]:
+        return own.describe()
+
+    @api.post("/own/data/files", status_code=201)
+    async def upload_own_file(
+        request: Request,
+        name: str = Query(min_length=1, max_length=1000),
+        description: str = Query(max_length=MAX_DESCRIPTION_CHARS * 4),
+    ) -> Any:
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > max_upload_bytes:
+            raise ApiError(
+                413, "too_large", f"The file is larger than the {max_upload_bytes} bytes that can be uploaded"
+            )
+        reader = RequestBodyReader(request, asyncio.get_running_loop())
+        try:
+            await run_in_threadpool(own.add_upload, name, cast(BinaryIO, reader), description)
+        except ClientDisconnect:
+            return Response(status_code=499)
+
+        return await run_in_threadpool(own.describe)
+
+    @api.post("/own/data/paths", status_code=201)
+    def add_own_path(body: OwnPathBody) -> dict[str, Any]:
+        own.add_path(body.path, body.description)
+
+        return own.describe()
+
+    @api.patch("/own/data/{name}")
+    def change_own_data(name: str, body: OwnDescriptionBody) -> dict[str, Any]:
+        own.change_description(name, body.description)
+
+        return own.describe()
+
+    @api.delete("/own/data/{name}")
+    def remove_own_data(name: str) -> dict[str, Any]:
+        own.remove(name)
+
+        return own.describe()
+
+    @api.get("/own/data/{name}/preview")
+    def preview_own_data(name: str) -> dict[str, Any]:
+        return own.preview(name)
+
+    @api.put("/own/software")
+    def put_own_software(body: OwnSoftwareBody) -> dict[str, Any]:
+        own.put_software(body.name, body.description)
+
+        return own.describe()
+
+    @api.delete("/own/software/{name:path}")
+    def remove_own_software(name: str) -> dict[str, Any]:
+        own.remove_software(name)
+
+        return own.describe()
 
     @api.get("/mcp")
     def get_mcp() -> dict[str, Any]:
