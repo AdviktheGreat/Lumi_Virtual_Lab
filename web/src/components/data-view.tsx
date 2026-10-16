@@ -1,10 +1,10 @@
 "use client";
 
-import { useId } from "react";
 import { LakeTab } from "@/components/setup-lake";
 import { OwnDataSection } from "@/components/own-data";
 import { OwnSoftwareSection } from "@/components/own-software";
 import { PageHeader } from "@/components/page-header";
+import { PageSection } from "@/components/page-section";
 import { useServer } from "@/components/server-provider";
 import { useSetupJobs } from "@/components/setup-provider";
 import { Button } from "@/components/ui/button";
@@ -15,22 +15,6 @@ import { useJobActions } from "@/lib/use-setup-actions";
 import { useDataLake } from "@/lib/use-setup-data";
 import type { Own } from "@/lib/types";
 import type { Loaded } from "@/lib/use-settings-data";
-
-function PageSection({ title, intro, children }: { title: string; intro?: React.ReactNode; children: React.ReactNode }) {
-  const id = useId();
-
-  return (
-    <section aria-labelledby={id} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h2 id={id} className="text-base font-semibold">
-          {title}
-        </h2>
-        {intro && <p className="text-sm text-muted-foreground">{intro}</p>}
-      </div>
-      {children}
-    </section>
-  );
-}
 
 // What a part of the page that is made of what the person gave shows until it has been asked for
 function Given({

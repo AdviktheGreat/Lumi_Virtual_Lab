@@ -186,6 +186,28 @@ describe("what a job has counted", () => {
   });
 });
 
+describe("the papers a job reads and the functions it writes", () => {
+  it("counts the papers dealt with, of those there are, and the functions", () => {
+    const reading = job({ kind: "papers", progress: { papers: 4, finished: 1 } });
+    const writing = job({ kind: "functions", progress: { functions: 2, finished: 1 } });
+
+    expect(jobFraction(reading)).toBe(0.25);
+    expect(jobCounts(reading)).toBe("1 of 4 papers");
+    expect(jobFraction(writing)).toBe(0.5);
+    expect(jobCounts(writing)).toBe("1 of 2 functions");
+  });
+
+  it("says paper for one, and nothing before it is known how many there are", () => {
+    expect(jobCounts(job({ kind: "papers", progress: { papers: 1, finished: 0 } }))).toBe("0 of 1 paper");
+    expect(jobFraction(job({ kind: "papers", progress: {} }))).toBeNull();
+    expect(jobCounts(job({ kind: "papers", progress: { finished: 2 } }))).toBe("");
+  });
+
+  it("does not take the count of one kind of job for another's", () => {
+    expect(jobFraction(job({ kind: "functions", progress: { papers: 4, finished: 1 } }))).toBeNull();
+  });
+});
+
 describe("what a job printed", () => {
   const lines = (from: number, count: number) => Array.from({ length: count }, (_, at) => `line ${from + at}`);
 

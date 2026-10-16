@@ -85,6 +85,33 @@ server keeps it (`GET /api/own` and what changes it, in the main README), and ev
 now is, which the page shows from then on. `src/lib/own.ts` checks what is written before it is sent, as the server
 does, so that what is wrong is said where it is written.
 
+## Papers
+
+The Papers page (`/papers`) is where the lab reads papers, and writes functions from what they share. It lists the runs,
+the latest first, each with where its papers come from and how far its reading has got, and makes one: from papers that are
+uploaded to it afterwards, from a folder on the server's machine, or from bioRxiv (a period, a subject, and how many
+preprints, which are checked where they are written, as the server checks them). A run is named in the address's query
+(`/papers?id=...`), as a conversation is, and its page has four parts.
+
+- **Papers** is where they are from. A run whose papers are uploaded shows them, with the means to remove one and to add
+  more (several at once, each with how much of it has been sent, and one that is not a paper, is too big, or has a name that
+  is taken is said so before it is sent). Reading asks for the most it may spend, which is always said, and may ask for the
+  most one paper may spend; a run that was stopped carries on from where it was, and papers that failed are read again only
+  if that is asked for. The progress of the job, and the way to stop it, are at the top of the run, and are the setup's jobs,
+  so what is begun here is followed in the setup as well. Nothing else is done to a run while it is being read or has
+  functions written for it. A stop is kept for the next paper: the one that is being read is not kept.
+- **What was read** is each paper, whether it was read, was not to be had, or failed (and why), how many tasks, databases,
+  and software were found in it, and what it cost.
+- **What the papers share** is the tasks, databases, and software found in the most papers, each with a table to download.
+- **Functions** are written for the tasks the papers share, for as much as is said it may spend, and as many as is asked for
+  (the most common tasks first, and only those found in a number of papers). Each shows whether it was checked, what it uses,
+  and its code, which is read from the server only when it is asked for, so that it can be read before it is relied on.
+  Whether they are given to the conversations that are made from then on is a box that is ticked or not; one that is already
+  going is not given them.
+
+A model that has no key, or no price, and Docker where functions are checked in it, are refused with what to do about it, as
+a conversation is. `src/lib/papers.ts` checks what is written before it is sent, as the server does.
+
 ## Settings
 
 The gear at the foot of the sidebar opens the settings, in five parts. What is set is what conversations started from then

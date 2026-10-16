@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Container, Database, PanelLeftClose, Search as SearchIcon, Settings, SquarePen, X, type LucideIcon } from "lucide-react";
+import { Container, Database, FileText, PanelLeftClose, Search as SearchIcon, Settings, SquarePen, X, type LucideIcon } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { ChatRow, LIST_ID } from "@/components/chat-row";
 import { useChats } from "@/components/chats-provider";
@@ -20,7 +20,10 @@ import { inDays, matchingTitles, SEARCH_FROM } from "@/lib/history";
 import { cn } from "@/lib/utils";
 
 // The pages besides the conversations, which are reached from the sidebar
-const PAGES: { href: string; label: string; icon: LucideIcon }[] = [{ href: "/data", label: "Data", icon: Database }];
+const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: "/data", label: "Data", icon: Database },
+  { href: "/papers", label: "Papers", icon: FileText },
+];
 
 function Search({ typed, onTyped }: { typed: string; onTyped: (typed: string) => void }) {
   return (
