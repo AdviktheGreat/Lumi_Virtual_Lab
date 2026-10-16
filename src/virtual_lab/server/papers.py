@@ -427,9 +427,11 @@ class Papers:
 
         :raises ApiError: If there is no run with this id, or it is being read.
         """
-        directory, _ = self.lookup(run_id)
-        self.check_idle(run_id)
-        shutil.rmtree(directory)
+        # With the lock that starting a read takes, so that a read cannot begin in a directory that is being removed
+        with self._lock:
+            directory, _ = self.lookup(run_id)
+            self.check_idle(run_id)
+            shutil.rmtree(directory)
 
     def check_idle(self, run_id: str) -> None:
         if self.running(run_id) is not None:
@@ -479,6 +481,7 @@ class Papers:
                         )
                     file.write(block)
             with self._lock:
+                self.check_idle(run_id)
                 self.check_room(directory, filename)
                 os.replace(temporary, files / filename)
         finally:
@@ -500,12 +503,13 @@ class Papers:
 
         :raises ApiError: If there is no run with this id, it is being read, or it has no such paper.
         """
-        directory, lab = self.lookup(run_id)
-        self.check_idle(run_id)
-        path = directory / UPLOADS_DIR / name
-        if lab["source"]["kind"] != "files" or path.parent != directory / UPLOADS_DIR or not path.is_file():
-            raise not_found("paper of that name in the run")
-        path.unlink()
+        with self._lock:
+            directory, lab = self.lookup(run_id)
+            self.check_idle(run_id)
+            path = directory / UPLOADS_DIR / name
+            if lab["source"]["kind"] != "files" or path.parent != directory / UPLOADS_DIR or not path.is_file():
+                raise not_found("paper of that name in the run")
+            path.unlink()
 
     # Reading
 
@@ -547,12 +551,17 @@ class Papers:
             raise ApiError(422, "invalid", "Upload the papers to read first")
 
         work = self.reader(directory, lab["source"], model, budget, per_paper, again)
-        try:
-            return self.jobs.start(
-                "papers", run_id, f"Reading papers: {lab['title']}", work, exclusive=f"papers:{run_id}"
-            )
-        except JobConflictError as error:
-            raise ApiError(409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()) from error
+        with self._lock:
+            # Looked for again, as a run that was deleted while the checks above were made has no place to read in
+            self.lookup(run_id)
+            try:
+                return self.jobs.start(
+                    "papers", run_id, f"Reading papers: {lab['title']}", work, exclusive=f"papers:{run_id}"
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
 
     def reader(
         self,
