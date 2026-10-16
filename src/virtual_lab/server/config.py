@@ -19,6 +19,7 @@ from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.schemas import normalize_title
 from virtual_lab.scientists import SCIENTISTS
 from virtual_lab.server.code import CodeSetup
+from virtual_lab.server.functions import check_function_runs, given_runs
 from virtual_lab.server.library import SETTABLE_KEYS, missing_keys, models, provider_of
 from virtual_lab.server.mcp import check_server_names, servers_on
 from virtual_lab.server.own import check_own_names
@@ -85,6 +86,8 @@ class ChatConfig:
     :param data: The names of the data the person gave the lab that code is given to read, where there is code. A
         conversation goes on with those of them that are still given and still there.
     :param software: The names of the software the person gave the lab that the agents are told they can use.
+    :param functions: The ids of the runs of papers whose functions the lead and the team may call, as tools, where code
+        runs. A conversation goes on with those of them that are still there.
     """
 
     model: str
@@ -98,6 +101,7 @@ class ChatConfig:
     mcp: tuple[str, ...] = ()
     data: tuple[str, ...] = ()
     software: tuple[str, ...] = ()
+    functions: tuple[str, ...] = ()
 
     def lead_agent(self) -> Agent:
         return agent_from({**self.lead, "model": self.model})
@@ -126,6 +130,7 @@ class ChatConfig:
             "mcp": list(self.mcp),
             "data": list(self.data),
             "software": list(self.software),
+            "functions": list(self.functions),
         }
 
     @classmethod
@@ -146,6 +151,8 @@ class ChatConfig:
             # A conversation begun before the person could give the lab data and software has none, and goes on without
             data=tuple(dict.fromkeys(str(name) for name in data.get("data", ()))),
             software=tuple(dict.fromkeys(str(name) for name in data.get("software", ()))),
+            # A conversation begun before the lab could write functions from papers has none, and goes on without
+            functions=tuple(dict.fromkeys(str(name) for name in data.get("functions", ()))),
         )
 
 
@@ -270,7 +277,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         and resources, "max_cost" (null for no limit), "stream", "commercial_mode", "tools", the names of the
         library's tools to give, which are all but those the workspace has turned off, "mcp", the names of the
         MCP servers to give, which are those the workspace has turned on, and "data" and "software", the names of
-        what the person gave the lab to give, which are all of it.
+        what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of papers whose
+        functions to give, which are those the person gave to conversations.
     :raises ValueError: If something chosen cannot be used.
     """
     scientists = library(workspace)
@@ -310,6 +318,12 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         else list(own["software"])
     )
 
+    functions = (
+        check_function_runs(request["functions"], workspace)
+        if request.get("functions") is not None
+        else given_runs(workspace)
+    )
+
     return ChatConfig(
         model=model,
         lead=lead,
@@ -322,6 +336,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         mcp=tuple(mcp),
         data=tuple(data),
         software=tuple(software),
+        functions=tuple(functions),
     )
 
 

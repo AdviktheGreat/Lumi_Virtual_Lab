@@ -122,7 +122,10 @@ class TestMakingARun:
             "failed": None,
             "spent": None,
             "stopped": None,
+            "function_count": 0,
+            "given": False,
             "job": None,
+            "job_kind": None,
         }
         assert "neuroscience" in described["subjects"]
         assert described["max_paper_bytes"] == LIMIT

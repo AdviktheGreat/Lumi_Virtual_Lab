@@ -29,6 +29,7 @@ from virtual_lab.server.asking import Asker
 from virtual_lab.server.config import ChatConfig, load_config, resolve_config, save_config
 from virtual_lab.server.connections import Connections
 from virtual_lab.server.errors import ApiError, not_found
+from virtual_lab.server.functions import function_tools
 from virtual_lab.server.library import missing_keys
 from virtual_lab.server.mcp import is_on, server_title
 from virtual_lab.server.own import given
@@ -403,6 +404,9 @@ class Conversations:
         session = config.code.session(directory / WORK_DIR_NAME, data=data, software=software)
         chat_models = MissingKeysModel(needs=tuple(self.missing_keys(config))) if keyless else self.chat_models
         available = conversation_tools(directory, session.directory if session is not None else None)
+        chosen = tuple(available[name] for name in config.tools if name in available)
+        # What the person had it write from papers, which runs where the code does, and so only where there is some
+        written = function_tools(self.workspace, config.functions, session, {tool.name for tool in chosen})
         # Those still set up and on, and not those it was begun with that have been turned off since, which may be why
         # it is being opened again
         stored = self.workspace.load_mcp_servers()
@@ -419,7 +423,7 @@ class Conversations:
                 client=self.client,
                 chat_models=chat_models,
                 title=title,
-                tools=tuple(available[name] for name in config.tools if name in available),
+                tools=(*chosen, *written),
                 late_tools=handle.connections.tools if handle.connections is not None else None,
                 max_cost=config.max_cost,
                 stream=config.stream,
