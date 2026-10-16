@@ -676,15 +676,24 @@ class UsageTracker:
 
 
 def write_atomically(path: Path, data: bytes) -> None:
-    """Writes a file under a temporary name and renames it into place, so it is never partial."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".part")
+    """Writes a file under a temporary name and renames it into place, so it is never partial.
+
+    :raises OSError: If it cannot be written, which names the file and not the temporary one beside it, since that is
+        the one a person knows.
+    """
+    temporary: str | None = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".part")
         with os.fdopen(handle, "wb") as file:
             file.write(data)
         os.replace(temporary, path)
+    except OSError as error:
+        error.filename, error.filename2 = str(path), None
+        raise
     finally:
-        Path(temporary).unlink(missing_ok=True)
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
 
 
 def compute_finetuning_cost(model: str, token_count: int, num_epochs: int = DEFAULT_FINETUNING_EPOCHS) -> float:

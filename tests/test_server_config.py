@@ -350,6 +350,21 @@ class TestSettings:
         with pytest.raises(ValueError, match=message):
             update_settings(Settings(), changes, workspace)
 
+    def test_a_setting_that_was_not_changed_is_not_checked_so_it_does_not_stop_another_being_changed(
+        self, workspace: Workspace
+    ) -> None:
+        stale = Settings(model="no-such-model", code="cloud", sandbox="huge")
+
+        new = update_settings(stale, {"stream": False}, workspace)
+
+        assert (new.stream, new.model, new.code, new.sandbox) == (False, "no-such-model", "cloud", "huge")
+        with pytest.raises(ValueError, match="Unable to determine the source"):
+            update_settings(stale, {"model": "also-no-such-model"}, workspace)
+        with pytest.raises(ValueError, match="Code runs in one of"):
+            update_settings(stale, {"sandbox": "python"}, workspace)
+        mended = update_settings(stale, {"model": TEST_MODEL, "code": "none", "sandbox": "python"}, workspace)
+        assert (mended.model, mended.code, mended.sandbox) == (TEST_MODEL, "none", "python")
+
 
 class TestModels:
     def test_the_models_say_whether_the_keys_they_need_are_set(self, monkeypatch: pytest.MonkeyPatch) -> None:

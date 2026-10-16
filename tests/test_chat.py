@@ -1941,6 +1941,104 @@ class TestKeeping:
         with pytest.raises(ValueError, match="Line 1 of .*messages.jsonl is not JSON"):
             make_chat(tmp_path)
 
+    @pytest.mark.parametrize("line", ["[]", "5", '"text"', "null", "true", "[1, 2]"])
+    def test_a_line_that_is_json_but_not_an_object_is_an_error_that_names_it(self, tmp_path: Path, line: str) -> None:
+        path = tmp_path / "lines.jsonl"
+        path.write_text('{"a": 1}\n' + line + "\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Line 2 of .*lines.jsonl is not a JSON object"):
+            chat_module.read_json_lines(path)
+
+        assert path.read_text(encoding="utf-8") == '{"a": 1}\n' + line + "\n"
+
+    @pytest.mark.parametrize(
+        ("name", "content", "message"),
+        [
+            ("chat.json", "[]", "chat.json cannot be used: it holds list, not an object"),
+            ("chat.json", "null", "chat.json cannot be used: it holds NoneType, not an object"),
+            ("chat.json", "{oops", "chat.json cannot be read: "),
+            ("chat.json", '{"turns": "many"}', "its turns should be a whole number, not str"),
+            ("chat.json", '{"turns": -1}', "its turns should be a whole number, not int"),
+            ("chat.json", '{"events": true}', "its events should be a whole number, not bool"),
+            ("chat.json", '{"lab_calls": 1.5}', "its lab_calls should be a whole number, not float"),
+            ("chat.json", '{"title": 5}', "its title should be text, not int"),
+            ("chat.json", '{"created_at": []}', "its created_at should be text, not list"),
+            ("chat.json", '{"usage": []}', "its usage should be the usage a conversation saves, not list"),
+            ("chat.json", '{"usage": {"per_model": []}}', "its usage should be the usage"),
+            ("chat.json", '{"usage": {"per_model": {"m": 5}}}', "its usage should be the usage"),
+            ("chat.json", '{"usage": {"per_model": {"m": {"input_tokens": "5"}}}}', "its usage should be the usage"),
+            ("events.jsonl", "[]\n", "Line 1 of .*events.jsonl is not a JSON object"),
+            ("events.jsonl", "{}\n", "Event 1 of .*events.jsonl cannot be used: An event has no kind"),
+            (
+                "events.jsonl",
+                '{"kind": "user", "id": "1", "turn": 1, "speaker": null, "text": "", "data": {}, "time": 0}\n',
+                "Event 1 of .*events.jsonl cannot be used: An event's id should be a whole number, not str",
+            ),
+            ("messages.jsonl", "[]\n", "Line 1 of .*messages.jsonl is not a JSON object"),
+            ("messages.jsonl", '{"content": "hi"}\n', "Message 1 of .*messages.jsonl cannot be used: it has no role"),
+            ("messages.jsonl", '{"role": 3}\n', "Message 1 of .*messages.jsonl cannot be used: it has no role"),
+        ],
+    )
+    def test_a_file_that_holds_what_a_conversation_does_not_save_is_an_error_that_names_it(
+        self, fake_client: FakeClient, tmp_path: Path, name: str, content: str, message: str
+    ) -> None:
+        make_chat(tmp_path).send("One")
+        directory = tmp_path / "chat"
+        kept = (directory / name).read_text()
+        (directory / name).write_text(content)
+
+        with pytest.raises(ValueError, match=message):
+            make_chat(tmp_path)
+
+        # What is not understood is left as it was, to be put right by whoever knows what it should be
+        assert (directory / name).read_text() == content
+        (directory / name).write_text(kept)
+        assert kinds(make_chat(tmp_path).events_since()) == ["user", "title", "usage", "answer"]
+
+    def test_what_a_later_version_saved_that_this_one_does_not_know_is_not_refused(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        make_chat(tmp_path).send("One")
+        path = tmp_path / "chat" / "chat.json"
+        info = json.loads(path.read_text())
+        info["usage"]["per_model"][TEST_MODEL]["future_tokens"] = "many"
+        info["something_new"] = [1]
+        path.write_text(json.dumps(info))
+
+        again = make_chat(tmp_path)
+
+        assert again.usage.per_model[TEST_MODEL].input_tokens == info["usage"]["per_model"][TEST_MODEL]["input_tokens"]
+
+    @pytest.mark.parametrize("part", ["id", "turn", "time"])
+    def test_an_event_has_numbers_that_are_numbers_and_not_true_or_false(self, part: str) -> None:
+        saved = ChatEvent(kind="user", id=1, turn=1, text="Hello").to_dict()
+        saved[part] = True
+
+        with pytest.raises(ValueError, match=f"An event's {part} should be a "):
+            ChatEvent.from_dict(saved)
+
+    def test_an_event_may_be_told_of_at_a_whole_number_of_seconds(self) -> None:
+        saved = ChatEvent(kind="user", id=1, turn=1, text="Hello").to_dict()
+        saved["time"] = 5
+
+        assert ChatEvent.from_dict(saved).time == 5
+
+    @pytest.mark.parametrize("event", ["", "kind", "speaker"])
+    def test_an_event_may_have_no_speaker_but_not_lack_any_other_part(self, event: str) -> None:
+        saved = ChatEvent(kind="user", id=1, turn=1, text="Hello").to_dict()
+        if event:
+            del saved[event]
+
+        if event == "":
+            assert ChatEvent.from_dict(saved) == ChatEvent(kind="user", id=1, turn=1, text="Hello")
+        else:
+            with pytest.raises(ValueError, match=f"An event has no {event}"):
+                ChatEvent.from_dict(saved)
+
+    def test_an_event_that_is_not_an_object_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="An event is an object, not list"):
+            ChatEvent.from_dict([])  # type: ignore[arg-type]
+
     def test_the_project_the_conversation_keeps_its_meetings_in_is_not_another(self, tmp_path: Path) -> None:
         make_chat(tmp_path)
 

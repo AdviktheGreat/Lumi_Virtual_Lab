@@ -197,13 +197,17 @@ def update_settings(settings: Settings, changes: Mapping[str, Any], workspace: W
     if unknown := sorted(set(changes) - set(PUBLIC_SETTINGS)):
         raise ValueError(f"There is no setting {', '.join(unknown)}")
     changed = replace(settings, **changes)
-    detect_source(changed.model)
-    CodeSetup(where=changed.code, sandbox=changed.sandbox)
+    # Only what is changed is checked, so that a setting a file was edited to have, which a new conversation says is
+    # wrong when it is begun, does not stop another from being changed
+    if "model" in changes:
+        detect_source(changed.model)
+    if "code" in changes or "sandbox" in changes:
+        CodeSetup(where=changed.code, sandbox=changed.sandbox)
     if "data_lake" in changes:
         changed.data_lake = check_data_lake(changed.data_lake, workspace)
     if "forward_keys" in changes:
         changed.forward_keys = check_forward_keys(changed.forward_keys)
-    if changed.max_cost is not None:
+    if "max_cost" in changes and changed.max_cost is not None:
         changed.max_cost = float(changed.max_cost)
         if not (math.isfinite(changed.max_cost) and changed.max_cost >= 0):
             raise ValueError(f"max_cost must be a finite amount, zero or more, not {changed.max_cost}")

@@ -30,7 +30,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
@@ -86,6 +86,7 @@ from virtual_lab.utils import (
     ContextLengthExceededError,
     CostUnknownError,
     MeetingUsage,
+    ModelUsage,
     check_context_length,
     combine_usage,
     compute_token_cost,
@@ -225,6 +226,53 @@ def title_of(text: str, files: Sequence[Attachment]) -> str:
     return line
 
 
+def is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def is_usage(value: Any) -> bool:
+    """Whether it is what MeetingUsage.to_dict gives, as far as MeetingUsage.from_dict reads it."""
+    per_model = value.get("per_model", {}) if isinstance(value, dict) else None
+
+    known = {usage_field.name for usage_field in fields(ModelUsage)}
+
+    return isinstance(per_model, dict) and all(
+        isinstance(counts, dict) and all(is_count(count) for name, count in counts.items() if name in known)
+        for counts in per_model.values()
+    )
+
+
+# What a conversation saves in chat.json that is read back, each with whether a value is of the kind and what that is
+SAVED_INFO_PARTS: dict[str, tuple[Callable[[Any], bool], str]] = {
+    "title": (lambda value: value is None or isinstance(value, str), "text"),
+    "created_at": (lambda value: isinstance(value, str), "text"),
+    "turns": (is_count, "a whole number"),
+    "lab_calls": (is_count, "a whole number"),
+    "events": (is_count, "a whole number"),
+    "usage": (is_usage, "the usage a conversation saves"),
+}
+
+
+def read_chat_info(path: Path) -> dict[str, Any]:
+    """Reads what a conversation saved of itself, which is read back before anything is built from it.
+
+    :raises ValueError: If the file is not JSON, or what it holds is not what a conversation saves, which a file that
+        was changed, or is not a conversation's, can hold.
+    """
+    try:
+        info = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise ValueError(f"{path} cannot be read: {error}") from error
+    if not isinstance(info, dict):
+        raise ValueError(f"{path} cannot be used: it holds {type(info).__name__}, not an object")
+    for name, (is_valid, described) in SAVED_INFO_PARTS.items():
+        if name in info and not is_valid(info[name]):
+            found = type(info[name]).__name__
+            raise ValueError(f"{path} cannot be used: its {name} should be {described}, not {found}")
+
+    return info
+
+
 def read_json_lines(path: Path, repair: bool = True) -> list[dict[str, Any]]:
     """Reads a file of JSON objects, one to a line, as the conversation saved it.
 
@@ -234,7 +282,8 @@ def read_json_lines(path: Path, repair: bool = True) -> list[dict[str, Any]]:
     :param repair: Whether to make the file whole, and to warn of the line that was cut short. A reader
         that is not the conversation leaves the file alone, and takes the last line, which the
         conversation may be writing as it reads, to be unfinished, not cut short.
-    :raises ValueError: If any other line is not JSON, which is not what a crash does.
+    :raises ValueError: If any other line is not JSON, or is JSON that is not an object, which is not what a crash
+        does.
     """
     if not path.is_file():
         return []
@@ -251,13 +300,17 @@ def read_json_lines(path: Path, repair: bool = True) -> list[dict[str, Any]]:
         if not line.strip():
             continue
         try:
-            items.append(json.loads(line))
+            item = json.loads(line)
         except json.JSONDecodeError as error:
             if number < len(lines):
                 raise ValueError(f"Line {number} of {path} is not JSON: {error}") from error
             if repair:
                 print(f"Warning: the last line of {path} was cut short, and is left out")
             mend = True
+            continue
+        if not isinstance(item, dict):
+            raise ValueError(f"Line {number} of {path} is not a JSON object, but {type(item).__name__}")
+        items.append(item)
 
     if mend and repair:
         write_atomically(path, "".join(json_line(item) for item in items).encode("utf-8"))
@@ -510,7 +563,7 @@ class Chat:
         self._interrupted = False
         numbered = 0
         if info_path.is_file():
-            info = json.loads(info_path.read_text(encoding="utf-8"))
+            info = read_chat_info(info_path)
             self.title = info.get("title") or self.title
             self.created_at = info.get("created_at", self.created_at)
             self._turn = info.get("turns", 0)
@@ -519,11 +572,22 @@ class Chat:
             self._interrupted = bool(info.get("running"))
             numbered = info.get("events", 0)
 
-        self._events = [ChatEvent.from_dict(saved) for saved in read_json_lines(self.save_dir / CHAT_EVENTS_FILE_NAME)]
+        events_path = self.save_dir / CHAT_EVENTS_FILE_NAME
+        self._events = []
+        for number, saved in enumerate(read_json_lines(events_path), start=1):
+            try:
+                self._events.append(ChatEvent.from_dict(saved))
+            except ValueError as error:
+                raise ValueError(f"Event {number} of {events_path} cannot be used: {error}") from error
         # The state the conversation was in is numbered like an event but not kept, so what was
         # numbered is saved too, and a page that saw that number is not told of a new event by it
         self._next_id = max(numbered, *(event.id for event in self._events), 0) + 1
-        self._messages = read_json_lines(self.save_dir / CHAT_MESSAGES_FILE_NAME)
+
+        messages_path = self.save_dir / CHAT_MESSAGES_FILE_NAME
+        self._messages = read_json_lines(messages_path)
+        for number, message in enumerate(self._messages, start=1):
+            if not isinstance(message.get("role"), str):
+                raise ValueError(f"Message {number} of {messages_path} cannot be used: it has no role")
 
     def _recover(self) -> None:
         """Ends a turn that a process stopped in, so that the conversation can go on from it."""

@@ -1,8 +1,10 @@
 """Tests of the server's routes, as a page uses them."""
 
 import asyncio
+import errno
 import hashlib
 import json
+import logging
 import os
 import shutil
 import threading
@@ -33,7 +35,7 @@ from virtual_lab.server.app import (
     create_app,
     last_event,
 )
-from virtual_lab.server.errors import ApiError
+from virtual_lab.server.errors import ApiError, file_error
 from virtual_lab.server.files import download_headers
 from virtual_lab.server.security import TOKEN_COOKIE
 from virtual_lab.server.workspace import Settings, Workspace
@@ -1100,6 +1102,178 @@ class TestChats:
         assert client.get("/api/chats").json() == {"chats": []}
         assert list(workspace.chats_dir.iterdir()) == []
         assert client.delete(f"/api/chats/{made['id']}").status_code == 404
+
+
+def close_conversations(app: FastAPI) -> None:
+    """Closes every open conversation, so that the next request opens it from what was saved."""
+    app.state.conversations.close()
+
+
+class TestDamagedFiles:
+    def test_settings_of_the_wrong_kind_in_the_file_are_shown_as_the_defaults_and_can_be_changed(
+        self, client: TestClient, workspace: Workspace
+    ) -> None:
+        workspace.settings_path.write_text(
+            json.dumps({"model": 123, "max_cost": "lots", "stream": "yes", "code": ["x"], "forward_keys": "ABC"})
+        )
+
+        shown = client.get("/api/settings")
+        changed = client.patch("/api/settings", json={"stream": False})
+
+        assert shown.status_code == 200 and shown.json()["max_cost"] == Settings().max_cost
+        assert changed.status_code == 200
+        saved = json.loads(workspace.settings_path.read_text())
+        assert (saved["stream"], saved["max_cost"], saved["model"]) == (False, Settings().max_cost, Settings().model)
+
+    def test_a_model_the_file_was_edited_to_is_said_to_be_wrong_when_it_is_used_not_when_another_setting_is_changed(
+        self, client: TestClient, workspace: Workspace
+    ) -> None:
+        workspace.settings_path.write_text(json.dumps({"model": "no-such-model"}))
+
+        changed = client.patch("/api/settings", json={"stream": False})
+        begun = client.post("/api/chats", json={"team": []})
+
+        assert changed.status_code == 200 and changed.json()["model"] == "no-such-model"
+        assert begun.status_code == 422
+        assert error_of(begun)["code"] == "invalid" and "no-such-model" in error_of(begun)["message"]
+        assert list(workspace.chats_dir.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        ("name", "content", "said"),
+        [
+            ("chat.json", "[]", "chat.json cannot be used"),
+            ("chat.json", "{oops", "chat.json cannot be read"),
+            ("chat.json", '{"turns": "many"}', "its turns should be a whole number"),
+            ("events.jsonl", "[]\n", "events.jsonl is not a JSON object"),
+            ("events.jsonl", "5\n", "events.jsonl is not a JSON object"),
+            ("events.jsonl", "{}\n", "Event 1 of"),
+            ("messages.jsonl", "[]\n", "messages.jsonl is not a JSON object"),
+            ("messages.jsonl", '{"x": 1}\n', "it has no role"),
+        ],
+    )
+    def test_a_conversation_whose_files_hold_what_it_does_not_save_is_said_to_be_unusable_and_can_be_deleted(
+        self, client: TestClient, app: FastAPI, workspace: Workspace, name: str, content: str, said: str
+    ) -> None:
+        damaged = new_chat(client)
+        other = new_chat(client)
+        close_conversations(app)
+        (workspace.chats_dir / damaged["id"] / name).write_text(content)
+        url = f"/api/chats/{damaged['id']}"
+
+        for response in (
+            client.get(url),
+            client.get(f"{url}/files"),
+            client.post(f"{url}/messages", json={"text": "Hello"}),
+        ):
+            assert response.status_code == 422, response.text
+            assert error_of(response)["code"] == "unavailable"
+            assert said in error_of(response)["message"]
+            assert name in error_of(response)["message"] or name.split(".")[0] in error_of(response)["message"]
+        assert client.get(f"/api/chats/{other['id']}").status_code == 200
+        assert client.delete(url).status_code == 204
+        assert [item["id"] for item in client.get("/api/chats").json()["chats"]] == [other["id"]]
+
+    def test_a_list_of_conversations_is_shown_whatever_one_of_them_saved_in_its_details(
+        self, client: TestClient, workspace: Workspace
+    ) -> None:
+        fine = new_chat(client)
+        odd = new_chat(client)
+        for index, details in enumerate(
+            [
+                {"title": 5, "created_at": [], "updated_at": 5, "turns": "x", "spent": "NaN", "max_cost": True},
+                {"updated_at": None, "turns": -3, "spent": float("nan"), "max_cost": float("inf")},
+            ]
+        ):
+            path = workspace.chats_dir / odd["id"] / "chat.json"
+            path.write_text(json.dumps(details))
+
+            response = client.get("/api/chats")
+
+            assert response.status_code == 200, (index, response.text)
+            by_id = {item["id"]: item for item in response.json()["chats"]}
+            assert set(by_id) == {fine["id"], odd["id"]}
+            assert by_id[odd["id"]]["title"] == ""
+            assert by_id[odd["id"]]["created_at"] is None and by_id[odd["id"]]["updated_at"] is None
+            assert by_id[odd["id"]]["turns"] == 0
+            assert by_id[odd["id"]]["spent"] is None and by_id[odd["id"]]["max_cost"] is None
+
+    @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="Root can write anywhere")
+    def test_a_workspace_that_cannot_be_written_to_is_said_so_with_the_file_and_what_to_check(
+        self, client: TestClient, workspace: Workspace
+    ) -> None:
+        workspace.root.chmod(0o500)
+        try:
+            settings = client.patch("/api/settings", json={"stream": False})
+            scientist = client.put("/api/scientists", json={"title": "T", "expertise": "e", "goal": "g", "role": "r"})
+        finally:
+            workspace.root.chmod(0o700)
+
+        for response, file in ((settings, "settings.json"), (scientist, "scientists.json")):
+            assert response.status_code == 500, response.text
+            assert error_of(response)["code"] == "files"
+            assert error_of(response)["message"].startswith(f"The server could not use {workspace.root}")
+            assert f"{file}: Permission denied" in error_of(response)["message"]
+            assert "can be changed by whoever started the server" in error_of(response)["message"]
+        assert workspace.load_settings().stream is True
+        assert not [item for item in workspace.root.iterdir() if item.name.endswith(".part")]
+
+    @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="Root can write anywhere")
+    def test_a_conversation_cannot_be_begun_in_a_directory_that_cannot_be_written_to_and_leaves_nothing(
+        self, client: TestClient, workspace: Workspace
+    ) -> None:
+        workspace.chats_dir.chmod(0o500)
+        try:
+            response = client.post("/api/chats", json={"team": []})
+        finally:
+            workspace.chats_dir.chmod(0o700)
+
+        assert response.status_code == 500
+        assert error_of(response)["code"] == "files"
+        assert "Permission denied" in error_of(response)["message"]
+        assert list(workspace.chats_dir.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        ("number", "hinted"),
+        [(errno.EACCES, True), (errno.EPERM, True), (errno.EROFS, True), (errno.ENOSPC, False), (errno.ENOENT, False)],
+    )
+    def test_only_an_error_of_not_being_let_to_change_a_file_says_what_to_check(
+        self, number: int, hinted: bool
+    ) -> None:
+        problem = file_error(OSError(number, os.strerror(number), "/the/workspace/tools.json"))
+
+        assert problem is not None and (problem.status, problem.code) == (500, "files")
+        assert problem.message.startswith(f"The server could not use /the/workspace/tools.json: {os.strerror(number)}.")
+        assert ("Check that the workspace can be changed" in problem.message) is hinted
+
+    def test_an_error_with_no_file_in_it_is_not_one_about_a_file(self) -> None:
+        assert file_error(ConnectionResetError("reset")) is None
+        assert file_error(OSError(errno.EACCES, "Permission denied")) is None
+
+    def test_an_error_about_a_file_is_told_with_its_name_and_any_other_is_not_told_to_the_page(
+        self, app: FastAPI, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        failures: list[OSError] = [
+            OSError(errno.ENOSPC, "No space left on device", "/the/workspace/settings.json"),
+            ConnectionResetError("secret detail of the machine"),
+        ]
+
+        def broken() -> None:
+            raise failures.pop(0)
+
+        monkeypatch.setattr(app.state.conversations, "summaries", broken)
+
+        with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+            with TestClient(app, base_url=LOCAL, headers=BEARER, raise_server_exceptions=False) as quiet:
+                full = quiet.get("/api/chats")
+                other = quiet.get("/api/chats")
+
+        assert full.status_code == 500 and error_of(full)["code"] == "files"
+        assert error_of(full)["message"] == (
+            "The server could not use /the/workspace/settings.json: No space left on device."
+        )
+        assert other.status_code == 500 and error_of(other)["code"] == "internal"
+        assert "secret" not in other.text
+        assert "GET /api/chats: The server could not use /the/workspace/settings.json" in caplog.text
 
 
 class TestMessages:
