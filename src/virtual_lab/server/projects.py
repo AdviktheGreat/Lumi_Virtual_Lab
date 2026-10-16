@@ -351,7 +351,9 @@ class Projects:
         if log is None:
             return "new"
 
-        return log["status"] if log.get("status") in ENDINGS else "interrupted"
+        status = log.get("status")
+
+        return status if isinstance(status, str) and status in ENDINGS else "interrupted"
 
     def entry(self, directory: Path, lab: dict[str, Any]) -> dict[str, Any]:
         """A project as a list shows it: what it is, how it stands, and what it has spent."""
@@ -754,9 +756,10 @@ class Projects:
             session = executor = None
             if code.where != "none":
                 options.update(code_actions="tags", resources=code.resources)
+                # Before the session, so that nothing is left open if it cannot be made
+                executor = code.docker_executor() if code.where == "docker" else LocalExecutor(warn=False)
                 (directory / SESSION_DIR).mkdir(parents=True, exist_ok=True)
                 session = code.session(directory / SESSION_DIR)
-                executor = code.docker_executor() if code.where == "docker" else LocalExecutor(warn=False)
             else:
                 options["resources"] = "none"
             try:

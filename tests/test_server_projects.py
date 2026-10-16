@@ -558,6 +558,13 @@ class TestWhatWasSaved:
             None,
         )
 
+    def test_a_status_that_is_not_text_is_taken_for_an_interrupted_project(self, projects: Projects) -> None:
+        project = make(projects)
+        (projects.workspace.projects_dir / project / "research_log.json").write_text(json.dumps({"status": ["failed"]}))
+
+        assert projects.view(project)["state"] == "interrupted"
+        assert projects.describe()["projects"][0]["state"] == "interrupted"
+
     def test_a_file_the_ledger_names_outside_the_project_is_not_read(self, projects: Projects, tmp_path: Path) -> None:
         project = make(projects)
         directory = projects.workspace.projects_dir / project
