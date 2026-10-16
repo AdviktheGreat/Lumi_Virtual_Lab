@@ -11,10 +11,9 @@ own.json, and the files that were uploaded in its own_data.
 """
 
 import os
-import re
 import stat
 import tempfile
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -22,7 +21,7 @@ from virtual_lab.chat import describe_size, safe_filename
 from virtual_lab.constants import SANDBOX_USER_DATA_DIR
 from virtual_lab.execution import ExecutionError, check_mountable
 from virtual_lab.server.errors import ApiError, not_found
-from virtual_lab.server.workspace import Workspace
+from virtual_lab.server.workspace import Workspace, has_control_character
 
 # The most pieces of data, and the most software, that may be given
 MAX_OWN_ITEMS = 500
@@ -37,8 +36,6 @@ PREVIEW_BYTES = 64 * 1024
 PREVIEW_LINES = 40
 PREVIEW_LINE_CHARS = 300
 PREVIEW_ENTRIES = 50
-
-CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def check_description(text: Any, what: str) -> str:
@@ -60,7 +57,7 @@ def check_name(name: str) -> str:
 
     :raises ApiError: If code could not be given it by that name.
     """
-    if not name or name in {".", ".."} or CONTROL_CHARACTERS.search(name):
+    if not name or name in {".", ".."} or has_control_character(name):
         raise ApiError(422, "invalid", f"{name!r} cannot be the name of a file that code is given")
     try:
         check_mountable(Path(f"{SANDBOX_USER_DATA_DIR}/{name}"), "")
@@ -81,15 +78,22 @@ def location(workspace: Workspace, name: str, entry: dict[str, Any]) -> Path:
     return Path(entry["path"]) if "path" in entry else workspace.own_data_dir / name
 
 
-def is_mountable(path: Path) -> bool:
-    """Whether Docker can be given what a path leads to, which a link that was pointed to may come to lead to
-    something it cannot."""
+def overlaps(first: Path, second: Path) -> bool:
+    """Whether one path is the other or is inside it."""
+    return first.is_relative_to(second) or second.is_relative_to(first)
+
+
+def can_be_given(workspace: Workspace, path: Path) -> bool:
+    """Whether code can be given what a path leads to, which a link that was pointed to may come to lead to something
+    it cannot be: a place Docker cannot mount, or where conversations are kept or that holds them, which a session
+    refuses to start with."""
     try:
-        check_mountable(path.resolve(), "")
+        source = path.resolve()
+        check_mountable(source, "")
     except (ExecutionError, OSError, RuntimeError):
         return False
 
-    return True
+    return not overlaps(source, workspace.chats_dir)
 
 
 def given(
@@ -111,7 +115,7 @@ def given(
         where = location(workspace, name, entry)
         # Code finds it by the name of its file, so a path that is not called what the data is, as one in a file edited
         # by hand may not be, would be found by another name, or by one that another has
-        if where.name == name and where.exists() and is_mountable(where):
+        if where.name == name and where.exists() and can_be_given(workspace, where):
             files[str(where)] = entry["description"]
 
     return files, {name: kept["software"][name] for name in software if name in kept["software"]}
@@ -196,10 +200,12 @@ class Own:
                         )
                     file.write(block)
 
-            def keep(kept: dict[str, dict[str, Any]]) -> None:
+            def keep(kept: dict[str, dict[str, Any]]) -> Callable[[], None]:
                 self.check_room(filename, kept)
                 kept["data"][filename] = {"description": described}
                 os.replace(temporary, directory / filename)
+
+                return lambda: (directory / filename).unlink(missing_ok=True)
 
             self.workspace.update_own(keep)
         finally:
@@ -217,7 +223,7 @@ class Own:
         text = path.strip()
         try:
             asked = Path(text).expanduser()
-            if not text or CONTROL_CHARACTERS.search(text) or not asked.is_absolute():
+            if not text or has_control_character(text) or not asked.is_absolute():
                 raise ValueError(text)
             where = Path(os.path.abspath(asked))
             source = where.resolve()
@@ -258,9 +264,9 @@ class Own:
         """
         chats = self.workspace.chats_dir
         uploads = self.workspace.own_data_dir.resolve()
-        if source.is_relative_to(chats) or chats.is_relative_to(source):
+        if overlaps(source, chats):
             raise ApiError(422, "invalid", f"{source} is where conversations are kept, or holds them")
-        if source.is_relative_to(uploads) or uploads.is_relative_to(source):
+        if overlaps(source, uploads):
             raise ApiError(422, "invalid", f"{source} is where uploaded files are kept, or holds them")
 
     def check_room(self, name: str, kept: dict[str, dict[str, Any]] | None = None) -> None:
@@ -334,7 +340,7 @@ class Own:
         :raises ApiError: If the name or what it is is not fit to be kept, or there is no room.
         """
         title = " ".join(name.split())
-        if not title or len(title) > MAX_SOFTWARE_NAME_CHARS or CONTROL_CHARACTERS.search(title):
+        if not title or len(title) > MAX_SOFTWARE_NAME_CHARS or has_control_character(title):
             raise ApiError(
                 422,
                 "invalid",

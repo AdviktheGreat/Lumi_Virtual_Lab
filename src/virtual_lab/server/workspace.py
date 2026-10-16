@@ -56,6 +56,24 @@ def is_text(value: Any) -> bool:
     return isinstance(value, str)
 
 
+def is_file_name(value: Any) -> bool:
+    """Whether a value is the name of one file, which is not a place anywhere else or a line of text."""
+    return (
+        isinstance(value, str)
+        and value not in {"", ".", ".."}
+        and Path(value).name == value
+        and not has_control_character(value)
+    )
+
+
+def is_full_path(value: Any) -> bool:
+    return isinstance(value, str) and Path(value).is_absolute() and not has_control_character(value)
+
+
+def has_control_character(text: str) -> bool:
+    return any(ord(character) < 32 or ord(character) == 127 for character in text)
+
+
 def is_flag(value: Any) -> bool:
     return isinstance(value, bool)
 
@@ -277,19 +295,20 @@ class Workspace:
 
     def load_own(self) -> dict[str, dict[str, Any]]:
         """What the person gave the lab, as {"data": {name: {"description": ..., "path": ...}}, "software": {name:
-        description}}. A piece of data has a path if it is somewhere else on this machine, and has none if it was
-        uploaded, and so is in own_data. What a file edited by hand holds that is not of this kind is left out."""
+        description}}. A piece of data has a path, in full, if it is somewhere else on this machine, and has none if
+        it was uploaded, and so is in own_data. What a file edited by hand holds that is not of this kind is left out,
+        and so is a piece of data whose name is not that of a file, since it could be a place outside own_data."""
         data = read_json(self.own_path)
         if not isinstance(data, dict):
             data = {}
         kept_data: dict[str, dict[str, Any]] = {}
         entries = data.get("data")
         for name, entry in (entries if isinstance(entries, dict) else {}).items():
-            if not (isinstance(name, str) and name and isinstance(entry, dict)):
+            if not (is_file_name(name) and isinstance(entry, dict)):
                 continue
             description = entry.get("description")
             path = entry.get("path")
-            if not (isinstance(description, str) and description.strip()) or not (path is None or is_text(path)):
+            if not (isinstance(description, str) and description.strip()) or not (path is None or is_full_path(path)):
                 continue
             kept_data[name] = {"description": description, **({"path": path} if path is not None else {})}
         kept_software: dict[str, str] = {}
@@ -300,13 +319,22 @@ class Workspace:
 
         return {"data": kept_data, "software": kept_software}
 
-    def update_own(self, change: Callable[[dict[str, dict[str, Any]]], None]) -> None:
+    def update_own(self, change: Callable[[dict[str, dict[str, Any]]], Callable[[], None] | None]) -> None:
         """Changes what the person gave the lab as `change` says, which is given what is kept, to change in place. A
-        change made at the same time by another is not lost, and one that fails keeps nothing."""
+        change made at the same time by another is not lost, and one that fails keeps nothing.
+
+        :param change: May return what undoes what it did outside what is kept, which is done if what is kept then
+            cannot be written, while what it changed is still not to be changed by another.
+        """
         with self._own_lock:
             kept = self.load_own()
-            change(kept)
-            write_atomically(self.own_path, json.dumps(kept, indent=4).encode("utf-8"))
+            undo = change(kept)
+            try:
+                write_atomically(self.own_path, json.dumps(kept, indent=4).encode("utf-8"))
+            except BaseException:
+                if undo is not None:
+                    undo()
+                raise
 
     def new_chat_directory(self, title: str, now: datetime | None = None) -> Path:
         """A new directory for a conversation, named after when it began and what it is called.

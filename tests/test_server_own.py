@@ -16,6 +16,7 @@ from test_server_app import call_app
 
 from virtual_lab import session as session_module
 from virtual_lab.server import own as own_module
+from virtual_lab.server import workspace as workspace_module
 from virtual_lab.server.app import create_app
 from virtual_lab.server.config import ChatConfig, resolve_config
 from virtual_lab.server.conversations import Conversations
@@ -30,7 +31,14 @@ from virtual_lab.server.own import (
     check_own_names,
     given,
 )
-from virtual_lab.server.workspace import OWN_DATA_DIR_NAME, OWN_FILE_NAME, Settings, Workspace
+from virtual_lab.server.workspace import (
+    OWN_DATA_DIR_NAME,
+    OWN_FILE_NAME,
+    Settings,
+    Workspace,
+    is_file_name,
+    is_full_path,
+)
 
 TOKEN = "the-token-of-the-person-who-started-it"
 LOCAL = "http://localhost"
@@ -144,6 +152,27 @@ class TestWhatIsKept:
             },
             "software": {"samtools": "Reads"},
         }
+
+    def test_data_not_named_as_a_file_or_not_at_a_full_path_is_left_out_as_it_could_be_a_place_elsewhere(
+        self, workspace: Workspace
+    ) -> None:
+        odd = ["../victim.txt", "/etc/victim.txt", "a/b.csv", "a/", "..", ".", "a\x00b", "a\nb.csv"]
+        workspace.own_path.write_text(
+            json.dumps(
+                {
+                    "data": {
+                        **{name: {"description": "Odd"} for name in odd},
+                        "relative.csv": {"description": "Odd", "path": "somewhere/relative.csv"},
+                        "home.csv": {"description": "Odd", "path": "~/home.csv"},
+                        "nul.csv": {"description": "Odd", "path": "/somewhere/a\x00b.csv"},
+                        "fine.csv": {"description": "Fine", "path": "/somewhere/fine.csv"},
+                        "plain.csv": {"description": "Fine"},
+                    }
+                }
+            )
+        )
+
+        assert list(workspace.load_own()["data"]) == ["fine.csv", "plain.csv"]
 
     def test_a_change_is_written_and_a_change_that_fails_writes_nothing(self, workspace: Workspace) -> None:
         workspace.update_own(lambda kept: kept["software"].update(samtools="Reads"))
@@ -267,6 +296,24 @@ class TestUploading:
         upload(own, "edge.bin", b"x" * LIMIT)
 
         assert data(own)["edge.bin"]["bytes"] == LIMIT
+
+    def test_a_file_whose_record_cannot_be_written_is_not_left_behind_and_a_name_that_was_taken_is_not_touched(
+        self, workspace: Workspace, own: Own, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        upload(own, "kept.csv", b"first")
+
+        def full(path: Path, data: bytes) -> None:
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr(workspace_module, "write_atomically", full)
+        with pytest.raises(OSError, match="no space"):
+            upload(own, "new.csv")
+        assert refused(upload, own, "kept.csv", b"second").code == "name_taken"
+        monkeypatch.undo()
+
+        assert sorted(data(own)) == ["kept.csv"]
+        assert sorted(path.name for path in workspace.own_data_dir.iterdir()) == ["kept.csv"]
+        assert (workspace.own_data_dir / "kept.csv").read_bytes() == b"first"
 
     def test_a_file_that_stops_arriving_leaves_nothing_behind(self, workspace: Workspace, own: Own) -> None:
         class Broken(io.BytesIO):
@@ -592,6 +639,18 @@ class TestChangingAndGivingUp:
 
         assert link.is_symlink() and target.read_bytes()
 
+    def test_a_name_that_is_a_place_elsewhere_in_a_file_edited_by_hand_deletes_nothing(
+        self, tmp_path: Path, workspace: Workspace, own: Own
+    ) -> None:
+        victim = tmp_path / "victim.txt"
+        victim.write_text("keep me")
+        workspace.own_path.write_text(json.dumps({"data": {"../../victim.txt": {"description": "Odd"}}}))
+
+        error = refused(own.remove, "../../victim.txt")
+
+        assert error.status == 404
+        assert victim.read_text() == "keep me"
+
     def test_a_file_that_is_gone_is_given_up_all_the_same(self, workspace: Workspace, own: Own) -> None:
         upload(own)
         (workspace.own_data_dir / "counts.csv").unlink()
@@ -889,6 +948,26 @@ class TestWhatASessionIsGiven:
 
         assert list(files) == [str(workspace.own_data_dir / "counts.csv")]
 
+    def test_a_link_that_has_come_to_lead_to_where_conversations_are_kept_or_to_what_holds_them_is_left_out(
+        self, tmp_path: Path, workspace: Workspace, own: Own
+    ) -> None:
+        good = made(tmp_path, "v1.csv")
+        inside = workspace.chats_dir / "2026-01-01_0000_x"
+        inside.mkdir()
+        links = {}
+        for name, target in (("into", inside), ("around", workspace.root), ("chats", workspace.chats_dir)):
+            link = good.parent / name
+            link.symlink_to(good)
+            own.add_path(str(link), name)
+            link.unlink()
+            link.symlink_to(target)
+            links[name] = link
+        upload(own)
+
+        files, _ = given(workspace, [*links, "counts.csv"], [])
+
+        assert list(files) == [str(workspace.own_data_dir / "counts.csv")]
+
     def test_nothing_is_given_when_nothing_is_asked_for(self, workspace: Workspace, own: Own) -> None:
         upload(own)
 
@@ -920,6 +999,23 @@ class TestCheckingNames:
     def test_a_name_that_cannot_even_be_looked_up_is_refused_the_same_way(self, name: Any) -> None:
         with pytest.raises(ValueError, match="no data named"):
             check_own_names([name], {"a": 1}, "data")
+
+
+class TestWhatIsAFileNameAndAFullPath:
+    @pytest.mark.parametrize("name", ["counts.csv", "my counts (2).csv", "séquences.fa", ".hidden", "a\\b", "a..b"])
+    def test_a_name_of_one_file_is_one(self, name: str) -> None:
+        assert is_file_name(name)
+
+    @pytest.mark.parametrize(
+        "name", ["", ".", "..", "a/b", "/a", "a/", "../a", "a\x00b", "a\x1fb", "a\x7fb", "a\x01", "a\n", 3, None, ["a"]]
+    )
+    def test_what_is_not_the_name_of_one_file_is_not_one(self, name: Any) -> None:
+        assert not is_file_name(name)
+
+    def test_a_full_path_is_one_that_begins_at_the_root_and_is_text_without_control_characters(self) -> None:
+        assert is_full_path("/data/a b.csv")
+        for path in ("a.csv", "./a.csv", "~/a.csv", "", "/a\x00b", "/a\x1fb", "/a\nb", 3, None):
+            assert not is_full_path(path), path
 
 
 class TestNamesOfData:
@@ -1104,6 +1200,25 @@ class TestConversing:
             assert reopened.session.data == ()
         finally:
             again.close()
+
+    @pytest.mark.parametrize(
+        "code", [{"where": "docker", "sandbox": "python"}, {"where": "local", "resources": "none"}]
+    )
+    def test_a_conversation_is_made_though_a_link_that_was_pointed_to_now_leads_around_where_it_is_kept(
+        self, tmp_path: Path, workspace: Workspace, own: Own, conversations: Conversations, code: dict[str, Any]
+    ) -> None:
+        good = made(tmp_path, "v1.csv")
+        link = good.parent / "latest.csv"
+        link.symlink_to(good)
+        own.add_path(str(link), "The latest")
+        upload(own, description="Counts")
+        link.unlink()
+        link.symlink_to(workspace.root)
+
+        handle = conversations.create({"team": [], "code": code})
+
+        assert handle.session is not None
+        assert [item.name for item in handle.session.data] == ["counts.csv"]
 
     def test_the_session_of_docker_is_given_it_to_mount_where_code_finds_it(
         self, tmp_path: Path, workspace: Workspace, own: Own, conversations: Conversations
