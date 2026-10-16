@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
+import openai
 import pytest
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
@@ -30,6 +32,7 @@ from virtual_lab.chat import (
 )
 from virtual_lab.constants import HUMAN_SPEAKER
 from virtual_lab.events import ChatEvent
+from virtual_lab.failures import KEY_REFUSED, UNWELL
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
@@ -108,6 +111,13 @@ def tool_calls_response(*calls: tuple[str, dict[str, Any]]) -> ChatCompletion:
 
 def team_meeting(agenda: str = "Design a nanobody.", members: tuple[str, ...] = ("Immunologist",), **extra: Any) -> Any:
     return tool_call_response("convene_team", {"agenda": agenda, "members": list(members), **extra})
+
+
+def provider_refusal(error_class: Any, status: int, message: str) -> Any:
+    """What the OpenAI client raises when a provider answers with an error status."""
+    response = httpx.Response(status, request=httpx.Request("POST", "https://api.example.test/v1/chat/completions"))
+
+    return error_class(message, response=response, body=None)
 
 
 def lines(path: Path) -> list[dict[str, Any]]:
@@ -2064,6 +2074,45 @@ class TestFailures:
         assert chat.state == "idle"
 
         assert chat.send("Hello again").text == "Back."
+
+    def test_a_provider_that_refuses_the_key_is_told_with_what_to_do_about_it(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        refusal = provider_refusal(openai.AuthenticationError, 401, "Error code: 401 - Incorrect API key provided")
+        fake_client.completions.responses = [refusal, text_response("Back.")]
+        chat = make_chat(tmp_path)
+
+        reply = chat.send("Hello")
+
+        assert reply.status == "failed"
+        assert reply.error is not None and reply.error.startswith(KEY_REFUSED + " (")
+        assert reply.error.endswith("Error code: 401 - Incorrect API key provided)")
+        (failed,) = of(chat.events_since(), "failed")
+        assert failed.text == reply.error
+        assert failed.data["type"].endswith("AuthenticationError")
+        assert chat.state == "idle"
+
+        assert chat.send("Hello again").text == "Back."
+
+    def test_what_a_failure_leaves_unanswered_is_closed_with_the_providers_words_alone(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [tool_call_response("look_up", {}), text_response("Back.")]
+
+        def on_event(event: ChatEvent) -> None:
+            if event.kind == "tool_calls":
+                raise provider_refusal(openai.InternalServerError, 502, "<html><body>502 Bad Gateway</body></html>")
+
+        chat = make_chat(tmp_path, on_event=on_event)
+
+        reply = chat.send("Go")
+
+        assert reply.error is not None and reply.error.startswith(UNWELL.format(status=502) + " (")
+        # What the model reads on the next turn is what happened, not what to click
+        assert [(m["role"], m.get("content")) for m in chat.messages][-1] == (
+            "tool",
+            "Not run: InternalServerError: 502 Bad Gateway",
+        )
 
     def test_a_reply_with_nothing_in_it_is_a_failure(self, fake_client: FakeClient, tmp_path: Path) -> None:
         fake_client.completions.responses = [text_response("   ")]
