@@ -1038,27 +1038,29 @@ class Chat:
         if not is_count(before) or before > len(self._messages):
             raise ValueError("The last message was sent before messages could be replaced, and cannot be")
 
+        events = self._events[:at]
+        messages = self._messages[:before]
+        # Written before anything is changed, so that a file that cannot be written leaves the conversation as it was
+        write_atomically(
+            self.save_dir / CHAT_EVENTS_FILE_NAME,
+            "".join(json_line(event.to_dict()) for event in events).encode("utf-8"),
+        )
+        write_atomically(
+            self.save_dir / CHAT_MESSAGES_FILE_NAME, "".join(json_line(message) for message in messages).encode("utf-8")
+        )
+
         # A title that came from this message is not one for what replaces it
         files = [
             Attachment(str(file.get("name", "")), "", 0)
             for file in first.data.get("attachments") or []
             if isinstance(file, dict)
         ]
-        if self.title == title_of(first.text, files) and not any(event.kind == "user" for event in self._events[:at]):
+        if self.title == title_of(first.text, files) and not any(event.kind == "user" for event in events):
             self.title = ""
-
-        self._events = self._events[:at]
-        self._messages = self._messages[:before]
+        self._events = events
+        self._messages = messages
         self._turn = first.turn - 1
         self._live.clear()
-        write_atomically(
-            self.save_dir / CHAT_EVENTS_FILE_NAME,
-            "".join(json_line(event.to_dict()) for event in self._events).encode("utf-8"),
-        )
-        write_atomically(
-            self.save_dir / CHAT_MESSAGES_FILE_NAME,
-            "".join(json_line(message) for message in self._messages).encode("utf-8"),
-        )
 
         return first.turn
 
