@@ -80,6 +80,9 @@ for (const theme of ["light", "dark"] as const) {
         await page.goto("/");
         await ask(page, "fail: this will go wrong");
         await expect(page.getByRole("alert").filter({ hasText: "scripted model failed" })).toBeVisible();
+        // Save is there to be used once there is something to save, and fades in, with less contrast while it does
+        await expect(page.getByTestId("export-toggle")).toBeEnabled();
+        await expect(page.getByTestId("export-toggle")).toHaveCSS("opacity", "1");
         await looksRight(page, "a turn that ended in an error");
 
         await page.getByTestId("export-toggle").click();

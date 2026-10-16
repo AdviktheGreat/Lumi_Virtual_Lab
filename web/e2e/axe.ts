@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Page } from "@playwright/test";
 
@@ -10,7 +11,8 @@ interface Found {
 // What axe, which checks a page against the rules for being usable without a mouse or good eyes, finds wrong with what is
 // on the page now, one line for each rule, with where. Rules named in skip are not looked at.
 export async function accessibilityProblems(page: Page, skip: string[] = []): Promise<string[]> {
-  await page.addScriptTag({ path: resolve("node_modules/axe-core/axe.min.js") });
+  // Run in the page, not added to it as a script, which the policy of the pages does not allow
+  await page.evaluate(readFileSync(resolve("node_modules/axe-core/axe.min.js"), "utf8"));
   const found: Found[] = await page.evaluate(async (off) => {
     // axe puts itself on the window, which the page's own types do not know
     const axe = (window as unknown as { axe: { run: (context: Document, options: object) => Promise<{ violations: Found[] }> } }).axe;

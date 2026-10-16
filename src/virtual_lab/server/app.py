@@ -77,7 +77,7 @@ from virtual_lab.server.mcp import (
     service_keys,
     sign_out,
 )
-from virtual_lab.server.security import LOCAL_HOSTS, Guard
+from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
 from virtual_lab.server.tools import check_tool_names, describe_tools
@@ -783,7 +783,12 @@ def create_app(
                 raise not_found("page at this address")
             cache = "public, max-age=31536000, immutable" if path.startswith(IMMUTABLE_PREFIX) else "no-cache"
 
-            return FileResponse(found, headers={"Cache-Control": cache})
+            headers = {"Cache-Control": cache}
+            if found.suffix == ".html":
+                changed = found.stat()
+                headers["Content-Security-Policy"] = policy_of_file(str(found), changed.st_mtime_ns, changed.st_size)
+
+            return FileResponse(found, headers=headers)
 
     app.add_middleware(Guard, token=token, allowed_hosts=allowed_hosts)
 
