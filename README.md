@@ -520,13 +520,25 @@ It prints a link with a token in it. Opening the link keeps the token in a cooki
 
 ### The chat interface
 
-The pages that talk to this server are in `web/`, written with Next.js, React, Tailwind, and shadcn/ui, and exported as static files: nothing runs but the server. They start a conversation with the lead scientist, show its reply as it is written, list the conversations on the side, set the model, the keys, where code runs, the scientists, the tools, and the MCP servers, ask before a call that costs money or cannot be undone and put a server's questions as forms, build the Docker image and fetch Biomni's data lake while showing what each prints, and say when the server cannot be reached or no longer accepts the token. They need Node 22 or later to build, and nothing at all to use once built.
+The pages that talk to this server are in `web/`, written with Next.js, React, Tailwind, and shadcn/ui, and exported as static files: nothing runs but the server. They start a conversation with the lead scientist (the first page says when the model has no key, and opens the keys to add one), show its reply as it is written, list the conversations on the side, set the model, the keys, where code runs, the scientists, the tools, and the MCP servers, ask before a call that costs money or cannot be undone and put a server's questions as forms, build the Docker image and fetch Biomni's data lake while showing what each prints, and say when the server cannot be reached or no longer accepts the token. They need Node 22 or later to build, and nothing at all to use once built.
+
+From a clone of this repository, one command does all of that, and starts the server:
 
 ```bash
+python3 start.py                        # then open the link it prints (it also opens it)
+python3 start.py --workspace ~/lab --port 9000 --no-browser
+python3 start.py --plan                 # what it would do, without doing it
+python3 start.py --rebuild              # build the pages again
+```
+
+It needs Python 3.12 or later to run, and Node 22 or later the first time, to build the pages. It makes a Python environment in `.venv` (or uses the one you are in, if you are in one), installs the lab in it with the `server`, `mcp`, `papers`, and `eval` extras, runs `npm ci` and `npm run package` in `web/`, and starts `virtual-lab-server`, giving it whatever else you wrote. Each of those is looked at first and left alone if it is done, so the first start takes a few minutes and the next ones a moment; the pages are built again when something in `web/src` or the files npm reads has changed since they were built, as after a `git pull`. A step that fails stops it, says which, and is tried again the next time. It starts the server from the clone's directory, so a `.env` file there with your keys in it (`OPENAI_API_KEY=...`) is read, and `.env` is not kept in version control. Without Node, it uses pages that are already built and says so, and otherwise says what to install. The same, by hand:
+
+```bash
+pip install -e ".[server,mcp,papers,eval]"
 cd web
 npm install
 npm run package                         # the pages, into src/virtual_lab/server/static
-virtual-lab-server                      # now shows them at the link it prints
+virtual-lab-server                      # now shows them at the link it prints (or python -m virtual_lab.server)
 ```
 
 `npm run package` is what makes a build of the package carry the pages (they are not kept in the repository). To change the interface, build into `web/out` with `npm run build` and run `virtual-lab-server --static-dir web/out`. `npm run lint`, `npm run typecheck`, and `npm test` check the code, and `npm run test:e2e` drives a browser through the built pages against the real server with a script where the model would be, so it needs no key. See `web/README.md`.

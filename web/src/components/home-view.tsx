@@ -2,17 +2,20 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Dna, FlaskConical, Microscope, Network } from "lucide-react";
+import { Dna, FlaskConical, KeyRound, Microscope, Network } from "lucide-react";
 import { BrandMark } from "@/components/brand";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
-import { ProblemNotice } from "@/components/messages";
+import { Notice, ProblemNotice } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
+import { useSettings } from "@/components/settings-provider";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { useAttachments } from "@/lib/use-attachments";
+import { useMissingKeys } from "@/lib/use-missing-keys";
 import type { ChatInfo } from "@/lib/types";
 
 const EXAMPLES = [
@@ -42,6 +45,7 @@ export function HomeView() {
   const router = useRouter();
   const { server, report } = useServer();
   const { refresh } = useChats();
+  const settings = useSettings();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -77,6 +81,7 @@ export function HomeView() {
   }
 
   const model = server.status === "ready" ? server.settings.model : null;
+  const missing = useMissingKeys(model, settings.closed);
 
   return (
     <>
@@ -93,6 +98,19 @@ export function HomeView() {
 
           <div className="flex flex-col gap-2">
             {problem && <ProblemNotice problem={problem} />}
+            {missing.length > 0 && problem?.fix !== "keys" && (
+              <Notice
+                tone="muted"
+                icon={KeyRound}
+                action={
+                  <Button variant="outline" size="xs" onClick={() => settings.open("keys")} className="shrink-0 text-foreground">
+                    Add the key{missing.length === 1 ? "" : "s"}
+                  </Button>
+                }
+              >
+                {model} needs {missing.join(", ")}, which {missing.length === 1 ? "is" : "are"} not set.
+              </Notice>
+            )}
             <Composer
               value={draft}
               onValueChange={setDraft}

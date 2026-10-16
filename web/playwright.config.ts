@@ -43,6 +43,9 @@ export default defineConfig({
       name: "own-server",
       testMatch: "**/own-server/**/*.spec.ts",
       testIgnore: "**/own-server/keychain.spec.ts",
+      // Each file changes what every conversation is made with, and puts it back, and a conversation made by another file
+      // in between is made with what was changed, so no file is run beside another
+      workers: 1,
       use: { ...devices["Desktop Chrome"], baseURL: `http://127.0.0.1:${ownPort}` },
     },
     {

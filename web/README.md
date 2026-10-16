@@ -2,7 +2,8 @@
 
 The interface for talking to the head of a lab, built with Next.js, React, Tailwind, and shadcn/ui, and exported as
 static pages. The server (`virtual-lab-server`, in `src/virtual_lab/server`) serves those pages itself, along with the
-API they talk to, so there is nothing to run but the server.
+API they talk to, so there is nothing to run but the server. To use the interface rather than change it, run
+`python3 start.py` in the root of the repository, which builds the pages if they are not built and starts the server.
 
 ## Layout
 

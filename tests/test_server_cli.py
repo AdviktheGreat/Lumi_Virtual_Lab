@@ -1,6 +1,7 @@
 """Tests of starting the server."""
 
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -241,6 +242,8 @@ class TestServing:
 
         output = capsys.readouterr().out
         assert "no pages to show" in output and "/api" in output
+        # Where the pages come from, since this is where a clone that has not built them ends up
+        assert "start.py" in output and "npm run package" in output
         assert "token=" not in output
         assert opened == []
         assert recording.started[0].sockets is not None
@@ -439,3 +442,17 @@ class TestInstalling:
             "uvicorn",
         }
         assert any("server" in requirement for requirement in project["optional-dependencies"]["dev"])
+
+
+class TestAsAModule:
+    def test_it_is_started_by_python_m_as_by_its_command(self) -> None:
+        done = subprocess.run(
+            [sys.executable, "-m", "virtual_lab.server", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+
+        assert done.returncode == 0
+        assert done.stdout.startswith("usage: virtual-lab-server") and "--workspace" in done.stdout

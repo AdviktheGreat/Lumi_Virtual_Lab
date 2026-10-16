@@ -1,4 +1,4 @@
-import { CircleAlert, OctagonX, Paperclip } from "lucide-react";
+import { CircleAlert, OctagonX, Paperclip, type LucideIcon } from "lucide-react";
 import { Steps } from "@/components/activity";
 import { BrandMark } from "@/components/brand";
 import { Markdown } from "@/components/markdown";
@@ -67,15 +67,18 @@ export function LeadText({ text, live = false }: { text: string; live?: boolean 
 
 export function Notice({
   tone,
+  icon,
   action,
   children,
 }: {
   tone: "error" | "muted";
+  // What stands for it, where the tone's own does not
+  icon?: LucideIcon;
   // What the person can do about it
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const Icon = tone === "error" ? CircleAlert : OctagonX;
+  const Icon = icon ?? (tone === "error" ? CircleAlert : OctagonX);
 
   return (
     <div
