@@ -1002,7 +1002,8 @@ test.describe("the setup, while it asks", () => {
 
     await dialog.getByRole("button", { name: "Build Biomni base" }).click();
 
-    await expect(dialog.getByRole("alert")).toBeVisible();
+    // A build that failed in an earlier test is told of in the dialog too, so the alert is the one about the lost request
+    await expect(dialog.getByRole("alert").filter({ hasText: "The server cannot be reached" })).toBeVisible();
     await expect.poll(() => looks).toBeGreaterThan(0);
   });
 });

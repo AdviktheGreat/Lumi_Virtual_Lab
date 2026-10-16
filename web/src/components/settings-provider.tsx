@@ -9,6 +9,8 @@ interface SettingsContext {
   // Opens the settings, at the part of them that is wanted, and gives the focus back to what had it, or to what is named
   // if what has it is about to go. Nothing opens while the server has not said what they are.
   open: (tab?: SettingsTab, opener?: HTMLElement | null) => void;
+  // How many times they have been closed, which what they change, such as a key, is looked at again on
+  closed: number;
 }
 
 const Context = createContext<SettingsContext | null>(null);
@@ -18,6 +20,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   // What the settings were when they were opened, which the dialog goes on from, and which is not undone should the
   // server be lost while it is open; and what had the focus, which is given it again when they are closed
   const [opened, setOpened] = useState<{ tab: SettingsTab; settings: Settings; opener: HTMLElement | null } | null>(null);
+  const [closed, setClosed] = useState(0);
   const settings = server.status === "ready" ? server.settings : null;
 
   const open = useCallback(
@@ -27,13 +30,17 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     },
     [settings],
   );
-  const value = useMemo(() => ({ open }), [open]);
+  const close = useCallback(() => {
+    setOpened(null);
+    setClosed((count) => count + 1);
+  }, []);
+  const value = useMemo(() => ({ open, closed }), [open, closed]);
 
   return (
     <Context.Provider value={value}>
       {children}
       {opened !== null && (
-        <SettingsDialog settings={opened.settings} tab={opened.tab} opener={opened.opener} onClose={() => setOpened(null)} />
+        <SettingsDialog settings={opened.settings} tab={opened.tab} opener={opened.opener} onClose={close} />
       )}
     </Context.Provider>
   );

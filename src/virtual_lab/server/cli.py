@@ -137,6 +137,7 @@ def serve(
     link = f"{address}/?token={token}"
     if pages is None:
         print(f"The Virtual Lab's server is running, with no pages to show. Its API is at {address}/api")
+        print("The pages are built by python3 start.py, from a clone of the repository, or by npm run package in web/.")
     else:
         print(f"The Virtual Lab is running. Open {link}")
     if not is_loopback(host):

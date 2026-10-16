@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { expect, test } from "../fixtures";
+import { expect, reopenHome, test } from "../fixtures";
 import { openSettings, resetSettings, settings } from "./state";
 
 // Every test here changes what the server is set up with, which they share, so each puts it back and none is run beside
@@ -161,6 +161,8 @@ test.describe("the settings", () => {
       release = resolve;
     });
     let asked = 0;
+    // The first page asks for them too, which is done with before the settings are opened, whose first answer is held
+    await reopenHome(page);
     // The first answer is read before the key is given, and delivered after
     await page.route("**/api/models", async (route) => {
       asked += 1;
@@ -584,8 +586,10 @@ test.describe("a model whose key is missing", () => {
     await page.getByRole("textbox", { name: "Message" }).fill("Something to ask");
     await page.getByRole("button", { name: "Send" }).click();
 
-    await expect(page.getByRole("alert").filter({ hasText: "That cannot be started." })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Add the key" })).toHaveCount(0);
+    const refusal = page.getByRole("alert").filter({ hasText: "That cannot be started." });
+    await expect(refusal).toBeVisible();
+    // The first page's own notice about the key, which this server has not been given, has a button of that name too
+    await expect(refusal.getByRole("button", { name: "Add the key" })).toHaveCount(0);
   });
 });
 

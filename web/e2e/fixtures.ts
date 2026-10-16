@@ -11,6 +11,18 @@ export async function signIn(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
 }
 
+// Opens the home page again, which is when it asks what the models and the keys are, and waits until it has been
+// answered and shown, so that what is not there is not just not there yet, and what is asked for after is not what it asked
+export async function reopenHome(page: Page): Promise<void> {
+  const asked = Promise.all(
+    ["/api/models", "/api/keys"].map((path) => page.waitForResponse((response) => new URL(response.url()).pathname === path)),
+  );
+  await page.goto("/");
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+  await asked;
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+}
+
 // Asks the lead something from the home page, and waits for the conversation it starts
 export async function ask(page: Page, question: string): Promise<string> {
   await page.getByRole("textbox", { name: "Message" }).fill(question);
