@@ -1,22 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { LakeTab } from "@/components/setup-lake";
 import { JobsTab } from "@/components/setup-jobs";
-import type { SetupActions } from "@/components/setup-job";
 import { OverviewTab } from "@/components/setup-overview";
 import { useServer } from "@/components/server-provider";
 import { useSettings } from "@/components/settings-provider";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api } from "@/lib/api";
-import { describeError } from "@/lib/errors";
 import { returnFocusTo } from "@/lib/focus";
-import type { Job } from "@/lib/types";
 import { useJobLogs, type JobsData } from "@/lib/use-jobs";
+import { useJobActions, type SetupActions } from "@/lib/use-setup-actions";
 import { useSetupData } from "@/lib/use-setup-data";
+import type { Job } from "@/lib/types";
 
 export type SetupTab = "overview" | "lake" | "jobs";
 
@@ -49,10 +47,8 @@ export function SetupDialog({
   const data = useSetupData(jobs.finished);
   const [tab, setTab] = useState(first);
   const [selected, setSelected] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
   const logs = useJobLogs(jobs.jobs, tab === "jobs" ? selected : null);
-  const { track, refresh: refreshJobs } = jobs;
+  const { refresh: refreshJobs } = jobs;
   const { refresh: refreshData } = data;
 
   useEffect(() => {
@@ -60,36 +56,12 @@ export function SetupDialog({
     void refreshJobs();
   }, [refreshJobs]);
 
-  const actions = useMemo<SetupActions>(() => {
-    // Starts or stops something, which is shown once the server has done it. Whatever it was refused for, which may be
-    // that it is done already, is looked at again.
-    async function run(action: () => Promise<Job>) {
-      setBusy(true);
-      setProblem(null);
-      try {
-        track(await action());
-        refreshData();
-      } catch (error) {
-        report(error);
-        setProblem(describeError(error));
-        void refreshJobs();
-        refreshData();
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    return {
-      busy,
-      build: (stage) => void run(() => api.buildImage(stage)),
-      fetch: (names) => void run(() => api.fetchDataLake(names)),
-      stop: (job) => void run(() => api.stopJob(job.id)),
-      showLog: (job) => {
-        setSelected(job.id);
-        setTab("jobs");
-      },
-    };
-  }, [busy, track, refreshData, refreshJobs, report]);
+  const showLog = useCallback((job: Job) => {
+    setSelected(job.id);
+    setTab("jobs");
+  }, []);
+  const { actions: asked, problem } = useJobActions({ jobs, refreshData, report });
+  const actions = useMemo<SetupActions>(() => ({ ...asked, showLog }), [asked, showLog]);
 
   const sandbox = server.status === "ready" ? server.settings.sandbox : "";
 

@@ -2,7 +2,7 @@
 
 import { Check, CircleDashed, Loader2, Lock } from "lucide-react";
 import { Aside, Section } from "@/components/settings-fields";
-import { JobProgress, StopButton, type SetupActions } from "@/components/setup-job";
+import { JobProgress, StopButton } from "@/components/setup-job";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,6 +10,7 @@ import { describeError } from "@/lib/errors";
 import { activeJob, latestJob, stageLabel, stepLabel, stepsLeft } from "@/lib/setup";
 import type { ImageStage, Images, Job, SetupStatus, SetupStep, StepState } from "@/lib/types";
 import type { Loaded } from "@/lib/use-settings-data";
+import type { SetupActions } from "@/lib/use-setup-actions";
 
 const ICONS: Record<StepState, React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>> = {
   done: Check,

@@ -179,6 +179,41 @@ describe("the API", () => {
     expect(calls[1][1].body).toBe(JSON.stringify({ disabled: ["pubmed_search"] }));
   });
 
+  it("asks for what was given to the lab, and takes what it is as it now is from what each change gives back", async () => {
+    const given = { data: [], software: [{ name: "Cell Ranger", description: "Counts" }], max_upload_bytes: 20480 };
+    const fetch = vi.fn(async () => answer(given));
+    vi.stubGlobal("fetch", fetch);
+
+    expect(await api.own()).toEqual(given);
+    expect(await api.addOwnPath("/data/my counts.csv", "Counts")).toEqual(given);
+    expect(await api.describeOwnData("my counts.csv", "Raw counts")).toEqual(given);
+    expect(await api.removeOwnData("my counts.csv")).toEqual(given);
+    expect(await api.saveOwnSoftware("Cell Ranger", "Counts")).toEqual(given);
+    expect(await api.removeOwnSoftware("Cell Ranger")).toEqual(given);
+
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([address, options]) => [address, options.method, options.body])).toEqual([
+      ["/api/own", "GET", undefined],
+      ["/api/own/data/paths", "POST", JSON.stringify({ path: "/data/my counts.csv", description: "Counts" })],
+      ["/api/own/data/my%20counts.csv", "PATCH", JSON.stringify({ description: "Raw counts" })],
+      ["/api/own/data/my%20counts.csv", "DELETE", undefined],
+      ["/api/own/software", "PUT", JSON.stringify({ name: "Cell Ranger", description: "Counts" })],
+      ["/api/own/software/Cell%20Ranger", "DELETE", undefined],
+    ]);
+  });
+
+  it("names data in the address as it is, whatever is in its name", async () => {
+    const fetch = vi.fn(async () => answer({ kind: "text", lines: [], truncated: false }));
+    vi.stubGlobal("fetch", fetch);
+
+    await api.previewOwnData("a/b #1?.csv");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/own/data/a%2Fb%20%231%3F.csv/preview",
+      expect.objectContaining({ method: "GET", body: undefined }),
+    );
+  });
+
   it("asks for the setup, and for the data lake, with nothing in the request", async () => {
     const fetch = vi.fn(async () => answer({ steps: [], files: [] }));
     vi.stubGlobal("fetch", fetch);
@@ -430,6 +465,79 @@ describe("sending a file", () => {
 
     await expect(api.upload("a", file, { signal: abort.signal })).rejects.toMatchObject({ name: "AbortError" });
     expect(FakeRequest.made).toEqual([]);
+  });
+});
+
+describe("giving the lab a file", () => {
+  const given = { data: [{ name: "my data.csv", description: "Counts" }], software: [], max_upload_bytes: 20480 };
+  const file = new File(["a,b"], "my data.csv");
+
+  function begin(options?: Parameters<typeof api.uploadOwnData>[2]) {
+    FakeRequest.made = [];
+    vi.stubGlobal("XMLHttpRequest", FakeRequest);
+    const result = api.uploadOwnData(file, "Raw counts & more", options);
+
+    return { result, request: FakeRequest.made[0] };
+  }
+
+  it("sends the file itself as the body, named as it was and with what it is, and takes what the lab was given", async () => {
+    const { result, request } = begin();
+
+    expect(request).toMatchObject({
+      method: "POST",
+      url: "/api/own/data/files?name=my%20data.csv&description=Raw%20counts%20%26%20more",
+    });
+    expect(request.sent).toBe(file);
+    request.finish(201, JSON.stringify(given));
+
+    expect(await result).toEqual(given);
+  });
+
+  it("says how much has gone, as a fraction", async () => {
+    const seen: number[] = [];
+    const { result, request } = begin({ onProgress: (fraction) => seen.push(fraction) });
+
+    request.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 4 });
+    request.upload.onprogress?.({ lengthComputable: true, loaded: 9, total: 4 });
+    request.finish(201, JSON.stringify(given));
+    await result;
+
+    expect(seen).toEqual([0.25, 1]);
+  });
+
+  it("raises the server's error for a file it turned away", async () => {
+    const { result, request } = begin();
+    request.finish(409, JSON.stringify({ error: { code: "name_taken", message: "There is data named my data.csv already" } }));
+
+    await expect(result).rejects.toMatchObject({ status: 409, code: "name_taken", message: "There is data named my data.csv already" });
+  });
+
+  it("raises an error for an answer that does not say what the lab was given", async () => {
+    const bodies = [
+      "not json",
+      JSON.stringify(null),
+      JSON.stringify({ name: "a.csv", path: "uploads/a.csv", size: 3 }),
+      JSON.stringify({ data: [], software: [] }),
+      JSON.stringify({ data: {}, software: [], max_upload_bytes: 1 }),
+      JSON.stringify({ data: [], software: "none", max_upload_bytes: 1 }),
+      JSON.stringify({ data: [], software: [], max_upload_bytes: "1" }),
+    ];
+    for (const body of bodies) {
+      const { result, request } = begin();
+      request.finish(201, body);
+
+      await expect(result).rejects.toMatchObject({ code: "error", message: "The server did not say what it kept" });
+    }
+  });
+
+  it("stops sending a file when it is called off, and says that it was", async () => {
+    const abort = new AbortController();
+    const { result, request } = begin({ signal: abort.signal });
+
+    abort.abort();
+
+    expect(request.aborted).toBe(true);
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
   });
 });
 

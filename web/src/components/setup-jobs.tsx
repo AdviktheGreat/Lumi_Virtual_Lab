@@ -1,7 +1,7 @@
 "use client";
 
 import { Section } from "@/components/settings-fields";
-import { JobProgress, StopButton, type SetupActions } from "@/components/setup-job";
+import { JobProgress, StopButton } from "@/components/setup-job";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,6 +9,7 @@ import { stripAnsi } from "@/lib/format";
 import { EMPTY_LOG, isActive, logEnd, startedText, stateLabel, type JobLog } from "@/lib/setup";
 import type { Job } from "@/lib/types";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
+import type { JobActions } from "@/lib/use-setup-actions";
 
 function Log({ job, log }: { job: Job; log: JobLog }) {
   const { scroller, onScroll } = useStickToBottom<HTMLDivElement>(logEnd(log));
@@ -51,7 +52,7 @@ function JobCard({
   job: Job;
   open: boolean;
   log: JobLog;
-  actions: SetupActions;
+  actions: JobActions;
   onToggle: () => void;
 }) {
   const active = isActive(job);
@@ -102,7 +103,7 @@ export function JobsTab({
   // The job whose output is shown
   selected: string | null;
   logs: Record<string, JobLog>;
-  actions: SetupActions;
+  actions: JobActions;
   onSelect: (id: string | null) => void;
 }) {
   return (

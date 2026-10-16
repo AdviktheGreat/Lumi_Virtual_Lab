@@ -59,6 +59,32 @@ conversation that is open, whose heading follows. Delete asks first, and removes
 its files, stopping it if it is at work; if it is the one that is open, the page goes to the home page. One that is gone
 already is as good as deleted.
 
+## Data
+
+The sidebar has a link to each page besides the conversations, under New chat; the one that is open is marked as the
+current page. The Data page (`/data`) is where the lab is given what it works on, in three parts.
+
+- **Your data** is the files and folders the person gave the lab. A file is uploaded, and the lab keeps its own copy
+  (up to the server's upload limit, and the form says what it is), or a file or folder is pointed to by its full path on
+  the machine the server runs on, and is left where it is. Each has to say what it is, in words, since the lead reads that
+  to know when to use it, and code finds a piece of data by its file name, so none can have the name of another: an upload
+  with a name that is taken is refused where it is chosen. A piece of data shows where it came from, how big it is, and
+  when it was changed. The eye shows the start of it (the first lines of a text file, or what is in a folder), the pencil
+  changes what it is said to be, and the bin gives it up after asking, saying whether that deletes the lab's copy (an
+  upload) or leaves the file where it is (a path). What was pointed to and has gone since is said to have gone, and the
+  page looks again whenever it is shown, so that it is found out when the person comes back to its tab.
+- **Your software** is a name and what it is for. The lab does not install it: it has to be where the code runs, which
+  a conversation checks when its code first runs, and tells the lead if it is not.
+- **Biomni's data lake** is the files of the data lake and the fetching of them, as the setup has it, with the progress
+  of a fetch and the means to stop it. The jobs are the setup's, so a fetch begun in either is followed in both, and the
+  page does not ask Docker anything (`useDataLake` in `src/lib/use-setup-data.ts` is the part of the setup's data that
+  it needs).
+
+What is given is in every conversation made from then on, and not in one that is already going (the page says so). The
+server keeps it (`GET /api/own` and what changes it, in the main README), and every change gives back all of it as it
+now is, which the page shows from then on. `src/lib/own.ts` checks what is written before it is sent, as the server
+does, so that what is wrong is said where it is written.
+
 ## Settings
 
 The gear at the foot of the sidebar opens the settings, in five parts. What is set is what conversations started from then
@@ -215,7 +241,7 @@ The tests run the real server with the built pages and a script where the model 
 port, which is 8799. The scripted server takes 20 KiB as the most for a file, so that the tests of the limit need only
 small files; `--max-upload-bytes` changes it.
 
-The tests of the settings, the keys, the scientists, and the tools (`e2e/own-server`) change what every conversation is made with, so
+The tests of the settings, the keys, the scientists, the tools, and the data and software given to the lab (`e2e/own-server`) change what every conversation is made with, so
 they run in a project of their own, against a second scripted server on the next port (8800). Each file of them puts
 back what it changed before each test, and neither touches what the other does. They run in order within a file, and a
 test that needs a key puts it there itself, since the server keeps none. The keys they give are kept in a keychain that is
@@ -230,7 +256,7 @@ what a test tells it, and files of 10 KB for every file of the data lake. A test
 the port after (8802, `--setup-control-port`; `e2e/setup/state.ts` is the client, and `FakeSetup.control` in
 `e2e/scripted_server.py` lists what it can be told), for instance to hold a download so that its progress and stopping can
 be seen. These run in a project of their own (`--project=setup`), one test at a time, and put the stand-ins back as they
-were before each test.
+were before each test. They include the data lake as the Data page shows it (`e2e/setup/data-page.spec.ts`).
 
 The tests of the MCP servers (`e2e/mcp`) set servers up, and every conversation made without being told which to have is
 given them, so they have a fourth scripted server, on the port after the setup's control port (8803), and run in a project of
