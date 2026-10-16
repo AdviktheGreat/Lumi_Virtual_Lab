@@ -48,6 +48,9 @@ MCP_FILE_NAME = "mcp.json"
 OWN_FILE_NAME = "own.json"
 OWN_DATA_DIR_NAME = "own_data"
 
+# What the lab was asked to read of papers, a directory for each run
+PAPERS_DIR_NAME = "papers"
+
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
 
@@ -283,6 +286,11 @@ class Workspace:
             write_atomically(self.mcp_path, json.dumps({"servers": servers}, indent=4).encode("utf-8"))
 
         return True
+
+    @property
+    def papers_dir(self) -> Path:
+        """Where the runs that read papers are kept, each in a directory of its own."""
+        return self.root / PAPERS_DIR_NAME
 
     @property
     def own_path(self) -> Path:

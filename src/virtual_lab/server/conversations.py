@@ -359,10 +359,15 @@ class Conversations:
     def missing_keys(self, config: ChatConfig) -> list[str]:
         """The variables its model's provider needs that are not set, which are none when keys are not checked
         or the conversation's models are given."""
+        return self.missing_keys_for(config.model)
+
+    def missing_keys_for(self, model: str) -> list[str]:
+        """The variables a model's provider needs that are not set, which are none when keys are not checked or
+        models are given."""
         if not self.check_keys or self.client is not None or self.chat_models is not None:
             return []
 
-        return missing_keys([config.model])
+        return missing_keys([model])
 
     def require_keys(self, config: ChatConfig) -> None:
         """Says what is missing before something that spends is done, rather than after it has gone wrong.
