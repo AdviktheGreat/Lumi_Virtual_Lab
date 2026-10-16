@@ -69,8 +69,8 @@ pdf = ["weasyprint>=66"]
 # Reading papers saved as PDFs, for the tasks, databases, and software in them
 papers = ["pypdf>=5"]
 # The server a page talks to, with virtual-lab-server or serve. keyring keeps the keys a person gives it in the
-# machine's own keychain
-server = ["fastapi>=0.115", "uvicorn>=0.30", "keyring>=25"]
+# machine's own keychain, and pyarrow and numpy read Biomni's benchmarks for the runs it answers them in
+server = ["fastapi>=0.115", "uvicorn>=0.30", "keyring>=25", "numpy", "pyarrow"]
 nanobody-design = [
     "biopython",
     "pandas",
