@@ -38,6 +38,12 @@ and everything else is a request and an answer.
     GET    /api/benchmarks/runs/{id}    one run, with how each question was answered; DELETE deletes it
     POST   /api/benchmarks/runs/{id}/start   answer its questions, as a job, with the most it may spend
     GET    /api/benchmarks/runs/{id}/questions/{task}/{number}   one question, with its answer and what was said
+    GET    /api/projects                the research projects, and what a page needs to make one
+    POST   /api/projects                a project: a goal for the lead to carry out, with a team, a plan, and a critic
+    GET    /api/projects/{id}           one project, with its team, plan, rounds, findings, and steps; DELETE deletes it
+    POST   /api/projects/{id}/start     work on it, as a job, with the most it may spend; again to carry on
+    GET    /api/projects/{id}/steps/{name}   one step, with what it produced and what was said or run in it
+    GET    /api/projects/{id}/report    the report of how it ended, as a document to save
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
@@ -101,6 +107,7 @@ from virtual_lab.server.mcp import (
 )
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
 from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_PAPERS, MAX_TITLE_CHARS, Papers
+from virtual_lab.server.projects import MAX_GOAL_CHARS, Projects
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
@@ -270,6 +277,26 @@ class BenchmarkStartBody(RequestModel):
     max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
     max_cost_per_question: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
     retry_failed: StrictBool = False
+
+
+class ProjectBody(RequestModel):
+    """A research project: a goal, and how its team is chosen and what its steps are given."""
+
+    goal: str = Field(max_length=MAX_GOAL_CHARS * 2)
+    title: str | None = Field(None, max_length=MAX_TITLE_CHARS * 4)
+    team: str = Field("chosen", max_length=100)
+    max_team_size: StrictInt | None = None
+    meeting_rounds: StrictInt | None = None
+    memory: str = Field("pick", max_length=100)
+    findings_per_step: StrictInt | None = None
+
+
+class ProjectStartBody(RequestModel):
+    """How much working on a project may cost in all, which is always said, and the rounds it may take."""
+
+    max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
+    max_rounds: StrictInt | None = None
+    max_stalled_rounds: StrictInt | None = None
 
 
 class McpServerBody(RequestModel):
@@ -457,6 +484,14 @@ def create_app(
         chat_models=chat_models,
         docker_missing=setup.missing_for if check_setup else None,
     )
+    projects = Projects(
+        store,
+        setup.jobs,
+        conversations.missing_keys_for,
+        client=client,
+        chat_models=chat_models,
+        docker_missing=setup.missing_for if check_setup else None,
+    )
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -480,6 +515,7 @@ def create_app(
     app.state.setup = setup
     app.state.workspace = store
     app.state.benchmarks = benchmarks
+    app.state.projects = projects
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
@@ -857,6 +893,48 @@ def create_app(
     @api.get("/benchmarks/runs/{run_id}/questions/{task}/{number}")
     def get_benchmark_question(run_id: str, task: str, number: str) -> dict[str, Any]:
         return benchmarks.question(run_id, task, number)
+
+    @api.get("/projects")
+    def get_projects() -> dict[str, Any]:
+        return projects.describe()
+
+    @api.post("/projects", status_code=201)
+    def make_project(body: ProjectBody) -> dict[str, Any]:
+        project_id = projects.create(
+            body.goal,
+            body.title,
+            body.team,
+            body.max_team_size,
+            body.meeting_rounds,
+            body.memory,
+            body.findings_per_step,
+        )
+
+        return projects.view(project_id)
+
+    @api.get("/projects/{project_id}")
+    def get_project(project_id: str) -> dict[str, Any]:
+        return projects.view(project_id)
+
+    @api.delete("/projects/{project_id}")
+    def delete_project(project_id: str) -> dict[str, Any]:
+        projects.delete(project_id)
+
+        return projects.describe()
+
+    @api.post("/projects/{project_id}/start", status_code=202)
+    def start_project(project_id: str, body: ProjectStartBody) -> dict[str, Any]:
+        job = projects.start(project_id, body.max_cost, body.max_rounds, body.max_stalled_rounds)
+
+        return job.snapshot(0)
+
+    @api.get("/projects/{project_id}/steps/{name}")
+    def get_project_step(project_id: str, name: str) -> dict[str, Any]:
+        return projects.step(project_id, name)
+
+    @api.get("/projects/{project_id}/report")
+    def project_report(project_id: str) -> FileResponse:
+        return file_response(projects.report_file(project_id), download=True)
 
     @api.get("/mcp")
     def get_mcp() -> dict[str, Any]:

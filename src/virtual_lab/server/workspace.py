@@ -56,6 +56,9 @@ PAPERS_DIR_NAME = "papers"
 # What the lab was asked to answer of Biomni's benchmarks: the files they were fetched into, and each run
 BENCHMARKS_DIR_NAME = "benchmarks"
 
+# The research projects the lab was given to carry out, a directory for each
+PROJECTS_DIR_NAME = "projects"
+
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
 
@@ -319,6 +322,11 @@ class Workspace:
     def benchmarks_dir(self) -> Path:
         """Where Biomni's benchmark files are kept, in files/, and the runs that answer them, each in runs/."""
         return self.root / BENCHMARKS_DIR_NAME
+
+    @property
+    def projects_dir(self) -> Path:
+        """Where the research projects are kept, each in a directory of its own."""
+        return self.root / PROJECTS_DIR_NAME
 
     @property
     def own_path(self) -> Path:

@@ -49,6 +49,7 @@ from virtual_lab.server.config import ChatConfig, resolve_config
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
 from virtual_lab.server.papers import StopWork, check_budget, check_count, check_flag, check_model, money
+from virtual_lab.server.transcripts import read_turns
 from virtual_lab.server.workspace import Workspace, claim_directory, has_control_character, read_json
 
 # What a run is, kept beside what the library saves of it, and where code runs for it
@@ -67,9 +68,8 @@ MAX_ROUNDS = 5
 
 MAX_TITLE_CHARS = 200
 
-# The most of a question's prompt a list shows, and of a transcript a page is sent, in characters
+# The most of a question's prompt a list shows, in characters
 PROMPT_PREVIEW_CHARS = 160
-MAX_TRANSCRIPT_CHARS = 200_000
 
 # Of a run's id and a question's task, which name the directories and files that hold them
 NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
@@ -735,31 +735,7 @@ class BenchmarkRuns:
     def turns_of(directory: Path, relative: str) -> tuple[list[dict[str, str]] | None, bool]:
         """What was said in answering a question, from the transcript the library saved, and whether it was cut short
         to be sent."""
-        path = (directory / relative).resolve()
-        # What a result file names is read only if it is in the run, which a file edited by hand may not be
-        if not path.is_relative_to(directory.resolve()) or not path.is_file():
-            return None, False
-        saved = read_json(path)
-        if not isinstance(saved, list):
-            return None, False
-        turns: list[dict[str, str]] = []
-        used = 0
-        for turn in saved:
-            if (
-                not isinstance(turn, dict)
-                or not isinstance(turn.get("agent"), str)
-                or not isinstance(turn.get("message"), str)
-            ):
-                continue
-            room = MAX_TRANSCRIPT_CHARS - used
-            if room <= 0:
-                return turns, True
-            turns.append({"agent": turn["agent"], "message": turn["message"][:room]})
-            used += len(turn["message"])
-            if len(turn["message"]) > room:
-                return turns, True
-
-        return turns, False
+        return read_turns(directory, relative)
 
     # Answering
 
