@@ -2,6 +2,7 @@ import { useState } from "react";
 import { CircleAlert, OctagonX, Paperclip, Pencil, RotateCcw, type LucideIcon } from "lucide-react";
 import { Steps } from "@/components/activity";
 import { BrandMark } from "@/components/brand";
+import { CopyButton } from "@/components/copy-button";
 import { Markdown } from "@/components/markdown";
 import { useSettings } from "@/components/settings-provider";
 import { useSetup } from "@/components/setup-provider";
@@ -225,6 +226,11 @@ export function TurnView({
         <LeadBlock speaker={lead}>
           <Steps steps={turn.steps} />
           {reply !== "" && <LeadText text={reply} live={turn.outcome === "running"} />}
+          {turn.outcome === "answered" && reply !== "" && (
+            <div className="-mt-1.5">
+              <CopyButton text={reply} label="Copy answer" />
+            </div>
+          )}
           {thinking && (
             <div className="animate-pulse text-sm text-muted-foreground" role="status">
               Thinking…
