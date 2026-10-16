@@ -21,6 +21,7 @@ from virtual_lab.scientists import SCIENTISTS
 from virtual_lab.server.code import CodeSetup
 from virtual_lab.server.library import SETTABLE_KEYS, missing_keys, models, provider_of
 from virtual_lab.server.mcp import check_server_names, servers_on
+from virtual_lab.server.own import check_own_names
 from virtual_lab.server.tools import check_tool_names, tool_names
 from virtual_lab.server.workspace import SCIENTIST_FIELDS, Settings, Workspace, read_json
 from virtual_lab.utils import write_atomically
@@ -81,6 +82,9 @@ class ChatConfig:
         that need code to run are given only where it does.
     :param mcp: The names of the MCP servers whose tools the lead and the team may call, as the person set them up. A
         conversation goes on with those of them that are still set up and on.
+    :param data: The names of the data the person gave the lab that code is given to read, where there is code. A
+        conversation goes on with those of them that are still given and still there.
+    :param software: The names of the software the person gave the lab that the agents are told they can use.
     """
 
     model: str
@@ -92,6 +96,8 @@ class ChatConfig:
     commercial_mode: bool
     tools: tuple[str, ...] = ()
     mcp: tuple[str, ...] = ()
+    data: tuple[str, ...] = ()
+    software: tuple[str, ...] = ()
 
     def lead_agent(self) -> Agent:
         return agent_from({**self.lead, "model": self.model})
@@ -118,6 +124,8 @@ class ChatConfig:
             "commercial_mode": self.commercial_mode,
             "tools": list(self.tools),
             "mcp": list(self.mcp),
+            "data": list(self.data),
+            "software": list(self.software),
         }
 
     @classmethod
@@ -135,6 +143,9 @@ class ChatConfig:
             tools=tuple(dict.fromkeys(str(name) for name in data.get("tools", ()))),
             # A conversation begun before the lead could be given MCP servers has none, and goes on without
             mcp=tuple(dict.fromkeys(str(name) for name in data.get("mcp", ()))),
+            # A conversation begun before the person could give the lab data and software has none, and goes on without
+            data=tuple(dict.fromkeys(str(name) for name in data.get("data", ()))),
+            software=tuple(dict.fromkeys(str(name) for name in data.get("software", ()))),
         )
 
 
@@ -257,8 +268,9 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
     :param request: What the person chose. A key left out is taken from the settings, or the library: "model",
         "lead" and each of "team", by title or described, "code" with any of where, sandbox, network, python,
         and resources, "max_cost" (null for no limit), "stream", "commercial_mode", "tools", the names of the
-        library's tools to give, which are all but those the workspace has turned off, and "mcp", the names of the
-        MCP servers to give, which are those the workspace has turned on.
+        library's tools to give, which are all but those the workspace has turned off, "mcp", the names of the
+        MCP servers to give, which are those the workspace has turned on, and "data" and "software", the names of
+        what the person gave the lab to give, which are all of it.
     :raises ValueError: If something chosen cannot be used.
     """
     scientists = library(workspace)
@@ -288,6 +300,15 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         tools = [name for name in tool_names() if name not in disabled]
     servers = workspace.load_mcp_servers()
     mcp = check_server_names(request["mcp"], servers) if request.get("mcp") is not None else servers_on(servers)
+    own = workspace.load_own()
+    data = (
+        check_own_names(request["data"], own["data"], "data") if request.get("data") is not None else list(own["data"])
+    )
+    software = (
+        check_own_names(request["software"], own["software"], "software")
+        if request.get("software") is not None
+        else list(own["software"])
+    )
 
     return ChatConfig(
         model=model,
@@ -299,6 +320,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         commercial_mode=bool(request.get("commercial_mode") or False),
         tools=tuple(tools),
         mcp=tuple(mcp),
+        data=tuple(data),
+        software=tuple(software),
     )
 
 

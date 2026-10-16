@@ -31,6 +31,7 @@ from virtual_lab.server.connections import Connections
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.library import missing_keys
 from virtual_lab.server.mcp import is_on, server_title
+from virtual_lab.server.own import given
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
@@ -393,7 +394,8 @@ class Conversations:
 
     def _start(self, directory: Path, config: ChatConfig, title: str | None, keyless: bool = False) -> ChatHandle:
         handle = ChatHandle(directory, config, self.loop, keyless)
-        session = config.code.session(directory / WORK_DIR_NAME)
+        data, software = given(self.workspace, config.data, config.software)
+        session = config.code.session(directory / WORK_DIR_NAME, data=data, software=software)
         chat_models = MissingKeysModel(needs=tuple(self.missing_keys(config))) if keyless else self.chat_models
         available = conversation_tools(directory, session.directory if session is not None else None)
         # Those still set up and on, and not those it was begun with that have been turned off since, which may be why
