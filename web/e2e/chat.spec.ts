@@ -13,6 +13,7 @@ test.describe("a conversation with the lead", () => {
     await expect(page.getByTestId("lead-message")).toContainText(`You asked: ${question}`);
     // It did nothing but answer, so there is no list of what it did, not even an empty one
     await expect(page.getByTestId("steps")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Copy answer" })).toHaveCount(1);
     await expect(page.getByTestId("chat-title")).toHaveText(question);
     await expect(page).toHaveTitle(`${question} · Virtual Lab`);
   });
@@ -84,7 +85,10 @@ test.describe("a conversation with the lead", () => {
 
     await expect(page.getByTestId("chat-state")).toHaveText("Working");
     await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    // Only an answer that is whole is copied, and the first turn's is the one there is
+    await expect(page.getByRole("button", { name: "Copy answer" })).toHaveCount(1);
     await answered(page, "word250", 30_000);
+    await expect(page.getByRole("button", { name: "Copy answer" })).toHaveCount(2);
 
     await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(1);
