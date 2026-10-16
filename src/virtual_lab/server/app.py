@@ -23,6 +23,12 @@ and everything else is a request and an answer.
     PATCH  /api/own/data/{name}         say again what it is; DELETE gives it up, deleting it only if it was uploaded
     GET    /api/own/data/{name}/preview what is at the start of it
     PUT    /api/own/software            some software to give, and what it is for; DELETE /software/{name} gives it up
+    GET    /api/papers                  the runs that read papers, and what a page needs to make one
+    POST   /api/papers/runs             a run, whose papers are uploaded, in a folder on this machine, or from bioRxiv
+    GET    /api/papers/runs/{id}        one run, with each paper and what they share; DELETE deletes it
+    POST   /api/papers/runs/{id}/files  a paper to upload to it, as the body, named by ?name=; DELETE /files/{name}
+    POST   /api/papers/runs/{id}/read   read its papers, as a job, with the most it may spend; again to carry on
+    GET    /api/papers/runs/{id}/tables/{kind}   what was found, as a table to open in a spreadsheet
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
@@ -54,7 +60,7 @@ import anyio.to_thread
 from fastapi import APIRouter, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
@@ -84,6 +90,7 @@ from virtual_lab.server.mcp import (
     sign_out,
 )
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
+from virtual_lab.server.papers import MAX_TITLE_CHARS, Papers
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
@@ -190,6 +197,33 @@ class OwnDescriptionBody(RequestModel):
 class OwnSoftwareBody(RequestModel):
     name: str = Field(min_length=1, max_length=MAX_SOFTWARE_NAME_CHARS * 4)
     description: str = Field(max_length=MAX_DESCRIPTION_CHARS * 4)
+
+
+class PapersSourceBody(RequestModel):
+    """Where a run's papers come from. Which of these are asked for depends on the kind, and the server says which."""
+
+    kind: str = Field(max_length=20)
+    path: str | None = Field(None, max_length=MAX_PATH_CHARS)
+    recursive: StrictBool | None = None
+    since: str | None = Field(None, max_length=20)
+    until: str | None = Field(None, max_length=20)
+    subject: str | None = Field(None, max_length=100)
+    limit: StrictInt | None = None
+    random: StrictBool | None = None
+    include_unpublished: StrictBool | None = None
+
+
+class PapersRunBody(RequestModel):
+    title: str = Field(max_length=MAX_TITLE_CHARS * 4)
+    source: PapersSourceBody
+
+
+class PapersReadBody(RequestModel):
+    """How much reading a run's papers may cost, which is always said, and whether to read again those that failed."""
+
+    max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
+    max_cost_per_paper: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+    retry_failed: StrictBool = False
 
 
 class McpServerBody(RequestModel):
@@ -360,6 +394,9 @@ def create_app(
         max_upload_bytes=max_upload_bytes,
     )
     own = Own(store, max_upload_bytes)
+    papers = Papers(
+        store, setup.jobs, max_upload_bytes, conversations.missing_keys_for, client=client, chat_models=chat_models
+    )
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -645,6 +682,55 @@ def create_app(
         own.remove_software(name)
 
         return own.describe()
+
+    @api.get("/papers")
+    def get_papers() -> dict[str, Any]:
+        return papers.describe()
+
+    @api.post("/papers/runs", status_code=201)
+    def make_paper_run(body: PapersRunBody) -> dict[str, Any]:
+        return papers.view(papers.create(body.title, body.source.model_dump(exclude_none=True)))
+
+    @api.get("/papers/runs/{run_id}")
+    def get_paper_run(run_id: str) -> dict[str, Any]:
+        return papers.view(run_id)
+
+    @api.delete("/papers/runs/{run_id}")
+    def delete_paper_run(run_id: str) -> dict[str, Any]:
+        papers.delete(run_id)
+
+        return papers.describe()
+
+    @api.post("/papers/runs/{run_id}/files", status_code=201)
+    async def upload_paper(request: Request, run_id: str, name: str = Query(min_length=1, max_length=1000)) -> Any:
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > papers.max_upload_bytes:
+            raise ApiError(
+                413, "too_large", f"The file is larger than the {papers.max_upload_bytes} bytes that can be uploaded"
+            )
+        reader = RequestBodyReader(request, asyncio.get_running_loop())
+        try:
+            await run_in_threadpool(papers.add_file, run_id, name, cast(BinaryIO, reader))
+        except ClientDisconnect:
+            return Response(status_code=499)
+
+        return await run_in_threadpool(papers.view, run_id)
+
+    @api.delete("/papers/runs/{run_id}/files/{name}")
+    def delete_paper_file(run_id: str, name: str) -> dict[str, Any]:
+        papers.remove_file(run_id, name)
+
+        return papers.view(run_id)
+
+    @api.post("/papers/runs/{run_id}/read", status_code=202)
+    def read_paper_run(run_id: str, body: PapersReadBody) -> dict[str, Any]:
+        job = papers.read(run_id, body.max_cost, body.max_cost_per_paper, body.retry_failed)
+
+        return job.snapshot(0)
+
+    @api.get("/papers/runs/{run_id}/tables/{kind}")
+    def paper_table(run_id: str, kind: str) -> FileResponse:
+        return file_response(papers.summary_file(run_id, kind), download=True)
 
     @api.get("/mcp")
     def get_mcp() -> dict[str, Any]:
