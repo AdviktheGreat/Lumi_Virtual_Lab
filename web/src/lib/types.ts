@@ -353,6 +353,10 @@ export type JobState = "running" | "stopping" | "succeeded" | "failed" | "stoppe
 export interface JobProgress {
   done?: number;
   total?: number;
+  // What reading papers, or writing functions, counts: how many there are, and how many have been dealt with
+  papers?: number;
+  functions?: number;
+  finished?: number;
   current?: string | null;
   bytes?: number;
   bytes_total?: number | null;
@@ -432,3 +436,136 @@ export type OwnPreview =
   | { kind: "binary" }
   | { kind: "folder"; entries: { name: string; folder: boolean }[]; more: number }
   | { kind: "missing" };
+
+// Where a run's papers come from, and what it is told about itself for each
+export type PaperSource =
+  | { kind: "files" }
+  | { kind: "folder"; path: string; recursive: boolean }
+  | {
+      kind: "biorxiv";
+      since: string;
+      until: string | null;
+      subject: string;
+      limit: number;
+      random: boolean;
+      include_unpublished: boolean;
+    };
+
+export type PaperSourceKind = PaperSource["kind"];
+
+// A run of papers as a list shows it: what it is, and how far the reading has got. What the report says of it is null
+// until the papers have been read.
+export interface PaperRunEntry {
+  id: string;
+  title: string;
+  source: PaperSource;
+  created_at: string;
+  // How many papers are uploaded, for a run whose papers are
+  files: number | null;
+  papers: number | null;
+  // How many papers have been dealt with, whether they were read or not
+  finished: number;
+  read: number | null;
+  unavailable: number | null;
+  failed: number | null;
+  spent: number | null;
+  stopped: string | null;
+  function_count: number;
+  // Whether its functions are given to the conversations that are made from now on
+  given: boolean;
+  // The job at work on it, which is reading its papers or writing its functions
+  job: string | null;
+  job_kind: "papers" | "functions" | null;
+}
+
+export interface PapersList {
+  runs: PaperRunEntry[];
+  // The subjects of bioRxiv that papers may be asked of
+  subjects: string[];
+  max_paper_bytes: number;
+  max_files: number;
+  // What a paper uploaded may end in, with the dot
+  suffixes: string[];
+}
+
+export type PaperStatus = "pending" | "read" | "unavailable" | "failed";
+
+export interface PaperResult {
+  key: string;
+  title: string;
+  doi: string | null;
+  status: PaperStatus;
+  tasks: number;
+  databases: number;
+  software: number;
+  cost: number | null;
+  error: string | null;
+}
+
+export type FindingKind = "tasks" | "databases" | "software";
+
+// Something found in the papers, and how many of them it is found in
+export interface PaperCount {
+  name: string;
+  papers: number;
+}
+
+export interface PaperSummary {
+  // How many papers were counted
+  papers: number;
+  tasks: PaperCount[];
+  databases: PaperCount[];
+  software: PaperCount[];
+  // How many more of each there are than are shown
+  more: Record<FindingKind, number>;
+}
+
+export type FunctionStatus = "verified" | "unverified" | "failed";
+
+export interface PaperFunctionRow {
+  name: string;
+  task: string;
+  papers: number;
+  status: FunctionStatus;
+  modules: string[];
+  error: string | null;
+  cost: number | null;
+  attempts: number;
+}
+
+export interface PaperRun extends PaperRunEntry {
+  // The papers uploaded to it, for a run whose papers are
+  uploads: { name: string; bytes: number }[] | null;
+  results: PaperResult[];
+  summary: PaperSummary;
+  functions: PaperFunctionRow[];
+}
+
+// A function with what it was written for, and its code
+export interface PaperFunction extends PaperFunctionRow {
+  brief: string;
+  problems: string[];
+  source: string | null;
+}
+
+// What reading a run's papers, or writing its functions, may spend, in dollars
+export interface PaperReadOptions {
+  max_cost: number;
+  max_cost_per_paper: number | null;
+  retry_failed: boolean;
+}
+
+export interface PaperFunctionsOptions {
+  max_cost: number;
+  max_cost_per_function: number | null;
+  min_papers: number;
+  limit: number;
+  retry_failed: boolean;
+  verify: boolean;
+}
+
+// What a new run is asked for: its title, and where its papers come from
+export interface NewPaperRun {
+  title: string;
+  source: PaperSource;
+}

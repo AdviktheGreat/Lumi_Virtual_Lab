@@ -16,8 +16,14 @@ import type {
   McpServer,
   Models,
   NewChat,
+  NewPaperRun,
   Own,
   OwnPreview,
+  PaperFunction,
+  PaperFunctionsOptions,
+  PaperReadOptions,
+  PaperRun,
+  PapersList,
   Scientist,
   Settings,
   SettingsChange,
@@ -175,6 +181,24 @@ function uploadOwnData(file: File, description: string, options: UploadOptions =
   );
 }
 
+function isPaperRun(value: unknown): value is PaperRun {
+  if (typeof value !== "object" || value === null) return false;
+  const { id, results, functions } = value as Record<string, unknown>;
+
+  return typeof id === "string" && Array.isArray(results) && Array.isArray(functions);
+}
+
+// Gives a run a paper, kept by the server under the name it has, and the run is given back as it now is
+function uploadPaper(run: string, file: File, options: UploadOptions = {}): Promise<PaperRun> {
+  return sendFile(
+    `/api/papers/runs/${encodeURIComponent(run)}/files?name=${encodeURIComponent(file.name)}`,
+    file,
+    (parsed) => (isPaperRun(parsed) ? parsed : undefined),
+    "The server did not say what the run holds",
+    options,
+  );
+}
+
 // What a request that is not for JSON is answered with, once it is known to have gone well: what went wrong is told in
 // the server's own shape, which is read, and what went well is left for the caller to read
 async function fetchBody(address: string, signal?: AbortSignal): Promise<Response> {
@@ -326,6 +350,32 @@ export const api = {
   // Some software and what it is for, in place of any with the name
   saveOwnSoftware: (name: string, description: string) => request<Own>("PUT", "/own/software", { name, description }),
   removeOwnSoftware: (name: string) => request<Own>("DELETE", `/own/software/${encodeURIComponent(name)}`),
+  // The runs that read papers, and what a new one is asked for
+  papers: (signal?: AbortSignal) => request<PapersList>("GET", "/papers", undefined, signal),
+  makePaperRun: (run: NewPaperRun) => request<PaperRun>("POST", "/papers/runs", run),
+  paperRun: (id: string, signal?: AbortSignal) =>
+    request<PaperRun>("GET", `/papers/runs/${encodeURIComponent(id)}`, undefined, signal),
+  // Deletes a run with what was uploaded to it and what was found, and gives back the runs that are left
+  deletePaperRun: (id: string) => request<PapersList>("DELETE", `/papers/runs/${encodeURIComponent(id)}`),
+  uploadPaper,
+  removePaper: (id: string, name: string) =>
+    request<PaperRun>("DELETE", `/papers/runs/${encodeURIComponent(id)}/files/${encodeURIComponent(name)}`),
+  // Starts reading the papers that are not read, or writing functions for what they share, which goes on as a job
+  readPapers: (id: string, options: PaperReadOptions) =>
+    request<Job>("POST", `/papers/runs/${encodeURIComponent(id)}/read`, options),
+  writeFunctions: (id: string, options: PaperFunctionsOptions) =>
+    request<Job>("POST", `/papers/runs/${encodeURIComponent(id)}/functions`, options),
+  paperFunction: (id: string, name: string, signal?: AbortSignal) =>
+    request<PaperFunction>(
+      "GET",
+      `/papers/runs/${encodeURIComponent(id)}/functions/${encodeURIComponent(name)}`,
+      undefined,
+      signal,
+    ),
+  removeFunction: (id: string, name: string) =>
+    request<PaperRun>("DELETE", `/papers/runs/${encodeURIComponent(id)}/functions/${encodeURIComponent(name)}`),
+  // Whether the functions of a run are given to the conversations that are made from now on
+  giveFunctions: (id: string, given: boolean) => request<PaperRun>("PATCH", `/papers/runs/${encodeURIComponent(id)}`, { given }),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),

@@ -21,7 +21,7 @@ export function JobProgress({ job }: { job: Job }) {
 }
 
 // Asks a job at work to stop, which it does in a moment, and is said to be doing until it has
-export function StopButton({ job, actions }: { job: Job; actions: JobActions }) {
+export function StopButton({ job, actions }: { job: Job; actions: Pick<JobActions, "busy" | "stop"> }) {
   const stopping = job.state === "stopping";
 
   return (

@@ -69,24 +69,42 @@ export function stageLabel(target: string): string {
   return SANDBOXES.find((stage) => stage.value === target)?.label ?? `Biomni ${target}`;
 }
 
+// What a job counts, if it counts anything: the files of a fetch, the papers that are read, or the functions that are
+// written, of how many there are
+function counted(job: Job): { done: number; total: number; noun: string } | null {
+  const { done, total, finished, papers, functions } = job.progress;
+  const found =
+    job.kind === "papers"
+      ? { done: finished, total: papers, noun: "paper" }
+      : job.kind === "functions"
+        ? { done: finished, total: functions, noun: "function" }
+        : { done, total, noun: "file" };
+
+  return typeof found.done === "number" && typeof found.total === "number" && found.total > 0
+    ? { done: found.done, total: found.total, noun: found.noun }
+    : null;
+}
+
 // How far a job has got, from 0 to 1, or null when it cannot be told, as it cannot of a build, which only prints. A
 // fetch of the data lake counts files, and the part of the one that is being fetched.
 export function jobFraction(job: Job): number | null {
   if (job.state === "succeeded") return 1;
-  const { done, total, bytes, bytes_total: announced } = job.progress;
-  if (typeof done !== "number" || typeof total !== "number" || total <= 0) return null;
+  const { bytes, bytes_total: announced } = job.progress;
+  const sum = counted(job);
+  if (sum === null) return null;
+  const { done, total } = sum;
   const part = typeof bytes === "number" && typeof announced === "number" && announced > 0 ? Math.min(bytes / announced, 1) : 0;
 
   return Math.min(Math.max((done + part) / total, 0), 1);
 }
 
-// What a fetch has counted, in words: files, bytes, and the file it is on. A job that counts nothing says nothing.
+// What a job has counted, in words: files, bytes, and the file it is on for a fetch, and papers or functions for the
+// work on a run. A job that counts nothing says nothing.
 export function jobCounts(job: Job): string {
-  const { done, total, fetched, bytes, bytes_total: announced, current } = job.progress;
+  const { fetched, bytes, bytes_total: announced, current } = job.progress;
   const parts: string[] = [];
-  if (typeof done === "number" && typeof total === "number" && total > 0) {
-    parts.push(`${done} of ${total} ${total === 1 ? "file" : "files"}`);
-  }
+  const sum = counted(job);
+  if (sum !== null) parts.push(`${sum.done} of ${sum.total} ${sum.noun}${sum.total === 1 ? "" : "s"}`);
   if (typeof fetched === "number" && fetched > 0) parts.push(`${formatBytes(fetched)} fetched`);
   if (isActive(job) && current && typeof bytes === "number" && typeof announced === "number" && announced > 0) {
     parts.push(`${formatBytes(bytes)} of ${formatBytes(announced)} of this file`);

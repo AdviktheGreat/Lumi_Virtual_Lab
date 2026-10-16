@@ -22,6 +22,10 @@ from a script: no key is needed, and every run says the same. What it says depen
 - "mcp:" and a word (echo, count, both, order, confirm, signed, gated) make it call the tools of the MCP servers that
   the tests of mcp/ set up, which are the test server of tests/mcp_test_server.py under the names genes, vault, and
   gate.
+- Papers that are read are answered with the tasks, databases, and software their text names: a paper that names
+  DESeq2 is found to use RNA-seq differential expression, one that names Scanpy single-cell clustering, and one that
+  names neither the first. "slow:" in a paper's text makes reading it take a while, so that the work can be followed or
+  stopped, and "fail:" makes reading it fail. A function asked for is written, whatever it is for.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -57,16 +61,26 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT / "tests")]
 
 import httpx  # noqa: E402
 import openai  # noqa: E402
-from conftest import FakeClient, FakeCompletions, FakeStream, make_usage, stream_chunks, text_response  # noqa: E402
+from conftest import (  # noqa: E402
+    FakeClient,
+    FakeCompletions,
+    FakeStream,
+    make_usage,
+    parsed_response,
+    stream_chunks,
+    text_response,
+)
 from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageToolCall  # noqa: E402
 from openai.types.chat.chat_completion import ChatCompletion, Choice  # noqa: E402
 from openai.types.chat.chat_completion_message_tool_call import Function  # noqa: E402
 
 from setup_fakes import Bucket, FakeDocker  # noqa: E402
+from test_papers import database, findings, package, task  # noqa: E402
 
 from virtual_lab.constants import MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
+from virtual_lab.papers import PaperFindings  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
 from virtual_lab.server.keychain import Keychain  # noqa: E402
@@ -81,6 +95,24 @@ LONG_REPLY_WORDS = 250
 
 # The largest file a message can be sent with, which is small, so that one too large is quick to make
 MAX_UPLOAD_BYTES = 20 * 1024
+
+# What a paper is found to be about, by a word in its text, and how long a paper that says "slow:" takes to read
+PAPER_TASKS = (
+    ("RNA-seq differential expression with DESeq2", "DESeq2"),
+    ("Single-cell clustering with Scanpy", "Scanpy"),
+)
+PAPER_DELAY = 2.0
+
+# What a function that is asked for is written as
+FUNCTION_CODE = """```python
+def {name}(path: str) -> int:
+    \"\"\"Counts the reads in a file.
+
+    Args:
+        path: The file.
+    \"\"\"
+    return 1
+```"""
 
 
 # Code that draws a figure and makes a file, without matplotlib: a stand-in for the module, which saves a picture
@@ -349,6 +381,25 @@ def lab_reply(title: str, messages: list[dict[str, Any]]) -> str:
     return LAB_REPLIES.get(title, f"As the {title}, I have nothing to add.")
 
 
+def paper_findings(text: str) -> PaperFindings:
+    """What a paper is found to use, from the words in its text."""
+    names = [name for name, word in PAPER_TASKS if word in text] or [PAPER_TASKS[0][0]]
+
+    return findings([task(name) for name in names], [database("GEO")], [package("STAR")])
+
+
+def function_named(kwargs: dict[str, Any]) -> str | None:
+    """The name of the function a request asks the model to write, if it asks for one."""
+    system = next((message["content"] for message in kwargs["messages"] if message["role"] == "system"), "")
+    found = re.search(r"one function named\s+`(\w+)`", system) if isinstance(system, str) else None
+
+    return found.group(1) if found else None
+
+
+def function_code(name: str) -> str:
+    return FUNCTION_CODE.format(name=name)
+
+
 def scenario_for(question: str) -> list[tuple[str, str, dict[str, Any]]] | None:
     return next((steps for word, steps in SCENARIOS.items() if word in question), None)
 
@@ -412,7 +463,10 @@ class ScriptedCompletions(FakeCompletions):
         scientist = None if searching else scientist_of(kwargs)
         steps = None if searching or scientist is not None else scenario_for(question)
         done = tool_results(kwargs["messages"])
-        if steps is not None and done < len(steps):
+        written = function_named(kwargs)
+        if written is not None:
+            response = text_response(function_code(written))
+        elif steps is not None and done < len(steps):
             narration, name, arguments = steps[done]
             response = call_response(narration, name, arguments, f"call_{done + 1}")
         elif scientist is not None and runs_code(scientist, kwargs) and done == 0:
@@ -435,6 +489,17 @@ class ScriptedCompletions(FakeCompletions):
             return SlowStream(stream_chunks(response, include_usage), self.delay)
 
         return response
+
+    def parse(self, **kwargs: Any) -> Any:
+        if kwargs["response_format"] is not PaperFindings:
+            return super().parse(**kwargs)
+        text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")
+        if "slow:" in text:
+            time.sleep(PAPER_DELAY)
+        if "fail:" in text:
+            raise RuntimeError("The scripted model failed to read the paper, as it was asked to")
+
+        return parsed_response(paper_findings(text))
 
 
 class ScriptedClient(FakeClient):
