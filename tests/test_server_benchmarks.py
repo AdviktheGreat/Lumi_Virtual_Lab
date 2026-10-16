@@ -367,7 +367,15 @@ class TestAnswering:
     def test_a_question_that_cannot_be_named_is_not_found(self, runs: BenchmarkRuns, fetched: Any) -> None:
         run = make(runs)
 
-        for task, number in (("../x", "0"), ("", "0"), (DBQA, "x"), (DBQA, "-1"), (DBQA, "1" * 10), ("other", "0")):
+        for task, number in (
+            ("../x", "0"),
+            ("", "0"),
+            (DBQA, "x"),
+            (DBQA, "²"),
+            (DBQA, "-1"),
+            (DBQA, "1" * 10),
+            ("other", "0"),
+        ):
             assert refused(runs.question, run, task, number).status == 404
         assert refused(runs.question, "nothing", DBQA, "0").status == 404
 

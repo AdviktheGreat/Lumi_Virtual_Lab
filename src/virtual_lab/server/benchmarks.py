@@ -706,7 +706,7 @@ class BenchmarkRuns:
         :raises ApiError: If there is no run with this id, or it neither asked nor can ask that question.
         """
         directory, lab = self.lookup(run_id)
-        if not check_name(task) or not number.isdigit() or len(number) > 9:
+        if not check_name(task) or not (number.isascii() and number.isdecimal()) or len(number) > 9:
             raise not_found("question with that name in the run")
         result = saved_result(directory / RESULTS_DIR / task / f"{number}.json")
         chosen = self.loaded(lab)
