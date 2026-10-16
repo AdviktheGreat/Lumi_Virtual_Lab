@@ -115,6 +115,19 @@ test.describe("a conversation with the lead", () => {
     await answered(page, "You asked: A question after the failure");
   });
 
+  test("a provider that refuses the key says what to do about it, and the conversation goes on", async ({ page }) => {
+    await ask(page, "fail:key please");
+
+    const alert = transcript(page).getByRole("alert");
+    await expect(alert).toContainText("The model provider did not accept the API key.");
+    await expect(alert).toContainText("Check it under API keys in Settings");
+    await expect(alert).toContainText("Incorrect API key provided");
+
+    await page.getByRole("textbox", { name: "Message" }).fill("A question after the refusal");
+    await page.getByRole("button", { name: "Send" }).click();
+    await answered(page, "You asked: A question after the refusal");
+  });
+
   test("a conversation that is not there says so", async ({ page }) => {
     await page.goto("/chat?id=2026-01-01_0000_nothing-here");
 

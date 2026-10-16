@@ -57,6 +57,7 @@ from virtual_lab.constants import (
     SESSION_MAX_TOOL_ITERATIONS,
 )
 from virtual_lab.events import ChatEvent, ChatEventKind, MeetingEvent, NextTurn, OnChatEvent
+from virtual_lab.failures import Failure, describe_failure
 from virtual_lab.llm import ModelReply, ModelSource, ToolCall, ask, resolve_chat_models
 from virtual_lab.project import Project, sha256_file
 from virtual_lab.prompts import (
@@ -1026,7 +1027,7 @@ class Chat:
         started = time.monotonic()
         status: ChatStatus = "answered"
         answer = ""
-        error: str | None = None
+        failure: Failure | None = None
         crash: BaseException | None = None
 
         try:
@@ -1039,8 +1040,8 @@ class Chat:
             self._append({"role": "assistant", "name": self.lead.name, "content": STOPPED_REPLY})
         except BaseException as caught:
             status = "failed"
-            error = f"{type(caught).__name__}: {caught}"
-            self._close_open_calls(f"Not run: {error}")
+            failure = describe_failure(caught)
+            self._close_open_calls(f"Not run: {failure.detail}")
             if not isinstance(caught, Exception):
                 crash = caught
 
@@ -1051,15 +1052,17 @@ class Chat:
             self._emit_ending("note", note, to=None, read=False)
 
         elapsed = round(time.monotonic() - started, 3)
-        reply = ChatReply(status=status, text=answer, error=error, usage=usage, elapsed_time=elapsed)
+        reply = ChatReply(
+            status=status, text=answer, error=failure.text if failure else None, usage=usage, elapsed_time=elapsed
+        )
         self.last_reply = reply
         if status == "answered":
             self._emit_ending("answer", answer, usage=usage, elapsed_time=elapsed)
         elif status == "stopped":
             self._emit_ending("stopped", "Stopped by you. What was done is kept.", elapsed_time=elapsed)
         else:
-            assert error is not None
-            self._emit_ending("failed", error, type=error.split(":", 1)[0], elapsed_time=elapsed)
+            assert failure is not None
+            self._emit_ending("failed", failure.text, type=failure.type, elapsed_time=elapsed)
 
         return reply, crash
 

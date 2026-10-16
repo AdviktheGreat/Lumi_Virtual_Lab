@@ -4,6 +4,7 @@ It is the real server, with the built pages, a workspace made for the run, and a
 from a script: no key is needed, and every run says the same. What it says depends on what it is asked:
 
 - "fail:" anywhere in the message makes the model fail, which is how a turn that ends in an error is tested.
+  "fail:key" has it fail as a provider does that will not accept the key.
 - "slow:" anywhere in the message makes it write a long reply, slowly, so that a turn can be followed or stopped
   while it is still going.
 - "markdown:" anywhere in the message makes it answer with a page of Markdown, with what a page must not trust in it,
@@ -54,6 +55,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "tests")]
 
+import httpx  # noqa: E402
+import openai  # noqa: E402
 from conftest import FakeClient, FakeCompletions, FakeStream, make_usage, stream_chunks, text_response  # noqa: E402
 from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageToolCall  # noqa: E402
 from openai.types.chat.chat_completion import ChatCompletion, Choice  # noqa: E402
@@ -398,6 +401,11 @@ class ScriptedCompletions(FakeCompletions):
 
     def create(self, **kwargs: Any) -> Any:
         question = asked(kwargs["messages"])
+        if "fail:key" in question:
+            request = httpx.Request("POST", "https://api.example.test/v1/chat/completions")
+            raise openai.AuthenticationError(
+                "Error code: 401 - Incorrect API key provided", response=httpx.Response(401, request=request), body=None
+            )
         if "fail:" in question:
             raise RuntimeError("The scripted model failed, as it was asked to")
         searching = "USER QUERY:" in question and "AVAILABLE TOOLS:" in question
