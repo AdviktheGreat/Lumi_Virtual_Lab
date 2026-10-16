@@ -343,6 +343,8 @@ def main(argv: Sequence[str] | None = None, root: Path = ROOT) -> int:
         description="Starts the Virtual Lab, after doing what is not yet done: making an environment, installing the "
         "lab, and building the pages of the interface.",
         epilog="Anything else is given to virtual-lab-server: --workspace, --port, --no-browser, and the rest.",
+        # An option of the server that begins as one of these do must reach the server, not be taken for one of these
+        allow_abbrev=False,
     )
     parser.add_argument("--plan", action="store_true", help="say what would be done, and do nothing")
     parser.add_argument("--rebuild", action="store_true", help="build the pages again, even if they are up to date")

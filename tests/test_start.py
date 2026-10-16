@@ -669,6 +669,18 @@ class TestMain:
         )
         assert "Build the pages of the interface" in output
 
+    def test_the_start_of_its_own_option_is_not_taken_for_it(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(start, "gather", lambda root: facts())
+        self.refuse_to_run(monkeypatch)
+
+        start.main(["--pla", "--reb", "--plan"], CLONE)
+
+        output = capsys.readouterr().out
+        assert "virtual_lab.server --pla --reb" in output
+        assert "Build the pages of the interface" not in output
+
     def test_a_start_with_nothing_to_do_runs_only_the_lab(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(start, "gather", lambda root: facts())
         ran: list[tuple[str, ...]] = []
