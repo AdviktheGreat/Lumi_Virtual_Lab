@@ -353,9 +353,11 @@ export type JobState = "running" | "stopping" | "succeeded" | "failed" | "stoppe
 export interface JobProgress {
   done?: number;
   total?: number;
-  // What reading papers, or writing functions, counts: how many there are, and how many have been dealt with
+  // What reading papers, writing functions, or answering a benchmark's questions counts: how many there are, and how
+  // many have been dealt with
   papers?: number;
   functions?: number;
+  questions?: number;
   finished?: number;
   current?: string | null;
   bytes?: number;
@@ -568,4 +570,150 @@ export interface PaperFunctionsOptions {
 export interface NewPaperRun {
   title: string;
   source: PaperSource;
+}
+
+export type BenchmarkId = "biomni_eval1" | "lab_bench_dbqa" | "lab_bench_seqqa" | "hle";
+
+export type BenchmarkSolver = "single" | "team";
+
+export type BenchmarkSubset = "test" | "sampled" | "all";
+
+// A benchmark, with what the files that were fetched say of it, which is null until they are there
+export interface BenchmarkInfo {
+  id: BenchmarkId;
+  title: string;
+  summary: string;
+  // The tasks of Biomni-Eval1, and how many questions each has
+  tasks: { name: string; questions: number }[] | null;
+  // The files of LAB-Bench that can be asked, and how many questions each has
+  subsets: { id: BenchmarkSubset; summary: string; questions: number }[] | null;
+  // How many questions of Humanity's Last Exam refer to an image
+  images: number | null;
+  // How many questions it has before a run narrows them
+  questions: number | null;
+}
+
+// A run as a list shows it: what it is, who answers, and how far the answering has got. What the report says of it is
+// null until some questions have been answered.
+export interface BenchmarkRunEntry {
+  id: string;
+  title: string;
+  benchmark: BenchmarkId;
+  solver: BenchmarkSolver;
+  rounds: number;
+  model: string | null;
+  created_at: string;
+  questions: number;
+  finished: number;
+  failed: number | null;
+  accuracy: number | null;
+  cost: number | null;
+  spent: number | null;
+  stopped: string | null;
+  // The job at work on it
+  job: string | null;
+}
+
+export interface BenchmarksList {
+  runs: BenchmarkRunEntry[];
+  benchmarks: BenchmarkInfo[];
+  files: {
+    ready: boolean;
+    directory: string;
+    // The files that are not there, or are not the ones that are pinned
+    missing: string[];
+    // Why the files that are there cannot be read
+    problem: string | null;
+  };
+  solvers: { id: BenchmarkSolver; title: string; summary: string }[];
+  max_rounds: number;
+  max_questions: number;
+  // The model that answers a run made now, and where its code runs
+  model: string;
+  code: { where: string; sandbox: string };
+}
+
+export type QuestionState = "unanswered" | "answered" | "failed";
+
+// A question as a list shows it, and how it was answered if it was
+export interface BenchmarkQuestionRow {
+  key: string;
+  task: string;
+  id: number;
+  // The start of what was asked, which is null where the benchmark's files cannot be read
+  prompt: string | null;
+  state: QuestionState;
+  answer: string | null;
+  correct_answer: string | null;
+  // From 0, wrong, to 1, right
+  score: number | null;
+  cost: number | null;
+  elapsed: number | null;
+  error: string | null;
+}
+
+export interface BenchmarkTaskRow {
+  task: string;
+  questions: number;
+  finished: number;
+  accuracy: number | null;
+}
+
+// What a run is asked of its benchmark, of which only what is for the benchmark is kept
+export interface BenchmarkOptions {
+  tasks?: string[];
+  subset?: BenchmarkSubset;
+  leave_out_images?: boolean;
+}
+
+export interface BenchmarkRun extends BenchmarkRunEntry {
+  options: BenchmarkOptions;
+  // How many questions were asked for, or null for all
+  limit: number | null;
+  code: { where: string | null; sandbox: string | null; network: string | null; resources: string | null };
+  lead: string | null;
+  team: string[];
+  // The benchmark's measures over the questions answered, such as accuracy, or accuracy/task for one of Biomni-Eval1's
+  metrics: Record<string, number | null>;
+  tasks: BenchmarkTaskRow[];
+  results: BenchmarkQuestionRow[];
+  // Why what was answered is shown without its questions
+  problem: string | null;
+}
+
+export interface BenchmarkTurn {
+  agent: string;
+  message: string;
+}
+
+// One question, with what was asked, what was said in answering it, and what that cost
+export interface BenchmarkQuestion extends BenchmarkQuestionRow {
+  // What was read out of what the model said, in the form the benchmark asks answers in
+  output: Record<string, unknown> | null;
+  usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    reasoning_tokens?: number;
+    num_calls?: number;
+    cost?: number | null;
+  } | null;
+  turns: BenchmarkTurn[] | null;
+  // Whether what was said is cut short
+  truncated: boolean;
+}
+
+// What a new run is asked for
+export interface NewBenchmarkRun extends BenchmarkOptions {
+  title: string;
+  benchmark: BenchmarkId;
+  solver: BenchmarkSolver;
+  rounds?: number;
+  limit?: number;
+}
+
+// What answering a run's questions may spend, in dollars
+export interface BenchmarkStartOptions {
+  max_cost: number;
+  max_cost_per_question: number | null;
+  retry_failed: boolean;
 }

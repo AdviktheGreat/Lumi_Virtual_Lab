@@ -3,7 +3,8 @@
 import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatCost } from "@/lib/format";
-import { count, FINDING_LABELS, statusLabel } from "@/lib/papers";
+import { count } from "@/lib/checks";
+import { FINDING_LABELS, statusLabel } from "@/lib/papers";
 import type { FindingKind, PaperResult, PaperRun } from "@/lib/types";
 
 const FINDING_KINDS = Object.keys(FINDING_LABELS) as FindingKind[];

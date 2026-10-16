@@ -112,6 +112,34 @@ preprints, which are checked where they are written, as the server checks them).
 A model that has no key, or no price, and Docker where functions are checked in it, are refused with what to do about it, as
 a conversation is. `src/lib/papers.ts` checks what is written before it is sent, as the server does.
 
+## Benchmarks
+
+The Benchmarks page (`/benchmarks`) is where the lab is scored on the questions Biomni is scored on. It has the files the
+questions are in, which are about 4 MB and are fetched from the page once (a run cannot be made before they are there, and
+the page says which are missing, or why those that are there cannot be read); the runs, the latest first, each with the
+benchmark, who answers, and how far the answering has got; and the making of one: the benchmark (with how many questions
+each has), which of its tasks, or which file of its questions, or whether to leave out those that refer to an image, who
+answers (the lead alone, or the lead and the team, with the rounds of criticism or of discussion), and how many questions to
+ask, the first ones, which is a way to try a run cheaply. A run keeps the model and where code runs as the settings have
+them when it is made, which the form says. A run is named in the address's query (`/benchmarks?id=...`), as a conversation
+is, and its page has these parts.
+
+- **What is being done** is the answering that is going on, or how the last of it ended, with its progress and the way to
+  stop it. It is the setup's job, so what is begun here is followed in the setup as well. Nothing else is done to a run while
+  it is being answered. A stop ends the question that is being answered without keeping it, and what was answered is kept.
+- **Answer the questions** asks for the most it may spend, which is always said, and may ask for the most one question may
+  spend. A run that stopped carries on from where it was, and questions that failed are asked again only if that is asked
+  for.
+- **Scores** are the benchmark's own measures over what has been answered (accuracy, and for LAB-Bench how much was refused),
+  and, where a benchmark has more than one task, how right the lead was in each.
+- **Questions** is each question, with whether it was right, partly right, wrong, failed, or is not answered yet, and can be
+  narrowed to a task and to how it was answered, a hundred at a time. Opening one reads it from the server, with what was
+  asked, the answer that was read out of what was said, the right one, what it cost, and what was said in answering it, so
+  that a score can be checked against it.
+
+A model that has no key, or no price, and Docker where code runs in it, are refused with what to do about it, as a
+conversation is. `src/lib/benchmarks.ts` checks what is written before it is sent, as the server does.
+
 ## Settings
 
 The gear at the foot of the sidebar opens the settings, in five parts. What is set is what conversations started from then

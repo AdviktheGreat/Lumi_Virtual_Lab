@@ -8,9 +8,10 @@ import { Looked } from "@/components/looked";
 import { ProblemNotice } from "@/components/messages";
 import { FunctionsSection } from "@/components/paper-functions";
 import { Results, Shared } from "@/components/paper-findings";
-import { PapersSection, WorkStatus } from "@/components/paper-work";
+import { PapersSection } from "@/components/paper-work";
 import { PageSection } from "@/components/page-section";
 import { useServer } from "@/components/server-provider";
+import { WorkStatus } from "@/components/work-status";
 import { useSetupJobs } from "@/components/setup-provider";
 import {
   AlertDialog,
@@ -26,7 +27,8 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { describeSource, lastJob, runFacts, workJob, workKey } from "@/lib/papers";
 import type { PaperRun, PapersList } from "@/lib/types";
-import { useAttempt, usePaperRun, usePapersList, type Looked as LookedAt } from "@/lib/use-papers";
+import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
+import { usePaperRun, usePapersList } from "@/lib/use-papers";
 import type { JobsData } from "@/lib/use-jobs";
 
 // A run, with its title and how far it has got, and the way to delete it

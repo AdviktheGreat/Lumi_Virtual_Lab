@@ -208,6 +208,21 @@ describe("the papers a job reads and the functions it writes", () => {
   });
 });
 
+describe("the questions a job answers", () => {
+  it("counts the questions answered, of those there are", () => {
+    const answering = job({ kind: "benchmark", progress: { questions: 4, finished: 1 } });
+
+    expect(jobFraction(answering)).toBe(0.25);
+    expect(jobCounts(answering)).toBe("1 of 4 questions");
+    expect(jobCounts(job({ kind: "benchmark", progress: { questions: 1, finished: 0 } }))).toBe("0 of 1 question");
+  });
+
+  it("says nothing before it is known how many there are, and takes no other job's count", () => {
+    expect(jobFraction(job({ kind: "benchmark", progress: { finished: 2 } }))).toBeNull();
+    expect(jobFraction(job({ kind: "papers", progress: { questions: 4, finished: 1 } }))).toBeNull();
+  });
+});
+
 describe("what a job printed", () => {
   const lines = (from: number, count: number) => Array.from({ length: count }, (_, at) => `line ${from + at}`);
 

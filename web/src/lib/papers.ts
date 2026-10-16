@@ -1,3 +1,4 @@
+import { characters, count, dollars, whole, type Checked } from "./checks";
 import { formatBytes } from "./files";
 import { formatCost } from "./format";
 import { tidy } from "./scientists";
@@ -61,10 +62,6 @@ export function functionLabel(status: FunctionStatus): string {
   return FUNCTION_LABELS[status] ?? status;
 }
 
-export function count(number: number, noun: string): string {
-  return `${number} ${noun}${number === 1 ? "" : "s"}`;
-}
-
 // Where a run's papers come from, in words
 export function describeSource(source: PaperSource): string {
   if (source.kind === "files") return "Papers uploaded to it";
@@ -114,35 +111,6 @@ export function workKey(jobs: readonly Job[] | null, ended: number, run?: string
     .map((job) => `${job.id}:${job.progress.finished ?? ""}`);
 
   return `${ended}|${at.join(",")}`;
-}
-
-export interface Checked<T, K extends string> {
-  // What to send, or null while there is something wrong
-  value: T | null;
-  problems: Partial<Record<K, string>>;
-}
-
-// An amount of dollars as it was typed, with or without the sign. It is nothing if it is blank where it may be.
-function dollars(text: string, what: string, optional: boolean): { value: number | null; problem?: string } {
-  const typed = text.trim().replace(/^\$/, "").trim();
-  if (typed === "") return optional ? { value: null } : { value: null, problem: `Say ${what}.` };
-  const value = /^(\d+(\.\d*)?|\.\d+)$/.test(typed) ? Number(typed) : Number.NaN;
-  if (!Number.isFinite(value)) {
-    return { value: null, problem: `${what[0].toUpperCase()}${what.slice(1)} is an amount in dollars, such as 1 or 0.50.` };
-  }
-
-  return { value };
-}
-
-// A whole number as it was typed, from the least to the most
-function whole(text: string, what: string, least: number, most: number): { value: number | null; problem?: string } {
-  const typed = text.trim();
-  const value = /^\d+$/.test(typed) ? Number(typed) : Number.NaN;
-  if (!Number.isSafeInteger(value) || value < least || value > most) {
-    return { value: null, problem: `${what} is a whole number from ${least} to ${most}.` };
-  }
-
-  return { value };
 }
 
 export interface ReadDraft {
@@ -250,11 +218,6 @@ function isDay(text: string): boolean {
   const date = new Date(Date.UTC(year, month - 1, day));
 
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-}
-
-// How many characters there are, as the server counts them: a character of more than one UTF-16 unit is one
-function characters(text: string): number {
-  return [...text].length;
 }
 
 export function checkRun(draft: RunDraft): Checked<NewPaperRun, RunKey> {

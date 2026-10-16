@@ -11,10 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import { count } from "@/lib/checks";
 import { formatCost } from "@/lib/format";
 import {
   checkFunctions,
-  count,
   EMPTY_FUNCTIONS,
   functionLabel,
   MAX_FUNCTIONS,
@@ -22,7 +22,7 @@ import {
 } from "@/lib/papers";
 import type { PaperFunction, PaperFunctionRow, PaperRun } from "@/lib/types";
 import type { JobsData } from "@/lib/use-jobs";
-import { useAttempt, type Looked as LookedAt } from "@/lib/use-papers";
+import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
 import type { Loaded } from "@/lib/use-settings-data";
 
 interface Shared {
