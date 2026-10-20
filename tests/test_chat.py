@@ -32,6 +32,7 @@ from virtual_lab.chat import (
 )
 from virtual_lab.constants import HUMAN_SPEAKER
 from virtual_lab.events import ChatEvent
+from virtual_lab import failures
 from virtual_lab.failures import KEY_REFUSED, UNWELL
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.session import LocalSession
@@ -2216,6 +2217,31 @@ class TestFailures:
         assert chat.state == "idle"
 
         assert chat.send("Hello again").text == "Back."
+
+    def test_a_safety_flag_is_told_with_what_to_do_and_editing_takes_the_flagged_step_out(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        flagged = openai.APIError(
+            "This content was flagged for possible biological risk. If this seems wrong, try rephrasing your request.",
+            request=httpx.Request("POST", "https://api.example.test/v1/chat/completions"),
+            body=None,
+        )
+        fake_client.completions.responses = [tool_call_response("look_up", {}), flagged, text_response("Reworded.")]
+        chat = make_chat(tmp_path)
+
+        reply = chat.send("Look it up")
+
+        assert reply.status == "failed"
+        assert reply.error is not None and reply.error.startswith(failures.SAFETY_FLAGGED + " (")
+        assert reply.error.endswith("try rephrasing your request.)")
+        (failed,) = of(chat.events_since(), "failed")
+        assert failed.text == reply.error and failed.data["type"] == "APIError"
+
+        # What the provider flagged is in the conversation, so a reworded message that replaces the last is the way on
+        assert chat.send("Reworded", replace_last=True).text == "Reworded."
+        sent = request_messages(fake_client, 2)
+        assert [message["role"] for message in sent] == ["system", "user"]
+        assert sent[1]["content"] == "Reworded"
 
     def test_a_provider_that_refuses_the_key_is_told_with_what_to_do_about_it(
         self, fake_client: FakeClient, tmp_path: Path

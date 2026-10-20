@@ -588,6 +588,14 @@ class ScriptedCompletions(FakeCompletions):
             raise openai.AuthenticationError(
                 "Error code: 401 - Incorrect API key provided", response=httpx.Response(401, request=request), body=None
             )
+        if "fail:flag" in question:
+            # As OpenAI's safety check stops a reply that is being streamed: an error with no status of its own
+            raise openai.APIError(
+                "This content was flagged for possible biological risk. "
+                "If this seems wrong, try rephrasing your request.",
+                request=httpx.Request("POST", "https://api.example.test/v1/chat/completions"),
+                body=None,
+            )
         if "fail:" in question:
             raise RuntimeError("The scripted model failed, as it was asked to")
         searching = "USER QUERY:" in question and "AVAILABLE TOOLS:" in question

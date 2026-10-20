@@ -33,8 +33,22 @@ QUOTA_PHRASES = (
     "insufficient credit",
 )
 
+# What a provider's safety check says when it stops a conversation, which comes as an error with no status of its own
+# when it is raised in the middle of a reply that is being streamed
+SAFETY_PHRASES = (
+    "flagged for possible biological risk",
+    "flagged as potentially violating our usage policy",
+)
+
 KEY_REFUSED = (
     "The model provider did not accept the API key. Check it under API keys in Settings, then send the message again."
+)
+SAFETY_FLAGGED = (
+    "The model provider's safety check flagged this conversation and stopped it. Such checks can be strict about some "
+    "biology, such as work on dangerous pathogens, and can flag research that is legitimate. A new message here would "
+    "send the flagged step again, so use Edit on your last message to reword it, which takes that step out, or start "
+    "a new conversation, with another model if you like (in Settings). For work like this, ask the provider about "
+    "access for researchers."
 )
 NOT_ALLOWED = (
     "The model provider does not let this key use this model. Check what the key may use in the provider's account, "
@@ -107,6 +121,8 @@ def advice_for(error: BaseException) -> str | None:
     names = {kind.__name__ for kind in type(error).__mro__}
     said = str(error).lower()
 
+    if any(phrase in said for phrase in SAFETY_PHRASES):
+        return SAFETY_FLAGGED
     if "ContextOverflowError" in names or (status == 400 and any(phrase in said for phrase in CONTEXT_PHRASES)):
         return TOO_LONG
     if status == 402 or (status in (400, 429) and any(phrase in said for phrase in QUOTA_PHRASES)):
