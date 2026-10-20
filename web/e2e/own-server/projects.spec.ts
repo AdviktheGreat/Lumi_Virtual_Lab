@@ -209,7 +209,7 @@ test("asks for what is wrong with a project, and what it may spend, to be put ri
   await make.getByLabel("The rounds of discussion in a meeting").fill("0");
   await make.getByRole("button", { name: "Make the project" }).click();
 
-  await expect(page.getByRole("heading", { level: 2 }).first()).toContainText("Find which of two nanobodies binds KP.3 better.");
+  await expect(page.getByRole("heading", { name: "Find which of two nanobodies binds KP.3 better.", level: 2 })).toBeVisible();
   await expect(page.getByText("Team: the whole lab, at most 2 · Findings: the best matches · Meetings: 0 rounds of discussion")).toBeVisible();
   await expect(page.getByRole("list", { name: "Team" })).toContainText("Immunologist");
 

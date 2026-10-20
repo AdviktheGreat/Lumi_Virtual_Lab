@@ -778,5 +778,11 @@ class TestTheKeysOfTheServices:
         response = client.put("/api/keys/GROQ_API_KEY", json={"value": "gsk_secret"})
 
         assert response.status_code == 200
-        assert response.json()["settable"] == ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"]
+        assert response.json()["settable"] == [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GROQ_API_KEY",
+            "OPENROUTER_API_KEY",
+        ]
         monkeypatch.delenv("GROQ_API_KEY")

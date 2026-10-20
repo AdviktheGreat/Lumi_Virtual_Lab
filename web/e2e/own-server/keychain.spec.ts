@@ -31,6 +31,7 @@ function told(changes: Record<string, unknown> = {}) {
       { provider: "Anthropic", variables: ["ANTHROPIC_API_KEY"], missing: ["ANTHROPIC_API_KEY"], ready: false },
       { provider: "Gemini", variables: ["GEMINI_API_KEY"], missing: ["GEMINI_API_KEY"], ready: false },
       { provider: "Groq", variables: ["GROQ_API_KEY"], missing: ["GROQ_API_KEY"], ready: false },
+      { provider: "OpenRouter", variables: ["OPENROUTER_API_KEY"], missing: ["OPENROUTER_API_KEY"], ready: false },
     ],
     keychain: { available: true, name: "Test Keychain", problem: null },
     sources: {},

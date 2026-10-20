@@ -10,9 +10,11 @@ from typing import Any
 import pytest
 
 from virtual_lab import llm as llm_module
+from virtual_lab import utils
 from virtual_lab.constants import CHAT_FILE_NAME, SANDBOX_DATA_LAKE_DIR
 from virtual_lab.environment import sandbox_image
-from virtual_lab.server.config import CONFIG_FILE_NAME
+from virtual_lab.openrouter import Catalog, models_from
+from virtual_lab.server.config import CONFIG_FILE_NAME, load_config
 from virtual_lab.server.conversations import (
     WORK_DIR_NAME,
     ChatHandle,
@@ -637,6 +639,180 @@ def wait_until(condition: Any, timeout: float = 10.0) -> None:
     while not condition():
         assert time.monotonic() < deadline, "Waited for something that did not happen"
         time.sleep(0.005)
+
+
+OPENROUTER_SONNET = "openrouter/anthropic/claude-sonnet-4.5"
+
+
+class TestSwitchingModel:
+    @pytest.fixture(autouse=True)
+    def without_prices_left_behind(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(utils, "REGISTERED_PRICES", {})
+        monkeypatch.delenv("LLM_SOURCE", raising=False)
+
+    def test_a_conversation_goes_on_with_another_model_from_where_it_was(
+        self, conversations: Conversations, workspace: Workspace, fake_client: FakeClient
+    ) -> None:
+        handle = conversations.create({"team": ["Scientific Critic"]}, "Old")
+        fake_client.completions.responses.append(text_response("The first answer"))
+        say(handle, "Before")
+        # What state it was in is numbered like an event but not saved, so it is not in what the new one is opened with
+        before = [event.id for event in handle.chat.events_since(0) if event.kind != "status"]
+
+        switched = conversations.switch_model(handle.id, f"  {OPENROUTER_SONNET} ")
+
+        assert switched is not handle and handle.closed
+        assert conversations.get(handle.id) is switched
+        assert switched.config.model == OPENROUTER_SONNET
+        assert switched.chat.lead.model == OPENROUTER_SONNET
+        assert {agent.model for agent in switched.chat.team} == {OPENROUTER_SONNET}
+        assert load_config(workspace.chats_dir / handle.id).model == OPENROUTER_SONNET
+        assert switched.chat.turns == 1
+        assert [event.id for event in switched.chat.events_since(0)] == before
+        fake_client.completions.responses.append(text_response("The second answer"))
+        say(switched, "After")
+        assert fake_client.completions.calls[-1]["model"] == OPENROUTER_SONNET
+        assert switched.chat.last_reply is not None and switched.chat.last_reply.text == "The second answer"
+        # What came before is still there for the new model to read
+        sent = json.dumps(fake_client.completions.calls[-1]["messages"])
+        assert "Before" in sent and "The first answer" in sent
+
+    def test_a_conversation_that_is_opened_again_later_keeps_the_model_it_was_switched_to(
+        self, workspace: Workspace
+    ) -> None:
+        first = Conversations(workspace, check_keys=False)
+        handle = first.create({"team": []})
+        first.switch_model(handle.id, OPENROUTER_SONNET)
+        first.close()
+
+        second = Conversations(workspace, check_keys=False)
+
+        assert second.get(handle.id).config.model == OPENROUTER_SONNET
+        assert second.summaries()[0]["model"] == OPENROUTER_SONNET
+        second.close()
+
+    def test_the_same_model_changes_nothing(self, conversations: Conversations) -> None:
+        handle = conversations.create({"team": []})
+
+        assert conversations.switch_model(handle.id, TEST_MODEL) is handle
+        assert not handle.closed
+
+    @pytest.mark.parametrize("model", ["", "   ", "mystery-model"])
+    def test_a_model_that_cannot_be_used_is_refused_and_the_conversation_goes_on_as_it_was(
+        self, conversations: Conversations, workspace: Workspace, model: str
+    ) -> None:
+        handle = conversations.create({"team": []})
+
+        with pytest.raises(ApiError) as caught:
+            conversations.switch_model(handle.id, model)
+
+        assert (caught.value.status, caught.value.code) == (422, "invalid")
+        assert conversations.get(handle.id) is handle and not handle.closed
+        assert load_config(workspace.chats_dir / handle.id).model == TEST_MODEL
+
+    def test_a_conversation_that_is_working_is_not_switched(
+        self, conversations: Conversations, workspace: Workspace, fake_client: FakeClient
+    ) -> None:
+        handle = conversations.create({"team": []})
+        gate = hold_the_model(fake_client)
+        thread = handle.chat.start("Think about it")
+        assert gate.reached.wait(10)
+
+        with pytest.raises(ApiError) as caught:
+            conversations.switch_model(handle.id, OPENROUTER_SONNET)
+
+        assert (caught.value.status, caught.value.code) == (409, "busy")
+        assert conversations.get(handle.id) is handle and not handle.closed
+        assert load_config(workspace.chats_dir / handle.id).model == TEST_MODEL
+        gate.release()
+        thread.join(20)
+
+    def test_a_model_whose_key_is_not_set_is_refused_and_the_conversation_goes_on_as_it_was(
+        self, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        kept = Conversations(workspace)
+        handle = kept.create({"team": []})
+
+        with pytest.raises(ApiError) as caught:
+            kept.switch_model(handle.id, OPENROUTER_SONNET)
+
+        assert (caught.value.status, caught.value.code) == (422, "missing_keys")
+        assert caught.value.details == {"missing": ["OPENROUTER_API_KEY"]}
+        assert kept.get(handle.id) is handle and not handle.closed
+
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        assert kept.switch_model(handle.id, OPENROUTER_SONNET).config.model == OPENROUTER_SONNET
+        kept.close()
+
+    def test_a_model_that_is_not_priced_is_refused_for_a_conversation_with_a_limit(
+        self, conversations: Conversations, workspace: Workspace
+    ) -> None:
+        handle = conversations.create({"team": [], "max_cost": 1.0})
+
+        with pytest.raises(ApiError) as caught:
+            conversations.switch_model(handle.id, "openrouter/auto")
+
+        assert (caught.value.status, caught.value.code) == (422, "unavailable")
+        assert "spending limit" in caught.value.message
+        assert conversations.get(handle.id) is handle and not handle.closed
+        # Without a limit, there is nothing to enforce
+        free = conversations.create({"team": [], "max_cost": None})
+        assert conversations.switch_model(free.id, "openrouter/auto").config.model == "openrouter/auto"
+
+    def test_the_prices_of_openrouters_models_are_read_when_one_is_switched_to(self, workspace: Workspace) -> None:
+        asked: list[int] = []
+
+        def source() -> Any:
+            asked.append(1)
+            return models_from(
+                {
+                    "data": [
+                        {
+                            "id": "anthropic/claude-sonnet-4.5",
+                            "name": "Claude Sonnet 4.5",
+                            "architecture": {"output_modalities": ["text"]},
+                            "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+                            "supported_parameters": ["tools"],
+                        }
+                    ]
+                }
+            )
+
+        kept = Conversations(workspace, check_keys=False, catalog=Catalog(fetch=source))
+        handle = kept.create({"team": [], "max_cost": 1.0})
+
+        switched = kept.switch_model(handle.id, OPENROUTER_SONNET)
+
+        assert switched.config.model == OPENROUTER_SONNET and asked == [1]
+        # One list is read for every conversation, and none for a model that is not OpenRouter's
+        kept.switch_model(handle.id, TEST_MODEL)
+        kept.switch_model(handle.id, OPENROUTER_SONNET)
+        assert asked == [1]
+        kept.close()
+
+    def test_a_conversation_that_cannot_be_opened_with_the_model_goes_on_as_it_was(
+        self, conversations: Conversations, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        handle = conversations.create({"team": []}, "Old")
+        say(handle, "Before")
+        start = conversations._start
+
+        def start_unless_switched(directory: Path, config: Any, title: Any, keyless: bool = False) -> ChatHandle:
+            if config.model == OPENROUTER_SONNET:
+                raise ApiError(422, "unavailable", "It cannot be opened with that")
+            return start(directory, config, title, keyless)
+
+        monkeypatch.setattr(conversations, "_start", start_unless_switched)
+
+        with pytest.raises(ApiError, match="cannot be opened with that"):
+            conversations.switch_model(handle.id, OPENROUTER_SONNET)
+
+        again = conversations.get(handle.id)
+        assert again is not handle and not again.closed
+        assert again.config.model == TEST_MODEL and again.chat.turns == 1
+        assert load_config(workspace.chats_dir / handle.id).model == TEST_MODEL
 
 
 class TestFollowers:

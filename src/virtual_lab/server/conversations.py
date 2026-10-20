@@ -13,6 +13,7 @@ import re
 import shutil
 import threading
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,8 +25,9 @@ from openai import OpenAI, OpenAIError
 from virtual_lab.chat import Chat, is_count
 from virtual_lab.constants import CHAT_FILE_NAME, CHAT_UPLOADS_DIR_NAME, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
 from virtual_lab.events import ChatEvent
-from virtual_lab.llm import ModelSource
+from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, detect_source
 from virtual_lab.mcp_tools import tool_prefix
+from virtual_lab.openrouter import Catalog
 from virtual_lab.server.asking import Asker
 from virtual_lab.server.config import ChatConfig, load_config, resolve_config, save_config
 from virtual_lab.server.connections import Connections
@@ -38,7 +40,7 @@ from virtual_lab.server.setup import Setup
 from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
 from virtual_lab.session import Session
-from virtual_lab.utils import CostUnknownError
+from virtual_lab.utils import CostUnknownError, compute_token_cost
 
 # What a conversation's code runs in, under its directory
 WORK_DIR_NAME = "work"
@@ -205,6 +207,8 @@ class Conversations:
     :param setup: What code in Docker needs, to say before a conversation is made that it is not there, or None
         to leave that until the code is run.
     :param max_upload_bytes: The most bytes of one file that may be attached to a message.
+    :param catalog: The models OpenRouter serves, whose prices a conversation that has one of them needs known to work
+        out what it has cost, or None to leave that to whoever registered them.
     """
 
     def __init__(
@@ -215,8 +219,10 @@ class Conversations:
         chat_models: ModelSource | None = None,
         setup: Setup | None = None,
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
+        catalog: Catalog | None = None,
     ) -> None:
         self.workspace = workspace
+        self.catalog = catalog
         self.check_keys = check_keys
         self.setup = setup
         self.max_upload_bytes = max_upload_bytes
@@ -335,6 +341,71 @@ class Conversations:
 
         return handle
 
+    def switch_model(self, chat_id: str, model: str) -> ChatHandle:
+        """Has a conversation go on with another model, from where it is: what was said is kept, and the lead and the
+        team answer with the new model from now on. Its files stay, and code that was running starts afresh.
+
+        :raises ApiError: If there is no such conversation, it is working, the model cannot be used, a key it needs is
+            not set, or the conversation cannot be opened with it, in which case it goes on as it was.
+        """
+        model = model.strip()
+        try:
+            detect_source(model)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        with self._lock:
+            handle = self.get(chat_id)
+            if handle.chat.state != "idle":
+                raise ApiError(
+                    409, "busy", "The conversation is working. Change its model once it has finished, or stop it first."
+                )
+            config = handle.config
+            if model == config.model:
+                return handle
+            changed = replace(config, model=model)
+            self.require_keys(changed)
+            self.know_prices(model)
+            if config.max_cost is not None:
+                try:
+                    compute_token_cost(model, 0, 0)
+                except CostUnknownError as error:
+                    raise ApiError(
+                        422,
+                        "unavailable",
+                        f"{error}, so this conversation's spending limit cannot be enforced with it. Choose a model "
+                        f"that is priced, or start a conversation with no limit.",
+                    ) from error
+            directory = handle.directory
+            handle.close()
+            try:
+                save_config(directory, changed)
+                reopened = self._start(directory, changed, None)
+            except BaseException:
+                self._reopen_as_it_was(chat_id, directory, config)
+                raise
+            self._open[chat_id] = reopened
+
+        return reopened
+
+    def _reopen_as_it_was(self, chat_id: str, directory: Path, config: ChatConfig) -> None:
+        """Opens a conversation again with the setup it had, after a change of it could not be made."""
+        try:
+            save_config(directory, config)
+            self._open[chat_id] = self._start(directory, config, None, keyless=bool(self.missing_keys(config)))
+        except Exception:
+            # What is not open is opened when it is next asked for, with what is saved, and told why not if it cannot be
+            self._open.pop(chat_id, None)
+
+    def know_prices(self, model: str) -> None:
+        """Has what a model costs known, where it is one OpenRouter serves, whose prices are read from there."""
+        if (
+            self.catalog is not None
+            and self.client is None
+            and self.chat_models is None
+            and model.startswith(OPENROUTER_PREFIX)
+        ):
+            self.catalog.ensure_prices()
+
     def delete(self, chat_id: str) -> None:
         """Stops a conversation, if it is running, and removes it and everything it saved."""
         with self._lock:
@@ -400,6 +471,7 @@ class Conversations:
             )
 
     def _start(self, directory: Path, config: ChatConfig, title: str | None, keyless: bool = False) -> ChatHandle:
+        self.know_prices(config.model)
         handle = ChatHandle(directory, config, self.loop, keyless)
         data, software = given(self.workspace, config.data, config.software)
         session = config.code.session(directory / WORK_DIR_NAME, data=data, software=software)

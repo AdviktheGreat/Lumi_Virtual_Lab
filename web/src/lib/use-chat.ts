@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { api, ApiError } from "./api";
 import { followChat, type Connection } from "./follow";
 import { emptyTranscript, reduce, type Transcript } from "./transcript";
@@ -17,6 +17,8 @@ export interface Followed {
   status: ChatStatus;
   transcript: Transcript;
   connection: Connection;
+  // Asks what the conversation is again, as it is after something changed it that is not an event, such as its model
+  reload: () => void;
 }
 
 type Action =
@@ -24,9 +26,11 @@ type Action =
   | { type: "connection"; connection: Connection }
   | { type: "status"; status: ChatStatus };
 
-const initial: Followed = { status: { kind: "loading" }, transcript: emptyTranscript, connection: "connecting" };
+type State = Omit<Followed, "reload">;
 
-function step(state: Followed, action: Action): Followed {
+const initial: State = { status: { kind: "loading" }, transcript: emptyTranscript, connection: "connecting" };
+
+function step(state: State, action: Action): State {
   switch (action.type) {
     case "event":
       return { ...state, transcript: reduce(state.transcript, action.event) };
@@ -46,6 +50,8 @@ function statusOf(error: unknown): ChatStatus {
 // another conversation starts from nothing.
 export function useChat(id: string): Followed {
   const [state, dispatch] = useReducer(step, initial);
+  const looking = useRef<(() => void) | null>(null);
+  const reload = useCallback(() => looking.current?.(), []);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -65,6 +71,7 @@ export function useChat(id: string): Followed {
       );
     };
     void look();
+    looking.current = () => void look();
     const following = followChat(id, {
       onEvent: (event) => dispatch({ type: "event", event }),
       onConnection: (connection) => {
@@ -75,10 +82,11 @@ export function useChat(id: string): Followed {
     });
 
     return () => {
+      looking.current = null;
       abort.abort();
       following.close();
     };
   }, [id]);
 
-  return state;
+  return { ...state, reload };
 }

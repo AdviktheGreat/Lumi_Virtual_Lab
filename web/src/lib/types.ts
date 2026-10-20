@@ -131,6 +131,23 @@ export interface Models {
   models: ModelChoice[];
 }
 
+// A model OpenRouter serves, which one key of OpenRouter's reaches. Its id is as it is named here, openrouter/<author>/<model>.
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+  // How many tokens it reads and writes in all, where that is said
+  context_length: number | null;
+  // What it costs per million tokens in US dollars, or null where that depends on what it is asked, as it does for a router
+  input_per_million: number | null;
+  output_per_million: number | null;
+}
+
+// OpenRouter's models, with what went wrong in reading them if that is why they are not as new as they should be
+export interface OpenRouterList {
+  models: OpenRouterModel[];
+  problem: string | null;
+}
+
 // Whether a provider's models can be reached, which is by whether the variables it needs are set. No key is ever sent.
 export interface ProviderStatus {
   provider: string;

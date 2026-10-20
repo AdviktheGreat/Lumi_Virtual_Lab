@@ -10,6 +10,7 @@ import { Composer } from "@/components/composer";
 import { ExportMenu } from "@/components/export-menu";
 import { ChatFilesProvider } from "@/components/chat-files";
 import { FilesButton, FilesPanel } from "@/components/files-panel";
+import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { LeadBlock, Notice, ProblemNotice, TurnView } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
@@ -54,7 +55,7 @@ export function ChatNotFound() {
 
 // One conversation with the lead. It is given the conversation's id as its key.
 export function ChatView({ id }: { id: string }) {
-  const { status, transcript, connection } = useChat(id);
+  const { status, transcript, connection, reload } = useChat(id);
   const { refresh } = useChats();
   const { server, report } = useServer();
   const [draft, setDraft] = useState("");
@@ -62,6 +63,7 @@ export function ChatView({ id }: { id: string }) {
   const [problem, setProblem] = useState<Problem | null>(null);
   const [sentNotes, setSentNotes] = useState<SentNote[]>([]);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [choosingModel, setChoosingModel] = useState(false);
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
   const { scroller, atBottom, jump, onScroll } = useStickToBottom<HTMLDivElement>(transcript.lastId);
   // The files are looked at again when something may have changed them: code ran, a turn ended, or a file was sent
@@ -272,12 +274,36 @@ export function ChatView({ id }: { id: string }) {
                 disabled={sending || status.kind !== "ready"}
                 holdUp={readiness(attachments.items)}
                 files={{ items: attachments.items, onAdd: attach, onRemove: (item) => attachments.remove([item]), onRetry: attachments.retry }}
-                footer={model ? `${lead} · ${model}` : undefined}
+                footer={
+                  model ? (
+                    <ModelButton prefix={lead} model={model} disabled={working || sending} onClick={() => setChoosingModel(true)} />
+                  ) : undefined
+                }
               />
             </div>
           </div>
           {filesOpen && <FilesPanel id={id} listed={listed} onClose={() => setFilesOpen(false)} />}
         </div>
+        {choosingModel && model !== null && (
+          <ModelDialog
+            title="Change the model"
+            description="The lead and the team answer with it from the next message. What was said stays, and so do the files. Code that was running starts afresh."
+            current={model}
+            onChoose={async (next) => {
+              if (next !== model) {
+                try {
+                  await api.switchModel(id, next);
+                } catch (error) {
+                  report(error);
+                  throw error;
+                }
+                reload();
+              }
+              setChoosingModel(false);
+            }}
+            onClose={() => setChoosingModel(false)}
+          />
+        )}
       </CaughtUpProvider>
     </ChatFilesProvider>
   );

@@ -74,7 +74,7 @@ test.describe("the settings", () => {
     const dialog = await openSettings(page);
     const model = dialog.getByRole("combobox", { name: "Model", exact: true });
 
-    await expect(model.locator("option", { hasText: "gpt-5.2 (needs a key)" })).toHaveCount(1);
+    await expect(model.locator("option", { hasText: /^gpt-5\.2 \(needs a key\)$/ })).toHaveCount(1);
     await expect(dialog.getByText("This model needs OPENAI_API_KEY, which is not set.")).toBeVisible();
     // The models are grouped by whose they are
     await expect(model.locator('optgroup[label="OpenAI"] option[value="gpt-5.2"]')).toHaveCount(1);
@@ -181,14 +181,14 @@ test.describe("the settings", () => {
     await dialog.getByRole("tab", { name: "Model" }).click();
     const model = dialog.getByRole("combobox", { name: "Model", exact: true });
     await expect(model).toBeVisible();
-    await expect(model.locator("option", { hasText: "gpt-5.2 (needs a key)" })).toHaveCount(0);
+    await expect(model.locator("option", { hasText: /^gpt-5\.2 \(needs a key\)$/ })).toHaveCount(0);
 
     const arrived = page.waitForResponse((response) => response.url().endsWith("/api/models"));
     release();
     await arrived;
     await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
 
-    await expect(model.locator("option", { hasText: "gpt-5.2 (needs a key)" })).toHaveCount(0);
+    await expect(model.locator("option", { hasText: /^gpt-5\.2 \(needs a key\)$/ })).toHaveCount(0);
     await expect(dialog.getByText("This model needs")).toHaveCount(0);
   });
 
@@ -353,7 +353,7 @@ test.describe("the code settings", () => {
     const dialog = await openSettings(page, "Code");
     await dialog.getByRole("radio", { name: /In a Docker container/ }).check();
 
-    await expect(dialog.getByText("Not set", { exact: true })).toHaveCount(3);
+    await expect(dialog.getByText("Not set", { exact: true })).toHaveCount(4);
     await expect(dialog.getByRole("checkbox", { name: /Groq key/ })).toBeVisible();
     await expect(dialog.getByText("Code cannot run while one of them is not set.")).toBeVisible();
   });
@@ -368,6 +368,7 @@ test.describe("the keys", () => {
       ["Anthropic", "ANTHROPIC_API_KEY"],
       ["Gemini", "GEMINI_API_KEY"],
       ["Groq", "GROQ_API_KEY"],
+      ["OpenRouter", "OPENROUTER_API_KEY"],
     ]) {
       await expect(dialog.getByLabel(`${provider} key`, { exact: true })).toBeVisible();
       await expect(dialog.getByTestId(`key-state-${name}`)).toHaveText("Not set");
@@ -402,7 +403,7 @@ test.describe("the keys", () => {
     // The models of the provider are no longer said to need it, and those of the others still are
     await dialog.getByRole("tab", { name: "Model" }).click();
     const model = dialog.getByRole("combobox", { name: "Model", exact: true });
-    await expect(model.locator("option", { hasText: "gpt-5.2 (needs a key)" })).toHaveCount(0);
+    await expect(model.locator("option", { hasText: /^gpt-5\.2 \(needs a key\)$/ })).toHaveCount(0);
     await expect(model.locator("option", { hasText: "claude-sonnet-4-5 (needs a key)" })).toHaveCount(1);
     await expect(dialog.getByText("This model needs")).toHaveCount(0);
 
@@ -414,7 +415,7 @@ test.describe("the keys", () => {
     await expect(dialog.getByRole("button", { name: "Remove the OpenAI key" })).toHaveCount(0);
 
     await dialog.getByRole("tab", { name: "Model" }).click();
-    await expect(model.locator("option", { hasText: "gpt-5.2 (needs a key)" })).toHaveCount(1);
+    await expect(model.locator("option", { hasText: /^gpt-5\.2 \(needs a key\)$/ })).toHaveCount(1);
   });
 
   test("say why the server refuses a key, and keep what was pasted to try again", async ({ page }) => {

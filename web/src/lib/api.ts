@@ -23,6 +23,7 @@ import type {
   NewChat,
   NewPaperRun,
   NewProject,
+  OpenRouterList,
   Own,
   OwnPreview,
   PaperFunction,
@@ -304,6 +305,8 @@ export const api = {
   // Only what is given is changed, and the settings are given back as they now are
   changeSettings: (changes: SettingsChange) => request<Settings>("PATCH", "/settings", changes),
   models: (signal?: AbortSignal) => request<Models>("GET", "/models", undefined, signal),
+  // Every model OpenRouter serves that a conversation can use, which the server reads from OpenRouter when it is asked
+  openRouterModels: (signal?: AbortSignal) => request<OpenRouterList>("GET", "/models/openrouter", undefined, signal),
   keys: (signal?: AbortSignal) => request<KeyStatuses>("GET", "/keys", undefined, signal),
   // A key is kept in the server's keychain, or by the server until it stops, and is never given back: what comes back is
   // which are set. False for remember keeps it until the server stops alone; undefined is left out of the body, which is as the keychain allows.
@@ -420,6 +423,9 @@ export const api = {
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),
   // Gives it another title, which the server tidies, and tells of to whoever follows the conversation
   renameChat: (id: string, title: string) => request<ChatInfo>("PATCH", `/chats/${encodeURIComponent(id)}`, { title }),
+  // The conversation goes on from where it is with another model, for the lead and for the team
+  switchModel: (id: string, model: string) =>
+    request<ChatInfo>("PUT", `/chats/${encodeURIComponent(id)}/model`, { model }),
   deleteChat: (id: string) => request<void>("DELETE", `/chats/${encodeURIComponent(id)}`),
   // Attachments are named as the server named them when it was sent the files. With replaceLast the message takes the
   // place of the last one, which is taken out of the conversation, to send it again or changed.
