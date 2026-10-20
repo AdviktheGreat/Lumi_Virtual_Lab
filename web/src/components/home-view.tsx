@@ -7,6 +7,7 @@ import { BrandMark } from "@/components/brand";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
 import { Notice, ProblemNotice } from "@/components/messages";
+import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
 import { useSettings } from "@/components/settings-provider";
@@ -49,6 +50,9 @@ export function HomeView() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
+  // The model chosen here for the conversation to begin, in place of the one the settings name, and whether it is being chosen
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [choosing, setChoosing] = useState(false);
   // There is no conversation to send files to until the message is, so they are held until then
   const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
 
@@ -63,7 +67,7 @@ export function HomeView() {
     setProblem(null);
     let chat: ChatInfo | null = null;
     try {
-      chat = await api.createChat();
+      chat = await api.createChat(chosen === null ? {} : { model: chosen });
       const names = await attachments.upload(chat.id);
       await api.send(chat.id, text, names);
       void refresh();
@@ -80,7 +84,7 @@ export function HomeView() {
     }
   }
 
-  const model = server.status === "ready" ? server.settings.model : null;
+  const model = chosen ?? (server.status === "ready" ? server.settings.model : null);
   const missing = useMissingKeys(model, settings.closed);
 
   return (
@@ -124,10 +128,23 @@ export function HomeView() {
                 onRetry: attachments.retry,
               }}
               autoFocus
-              footer={model}
+              footer={model ? <ModelButton model={model} disabled={sending} onClick={() => setChoosing(true)} /> : undefined}
               className="shadow-md"
             />
           </div>
+
+          {choosing && model !== null && (
+            <ModelDialog
+              title="Choose the model"
+              description="The lead and the team of this conversation answer with it. You can change it later, from the conversation."
+              current={model}
+              onChoose={async (next) => {
+                setChosen(next);
+                setChoosing(false);
+              }}
+              onClose={() => setChoosing(false)}
+            />
+          )}
 
           <ul className="grid gap-2 sm:grid-cols-2" aria-label="Examples">
             {EXAMPLES.map(({ icon: Icon, title, prompt }) => (

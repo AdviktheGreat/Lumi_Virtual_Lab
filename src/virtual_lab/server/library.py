@@ -12,12 +12,24 @@ PROVIDER_KEYS: dict[str, tuple[str, ...]] = {
     "Anthropic": ("ANTHROPIC_API_KEY",),
     "Gemini": ("GEMINI_API_KEY",),
     "Groq": ("GROQ_API_KEY",),
+    "OpenRouter": ("OPENROUTER_API_KEY",),
     "AzureOpenAI": ("OPENAI_API_KEY", "OPENAI_ENDPOINT"),
     "Bedrock": ("AWS_REGION",),
 }
 
 # The keys a person may give the interface for the rest of the process
-SETTABLE_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY")
+SETTABLE_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY")
+
+# OpenRouter's routers and a few of the models most often wanted through it, so that there is something to choose before
+# its whole list has been read. The rest of its models are searched for in that list.
+FEATURED_OPENROUTER_MODELS = (
+    "openrouter/auto",
+    "openrouter/free",
+    "openrouter/anthropic/claude-sonnet-4.5",
+    "openrouter/openai/gpt-5.2",
+    "openrouter/google/gemini-2.5-pro",
+    "openrouter/deepseek/deepseek-v3.2",
+)
 
 
 @dataclass(frozen=True)
@@ -39,8 +51,12 @@ class ProviderStatus:
 
 
 def models() -> list[str]:
-    """The models to choose from: the default, then every priced one, newest families first."""
-    return list(dict.fromkeys([DEFAULT_MODEL, *sorted(MODEL_TO_INPUT_PRICE_PER_TOKEN, key=model_order)]))
+    """The models to choose from: the default, then every priced one, newest families first, then OpenRouter's."""
+    return list(
+        dict.fromkeys(
+            [DEFAULT_MODEL, *sorted(MODEL_TO_INPUT_PRICE_PER_TOKEN, key=model_order), *FEATURED_OPENROUTER_MODELS]
+        )
+    )
 
 
 MODEL_FAMILIES = ("gpt-6", "gpt-5", "claude-", "gemini-", "gpt-4", "o")

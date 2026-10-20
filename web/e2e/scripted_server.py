@@ -91,6 +91,7 @@ from virtual_lab.benchmarks import MultipleChoiceOutput  # noqa: E402
 from virtual_lab.constants import BENCHMARK_FILES, MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
+from virtual_lab import openrouter  # noqa: E402
 from virtual_lab.memory import Findings  # noqa: E402
 from virtual_lab.papers import PaperFindings  # noqa: E402
 from virtual_lab.planning import NextStep, PlanTask, ResearchPlan, Review  # noqa: E402
@@ -802,6 +803,33 @@ def stand_in_pdf(page: str) -> bytes:
     return b"%PDF-1.7\n% made by the stand-in\n" + page.encode("utf-8")
 
 
+def stand_in_openrouter_models(*arguments: Any, **keywords: Any) -> list[openrouter.OpenRouterModel]:
+    """What OpenRouter lists, so that no test asks it: a router, and a few models with different prices."""
+
+    def listed(name: str, label: str, prompt: str, completion: str, context: int) -> dict[str, Any]:
+        return {
+            "id": name,
+            "name": label,
+            "context_length": context,
+            "architecture": {"output_modalities": ["text"]},
+            "pricing": {"prompt": prompt, "completion": completion},
+            "supported_parameters": ["tools"],
+        }
+
+    return openrouter.models_from(
+        {
+            "data": [
+                listed("openrouter/auto", "Auto Router", "-1", "-1", 2_000_000),
+                listed(
+                    "anthropic/claude-sonnet-4.5", "Anthropic: Claude Sonnet 4.5", "0.000003", "0.000015", 1_000_000
+                ),
+                listed("google/gemini-2.5-pro", "Google: Gemini 2.5 Pro", "0.00000125", "0.00001", 1_048_576),
+                listed("meta-llama/llama-3.3-70b-instruct:free", "Meta: Llama 3.3 70B (free)", "0", "0", 131_072),
+            ]
+        }
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="The server the interface's end-to-end tests run against.")
     parser.add_argument("--port", type=int, default=8799)
@@ -818,6 +846,7 @@ def main() -> None:
     options = parser.parse_args()
 
     server_app.make_pdf = stand_in_pdf
+    openrouter.fetch_models = stand_in_openrouter_models
     stand_in_benchmark_files()
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened

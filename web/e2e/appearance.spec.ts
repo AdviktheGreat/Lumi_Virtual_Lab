@@ -230,7 +230,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.route("**/api/keys/GROQ_API_KEY", (route) =>
           route.fulfill({
             json: {
-              settable: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"],
+              settable: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"],
               providers: [{ provider: "Groq", variables: ["GROQ_API_KEY"], missing: [], ready: true }],
               keychain: { available: true, name: "Test Keychain", problem: null },
               sources: { GROQ_API_KEY: "session" },

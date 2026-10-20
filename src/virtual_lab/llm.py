@@ -2,7 +2,8 @@
 
 get_llm chooses and builds a LangChain chat model the way Biomni does (snap-stanford/Biomni,
 biomni/llm.py, Apache License 2.0): the same eight sources, the same rules for telling them
-apart by model name, and the same environment variables for each. Three things differ, each on
+apart by model name, and the same environment variables for each. A ninth, OpenRouter, is added:
+one key reaches hundreds of models, named openrouter/<author>/<model>. Three things differ, each on
 purpose:
 
 - No temperature is fixed when the model is built. A meeting sets it on every request, so that
@@ -42,7 +43,9 @@ from openai.types.completion_usage import CompletionTokensDetails, PromptTokensD
 
 from virtual_lab.constants import DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_RETRIES
 
-SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom"]
+SourceType = Literal[
+    "OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "OpenRouter", "Custom"
+]
 ALLOWED_SOURCES: frozenset[str] = frozenset(SourceType.__args__)  # type: ignore[attr-defined]
 
 # Names Biomni sends to a local Ollama server when nothing else claims them
@@ -52,6 +55,10 @@ BEDROCK_PREFIXES = ("anthropic.claude-", "amazon.titan-", "meta.llama-", "mistra
 AZURE_API_VERSION = "2024-12-01-preview"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# What tells an OpenRouter model from one a provider serves itself: OpenRouter names a model <author>/<model>, which
+# Biomni's rules would send to a local Ollama server
+OPENROUTER_PREFIX = "openrouter/"
 
 # How often a request that is waited on is asked whether to go on waiting
 INTERRUPT_POLL_SECONDS = 0.2
@@ -71,6 +78,8 @@ def detect_source(model: str, base_url: str | None = None) -> SourceType:
     if env_source in ALLOWED_SOURCES:
         return env_source  # type: ignore[return-value]
 
+    if model.startswith(OPENROUTER_PREFIX):
+        return "OpenRouter"
     if model.startswith("claude-"):
         return "Anthropic"
     if model.startswith("gpt-oss"):
@@ -96,6 +105,16 @@ def detect_source(model: str, base_url: str | None = None) -> SourceType:
         return "OpenAI"
 
     raise ValueError(f'Unable to determine the source of "{model}". Please specify source.')
+
+
+def openrouter_name(model: str) -> str:
+    """What OpenRouter calls a model named openrouter/<author>/<model>: <author>/<model>.
+
+    OpenRouter's own routers are named openrouter/<name>, as openrouter/auto, and are sent as they are.
+    """
+    rest = model.removeprefix(OPENROUTER_PREFIX)
+
+    return rest if "/" in rest else model
 
 
 def supported_arguments(model_class: type, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -155,7 +174,7 @@ def get_llm(
         merged = {key: value for key, value in {**common, **arguments}.items() if value is not None}
         return model_class(**supported_arguments(model_class, merged))
 
-    if source in {"OpenAI", "Gemini", "Groq", "Custom"}:
+    if source in {"OpenAI", "Gemini", "Groq", "OpenRouter", "Custom"}:
         chat_openai = import_chat_model("langchain_openai", "ChatOpenAI", "langchain-openai")
 
         if source == "OpenAI":
@@ -164,6 +183,13 @@ def get_llm(
             return build(chat_openai, api_key=os.getenv("GEMINI_API_KEY"), base_url=GEMINI_BASE_URL)
         if source == "Groq":
             return build(chat_openai, api_key=os.getenv("GROQ_API_KEY"), base_url=GROQ_BASE_URL)
+        if source == "OpenRouter":
+            return build(
+                chat_openai,
+                model=openrouter_name(model),
+                api_key=os.getenv("OPENROUTER_API_KEY"),
+                base_url=OPENROUTER_BASE_URL,
+            )
 
         # Custom serving, such as SGLang for Biomni-R0, must expose an OpenAI-compatible API
         if base_url is None:

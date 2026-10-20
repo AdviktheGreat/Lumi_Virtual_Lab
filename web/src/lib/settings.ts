@@ -112,7 +112,9 @@ export function isOffered(model: string, models: Models | null): boolean {
 // The keys that the model's provider needs and that are not set, or none if they are, or if the model is not one that
 // the server knows the provider of
 export function keysMissingFor(model: string, models: Models | null, keys: KeyStatuses | null): string[] {
-  const provider = models?.models.find((choice) => choice.id === model)?.provider;
+  // OpenRouter serves far more models than the server lists, all of them named openrouter/<author>/<model>
+  const provider =
+    models?.models.find((choice) => choice.id === model)?.provider ?? (model.startsWith("openrouter/") ? "OpenRouter" : null);
   if (!provider || keys === null) return [];
 
   return keys.providers.find((status) => status.provider === provider)?.missing ?? [];

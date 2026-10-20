@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { ModelDialog } from "@/components/model-dialog";
 import { describedBy, Field, Section } from "@/components/settings-fields";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -125,6 +127,7 @@ export function ModelTab({
   // Goes to where the key is given
   onAddKey: () => void;
 }) {
+  const [browsing, setBrowsing] = useState(false);
   const missing = keysMissingFor(
     draft.model.trim(),
     models.kind === "ready" ? models.value : null,
@@ -154,6 +157,27 @@ export function ModelTab({
             describedByIds={describedBy("settings-model", { hint: true, problem: problems.model !== undefined })}
           />
         </Field>
+        <Button
+          type="button"
+          variant="link"
+          size="xs"
+          onClick={() => setBrowsing(true)}
+          className="h-auto self-start p-0 text-xs"
+        >
+          Search all models, including OpenRouter&apos;s
+        </Button>
+        {browsing && (
+          <ModelDialog
+            title="Choose the model"
+            description="The lead and the team of a new conversation use it. A conversation that has begun keeps its own, which can be changed from it."
+            current={draft.model.trim()}
+            onChoose={async (model) => {
+              onChange({ model });
+              setBrowsing(false);
+            }}
+            onClose={() => setBrowsing(false)}
+          />
+        )}
         {missing.length > 0 && (
           <p role="status" className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
             <span>

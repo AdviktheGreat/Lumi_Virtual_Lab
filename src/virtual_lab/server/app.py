@@ -89,6 +89,7 @@ from virtual_lab.export import PDFExportError, make_pdf
 from virtual_lab.export_chat import chat_html
 from virtual_lab.export_notebook import chat_notebook, notebook_text
 from virtual_lab.mcp_presets import MCP_PRESETS
+from virtual_lab.openrouter import Catalog
 from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.benchmarks import BenchmarkRuns
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
@@ -121,6 +122,10 @@ from virtual_lab.server.workspace import DEFAULT_WORKSPACE, Settings, Workspace
 LOG = logging.getLogger("uvicorn.error")
 
 MAX_MESSAGE_CHARS = 200_000
+
+# Where the models OpenRouter serves are kept, in the workspace, so that what they cost is known when the server is
+# started again with no connection
+OPENROUTER_FILE_NAME = "openrouter-models.json"
 
 # Seconds the server waits for the next part of a file that is being uploaded
 UPLOAD_CHUNK_TIMEOUT = 120.0
@@ -339,6 +344,10 @@ class NoteBody(RequestModel):
     text: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
 
 
+class ModelBody(RequestModel):
+    model: str = Field(min_length=1, max_length=500)
+
+
 class KeyBody(RequestModel):
     value: str = Field(max_length=MAX_KEY_CHARS)
     # Whether to keep it in the keychain, or only until the server stops; None is as the keychain allows
@@ -434,6 +443,7 @@ def create_app(
     release_url: str = BIOMNI_RELEASE_URL,
     max_upload_bytes: int = MAX_UPLOAD_BYTES,
     keychain: Keychain | None = None,
+    catalog: Catalog | None = None,
 ) -> FastAPI:
     """The server's application.
 
@@ -458,8 +468,11 @@ def create_app(
     :param keychain: Where the keys a person gives are kept, so that they are there when the server is started
         again, and are read from now, or None to keep them only until the server stops. It is never the machine's
         own unless it is given: virtual_lab.server.serve gives it.
+    :param catalog: The models OpenRouter serves, which tests give so that none is asked for. By default they are read
+        from OpenRouter when they are wanted, and kept in the workspace.
     """
     store = Workspace(Path(workspace))
+    models_of_openrouter = catalog if catalog is not None else Catalog(store.root / OPENROUTER_FILE_NAME)
     setup = Setup(store, docker_command, release_url)
     conversations = Conversations(
         store,
@@ -468,6 +481,7 @@ def create_app(
         chat_models=chat_models,
         setup=setup if check_setup else None,
         max_upload_bytes=max_upload_bytes,
+        catalog=models_of_openrouter,
     )
     own = Own(store, max_upload_bytes)
     papers = Papers(
@@ -575,12 +589,19 @@ def create_app(
         except (ValueError, TypeError) as error:
             raise ApiError(422, "invalid", str(error)) from error
         store.save_settings(changed)
+        # A model of OpenRouter's is priced from its list, which is read now if it never was, so that a limit on what a
+        # paper, a run, or a project spends can be enforced with it
+        conversations.know_prices(changed.model)
 
         return settings_view(changed)
 
     @api.get("/models")
     def get_models() -> dict[str, Any]:
         return {"default": store.load_settings().model, "models": describe_models()}
+
+    @api.get("/models/openrouter")
+    def get_openrouter_models() -> dict[str, Any]:
+        return models_of_openrouter.listing()
 
     def key_statuses(problem: str | None = None) -> dict[str, Any]:
         """What the keys are, without any of them. A problem is what went wrong with the keychain in a change that
@@ -1030,6 +1051,10 @@ def create_app(
         handle.chat.rename(title)
 
         return handle.info()
+
+    @api.put("/chats/{chat_id}/model")
+    def switch_chat_model(chat_id: str, body: ModelBody) -> dict[str, Any]:
+        return conversations.switch_model(chat_id, body.model).info()
 
     @api.delete("/chats/{chat_id}")
     def delete_chat(chat_id: str) -> Response:

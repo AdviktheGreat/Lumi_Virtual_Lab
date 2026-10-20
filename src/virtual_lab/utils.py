@@ -1,10 +1,11 @@
 """Contains useful utility functions."""
 
 import json
+import math
 import os
 import re
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -279,6 +280,23 @@ class BudgetExceededError(RuntimeError):
         self.limit = limit
 
 
+# Prices a provider publishes of models too many and too changeable to keep in the tables of virtual_lab.constants, as
+# OpenRouter's are: USD per token, input then output, for the model named exactly
+REGISTERED_PRICES: dict[str, tuple[float, float]] = {}
+
+
+def register_prices(prices: Mapping[str, tuple[float, float]]) -> None:
+    """Tells compute_token_cost what models cost that are not in the tables, replacing what it was told of them before.
+
+    :param prices: For each model, its USD per input token and per output token. A model is priced as named, with no
+        part of its name left off, as a dated snapshot is in the tables.
+    """
+    for model, (input_price, output_price) in prices.items():
+        if not all(math.isfinite(price) and price >= 0 for price in (input_price, output_price)):
+            raise ValueError(f"The price of {model} is an amount of money, zero or more, per token")
+    REGISTERED_PRICES.update(prices)
+
+
 def price_key(model: str, prices: dict[str, float]) -> str | None:
     """Finds the entry in a price table for a model, matching only the model itself.
 
@@ -308,6 +326,10 @@ def compute_token_cost(model: str, input_token_count: int, output_token_count: i
     :raises CostUnknownError: If the model is not in the price tables.
     :return: The token cost of the model.
     """
+    registered = REGISTERED_PRICES.get(model)
+    if registered is not None:
+        return input_token_count * registered[0] + output_token_count * registered[1]
+
     input_prices, output_prices = MODEL_TO_INPUT_PRICE_PER_TOKEN, MODEL_TO_OUTPUT_PRICE_PER_TOKEN
     base = model
 

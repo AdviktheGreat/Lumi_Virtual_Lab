@@ -22,12 +22,14 @@ from virtual_lab.llm import (
     FINISH_REASONS,
     GEMINI_BASE_URL,
     GROQ_BASE_URL,
+    OPENROUTER_BASE_URL,
     ask,
     configure,
     detect_source,
     finish_reason_of,
     get_llm,
     meeting_source,
+    openrouter_name,
     reads_speaker_names,
     reply_from,
     resolve_chat_models,
@@ -101,7 +103,7 @@ class Decision(BaseModel):
 
 @pytest.fixture
 def keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"):
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"):
         monkeypatch.setenv(name, f"test-{name.lower()}")
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.delenv("LLM_SOURCE", raising=False)
@@ -117,6 +119,9 @@ class TestDetectSource:
             ("azure-my-deployment", "AzureOpenAI"),
             ("gemini-2.5-pro", "Gemini"),
             ("llama-3.3-70b-groq", "Groq"),
+            ("openrouter/anthropic/claude-sonnet-4.5", "OpenRouter"),
+            ("openrouter/meta-llama/llama-3.3-70b-instruct:free", "OpenRouter"),
+            ("openrouter/auto", "OpenRouter"),
             ("qwen2.5:14b", "Ollama"),
             ("meta-llama/Llama-3-8B", "Ollama"),
             ("anthropic.claude-3-sonnet", "Bedrock"),
@@ -178,6 +183,30 @@ class TestGetLlm:
 
         assert llm.openai_api_base == GROQ_BASE_URL
         assert llm.openai_api_key.get_secret_value() == "test-groq_api_key"
+
+    def test_openrouter_goes_to_its_endpoint_under_the_name_it_gives_the_model(self, keys: None) -> None:
+        llm = get_llm("openrouter/anthropic/claude-sonnet-4.5")
+
+        assert isinstance(llm, ChatOpenAI)
+        assert llm.openai_api_base == OPENROUTER_BASE_URL
+        assert llm.openai_api_key.get_secret_value() == "test-openrouter_api_key"
+        assert llm.model_name == "anthropic/claude-sonnet-4.5"
+
+    def test_an_openrouter_router_is_asked_for_by_its_own_name(self, keys: None) -> None:
+        assert get_llm("openrouter/auto").model_name == "openrouter/auto"
+
+    @pytest.mark.parametrize(
+        ("model", "name"),
+        [
+            ("openrouter/anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-4.5"),
+            ("openrouter/openai/gpt-5.2:free", "openai/gpt-5.2:free"),
+            ("openrouter/auto", "openrouter/auto"),
+            ("openrouter/free", "openrouter/free"),
+            ("openrouter/openrouter/auto", "openrouter/auto"),
+        ],
+    )
+    def test_openrouter_is_told_the_name_without_the_prefix_that_marks_it_here(self, model: str, name: str) -> None:
+        assert openrouter_name(model) == name
 
     def test_a_custom_server_needs_an_address(self, keys: None) -> None:
         with pytest.raises(ValueError, match="base_url"):

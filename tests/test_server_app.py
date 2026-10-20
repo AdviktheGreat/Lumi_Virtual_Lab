@@ -16,16 +16,18 @@ from typing import Any
 
 import httpx
 import pytest
+import requests
 import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from virtual_lab.__about__ import __version__
-from virtual_lab import environment
+from virtual_lab import environment, utils
 from virtual_lab.constants import MAX_UPLOAD_BYTES
 from virtual_lab.environment import DATA_LAKE, sandbox_image
 from virtual_lab.events import ChatEvent
 from virtual_lab.export import PDFExportError
+from virtual_lab.openrouter import Catalog, models_from
 from virtual_lab.server import app as app_module
 from virtual_lab.server.app import (
     MAX_MESSAGE_CHARS,
@@ -367,6 +369,144 @@ class TestSettings:
         assert {"id": "gpt-5.2", "provider": "OpenAI", "ready": True} in shown["models"]
 
 
+SONNET = "openrouter/anthropic/claude-sonnet-4.5"
+
+
+def openrouter_list() -> Any:
+    return models_from(
+        {
+            "data": [
+                {
+                    "id": "anthropic/claude-sonnet-4.5",
+                    "name": "Anthropic: Claude Sonnet 4.5",
+                    "context_length": 1_000_000,
+                    "architecture": {"output_modalities": ["text"]},
+                    "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+                    "supported_parameters": ["tools"],
+                }
+            ]
+        }
+    )
+
+
+class TestOpenRouter:
+    @pytest.fixture(autouse=True)
+    def without_prices_left_behind(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(utils, "REGISTERED_PRICES", {})
+        monkeypatch.delenv("LLM_SOURCE", raising=False)
+
+    @pytest.fixture
+    def asked(self) -> list[int]:
+        return []
+
+    @pytest.fixture
+    def app(self, workspace: Workspace, asked: list[int]) -> FastAPI:
+        def source() -> Any:
+            asked.append(1)
+            return openrouter_list()
+
+        return create_app(workspace.root, token=TOKEN, check_keys=False, catalog=Catalog(fetch=source))
+
+    def test_its_routers_and_best_known_models_are_offered_with_whether_the_key_is_set(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, asked: list[int]
+    ) -> None:
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+        before = {item["id"]: item for item in client.get("/api/models").json()["models"]}
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        after = {item["id"]: item for item in client.get("/api/models").json()["models"]}
+
+        assert before["openrouter/auto"] == {"id": "openrouter/auto", "provider": "OpenRouter", "ready": False}
+        assert after[SONNET] == {"id": SONNET, "provider": "OpenRouter", "ready": True}
+        # Offering them does not ask OpenRouter for its list
+        assert asked == []
+
+    def test_the_whole_list_is_read_from_openrouter_when_it_is_asked_for(
+        self, client: TestClient, asked: list[int]
+    ) -> None:
+        shown = client.get("/api/models/openrouter").json()
+
+        assert shown["problem"] is None
+        assert shown["models"] == [
+            {
+                "id": SONNET,
+                "name": "Anthropic: Claude Sonnet 4.5",
+                "context_length": 1_000_000,
+                "input_per_million": pytest.approx(3.0),
+                "output_per_million": pytest.approx(15.0),
+            }
+        ]
+        client.get("/api/models/openrouter")
+        assert asked == [1]
+
+    def test_the_trouble_in_reading_the_list_is_told(self, workspace: Workspace) -> None:
+        def source() -> Any:
+            raise requests.ConnectionError("no connection")
+
+        broken = create_app(workspace.root, token=TOKEN, check_keys=False, catalog=Catalog(fetch=source))
+        with TestClient(broken, base_url=LOCAL, headers=BEARER) as opened:
+            shown = opened.get("/api/models/openrouter").json()
+
+        assert shown["models"] == []
+        assert "no connection" in shown["problem"]
+
+    def test_choosing_one_of_its_models_in_the_settings_reads_what_they_cost(
+        self, client: TestClient, asked: list[int]
+    ) -> None:
+        response = client.patch("/api/settings", json={"model": SONNET})
+
+        assert response.status_code == 200 and response.json()["model"] == SONNET
+        assert asked == [1]
+        assert utils.compute_token_cost(SONNET, 10**6, 0) == pytest.approx(3.0)
+        client.patch("/api/settings", json={"model": TEST_MODEL})
+        assert asked == [1]
+
+    def test_a_conversation_is_switched_to_another_model_and_goes_on_from_where_it_was(
+        self, client: TestClient, workspace: Workspace, fake_client: FakeClient
+    ) -> None:
+        chat_id = new_chat(client)["id"]
+        client.post(f"/api/chats/{chat_id}/messages", json={"text": "Before"})
+        wait_idle(client, chat_id)
+
+        response = client.put(f"/api/chats/{chat_id}/model", json={"model": SONNET})
+
+        assert response.status_code == 200, response.text
+        switched = response.json()
+        assert switched["config"]["model"] == SONNET
+        assert switched["turns"] == 1 and switched["state"] == "idle"
+        assert client.get(f"/api/chats/{chat_id}").json()["config"]["model"] == SONNET
+        assert [item["model"] for item in client.get("/api/chats").json()["chats"]] == [SONNET]
+        client.post(f"/api/chats/{chat_id}/messages", json={"text": "After"})
+        wait_idle(client, chat_id, turns=2)
+        assert fake_client.completions.calls[-1]["model"] == SONNET
+
+    def test_what_cannot_be_switched_is_refused_and_told_why(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        chat_id = new_chat(client)["id"]
+
+        assert client.put("/api/chats/no-such-chat/model", json={"model": SONNET}).status_code == 404
+        assert client.put(f"/api/chats/{chat_id}/model", json={}).status_code == 422
+        assert client.put(f"/api/chats/{chat_id}/model", json={"model": ""}).status_code == 422
+        refused = client.put(f"/api/chats/{chat_id}/model", json={"model": "mystery-model"})
+        assert refused.status_code == 422 and error_of(refused)["code"] == "invalid"
+        assert client.get(f"/api/chats/{chat_id}").json()["config"]["model"] == TEST_MODEL
+
+    def test_a_conversation_that_is_working_is_not_switched(
+        self, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        chat_id = new_chat(client)["id"]
+        gate = hold_the_model(fake_client)
+        client.post(f"/api/chats/{chat_id}/messages", json={"text": "Think"})
+        assert gate.reached.wait(10)
+
+        refused = client.put(f"/api/chats/{chat_id}/model", json={"model": SONNET})
+
+        assert refused.status_code == 409 and error_of(refused)["code"] == "busy"
+        gate.release()
+        wait_idle(client, chat_id)
+
+
 class TestKeys:
     def test_which_providers_have_their_keys_is_shown_without_any_key(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -385,7 +525,14 @@ class TestKeys:
             "ready": True,
         }
         assert providers["Groq"]["missing"] == ["GROQ_API_KEY"] and providers["Groq"]["ready"] is False
-        assert shown["settable"] == ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"]
+        assert shown["settable"] == [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GROQ_API_KEY",
+            "OPENROUTER_API_KEY",
+        ]
+        assert providers["OpenRouter"]["variables"] == ["OPENROUTER_API_KEY"]
         assert "sk-never-shown" not in response.text
 
     def test_a_key_is_set_until_the_server_stops_and_is_never_told_to_anyone(
