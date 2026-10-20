@@ -151,9 +151,11 @@ export function ModelDialog({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
-              // Enter takes what is first, or what is typed where nothing in the list is like it
+              // Enter takes what is first, or what is typed where nothing in the list is like it, and does nothing
+              // before anything is typed, so that a stray key does not change the model
               if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
               event.preventDefault();
+              if (query.trim() === "") return;
               const first = shown[0];
               if (first !== undefined) void choose(first.id);
               else if (typed !== null) void choose(typed);

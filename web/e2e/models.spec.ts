@@ -25,6 +25,11 @@ test.describe("choosing the model", () => {
     await dialog.getByRole("textbox", { name: "Search the models" }).fill("free");
     await expect(dialog.locator('[data-model="openrouter/meta-llama/llama-3.3-70b-instruct:free"]')).toContainText("Free");
 
+    // Enter before anything is typed chooses nothing
+    await dialog.getByRole("textbox", { name: "Search the models" }).fill("");
+    await dialog.getByRole("textbox", { name: "Search the models" }).press("Enter");
+    await expect(dialog).toBeVisible();
+
     await dialog.getByRole("textbox", { name: "Search the models" }).fill("gemini");
     await dialog.locator(`[data-model="${GEMINI}"]`).click();
     await expect(dialog).toHaveCount(0);

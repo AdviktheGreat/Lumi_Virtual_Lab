@@ -353,6 +353,8 @@ class Conversations:
             detect_source(model)
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
+        # Before the lock is taken, since reading the prices can wait on the network
+        self.know_prices(model)
         with self._lock:
             handle = self.get(chat_id)
             if handle.chat.state != "idle":
@@ -364,7 +366,6 @@ class Conversations:
                 return handle
             changed = replace(config, model=model)
             self.require_keys(changed)
-            self.know_prices(model)
             if config.max_cost is not None:
                 try:
                     compute_token_cost(model, 0, 0)
