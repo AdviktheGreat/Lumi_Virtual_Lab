@@ -32,8 +32,7 @@ from virtual_lab.chat import (
 )
 from virtual_lab.constants import HUMAN_SPEAKER
 from virtual_lab.events import ChatEvent
-from virtual_lab import failures
-from virtual_lab.failures import KEY_REFUSED, UNWELL
+from virtual_lab.failures import KEY_REFUSED, SAFETY_FLAGGED, UNWELL
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
@@ -2232,7 +2231,7 @@ class TestFailures:
         reply = chat.send("Look it up")
 
         assert reply.status == "failed"
-        assert reply.error is not None and reply.error.startswith(failures.SAFETY_FLAGGED + " (")
+        assert reply.error is not None and reply.error.startswith(SAFETY_FLAGGED + " (")
         assert reply.error.endswith("try rephrasing your request.)")
         (failed,) = of(chat.events_since(), "failed")
         assert failed.text == reply.error and failed.data["type"] == "APIError"
