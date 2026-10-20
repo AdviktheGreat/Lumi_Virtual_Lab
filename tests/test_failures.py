@@ -113,6 +113,26 @@ class TestAdvice:
             pytest.param(httpx.RemoteProtocolError("peer closed connection"), failures.BROKEN_OFF, id="cut off"),
             pytest.param(httpx.ReadError("reset"), failures.BROKEN_OFF, id="read failed"),
             pytest.param(ValueError("No generation chunks were returned"), failures.NOTHING, id="empty stream"),
+            pytest.param(
+                openai.APIError(
+                    "This content was flagged for possible biological risk. If this seems wrong, try rephrasing your "
+                    "request. We are continuously refining our work in detecting biological risk, and you can read "
+                    "more about our approach in our blog post: https://openai.com/index/preparing-for-future-ai",
+                    request=REQUEST,
+                    body=None,
+                ),
+                failures.SAFETY_FLAGGED,
+                id="biological risk, raised while streaming",
+            ),
+            pytest.param(
+                refused(
+                    openai.BadRequestError,
+                    400,
+                    "Invalid prompt: your prompt was flagged as potentially violating our usage policy.",
+                ),
+                failures.SAFETY_FLAGGED,
+                id="usage policy, with a status",
+            ),
         ],
     )
     def test_a_provider_failure_gets_advice_for_what_it_means(self, error: BaseException, advice: str) -> None:

@@ -174,6 +174,23 @@ test.describe("a conversation with the lead", () => {
     await answered(page, "You asked: A question after the refusal");
   });
 
+  test("a safety check that stops a turn says what to do, and editing the message takes it out", async ({ page }) => {
+    await ask(page, "fail:flag please");
+
+    const alert = transcript(page).getByRole("alert");
+    await expect(alert).toContainText("The model provider's safety check flagged this conversation and stopped it.");
+    await expect(alert).toContainText("use Edit on your last message");
+    await expect(alert).toContainText("flagged for possible biological risk");
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByRole("textbox", { name: "Edit message" }).fill("A reworded question");
+    await page.getByRole("button", { name: "Send again" }).click();
+
+    await answered(page, "You asked: A reworded question");
+    await expect(transcript(page).getByRole("alert")).toHaveCount(0);
+    await expect(page.getByTestId("user-message")).toHaveText("A reworded question");
+  });
+
   test("a conversation that is not there says so", async ({ page }) => {
     await page.goto("/chat?id=2026-01-01_0000_nothing-here");
 
