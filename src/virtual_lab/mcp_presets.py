@@ -51,12 +51,18 @@ Proto runs over a hundred bioinformatics tools, among them structure prediction,
 protein and DNA language models, binder design, docking, and database lookups, on the user's own
 Modal account, which is billed for what they run. Find a tool with search_tools or list_tools,
 read its schema with get_tool_schema, and see a valid input with get_tool_example before the first
-call to run_tool. Run small batches before large ones. Large outputs, such as structures, are
-written to files on the machine running the server, and returned as their paths.
+call to run_tool. Run small batches before large ones. run_tool with use_example runs the tool's own
+example and not the user's data, so give the user's inputs, and use_example only to try a tool out. Large
+outputs, such as structures, are written to files on the machine running the server, and returned as their
+paths.
 
 Deploying a tool that is not yet deployed builds and runs it on Modal at the user's expense, so a
 call to deploy_tool waits for a person to approve it, and Proto's server then asks them to confirm
-as well. If either is declined, nothing is deployed: use a deployed tool, or go on without it."""
+as well. If either is declined, nothing is deployed: use a deployed tool, or go on without it.
+
+A deploy takes several minutes, and goes on without this connection. Do not ask for its status again and
+again, which costs a call each time: check it a few times at most, a minute apart (waiting in code, if you
+can run any), and if it is not done, say it is still building and stop, so that the researcher can ask again."""
 
 # Proto's tools that read, or run a tool already deployed. Any other, such as deploy_tool, waits
 # for approval
@@ -80,11 +86,17 @@ Proto's hosted server runs bioinformatics tools, among them structure prediction
 folding, protein and DNA language models, binder design, and database lookups, with nothing
 installed here, under the Proto account signed in to, which may be charged for what is run.
 Before the first call to a tool, find it and read what it takes with the server's tools for
-doing so, and see a valid input where one is given. Run small batches before large ones.
+doing so, and see a valid input where one is given. Run small batches before large ones. run_tool with
+use_example runs the tool's own example and not the user's data, so give the user's inputs, and use_example
+only to try a tool out.
 
 Some calls, such as any that deploys a tool, wait for a person to approve them, and fail if they
 do not. If a call is declined, do not make it again unchanged: say what was declined, and go on
-without it."""
+without it.
+
+A deploy takes several minutes, and goes on without this connection. Do not ask for its status again and
+again, which costs a call each time: check it a few times at most, a minute apart (waiting in code, if you
+can run any), and if it is not done, say it is still building and stop, so that the researcher can ask again."""
 
 
 @dataclass(frozen=True)
