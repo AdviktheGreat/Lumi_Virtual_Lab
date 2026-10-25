@@ -387,6 +387,17 @@ def code_repair_prompt(
     )
 
 
+def faked_tool_calls_prompt() -> str:
+    """Generates the message that tells an agent that the tool calls it wrote out were only text."""
+    return (
+        "Nothing was run. The lines in your last reply that look like a tool call or what it returned, such as "
+        '"[Someone called a_tool with {...}]", are only how this meeting\'s record shows what others did, and writing '
+        "one does nothing. To use a tool, call it with the tool-calling feature itself, without writing it out. "
+        "Otherwise, answer in your own words, without tools, and do not write what a tool returned or what another "
+        "person said."
+    )
+
+
 def human_note_prompt(note: str) -> str:
     """Generates the message that gives the agents a note from the person following the meeting.
 

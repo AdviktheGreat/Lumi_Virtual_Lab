@@ -215,6 +215,11 @@ MAX_TOOL_ITERATIONS = 5
 # computing what was asked. Biomni's agent routinely takes dozens.
 SESSION_MAX_TOOL_ITERATIONS = 20
 
+# How many times in one turn an agent is told that what it wrote out as a tool call was only text, and asked again.
+# A model that reads the other agents' tool calls as lines of text can write such lines itself, which runs nothing and
+# ends its turn.
+MAX_FAKED_CALL_RETRIES = 2
+
 # Most characters of one tool result given back to a model. Every lookup already budgets its own
 # report, the largest being a full text at 20,000 characters plus its headings and citation, so
 # this is set above all of them and only binds on output that has no budget of its own: the

@@ -980,6 +980,50 @@ class TestTeam:
 
         assert of(chat.events_since(), "tool_output")[0].text.startswith('Error running tool "convene_team": TypeError')
 
+    def test_the_same_request_sent_twice_in_one_message_is_held_once(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        asked = {"agenda": "Design a nanobody.", "members": ["Immunologist"], "rounds": 0}
+        # The same request, written out another way
+        again = {"rounds": 0, "members": ["Immunologist"], "agenda": "Design a nanobody."}
+        fake_client.completions.responses = [
+            tool_calls_response(("convene_team", asked), ("convene_team", again)),
+            text_response("Alone."),
+            text_response("Done."),
+        ]
+        chat = make_chat(tmp_path)
+
+        reply = chat.send("Go")
+
+        assert reply.text == "Done."
+        assert [step.name for step in chat.project.steps] == ["lab_001"]
+        assert len(fake_client.completions.calls) == 3
+        outputs = of(chat.events_since(), "tool_output")
+        assert [output.data["call"] for output in outputs] == ["call_1", "call_2"]
+        assert outputs[1].text.startswith("Not held again: this is the same request as call_1")
+        # Every call the lead made is answered, which a provider requires
+        sent = request_messages(fake_client, 2)
+        assert [message["tool_call_id"] for message in sent if message["role"] == "tool"] == ["call_1", "call_2"]
+
+    def test_two_different_requests_in_one_message_are_both_held(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_calls_response(
+                ("convene_team", {"agenda": "Design a nanobody.", "members": ["Immunologist"], "rounds": 0}),
+                ("convene_team", {"agenda": "Model the complex.", "members": ["Computational Biologist"], "rounds": 0}),
+            ),
+            text_response("Alone."),
+            text_response("Alone too."),
+            text_response("Done."),
+        ]
+        chat = make_chat(tmp_path)
+
+        reply = chat.send("Go")
+
+        assert reply.text == "Done."
+        assert [step.name for step in chat.project.steps] == ["lab_001", "lab_002"]
+
     def test_the_lead_may_start_only_so_many_sessions_for_one_message(
         self, fake_client: FakeClient, tmp_path: Path
     ) -> None:
