@@ -795,6 +795,16 @@ class TestPresets:
 
         assert entry == {**MCP_PRESETS["proto"].entry, "cwd": "/work", "approval": ["*"]}
 
+    @pytest.mark.parametrize("name", ["proto", "proto_hosted"])
+    def test_protos_instructions_say_how_long_a_deploy_takes_and_that_use_example_is_not_the_users_data(
+        self, name: str
+    ) -> None:
+        instructions = " ".join(MCP_PRESETS[name].entry["instructions"].split())
+
+        assert "A deploy takes several minutes" in instructions
+        assert "Do not ask for its status again and again" in instructions
+        assert "use_example runs the tool's own example and not the user's data" in instructions
+
     def test_an_entry_without_a_preset_is_left_as_it_is(self) -> None:
         entry = {"command": "server"}
 
