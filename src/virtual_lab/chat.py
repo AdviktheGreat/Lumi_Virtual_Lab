@@ -333,6 +333,16 @@ def describe_call(call: ToolCall) -> dict[str, str]:
     return {"id": call.id, "name": call.function.name, "arguments": call.function.arguments}
 
 
+def request_of(call: ToolCall) -> tuple[str, str]:
+    """What a tool call asks, as the tool and its arguments, which are the same however they were written out."""
+    try:
+        arguments = json.dumps(json.loads(call.function.arguments), sort_keys=True)
+    except ValueError:
+        arguments = call.function.arguments
+
+    return call.function.name, arguments
+
+
 class Chat:
     """A conversation between a researcher and the head of a lab.
 
@@ -1287,8 +1297,22 @@ class Chat:
 
     def _run_calls(self, calls: Iterable[ToolCall]) -> None:
         """Runs the lead's tool calls one at a time, so that each is told of when it is done."""
+        # The team's requests of this message, by what was asked, which is the id of the call that held it. A model
+        # can send the same request twice in one message, and holding a meeting twice costs twice for nothing.
+        held: dict[tuple[str, str], str] = {}
         for call in calls:
             self._checkpoint()
+            asked = request_of(call) if call.function.name in (CONVENE_TOOL_NAME, CONSULT_TOOL_NAME) else None
+            if asked is not None and asked in held:
+                output = (
+                    f"Not held again: this is the same request as {held[asked]}, in this message, which is answered "
+                    "there."
+                )
+                self._append({"role": "tool", "tool_call_id": call.id, "content": output})
+                self._emit("tool_output", text=output, call=call.id, name=call.function.name)
+                continue
+            if asked is not None:
+                held[asked] = call.id
             self._call_id = call.id
             outputs, messages = run_tool_calls([call], self._lead_tools)  # type: ignore[arg-type]
             self._call_id = None

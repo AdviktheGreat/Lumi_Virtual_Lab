@@ -26,6 +26,7 @@ BEARER = {"Authorization": f"Bearer {TOKEN}"}
 SECRET = "sk-the-secret-that-no-response-may-repeat"
 OPENAI = "OPENAI_API_KEY"
 GROQ = "GROQ_API_KEY"
+OPENROUTER = "OPENROUTER_API_KEY"
 SETTABLE = SETTABLE_KEYS
 
 
@@ -387,6 +388,16 @@ class TestTheKeysTheServerIsStartedWith:
         assert {item["provider"]: item["ready"] for item in shown["providers"]}["Groq"] is True
         assert shown["keychain"] == {"available": True, "name": "Test Keychain", "problem": None}
 
+    def test_the_openrouter_key_kept_is_there_when_the_server_is_started_and_makes_its_models_ready(
+        self, tmp_path: Path, no_keys: None
+    ) -> None:
+        for client in opened(tmp_path, keychain_of(FakeBackend({OPENROUTER: "kept-openrouter"}))):
+            shown = keys(client)
+
+        assert os.environ[OPENROUTER] == "kept-openrouter"
+        assert shown["sources"] == {OPENROUTER: "keychain"}
+        assert {item["provider"]: item["ready"] for item in shown["providers"]}["OpenRouter"] is True
+
     def test_a_key_in_the_environment_is_not_replaced_by_the_one_kept_and_is_said_to_be_from_it(
         self, tmp_path: Path, no_keys: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -471,6 +482,22 @@ class TestGivingAKey:
 
         assert backend.stored() == {GROQ: SECRET}
         assert response.json()["sources"] == {GROQ: "keychain"}
+
+    def test_the_openrouter_key_is_kept_in_the_keychain_and_forgotten_from_it(
+        self, client: TestClient, backend: FakeBackend
+    ) -> None:
+        response = client.put(f"/api/keys/{OPENROUTER}", json={"value": SECRET})
+
+        assert response.status_code == 200
+        assert backend.stored() == {OPENROUTER: SECRET}
+        assert response.json()["sources"] == {OPENROUTER: "keychain"}
+        assert SECRET not in response.text
+
+        forgotten = client.delete(f"/api/keys/{OPENROUTER}")
+
+        assert forgotten.status_code == 200
+        assert backend.stored() == {}
+        assert OPENROUTER not in os.environ
 
     def test_a_key_that_is_not_to_be_kept_is_set_for_the_session_alone(
         self, client: TestClient, backend: FakeBackend

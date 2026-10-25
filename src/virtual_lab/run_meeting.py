@@ -20,13 +20,14 @@ from tqdm import trange, tqdm
 
 from virtual_lab.actions import describe_tool_output, find_code_action, observation, without_code_action
 from virtual_lab.agent import Agent
-from virtual_lab.llm import ModelReply, ModelSource, ask, resolve_chat_models
+from virtual_lab.llm import ModelReply, ModelSource, ask, faked_tool_calls, resolve_chat_models, without_speaker_echo
 from virtual_lab.completions import check_temperature, ran_without_temperature, send_request
 from virtual_lab.events import MeetingEvent, MeetingEventKind, NextTurn, OnMeetingEvent, Steer
 from virtual_lab.constants import (
     CONSISTENT_TEMPERATURE,
     DEFAULT_MAX_RETRIES,
     HUMAN_SPEAKER,
+    MAX_FAKED_CALL_RETRIES,
     MAX_RECORDED_ARGUMENT_CHARS,
     MAX_RECORDED_RETRIEVAL_CHARS,
     MAX_TOOL_ITERATIONS,
@@ -36,6 +37,7 @@ from virtual_lab.constants import (
 )
 from virtual_lab.prompts import (
     code_session_prompt,
+    faked_tool_calls_prompt,
     human_note_prompt,
     individual_meeting_agent_prompt,
     individual_meeting_critic_prompt,
@@ -736,6 +738,7 @@ def hold_meeting(
                 turn_usage = MeetingUsage()
                 turn_tool_calls: list[dict[str, str]] = []
                 turn_fingerprint: str | None = None
+                turn_faked = 0
                 turn_first_cell = len(session.history) if session is not None else 0
 
                 # Build messages for this agent with their system prompt
@@ -775,6 +778,23 @@ def hold_meeting(
                         if code_actions == "tags" and not reply.tool_calls
                         else None
                     )
+
+                    # Writing a tool call out as text runs nothing and would end the turn there. It is said to this
+                    # agent alone, since the others need not read what it wrote by mistake.
+                    if (
+                        not reply.tool_calls
+                        and action is None
+                        and not is_final_attempt
+                        and turn_faked < MAX_FAKED_CALL_RETRIES
+                        and faked_tool_calls(reply.content)
+                    ):
+                        turn_faked += 1
+                        agent_messages = [
+                            *agent_messages,
+                            {"role": "assistant", "name": agent.name, "content": reply.content},
+                            {"role": "user", "content": faked_tool_calls_prompt()},
+                        ]
+                        continue
 
                     # Stop once the agent has answered, and never run tools on the forced attempt
                     if (not reply.tool_calls and action is None) or is_final_attempt:
@@ -863,7 +883,7 @@ def hold_meeting(
                     check_context_length(messages=agent_messages, model=agent.model)
 
                 # Extract the response content
-                response_content = reply.content
+                response_content = without_speaker_echo(reply.content, agent.name, agent.title)
 
                 # Only the forced final attempt can end a turn on code, which it was too late to run
                 if code_actions == "tags":

@@ -21,6 +21,7 @@ different. What comes back is normalised to one shape, ModelReply, whatever answ
 import contextvars
 import json
 import os
+import re
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -465,6 +466,31 @@ def describe_call(call: dict[str, Any]) -> str:
     arguments = call["args"]
 
     return arguments if isinstance(arguments, str) else json.dumps(arguments)
+
+
+# The lines that stand for another agent's tool call, and for what it returned, in what a model that cannot be told
+# who wrote a turn is sent (see to_langchain_messages)
+FAKED_CALL_PATTERN = re.compile(
+    r"^\[[^\[\]\n]{1,80} called [\w.:-]+ with .*\]\s*$|^\[What [\w.:-]+ returned to [^\[\]\n]{1,80}\]\s*$",
+    re.MULTILINE,
+)
+
+
+def faked_tool_calls(text: str) -> bool:
+    """Whether a reply has lines that read as a tool call or its result, as another agent's turns are shown to a
+    model, which a model can copy instead of calling the tool. Nothing runs when it does."""
+    return FAKED_CALL_PATTERN.search(text) is not None
+
+
+def without_speaker_echo(text: str, *names: str) -> str:
+    """A reply without the speaker's name that it began with, which a model copies from the other agents' turns, and
+    which the meeting's record gives it anyway."""
+    for name in names:
+        stripped = re.sub(rf"^\s*{re.escape(name)}\s*:[ \t]*", "", text, count=1)
+        if stripped != text:
+            return stripped if stripped.strip() else text
+
+    return text
 
 
 def to_langchain_messages(
