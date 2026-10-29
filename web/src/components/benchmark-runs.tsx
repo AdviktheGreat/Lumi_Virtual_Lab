@@ -37,7 +37,7 @@ export const runAddress = (id: string) => `/benchmarks?id=${encodeURIComponent(i
 
 function RunRow({ run, benchmark }: { run: BenchmarkRunEntry; benchmark: string }) {
   return (
-    <li className="flex flex-col gap-1 rounded-lg border border-border p-3" data-testid="benchmark-run">
+    <li className="flex flex-col gap-1.5 rounded-xl border border-border bg-card p-4 transition-colors hover:border-ring/50" data-testid="benchmark-run">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="min-w-0 break-words text-sm font-medium">
           <Link href={runAddress(run.id)} className="rounded-sm outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
