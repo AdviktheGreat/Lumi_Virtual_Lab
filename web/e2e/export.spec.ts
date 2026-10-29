@@ -199,7 +199,7 @@ test.describe("saving a conversation as a document", () => {
     await toggle(page).click();
     await page.getByTestId("export-html").click();
     await reached;
-    await page.getByRole("link", { name: "New chat" }).click();
+    await page.getByRole("link", { name: "New chat", exact: true }).click();
     await expect(page).not.toHaveURL(/chat/);
     release();
     await page.waitForTimeout(1_000);

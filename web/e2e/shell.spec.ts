@@ -5,7 +5,7 @@ test.describe("the shell", () => {
     await ask(page, "The first of two conversations");
     await answered(page, "This answer is from a script");
 
-    await page.getByRole("link", { name: "New chat" }).click();
+    await page.getByRole("link", { name: "New chat", exact: true }).click();
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue("");
 
@@ -128,7 +128,7 @@ test.describe("on a narrow screen", () => {
     await expect(sidebar).toBeVisible();
     await expect(sidebar).toBeInViewport();
 
-    await page.getByRole("link", { name: "New chat" }).click();
+    await page.getByRole("link", { name: "New chat", exact: true }).click();
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
     await expect(sidebar).toBeHidden();
   });

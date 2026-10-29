@@ -97,7 +97,7 @@ function PageLinks() {
                 <span
                   className={cn(
                     "flex h-8 w-10 items-center justify-center rounded-xl transition-colors group-hover:bg-sidebar-accent",
-                    active && "bg-highlight text-highlight-foreground group-hover:bg-highlight",
+                    active && "bg-highlight text-highlight-foreground ring-1 ring-inset ring-primary/20 group-hover:bg-highlight",
                   )}
                 >
                   <Icon className="size-[18px]" aria-hidden />
@@ -187,7 +187,7 @@ function Rail() {
         >
           <Container className="size-[18px]" />
           {setup.working && (
-            <span aria-hidden className="absolute right-1.5 top-1.5 size-2 animate-pulse rounded-full bg-highlight motion-reduce:animate-none" />
+            <span aria-hidden className="absolute right-1.5 top-1.5 size-2 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />
           )}
         </Button>
         <ThemeToggle />
@@ -201,7 +201,7 @@ function Panel() {
   const { server } = useServer();
 
   return (
-    <div className={cn("flex min-h-0 w-64 shrink-0 flex-col border-r border-sidebar-border", !sidebarShown && "md:hidden")}>
+    <div className={cn("flex min-h-0 w-64 min-w-0 shrink flex-col border-r border-sidebar-border md:shrink-0", !sidebarShown && "md:hidden")}>
       <div className="flex h-14 shrink-0 items-start justify-between gap-2 px-4 pt-3">
         <div className="min-w-0">
           <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Workspace</p>
