@@ -99,9 +99,9 @@ const components: Components = {
   code: ({ className, children }) => (
     <code className={cn("rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]", className)}>{children}</code>
   ),
-  h1: ({ children }) => <h2 className="mt-3 text-xl font-semibold tracking-tight">{children}</h2>,
-  h2: ({ children }) => <h3 className="mt-3 text-lg font-semibold tracking-tight">{children}</h3>,
-  h3: ({ children }) => <h4 className="mt-2 text-base font-semibold">{children}</h4>,
+  h1: ({ children }) => <h2 className="mt-3 font-serif text-xl font-semibold tracking-tight">{children}</h2>,
+  h2: ({ children }) => <h3 className="mt-3 font-serif text-lg font-semibold tracking-tight">{children}</h3>,
+  h3: ({ children }) => <h4 className="mt-2 font-serif text-base font-semibold">{children}</h4>,
   h4: ({ children }) => <h5 className="mt-2 text-[15px] font-semibold">{children}</h5>,
   ul: ({ children }) => <ul className="flex list-disc flex-col gap-1.5 pl-6 marker:text-muted-foreground">{children}</ul>,
   ol: ({ children }) => <ol className="flex list-decimal flex-col gap-1.5 pl-6 marker:text-muted-foreground">{children}</ol>,

@@ -36,7 +36,7 @@ export function UserMessage({ text, attachments }: { text: string; attachments: 
     <div className="flex flex-col items-end gap-1.5" data-testid="user-message">
       <Files files={attachments} />
       {text && (
-        <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-[15px] leading-6">
+        <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl rounded-br-lg bg-secondary px-4 py-2.5 text-[15px] leading-6">
           {text}
         </p>
       )}
@@ -121,9 +121,9 @@ function ReplaceableUserMessage({
 export function LeadBlock({ speaker, children }: { speaker: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-3" data-testid="lead-block">
-      <BrandMark className="mt-0.5 size-6 rounded-md" />
+      <BrandMark className="mt-0.5 size-7 rounded-lg" />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <div className="text-sm font-medium">{speaker}</div>
+        <div className="pt-0.5 font-serif text-base font-semibold leading-6 tracking-tight">{speaker}</div>
         {children}
       </div>
     </div>

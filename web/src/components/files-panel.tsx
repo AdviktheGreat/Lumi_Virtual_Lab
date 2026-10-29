@@ -296,8 +296,8 @@ export function FilesPanel({ id, listed, onClose }: { id: string; listed: Listed
         data-testid="files-panel"
         className="fixed inset-y-0 right-0 z-40 flex w-[min(24rem,100vw)] flex-col border-l border-border bg-background shadow-xl lg:static lg:z-auto lg:w-96 lg:shrink-0 lg:shadow-none"
       >
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-          <h2 className="flex-1 text-sm font-medium">Files</h2>
+        <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border/70 px-3">
+          <h2 className="flex-1 font-serif text-lg font-medium tracking-tight">Files</h2>
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Close the files" onClick={onClose}>
             <X />
           </Button>
