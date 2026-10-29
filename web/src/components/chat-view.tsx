@@ -183,12 +183,12 @@ export function ChatView({ id }: { id: string }) {
     <ChatFilesProvider value={id}>
       <CaughtUpProvider value={caughtUp}>
         <PageHeader>
-          <h1 className="min-w-0 flex-1 truncate text-sm font-medium" data-testid="chat-title">
+          <h1 className="min-w-0 flex-1 truncate font-serif text-lg font-medium tracking-tight" data-testid="chat-title">
             {title || (status.kind === "ready" ? status.info.title : "") || <span className="sr-only">Conversation</span>}
           </h1>
           {label && (
-            <Badge variant="secondary" className="gap-1.5" data-testid="chat-state">
-              <span className="size-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
+            <Badge variant="secondary" className="gap-1.5 bg-highlight text-highlight-foreground" data-testid="chat-state">
+              <span className="size-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" aria-hidden />
               {label}
             </Badge>
           )}

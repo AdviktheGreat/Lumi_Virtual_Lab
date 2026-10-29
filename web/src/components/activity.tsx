@@ -32,7 +32,7 @@ function Header({
 }) {
   return (
     <>
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
         {icon}
       </span>
       <span className="shrink-0 text-sm font-medium">{title}</span>

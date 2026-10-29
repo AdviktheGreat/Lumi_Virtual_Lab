@@ -10,7 +10,7 @@ export function PageHeader({ children, className }: { children?: React.ReactNode
   const { sidebarShown, toggleSidebar, setDrawerOpen } = useShell();
 
   return (
-    <header className={cn("flex h-12 shrink-0 items-center gap-2 border-b border-border px-3", className)}>
+    <header className={cn("flex h-14 shrink-0 items-center gap-2 border-b border-border/70 px-3", className)}>
       <Button
         variant="ghost"
         size="icon-sm"

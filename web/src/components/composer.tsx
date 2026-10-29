@@ -93,7 +93,7 @@ export function Composer({
     <form
       data-dragging={dragging}
       className={cn(
-        "flex flex-col gap-2 rounded-2xl border border-input bg-card p-3 shadow-sm transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/25 data-[dragging=true]:border-dashed data-[dragging=true]:border-brand",
+        "flex flex-col gap-2 rounded-3xl border border-input bg-card p-3 shadow-sm transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/25 data-[dragging=true]:border-dashed data-[dragging=true]:border-brand",
         className,
       )}
       onSubmit={(event) => {

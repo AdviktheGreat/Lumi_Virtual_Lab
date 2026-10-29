@@ -39,7 +39,7 @@ function ChatLink({ chat, active }: { chat: ChatSummary; active: boolean }) {
       href={`/chat?id=${encodeURIComponent(chat.id)}`}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex flex-col gap-0.5 rounded-lg py-2 pl-2.5 pr-9 text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+        "flex flex-col gap-0.5 rounded-xl py-2 pl-2.5 pr-9 text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring",
         active && "bg-sidebar-accent text-sidebar-accent-foreground",
       )}
     >
