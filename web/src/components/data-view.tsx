@@ -3,7 +3,7 @@
 import { LakeTab } from "@/components/setup-lake";
 import { OwnDataSection } from "@/components/own-data";
 import { OwnSoftwareSection } from "@/components/own-software";
-import { PageHeader } from "@/components/page-header";
+import { PageFrame } from "@/components/page-frame";
 import { PageSection } from "@/components/page-section";
 import { useServer } from "@/components/server-provider";
 import { useSetupJobs } from "@/components/setup-provider";
@@ -62,50 +62,41 @@ export function DataView() {
   const { actions, problem } = useJobActions({ jobs, refreshData: lake.refresh, report });
 
   return (
-    <>
-      <PageHeader>
-        <h1 className="min-w-0 flex-1 truncate text-sm font-medium">Data</h1>
-      </PageHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-4 py-8">
-          <p className="text-sm text-muted-foreground">
-            What the lab can read when it runs code. What you give it here is in every conversation you start from then
-            on, and not in one that is already going.
+    <PageFrame
+      title="Data"
+      intro="What the lab can read when it runs code. What you give it here is in every conversation you start from then on, and not in one that is already going."
+    >
+      <PageSection
+        title="Your data"
+        intro={
+          <>
+            Files and folders of yours. The lead is told what each is, and code can read them: in Docker they are in{" "}
+            <code>/data</code>, and code that runs on this machine is given where they are.
+          </>
+        }
+      >
+        <Given own={own} label="Looking at your data" onRetry={reload}>
+          {(value) => <OwnDataSection own={value} onChanged={set} />}
+        </Given>
+      </PageSection>
+
+      <PageSection
+        title="Your software"
+        intro="Software you have that the code may use. The lab does not install it: it has to be where the code runs, which a conversation checks when its code first runs, and tells the lead if it is not."
+      >
+        <Given own={own} label="Looking at your software" onRetry={reload}>
+          {(value) => <OwnSoftwareSection own={value} onChanged={set} />}
+        </Given>
+      </PageSection>
+
+      <PageSection title="Biomni's data lake">
+        <LakeTab lake={lake.lake} jobs={jobs.jobs ?? []} actions={actions} onRetry={lake.refresh} />
+        {problem && (
+          <p role="alert" className="text-sm text-destructive">
+            {problem}
           </p>
-
-          <PageSection
-            title="Your data"
-            intro={
-              <>
-                Files and folders of yours. The lead is told what each is, and code can read them: in Docker they are in{" "}
-                <code>/data</code>, and code that runs on this machine is given where they are.
-              </>
-            }
-          >
-            <Given own={own} label="Looking at your data" onRetry={reload}>
-              {(value) => <OwnDataSection own={value} onChanged={set} />}
-            </Given>
-          </PageSection>
-
-          <PageSection
-            title="Your software"
-            intro="Software you have that the code may use. The lab does not install it: it has to be where the code runs, which a conversation checks when its code first runs, and tells the lead if it is not."
-          >
-            <Given own={own} label="Looking at your software" onRetry={reload}>
-              {(value) => <OwnSoftwareSection own={value} onChanged={set} />}
-            </Given>
-          </PageSection>
-
-          <PageSection title="Biomni's data lake">
-            <LakeTab lake={lake.lake} jobs={jobs.jobs ?? []} actions={actions} onRetry={lake.refresh} />
-            {problem && (
-              <p role="alert" className="text-sm text-destructive">
-                {problem}
-              </p>
-            )}
-          </PageSection>
-        </div>
-      </div>
-    </>
+        )}
+      </PageSection>
+    </PageFrame>
   );
 }

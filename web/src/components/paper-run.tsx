@@ -47,7 +47,7 @@ function RunHeader({ run, working }: { run: PaperRun; working: boolean }) {
     <div className="flex flex-col gap-2">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <h2 className="break-words text-lg font-semibold">{run.title}</h2>
+          <h2 className="break-words font-serif text-2xl font-medium tracking-tight">{run.title}</h2>
           <p className="text-sm text-muted-foreground">{describeSource(run.source)}</p>
           <p className="text-sm text-muted-foreground">{runFacts(run)}</p>
         </div>

@@ -9,7 +9,7 @@ export function PageSection({ title, intro, children }: { title: string; intro?:
   return (
     <section aria-labelledby={id} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h2 id={id} className="text-base font-semibold">
+        <h2 id={id} className="font-serif text-2xl font-medium tracking-tight">
           {title}
         </h2>
         {intro && <p className="text-sm text-muted-foreground">{intro}</p>}

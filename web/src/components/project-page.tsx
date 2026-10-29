@@ -53,7 +53,7 @@ function ProjectHeader({ project, working }: { project: Project; working: boolea
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="break-words text-lg font-semibold">{project.title}</h2>
+            <h2 className="break-words font-serif text-2xl font-medium tracking-tight">{project.title}</h2>
             <StateBadge state={project.state} />
           </div>
           <p className="mt-1 whitespace-pre-wrap break-words text-sm">{project.goal}</p>
