@@ -5,7 +5,7 @@ test.describe("the shell", () => {
     await ask(page, "The first of two conversations");
     await answered(page, "This answer is from a script");
 
-    await page.getByRole("link", { name: "New chat" }).click();
+    await page.getByRole("link", { name: "New chat", exact: true }).click();
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue("");
 
@@ -96,18 +96,22 @@ test.describe("the shell", () => {
     await expect(html).toHaveClass(/dark/);
   });
 
-  test("the sidebar can be hidden and shown, and the choice is kept", async ({ page }) => {
-    const sidebar = page.getByRole("complementary", { name: "Sidebar" });
-    await expect(sidebar).toBeVisible();
+  test("the conversations can be hidden and shown, the rail stays, and the choice is kept", async ({ page }) => {
+    const conversations = page.getByRole("navigation", { name: "Conversations" });
+    const pages = page.getByRole("navigation", { name: "Pages" });
+    await expect(conversations).toBeVisible();
+    await expect(pages).toBeVisible();
 
     await page.getByRole("button", { name: "Hide the sidebar" }).click();
-    await expect(sidebar).toBeHidden();
+    await expect(conversations).toBeHidden();
+    await expect(pages).toBeVisible();
 
     await page.reload();
-    await expect(sidebar).toBeHidden();
+    await expect(conversations).toBeHidden();
+    await expect(pages).toBeVisible();
 
     await page.getByRole("button", { name: "Show the sidebar" }).click();
-    await expect(sidebar).toBeVisible();
+    await expect(conversations).toBeVisible();
   });
 });
 
@@ -124,7 +128,7 @@ test.describe("on a narrow screen", () => {
     await expect(sidebar).toBeVisible();
     await expect(sidebar).toBeInViewport();
 
-    await page.getByRole("link", { name: "New chat" }).click();
+    await page.getByRole("link", { name: "New chat", exact: true }).click();
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
     await expect(sidebar).toBeHidden();
   });

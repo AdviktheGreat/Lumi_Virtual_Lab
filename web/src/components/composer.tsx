@@ -37,6 +37,8 @@ interface ComposerProps {
   autoFocus?: boolean;
   // What goes beside the buttons
   footer?: React.ReactNode;
+  // Room for a longer message, as the box of a conversation that is not yet begun has
+  roomy?: boolean;
   className?: string;
 }
 
@@ -58,6 +60,7 @@ export function Composer({
   files,
   autoFocus = false,
   footer,
+  roomy = false,
   className,
 }: ComposerProps) {
   const input = useRef<HTMLTextAreaElement>(null);
@@ -90,7 +93,7 @@ export function Composer({
     <form
       data-dragging={dragging}
       className={cn(
-        "flex flex-col gap-2 rounded-2xl border border-input bg-card p-2.5 shadow-sm transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/25 data-[dragging=true]:border-dashed data-[dragging=true]:border-brand",
+        "flex flex-col gap-2 rounded-2xl border border-input bg-card p-3 shadow-sm transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/25 data-[dragging=true]:border-dashed data-[dragging=true]:border-brand",
         className,
       )}
       onSubmit={(event) => {
@@ -141,7 +144,10 @@ export function Composer({
           event.preventDefault();
           take(pasted);
         }}
-        className="max-h-60 min-h-11 w-full resize-none bg-transparent px-1.5 py-1 text-[15px] leading-6 outline-none placeholder:text-muted-foreground"
+        className={cn(
+          "max-h-60 w-full resize-none bg-transparent px-1.5 py-1 text-[15px] leading-6 outline-none placeholder:text-muted-foreground",
+          roomy ? "min-h-24" : "min-h-11",
+        )}
       />
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">

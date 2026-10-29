@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/newsreader";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { ServerGate } from "@/components/server-gate";

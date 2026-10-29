@@ -236,7 +236,7 @@ test.describe("attaching files to a message", () => {
     await chosen(page, { name: "left.txt", content: "x" });
     await expect(chips(page).first()).toHaveAttribute("data-status", "uploading");
 
-    await page.getByRole("link", { name: "New chat" }).click();
+    await page.getByRole("link", { name: "New chat", exact: true }).click();
 
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
     await page.waitForTimeout(1_500);

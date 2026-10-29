@@ -9,6 +9,7 @@ import {
   FileText,
   FlaskConical,
   Gauge,
+  MessagesSquare,
   PanelLeftClose,
   Search as SearchIcon,
   Settings,
@@ -16,7 +17,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { Brand } from "@/components/brand";
+import { BrandMark } from "@/components/brand";
 import { ChatRow, LIST_ID } from "@/components/chat-row";
 import { useChats } from "@/components/chats-provider";
 import { useSettings } from "@/components/settings-provider";
@@ -31,8 +32,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { inDays, matchingTitles, SEARCH_FROM } from "@/lib/history";
 import { cn } from "@/lib/utils";
 
-// The pages besides the conversations, which are reached from the sidebar
+// The pages, which are reached from the rail: the conversations first, and then the rest
 const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: "/", label: "Chats", icon: MessagesSquare },
   { href: "/data", label: "Data", icon: Database },
   { href: "/papers", label: "Papers", icon: FileText },
   { href: "/projects", label: "Projects", icon: FlaskConical },
@@ -79,22 +81,27 @@ function PageLinks() {
   const pathname = usePathname();
 
   return (
-    <nav aria-label="Pages" className="px-3 pb-2">
-      <ul className="flex flex-col gap-0.5">
+    <nav aria-label="Pages" className="flex flex-col items-center gap-1 px-1.5">
+      <ul className="flex flex-col items-center gap-1">
         {PAGES.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href;
+          // The conversations are the page the home and every conversation belong to
+          const active = href === "/" ? pathname === "/" || pathname === "/chat" : pathname === href;
 
           return (
             <li key={href}>
               <Link
                 href={href}
                 aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex h-8 items-center gap-2 rounded-lg px-2.5 text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-                  active && "bg-sidebar-accent text-sidebar-accent-foreground",
-                )}
+                className="group flex w-14 flex-col items-center gap-1 rounded-xl py-1.5 text-[11px] font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring aria-[current=page]:text-foreground"
               >
-                <Icon className="size-4" aria-hidden />
+                <span
+                  className={cn(
+                    "flex h-8 w-10 items-center justify-center rounded-xl transition-colors group-hover:bg-sidebar-accent",
+                    active && "bg-highlight text-highlight-foreground ring-1 ring-inset ring-primary/20 group-hover:bg-highlight",
+                  )}
+                >
+                  <Icon className="size-[18px]" aria-hidden />
+                </span>
                 {label}
               </Link>
             </li>
@@ -153,18 +160,53 @@ function ChatList() {
   );
 }
 
-export function Sidebar() {
-  const { toggleSidebar } = useShell();
-  const { server } = useServer();
+function Rail() {
   const settings = useSettings();
   const setup = useSetup();
 
   return (
-    <>
-      <div className="flex h-12 shrink-0 items-center justify-between px-3">
-        <Link href="/" aria-label="Virtual Lab" className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring">
-          <Brand />
-        </Link>
+    <div className="flex w-[4.5rem] shrink-0 flex-col items-center gap-3 border-r border-sidebar-border py-3">
+      <Link
+        href="/"
+        aria-label="Virtual Lab"
+        className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+      >
+        <BrandMark className="size-9" />
+      </Link>
+      <PageLinks />
+      <div className="mt-auto flex flex-col items-center gap-1">
+        <Button variant="ghost" size="icon" aria-label="Settings" onClick={() => settings.open()} className="text-muted-foreground">
+          <Settings className="size-[18px]" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={setup.working ? "Set up, something is being built or fetched" : "Set up"}
+          onClick={() => setup.open()}
+          className="relative text-muted-foreground"
+        >
+          <Container className="size-[18px]" />
+          {setup.working && (
+            <span aria-hidden className="absolute right-1.5 top-1.5 size-2 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />
+          )}
+        </Button>
+        <ThemeToggle />
+      </div>
+    </div>
+  );
+}
+
+function Panel() {
+  const { toggleSidebar, sidebarShown } = useShell();
+  const { server } = useServer();
+
+  return (
+    <div className={cn("flex min-h-0 w-64 min-w-0 shrink flex-col border-r border-sidebar-border md:shrink-0", !sidebarShown && "md:hidden")}>
+      <div className="flex h-14 shrink-0 items-start justify-between gap-2 px-4 pt-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Workspace</p>
+          <p className="truncate font-serif text-xl font-semibold leading-6 tracking-tight">Virtual Lab</p>
+        </div>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon-sm" onClick={toggleSidebar} aria-label="Hide the sidebar" className="max-md:hidden">
@@ -174,39 +216,29 @@ export function Sidebar() {
           <TooltipContent side="right">Hide the sidebar</TooltipContent>
         </Tooltip>
       </div>
-      <div className="px-3 pb-2">
-        <Button asChild variant="outline" className="w-full justify-start">
+      <div className="px-3 pb-3 pt-2">
+        <Button asChild className="w-full justify-start gap-2 rounded-xl" size="lg">
           <Link href="/">
             <SquarePen className="size-4" />
             New chat
           </Link>
         </Button>
       </div>
-      <PageLinks />
       <nav id={LIST_ID} tabIndex={-1} aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none">
         <ChatList />
       </nav>
-      <div className="flex items-center justify-between border-t border-sidebar-border px-3 py-2">
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon-sm" aria-label="Settings" onClick={() => settings.open()}>
-            <Settings className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={setup.working ? "Set up, something is being built or fetched" : "Set up"}
-            onClick={() => setup.open()}
-            className="relative"
-          >
-            <Container className="size-4" />
-            {setup.working && (
-              <span aria-hidden className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />
-            )}
-          </Button>
-          <ThemeToggle />
-        </div>
-        {server.status === "ready" && <span className="text-xs text-muted-foreground">v{server.version}</span>}
-      </div>
+      {server.status === "ready" && (
+        <p className="border-t border-sidebar-border px-4 py-2.5 text-xs text-muted-foreground">Virtual Lab v{server.version}</p>
+      )}
+    </div>
+  );
+}
+
+export function Sidebar() {
+  return (
+    <>
+      <Rail />
+      <Panel />
     </>
   );
 }
