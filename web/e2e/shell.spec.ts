@@ -96,18 +96,22 @@ test.describe("the shell", () => {
     await expect(html).toHaveClass(/dark/);
   });
 
-  test("the sidebar can be hidden and shown, and the choice is kept", async ({ page }) => {
-    const sidebar = page.getByRole("complementary", { name: "Sidebar" });
-    await expect(sidebar).toBeVisible();
+  test("the conversations can be hidden and shown, the rail stays, and the choice is kept", async ({ page }) => {
+    const conversations = page.getByRole("navigation", { name: "Conversations" });
+    const pages = page.getByRole("navigation", { name: "Pages" });
+    await expect(conversations).toBeVisible();
+    await expect(pages).toBeVisible();
 
     await page.getByRole("button", { name: "Hide the sidebar" }).click();
-    await expect(sidebar).toBeHidden();
+    await expect(conversations).toBeHidden();
+    await expect(pages).toBeVisible();
 
     await page.reload();
-    await expect(sidebar).toBeHidden();
+    await expect(conversations).toBeHidden();
+    await expect(pages).toBeVisible();
 
     await page.getByRole("button", { name: "Show the sidebar" }).click();
-    await expect(sidebar).toBeVisible();
+    await expect(conversations).toBeVisible();
   });
 });
 

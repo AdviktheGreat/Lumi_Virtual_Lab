@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Dna, FlaskConical, KeyRound, Microscope, Network } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { BrandMark } from "@/components/brand";
+import { CapabilityCards } from "@/components/capability-cards";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
 import { Notice, ProblemNotice } from "@/components/messages";
@@ -18,29 +19,6 @@ import { plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
 import type { ChatInfo } from "@/lib/types";
-
-const EXAMPLES = [
-  {
-    icon: Dna,
-    title: "Base editing",
-    prompt: "Explain how CRISPR base editors work and where they fall short, and what would improve them.",
-  },
-  {
-    icon: Microscope,
-    title: "Experiment design",
-    prompt: "Plan an experiment to test whether knocking down a gene changes T-cell exhaustion, with controls.",
-  },
-  {
-    icon: Network,
-    title: "Method comparison",
-    prompt: "Compare structure-prediction and physics-based approaches to docking an antibody to its antigen.",
-  },
-  {
-    icon: FlaskConical,
-    title: "Analysis plan",
-    prompt: "Draft an analysis plan for a case-control GWAS of 5,000 samples, from quality control to follow-up.",
-  },
-];
 
 export function HomeView() {
   const router = useRouter();
@@ -89,48 +67,53 @@ export function HomeView() {
 
   return (
     <>
-      <PageHeader />
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
-        <div className="flex w-full max-w-2xl flex-col gap-8">
-          <div className="flex flex-col items-center gap-3 text-center">
-            <BrandMark className="size-11 rounded-xl [&_svg]:size-6" />
-            <h1 className="text-balance text-3xl font-semibold tracking-tight">What would you like to investigate?</h1>
-            <p className="max-w-md text-balance text-[15px] text-muted-foreground">
-              Ask the lead scientist. When a question needs more expertise, the lead brings in the lab&apos;s team.
-            </p>
-          </div>
+      <PageHeader className="border-transparent" />
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-8">
+        <div className="mx-auto my-auto flex w-full max-w-3xl flex-col gap-10">
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col items-start gap-3">
+              <div className="flex items-center gap-3.5">
+                <BrandMark className="size-10 rounded-xl [&_svg]:size-5" />
+                <h1 className="text-balance font-serif text-4xl font-medium tracking-tight">What would you like to investigate?</h1>
+              </div>
+              <p className="max-w-xl text-balance text-[15px] text-muted-foreground">
+                Ask the lead scientist. When a question needs more expertise, the lead brings in the lab&apos;s team.
+              </p>
+            </div>
 
-          <div className="flex flex-col gap-2">
-            {problem && <ProblemNotice problem={problem} />}
-            {missing.length > 0 && problem?.fix !== "keys" && (
-              <Notice
-                tone="muted"
-                icon={KeyRound}
-                action={
-                  <Button variant="outline" size="xs" onClick={() => settings.open("keys")} className="shrink-0 text-foreground">
-                    Add the key{missing.length === 1 ? "" : "s"}
-                  </Button>
-                }
-              >
-                {model} needs {missing.join(", ")}, which {missing.length === 1 ? "is" : "are"} not set.
-              </Notice>
-            )}
-            <Composer
-              value={draft}
-              onValueChange={setDraft}
-              onSend={() => void start()}
-              disabled={sending}
-              holdUp={readiness(attachments.items)}
-              files={{
-                items: attachments.items,
-                onAdd: attach,
-                onRemove: (id) => attachments.remove([id]),
-                onRetry: attachments.retry,
-              }}
-              autoFocus
-              footer={model ? <ModelButton model={model} disabled={sending} onClick={() => setChoosing(true)} /> : undefined}
-              className="shadow-md"
-            />
+            <div className="flex flex-col gap-2">
+              {problem && <ProblemNotice problem={problem} />}
+              {missing.length > 0 && problem?.fix !== "keys" && (
+                <Notice
+                  tone="muted"
+                  icon={KeyRound}
+                  action={
+                    <Button variant="outline" size="xs" onClick={() => settings.open("keys")} className="shrink-0 text-foreground">
+                      Add the key{missing.length === 1 ? "" : "s"}
+                    </Button>
+                  }
+                >
+                  {model} needs {missing.join(", ")}, which {missing.length === 1 ? "is" : "are"} not set.
+                </Notice>
+              )}
+              <Composer
+                value={draft}
+                onValueChange={setDraft}
+                onSend={() => void start()}
+                disabled={sending}
+                holdUp={readiness(attachments.items)}
+                files={{
+                  items: attachments.items,
+                  onAdd: attach,
+                  onRemove: (id) => attachments.remove([id]),
+                  onRetry: attachments.retry,
+                }}
+                autoFocus
+                roomy
+                footer={model ? <ModelButton model={model} disabled={sending} onClick={() => setChoosing(true)} /> : undefined}
+                className="shadow-md"
+              />
+            </div>
           </div>
 
           {choosing && model !== null && (
@@ -146,23 +129,7 @@ export function HomeView() {
             />
           )}
 
-          <ul className="grid gap-2 sm:grid-cols-2" aria-label="Examples">
-            {EXAMPLES.map(({ icon: Icon, title, prompt }) => (
-              <li key={title}>
-                <button
-                  type="button"
-                  onClick={() => setDraft(prompt)}
-                  className="flex h-full w-full flex-col gap-1 rounded-xl border border-border bg-card p-3 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <span className="flex items-center gap-2 font-medium">
-                    <Icon className="size-4 text-brand" aria-hidden />
-                    {title}
-                  </span>
-                  <span className="line-clamp-2 text-muted-foreground">{prompt}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <CapabilityCards onChoose={setDraft} />
         </div>
       </div>
     </>

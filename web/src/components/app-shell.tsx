@@ -116,10 +116,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <aside
                 aria-label="Sidebar"
                 className={cn(
-                  "fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[transform,visibility] duration-200 md:static md:z-auto md:translate-x-0",
+                  // The rail is always there, and the conversations beside it are what the sidebar hides
+                  "fixed inset-y-0 left-0 z-40 flex max-w-[calc(100vw-1.5rem)] shrink-0 bg-sidebar text-sidebar-foreground transition-[transform,visibility] duration-200 md:static md:z-auto md:max-w-none md:translate-x-0",
                   // Off the screen is also out of the tab order
                   drawerOpen ? "translate-x-0" : "-translate-x-full max-md:invisible",
-                  !sidebarShown && "md:hidden",
                 )}
               >
                 <Suspense>
