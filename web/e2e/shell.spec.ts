@@ -75,9 +75,17 @@ test.describe("the shell", () => {
     expect(made).toBe(1);
   });
 
-  test("the theme is chosen, kept, and applied before the page is shown", async ({ page }) => {
+  test("the theme starts dark, is chosen, kept, and applied before the page is shown", async ({ page }) => {
     const html = page.locator("html");
     await page.emulateMedia({ colorScheme: "light" });
+    await page.reload();
+    // Dark until one is chosen, whatever the system is set to
+    await expect(html).toHaveClass(/dark/);
+
+    await page.getByRole("button", { name: "Theme" }).click();
+    await page.getByRole("menuitem", { name: "Light" }).click();
+    await expect(html).not.toHaveClass(/dark/);
+
     await page.reload();
     await expect(html).not.toHaveClass(/dark/);
 
@@ -90,6 +98,9 @@ test.describe("the shell", () => {
 
     await page.getByRole("button", { name: "Theme" }).click();
     await page.getByRole("menuitem", { name: "System" }).click();
+    await expect(html).not.toHaveClass(/dark/);
+
+    await page.reload();
     await expect(html).not.toHaveClass(/dark/);
 
     await page.emulateMedia({ colorScheme: "dark" });

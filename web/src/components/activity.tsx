@@ -85,7 +85,7 @@ function CodeCall({ call }: { call: Call }) {
         {call.cells.length === 0 && !running && call.output !== null && call.output !== "" && (
           <ScrollBox
             as="pre"
-            className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 text-[13px] leading-5"
+            className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-code px-3 py-2 text-[13px] leading-5"
           >
             {stripAnsi(call.output)}
           </ScrollBox>
@@ -138,7 +138,7 @@ function ToolCall({ call }: { call: Call }) {
             <span className="text-xs font-medium text-muted-foreground">Asked</span>
             <ScrollBox
               as="pre"
-              className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-[13px]"
+              className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-code px-3 py-2 font-mono text-[13px]"
             >
               {call.arguments}
             </ScrollBox>

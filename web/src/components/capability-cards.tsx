@@ -83,7 +83,7 @@ export function CapabilityCards({ onChoose }: { onChoose: (prompt: string) => vo
   return (
     <section aria-labelledby={heading} className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
-        <h2 id={heading} className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        <h2 id={heading} className="font-serif text-xl font-medium tracking-tight">
           Ways to begin
         </h2>
         <div className="relative w-44">
@@ -113,7 +113,7 @@ export function CapabilityCards({ onChoose }: { onChoose: (prompt: string) => vo
                   "hover:border-ring/60 hover:bg-accent/40 hover:shadow-sm focus-visible:ring-3 focus-visible:ring-ring/40",
                 )}
               >
-                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">{item.category}</span>
+                <span className="text-xs text-muted-foreground">{item.category}</span>
                 <span className="font-serif text-[17px] font-semibold leading-snug">{item.title}</span>
                 <span className="line-clamp-3 text-[13px] leading-5 text-muted-foreground">{item.prompt}</span>
                 <span className="mt-auto flex items-center justify-between pt-2 text-xs font-medium">

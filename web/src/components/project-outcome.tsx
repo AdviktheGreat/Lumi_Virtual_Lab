@@ -53,7 +53,7 @@ export function Outcome({ project }: { project: Project }) {
           <a
             href={`/api/projects/${encodeURIComponent(project.id)}/report`}
             download
-            className="inline-flex items-center gap-1 rounded-sm text-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+            className="inline-flex items-center gap-1 rounded-sm text-sm text-brand underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <Download className="size-3.5" aria-hidden />
             Download the report

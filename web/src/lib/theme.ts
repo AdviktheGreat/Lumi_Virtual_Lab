@@ -9,9 +9,9 @@ function stored(): Theme {
   try {
     const value = localStorage.getItem(KEY);
 
-    return value === "light" || value === "dark" ? value : "system";
+    return value === "light" || value === "system" ? value : "dark";
   } catch {
-    return "system";
+    return "dark";
   }
 }
 
@@ -22,8 +22,7 @@ function apply(theme: Theme): void {
 
 export function setTheme(theme: Theme): void {
   try {
-    if (theme === "system") localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, theme);
+    localStorage.setItem(KEY, theme);
   } catch {
     // A browser that keeps nothing still shows the theme chosen, until the page is closed
   }
@@ -51,5 +50,5 @@ function subscribe(onChange: () => void): () => void {
 }
 
 export function useTheme(): Theme {
-  return useSyncExternalStore(subscribe, stored, () => "system");
+  return useSyncExternalStore(subscribe, stored, () => "dark");
 }

@@ -314,7 +314,7 @@ function QuestionPage({ question, url }: { question: Question; url: string | nul
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 break-all font-medium text-primary underline underline-offset-4"
+            className="inline-flex items-center gap-1 break-all font-medium text-brand underline underline-offset-4"
           >
             {url}
             <ExternalLink className="size-3.5 shrink-0" aria-hidden />

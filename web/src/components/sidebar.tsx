@@ -146,7 +146,7 @@ function ChatList() {
       )}
       {inDays(shown).map((day) => (
         <div key={day.name}>
-          <h2 className="px-2.5 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{day.name}</h2>
+          <h2 className="px-2.5 pb-1 pt-3 text-xs font-medium text-muted-foreground">{day.name}</h2>
           <ul className="flex flex-col gap-0.5">
             {day.chats.map((chat) => (
               <li key={chat.id}>
@@ -202,11 +202,8 @@ function Panel() {
 
   return (
     <div className={cn("flex min-h-0 w-64 min-w-0 shrink flex-col border-r border-sidebar-border md:shrink-0", !sidebarShown && "md:hidden")}>
-      <div className="flex h-14 shrink-0 items-start justify-between gap-2 px-4 pt-3">
-        <div className="min-w-0">
-          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Workspace</p>
-          <p className="truncate font-serif text-xl font-semibold leading-6 tracking-tight">Virtual Lab</p>
-        </div>
+      <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-4">
+        <p className="min-w-0 truncate font-serif text-xl font-medium tracking-tight">Virtual Lab</p>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon-sm" onClick={toggleSidebar} aria-label="Hide the sidebar" className="max-md:hidden">
@@ -217,7 +214,7 @@ function Panel() {
         </Tooltip>
       </div>
       <div className="px-3 pb-3 pt-2">
-        <Button asChild className="w-full justify-start gap-2 rounded-xl" size="lg">
+        <Button asChild className="w-full justify-start gap-2" size="lg">
           <Link href="/">
             <SquarePen className="size-4" />
             New chat

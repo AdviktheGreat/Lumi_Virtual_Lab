@@ -91,7 +91,7 @@ function Counts({ run, kind }: { run: PaperRun; kind: FindingKind }) {
           href={`/api/papers/runs/${encodeURIComponent(run.id)}/tables/${kind}`}
           download
           aria-label={`Download as a table, ${label.toLowerCase()}`}
-          className="inline-flex items-center gap-1 rounded-sm text-xs text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="inline-flex items-center gap-1 rounded-sm text-xs text-brand underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <Download className="size-3" aria-hidden />
           Download as a table

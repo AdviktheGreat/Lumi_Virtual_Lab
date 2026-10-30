@@ -1,50 +1,27 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
+import { Avatar } from "@/components/avatar";
 import { CallIcon } from "@/components/call-icon";
 import { CodeCell, PendingCell } from "@/components/code-cell";
 import { Markdown } from "@/components/markdown";
 import { summarize } from "@/lib/calls";
 import { stripAnsi } from "@/lib/format";
 import {
-  initialsOf,
   inRounds,
   listedCalls,
   roundName,
-  speakerTone,
   type LabCall,
   type LabSession,
   type LabStep,
   type LabTurn,
 } from "@/lib/lab";
-import { cn } from "@/lib/utils";
 import { ScrollBox } from "@/components/scroll-box";
-
-// One for each of the tones that speakerTone gives
-const TONES = [
-  "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  "bg-violet-500/15 text-violet-700 dark:text-violet-300",
-  "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  "bg-rose-500/15 text-rose-700 dark:text-rose-300",
-  "bg-teal-500/15 text-teal-700 dark:text-teal-300",
-];
 
 const KINDS: Record<string, string> = {
   team: "Team discussion",
   individual: "One scientist, reviewed by the critic",
 };
-
-function Avatar({ name, className }: { name: string; className?: string }) {
-  return (
-    <span
-      aria-hidden
-      className={cn("flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold", TONES[speakerTone(name)], className)}
-    >
-      {initialsOf(name)}
-    </span>
-  );
-}
 
 function Waiting({ children }: { children: React.ReactNode }) {
   return (
@@ -208,7 +185,7 @@ function TurnView({ turn, live, writing }: { turn: LabTurn; live: boolean; writi
 
 function RoundHeading({ name }: { name: string }) {
   return (
-    <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="flex items-center gap-3 font-mono text-xs text-muted-foreground">
       <span>{name}</span>
       <span className="h-px flex-1 bg-border" aria-hidden />
     </div>
