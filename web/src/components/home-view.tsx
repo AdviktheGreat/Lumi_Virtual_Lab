@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound } from "lucide-react";
-import { BrandMark } from "@/components/brand";
+import { BrandLogo } from "@/components/brand";
 import { CapabilityCards } from "@/components/capability-cards";
 import { useChats } from "@/components/chats-provider";
 import { Composer } from "@/components/composer";
@@ -72,7 +72,7 @@ export function HomeView() {
         <div className="mx-auto my-auto flex w-full max-w-3xl flex-col gap-10">
           <div className="flex flex-col gap-6">
             <div className="flex flex-col items-start gap-4">
-              <BrandMark className="size-9 rounded-xl [&_svg]:size-[18px]" />
+              <BrandLogo className="-mb-2" />
               <h1 className="max-w-2xl text-balance font-serif text-4xl font-medium leading-[1.06] tracking-tight sm:text-5xl">
                 What would you like to investigate?
               </h1>

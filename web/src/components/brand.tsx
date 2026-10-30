@@ -1,40 +1,27 @@
 import { cn } from "@/lib/utils";
 
-// A flask with a leaf in it, drawn in the colour it is given
-export function BrandGlyph({ className }: { className?: string }) {
+// The lab's mark, a cell with its nucleus, and its logo, which has the name beside it. They are the Lumigenic files, with
+// their own colours: a green cell, and a nucleus that is the paper colour, which reads as a pale centre on a dark page and as
+// an opening in the cell on a light one.
+export function BrandMark({ className }: { className?: string }) {
   return (
-    <svg
-      aria-hidden
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={cn("size-4", className)}
-    >
-      <path d="M9 3h6" />
-      <path d="M10 3v5.2L4.6 18a2 2 0 0 0 1.75 3h11.3a2 2 0 0 0 1.75-3L14 8.2V3" />
-      <path d="M12 18.5c-.2-2.3 1.2-3.9 3.4-4.1.2 2.3-1.1 4-3.4 4.1Z" fill="currentColor" strokeWidth={1.25} />
-    </svg>
+    // A file of the app's own, so there is nothing for next/image to optimize
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/brand/lumigenic-mark.svg" alt="" aria-hidden className={cn("size-9 shrink-0 object-contain", className)} />
   );
 }
 
-export function BrandMark({ className }: { className?: string }) {
+export function BrandLogo({ className }: { className?: string }) {
   return (
-    <span
-      aria-hidden
-      className={cn("flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand text-brand-foreground", className)}
-    >
-      <BrandGlyph />
-    </span>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/brand/lumigenic-logo.svg" alt="Lumigenic" className={cn("h-20 w-auto", className)} />
   );
 }
 
 export function Brand({ className }: { className?: string }) {
   return (
-    <span className={cn("flex items-center gap-2.5 font-serif text-lg font-semibold tracking-tight", className)}>
-      <BrandMark />
+    <span className={cn("flex items-center gap-2.5 font-serif text-lg font-medium tracking-tight", className)}>
+      <BrandMark className="size-8" />
       Virtual Lab
     </span>
   );
