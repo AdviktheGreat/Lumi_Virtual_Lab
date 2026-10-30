@@ -15,7 +15,7 @@ test.describe("a conversation with the lead", () => {
     await expect(page.getByTestId("steps")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Copy answer" })).toHaveCount(1);
     await expect(page.getByTestId("chat-title")).toHaveText(question);
-    await expect(page).toHaveTitle(`${question} · Virtual Lab`);
+    await expect(page).toHaveTitle(`${question} · Lumi Virtual Lab`);
   });
 
   test("the conversation is listed on the side and is there when the page is opened again", async ({ page }) => {

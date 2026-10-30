@@ -242,7 +242,7 @@ test.describe("renaming a conversation", () => {
     await page.keyboard.press("Enter");
 
     await expect(page.getByTestId("chat-title")).toHaveText(`Renamed ${title}`);
-    await expect(page).toHaveTitle(`Renamed ${title} · Virtual Lab`);
+    await expect(page).toHaveTitle(`Renamed ${title} · Lumi Virtual Lab`);
     await expect(list(page).getByRole("link", { name: `Renamed ${title}` })).toHaveAttribute("aria-current", "page");
   });
 

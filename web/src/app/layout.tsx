@@ -10,7 +10,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { themeScript } from "@/lib/theme-script";
 
 export const metadata: Metadata = {
-  title: "Virtual Lab",
+  title: "Lumi Virtual Lab",
   description: "Talk to the head of a lab of scientists, who brings in the team when a question needs it.",
 };
 

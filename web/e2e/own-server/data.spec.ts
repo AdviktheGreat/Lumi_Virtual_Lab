@@ -95,7 +95,7 @@ test.describe("the page", () => {
 
     await expect(page).toHaveURL(/\/data$/);
     await expect(page.getByRole("heading", { name: "Data", level: 1 })).toBeVisible();
-    await expect(page).toHaveTitle("Data · Virtual Lab");
+    await expect(page).toHaveTitle("Data · Lumi Virtual Lab");
     await expect(link).toHaveAttribute("aria-current", "page");
 
     await sidebar.getByRole("link", { name: "New chat", exact: true }).first().click();

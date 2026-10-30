@@ -22,7 +22,7 @@ export function Brand({ className }: { className?: string }) {
   return (
     <span className={cn("flex items-center gap-2.5 font-serif text-lg font-medium tracking-tight", className)}>
       <BrandMark className="size-8" />
-      Virtual Lab
+      Lumi Virtual Lab
     </span>
   );
 }
