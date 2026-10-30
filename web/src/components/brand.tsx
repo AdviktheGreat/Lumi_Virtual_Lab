@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils";
 
-// The lab's mark, a cell with its nucleus, and its logo, which has the name beside it. They are the Lumigenic files, whose
-// colours are their own and read the same on a dark page and a light one.
+// The lab's mark, a cell with its nucleus, and its logo, which has the name beside it. They are the Lumigenic files, with
+// their own colours: a green cell, and a nucleus that is the paper colour, which reads as a pale centre on a dark page and as
+// an opening in the cell on a light one.
 export function BrandMark({ className }: { className?: string }) {
   return (
     // A file of the app's own, so there is nothing for next/image to optimize
