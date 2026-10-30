@@ -168,7 +168,7 @@ function Rail() {
     <div className="flex w-[4.5rem] shrink-0 flex-col items-center gap-3 border-r border-sidebar-border py-3">
       <Link
         href="/"
-        aria-label="Virtual Lab"
+        aria-label="Lumi Virtual Lab"
         className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
       >
         <BrandMark className="size-11" />
@@ -203,7 +203,7 @@ function Panel() {
   return (
     <div className={cn("flex min-h-0 w-64 min-w-0 shrink flex-col border-r border-sidebar-border md:shrink-0", !sidebarShown && "md:hidden")}>
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-4">
-        <p className="min-w-0 truncate font-serif text-xl font-medium tracking-tight">Virtual Lab</p>
+        <p className="min-w-0 truncate font-serif text-xl font-medium tracking-tight">Lumi Virtual Lab</p>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon-sm" onClick={toggleSidebar} aria-label="Hide the sidebar" className="max-md:hidden">
@@ -225,7 +225,7 @@ function Panel() {
         <ChatList />
       </nav>
       {server.status === "ready" && (
-        <p className="border-t border-sidebar-border px-4 py-2.5 text-xs text-muted-foreground">Virtual Lab v{server.version}</p>
+        <p className="border-t border-sidebar-border px-4 py-2.5 text-xs text-muted-foreground">Lumi Virtual Lab v{server.version}</p>
       )}
     </div>
   );

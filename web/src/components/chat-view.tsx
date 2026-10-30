@@ -83,10 +83,10 @@ export function ChatView({ id }: { id: string }) {
   }, [state, title, refresh]);
 
   useEffect(() => {
-    document.title = title ? `${title} · Virtual Lab` : "Virtual Lab";
+    document.title = title ? `${title} · Lumi Virtual Lab` : "Lumi Virtual Lab";
 
     return () => {
-      document.title = "Virtual Lab";
+      document.title = "Lumi Virtual Lab";
     };
   }, [title]);
 
