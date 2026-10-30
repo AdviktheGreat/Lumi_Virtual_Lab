@@ -39,7 +39,7 @@ export function CodeBlock({ code, language, foldAfter, className }: CodeBlockPro
   const folding = fold(code, foldAfter, open);
 
   return (
-    <div className={cn("overflow-hidden rounded-lg border border-border bg-muted/50", className)}>
+    <div className={cn("overflow-hidden rounded-lg border border-border bg-code", className)}>
       <div className="flex h-7 items-center justify-between border-b border-border/70 pl-3 pr-1 text-xs text-muted-foreground">
         <span>{language ? languageLabel(language) : "Code"}</span>
         <CopyButton text={code} label="Copy code" />

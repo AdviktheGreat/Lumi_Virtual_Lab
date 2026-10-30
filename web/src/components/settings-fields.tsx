@@ -51,7 +51,7 @@ export function describedBy(id: string, { hint, problem }: { hint?: boolean; pro
 export function Section({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-4">
-      {title && <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>}
+      {title && <h3 className="text-sm font-medium">{title}</h3>}
       {children}
     </section>
   );

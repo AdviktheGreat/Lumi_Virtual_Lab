@@ -187,13 +187,13 @@ export function ChatView({ id }: { id: string }) {
             {title || (status.kind === "ready" ? status.info.title : "") || <span className="sr-only">Conversation</span>}
           </h1>
           {label && (
-            <Badge variant="secondary" className="gap-1.5 bg-highlight text-highlight-foreground" data-testid="chat-state">
+            <Badge variant="secondary" className="gap-1.5 border-primary/35 bg-highlight text-highlight-foreground" data-testid="chat-state">
               <span className="size-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" aria-hidden />
               {label}
             </Badge>
           )}
           {cost && (
-            <span className="text-xs tabular-nums text-muted-foreground" title="Spent in this conversation">
+            <span className="font-mono text-xs tabular-nums text-muted-foreground" title="Spent in this conversation">
               {cost}
               {transcript.maxCost !== null && ` of ${formatCost(transcript.maxCost)}`}
             </span>

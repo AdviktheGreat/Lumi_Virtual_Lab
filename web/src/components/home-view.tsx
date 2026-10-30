@@ -68,15 +68,15 @@ export function HomeView() {
   return (
     <>
       <PageHeader className="border-transparent" />
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-8">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[radial-gradient(55%_45%_at_88%_0%,var(--highlight),transparent)] px-4 py-8">
         <div className="mx-auto my-auto flex w-full max-w-3xl flex-col gap-10">
           <div className="flex flex-col gap-6">
-            <div className="flex flex-col items-start gap-3">
-              <div className="flex items-center gap-3.5">
-                <BrandMark className="size-10 rounded-xl [&_svg]:size-5" />
-                <h1 className="text-balance font-serif text-4xl font-medium tracking-tight">What would you like to investigate?</h1>
-              </div>
-              <p className="max-w-xl text-balance text-[15px] text-muted-foreground">
+            <div className="flex flex-col items-start gap-4">
+              <BrandMark className="size-9 rounded-xl [&_svg]:size-[18px]" />
+              <h1 className="max-w-2xl text-balance font-serif text-4xl font-medium leading-[1.06] tracking-tight sm:text-5xl">
+                What would you like to investigate?
+              </h1>
+              <p className="max-w-xl text-balance text-base leading-7 text-muted-foreground">
                 Ask the lead scientist. When a question needs more expertise, the lead brings in the lab&apos;s team.
               </p>
             </div>

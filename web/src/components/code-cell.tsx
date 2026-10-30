@@ -130,7 +130,7 @@ export function CodeCell({ cell }: { cell: Cell }) {
           role="group"
           aria-label="Output"
           className={cn(
-            "max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-card px-3 py-2.5 font-mono text-[13px] leading-5",
+            "max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-code px-3 py-2.5 font-mono text-[13px] leading-5",
           )}
           data-testid="code-output"
         >
@@ -151,7 +151,7 @@ export function CodeCell({ cell }: { cell: Cell }) {
         <ScrollBox
           as="pre"
           role="group"
-          className="max-h-48 overflow-auto rounded-lg border border-border bg-card px-3 py-2 font-mono text-[13px]"
+          className="max-h-48 overflow-auto rounded-lg border border-border bg-code px-3 py-2 font-mono text-[13px]"
           aria-label="Value"
         >
           {value}
