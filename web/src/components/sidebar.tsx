@@ -171,7 +171,7 @@ function Rail() {
         aria-label="Virtual Lab"
         className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
       >
-        <BrandMark className="size-9" />
+        <BrandMark className="size-11" />
       </Link>
       <PageLinks />
       <div className="mt-auto flex flex-col items-center gap-1">
