@@ -381,6 +381,25 @@ class TestCode:
         assert "tools" in fake_client.completions.calls[0]
         assert "tools" not in fake_client.completions.calls[1]
 
+    def test_the_lead_is_asked_to_say_where_it_is_when_it_has_used_all_its_calls(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("look_up", {"query": "KP.3"}),
+            text_response("Found KP.3, and the rest is left."),
+        ]
+        chat = make_chat(tmp_path, tools=(looking_up(),), max_tool_iterations=1)
+
+        reply = chat.send("Go")
+
+        assert reply.text == "Found KP.3, and the rest is left."
+        assert "tools" in fake_client.completions.calls[0]
+        assert "all 1 rounds of tool calls" not in str(request_messages(fake_client, 0))
+        told = request_messages(fake_client, 1)
+        assert told[-1]["role"] == "user" and "all 1 rounds of tool calls" in told[-1]["content"]
+        # It is said to that request alone
+        assert all("rounds of tool calls" not in str(message.get("content")) for message in chat.messages)
+
     def test_a_tool_the_lead_makes_up_is_answered_with_an_error(self, fake_client: FakeClient, tmp_path: Path) -> None:
         fake_client.completions.responses = [tool_call_response("run_code", {"code": "1"}), text_response("Sorry.")]
         chat = make_chat(tmp_path)
@@ -408,6 +427,129 @@ class TestCode:
         assert [tool["function"]["name"] for tool in fake_client.completions.calls[0]["tools"]][0] == "look_up"
         assert "Look things up sparingly." in request_messages(fake_client, 0)[0]["content"]
         assert of(chat.events_since(), "tool_output")[0].text == "Found KP.3."
+
+
+WRITTEN_OUT = '[You called look_up with {"query": "KP.3"}]'
+
+
+class TestAToolCallWrittenOut:
+    """A model that writes its call out as text, as the history is shown to a model that is sent no tool calls, has
+    called nothing, and it is not its answer."""
+
+    def test_the_lead_is_told_that_nothing_ran_and_goes_on_to_call_the_tool(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            text_response(f"I will look.\n{WRITTEN_OUT}"),
+            tool_call_response("look_up", {"query": "KP.3"}),
+            text_response("KP.3 is a variant."),
+        ]
+        chat = make_chat(tmp_path, tools=(looking_up(),))
+
+        reply = chat.send("What is KP.3?")
+
+        assert (reply.status, reply.text) == ("answered", "KP.3 is a variant.")
+        told = request_messages(fake_client, 1)
+        assert told[-2] == {
+            "role": "assistant",
+            "name": "Principal_Investigator",
+            "content": f"I will look.\n{WRITTEN_OUT}",
+        }
+        assert told[-1]["role"] == "user" and "Nothing was run" in told[-1]["content"]
+        assert "call it with the tool-calling feature" in told[-1]["content"]
+        assert fake_client.completions.calls[1].get("tools")
+        # What it said is shown without the line that was not a call, and the page's writing is closed
+        said = [event for event in of(chat.events_since(), "tool_calls") if event.data["calls"] == []]
+        assert [event.text for event in said] == ["I will look."]
+        assert of(chat.events_since(), "tool_output")[0].text == "Found KP.3."
+
+    def test_a_reply_written_out_is_not_one_of_the_rounds_of_calls(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            text_response(WRITTEN_OUT),
+            tool_call_response("look_up", {"query": "KP.3"}),
+            text_response("Done."),
+        ]
+        chat = make_chat(tmp_path, tools=(looking_up(),), max_tool_iterations=1)
+
+        chat.send("Go")
+
+        assert "tools" in fake_client.completions.calls[1]
+        assert "tools" not in fake_client.completions.calls[2]
+        # Nothing of it is shown, but the page is told that what it was writing is done
+        (closed,) = [event for event in of(chat.events_since(), "tool_calls") if event.data["calls"] == []]
+        assert closed.text == ""
+
+    def test_on_the_last_request_it_is_asked_again_without_being_told_to_call_a_tool(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        # What a model did that was sent its own earlier calls as text, when it had used all its rounds
+        fake_client.completions.responses = [
+            tool_call_response("look_up", {"query": "KP.3"}),
+            text_response(WRITTEN_OUT),
+            text_response("I found KP.3. What is left is the rest."),
+        ]
+        chat = make_chat(tmp_path, tools=(looking_up(),), max_tool_iterations=1)
+
+        reply = chat.send("Go")
+
+        assert (reply.status, reply.text) == ("answered", "I found KP.3. What is left is the rest.")
+        assert len(fake_client.completions.calls) == 3
+        assert all("tools" not in call for call in fake_client.completions.calls[1:])
+        told = request_messages(fake_client, 2)
+        assert "No tools can be called now" in told[-2]["content"]
+        assert "all 1 rounds of tool calls" in told[-1]["content"]
+        assert chat.messages[-1]["content"] == reply.text
+
+    def test_a_lead_that_only_goes_on_writing_calls_out_is_asked_so_many_times_and_the_researcher_is_told(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("look_up", {"query": "KP.3"}),
+            text_response(WRITTEN_OUT),
+            text_response(WRITTEN_OUT),
+            text_response(WRITTEN_OUT),
+        ]
+        chat = make_chat(tmp_path, tools=(looking_up(),), max_tool_iterations=1)
+
+        reply = chat.send("Go")
+
+        assert len(fake_client.completions.calls) == 4
+        assert reply.status == "answered"
+        assert reply.text == chat_module.OUT_OF_TURNS_REPLY.format(limit=1)
+        assert "continue" in reply.text and "[You called" not in reply.text
+        assert chat.messages[-1] == {"role": "assistant", "name": "Principal_Investigator", "content": reply.text}
+        assert of(chat.events_since(), "answer")[0].text == reply.text
+
+    def test_what_a_lead_wrote_besides_the_call_is_its_answer_when_it_will_not_stop(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response(f"Here is what I think.\n{WRITTEN_OUT}")] * 3
+        chat = make_chat(tmp_path, tools=(looking_up(),))
+
+        reply = chat.send("Go")
+
+        assert len(fake_client.completions.calls) == 3
+        assert reply.text == "Here is what I think."
+
+    def test_a_lead_that_writes_nothing_but_a_call_while_it_has_rounds_left_is_told_it_did_not_run(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response(WRITTEN_OUT)] * 3
+        chat = make_chat(tmp_path, tools=(looking_up(),))
+
+        reply = chat.send("Go")
+
+        assert reply.text == chat_module.FAKED_CALL_REPLY
+        assert "[You called" not in reply.text
+
+    def test_ordinary_brackets_in_an_answer_are_left_alone(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [text_response("It is known [1], [2].")]
+        chat = make_chat(tmp_path)
+
+        assert chat.send("Hi").text == "It is known [1], [2]."
+        assert len(fake_client.completions.calls) == 1
 
 
 def looking_up(name: str = "look_up", instructions: str | None = None) -> Tool:

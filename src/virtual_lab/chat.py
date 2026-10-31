@@ -52,6 +52,7 @@ from virtual_lab.constants import (
     MAX_CHAT_DELEGATION_ROUNDS,
     MAX_CHAT_DELEGATIONS,
     MAX_CHAT_TITLE_CHARS,
+    MAX_FAKED_CALL_RETRIES,
     MAX_TOOL_ITERATIONS,
     MAX_UPLOAD_BYTES,
     MAX_UPLOAD_NAME_BYTES,
@@ -60,7 +61,15 @@ from virtual_lab.constants import (
 from virtual_lab.directives import DIRECTIVES, Check, Directive, LabRequest, directive_named, is_literature_tool
 from virtual_lab.events import ChatEvent, ChatEventKind, MeetingEvent, NextTurn, OnChatEvent
 from virtual_lab.failures import Failure, describe_failure
-from virtual_lab.llm import ModelReply, ModelSource, ToolCall, ask, resolve_chat_models
+from virtual_lab.llm import (
+    ModelReply,
+    ModelSource,
+    ToolCall,
+    ask,
+    faked_tool_calls,
+    resolve_chat_models,
+    without_faked_calls,
+)
 from virtual_lab.project import Project, sha256_file
 from virtual_lab.prompts import (
     SCIENTIFIC_CRITIC,
@@ -68,7 +77,9 @@ from virtual_lab.prompts import (
     chat_note_prompt,
     chat_resources_prompt,
     chat_session_prompt,
+    faked_tool_calls_prompt,
     lab_chat_prompt,
+    out_of_tool_turns_prompt,
 )
 from virtual_lab.provenance import describe_agent, utc_timestamp
 from virtual_lab.resources import (
@@ -123,6 +134,15 @@ STOPPABLE_LAB_EVENTS = frozenset({"turn", "writing", "message", "tool_calls", "c
 UNTOLD_LAB_EVENTS = frozenset({"usage"})
 
 STOPPED_REPLY = "I was stopped by the researcher before I finished."
+
+# What is said when the lead's last reply of a turn is only a tool call written out as text, which runs nothing
+OUT_OF_TURNS_REPLY = (
+    "I used all {limit} rounds of tool calls that one message is given before I could write up where I am. "
+    'Write "continue", and I will pick up from here with more.'
+)
+FAKED_CALL_REPLY = (
+    'I wrote a tool call out as text instead of calling it, and that did not run. Ask me again, or write "continue".'
+)
 
 # What the project that holds the team's meetings is for, which only has to be the same every time
 CHAT_PROJECT_GOAL = "Conversation with the head of a lab"
@@ -1536,10 +1556,13 @@ class Chat:
         withheld = self._directive is not None and self._directive.no_tools
         definitions = [] if withheld else [tool.definition for tool in self._turn_tools()]
         reminded = False
+        # Replies that were a tool call written out as text, which are not counted as one of the rounds of tool calls
+        faked = 0
+        iteration = 0
 
-        for iteration in range(self.max_tool_iterations + 1):
+        while True:
             # The tools are withheld on the final attempt, to force an answer
-            final = iteration == self.max_tool_iterations
+            final = iteration >= self.max_tool_iterations
 
             if note := self._gate("lead"):
                 self._append({"role": "user", "content": chat_note_prompt(note)})
@@ -1548,6 +1571,9 @@ class Chat:
                 {"role": "system", "content": self._system},
                 *self.messages,  # type: ignore[list-item]
             ]
+            if final and not withheld:
+                # Said in this request alone, so that it is not in what the lead reads of this conversation later
+                request.append({"role": "user", "content": out_of_tool_turns_prompt(self.max_tool_iterations)})
             self._check_fits(request)
             self._check_budget()
             reply = self._ask(self.lead, request, definitions if definitions and not final else None)
@@ -1560,18 +1586,35 @@ class Chat:
                     "max_completion_tokens."
                 )
 
+            # Writing a tool call out as text runs nothing, and would end the turn as if it were the answer
+            writes_calls = not reply.tool_calls and faked_tool_calls(reply.content)
+            if writes_calls and faked < MAX_FAKED_CALL_RETRIES:
+                faked += 1
+                self._append({"role": "assistant", "name": self.lead.name, "content": reply.content})
+                # Told even when nothing is left of what it wrote, since any event but a reply being written is what
+                # closes the half-written one a page is showing
+                self._emit("tool_calls", speaker=self.lead.title, text=without_faked_calls(reply.content), calls=[])
+                self._append({"role": "user", "content": faked_tool_calls_prompt(tools_offered=not final)})
+                continue
+
+            iteration += 1
             if not final and not reply.tool_calls and not reminded and self._remind(reply):
                 reminded = True
                 continue
 
             if final or not reply.tool_calls:
-                if not reply.content.strip():
+                answer = reply.content
+                if writes_calls:
+                    answer = without_faked_calls(answer) or (
+                        OUT_OF_TURNS_REPLY.format(limit=self.max_tool_iterations) if final else FAKED_CALL_REPLY
+                    )
+                if not answer.strip():
                     raise RuntimeError(f"{self.lead.title} sent no answer")
                 if reply.finish_reason == "length":
                     print(f"Warning: {self.lead.title} ran out of tokens and its answer is cut short.")
-                self._append({"role": "assistant", "name": self.lead.name, "content": reply.content})
+                self._append({"role": "assistant", "name": self.lead.name, "content": answer})
 
-                return reply.content
+                return answer
 
             self._append(
                 {
@@ -1588,8 +1631,6 @@ class Chat:
                 calls=[describe_call(call) for call in reply.tool_calls],
             )
             self._run_calls(reply.tool_calls)
-
-        raise AssertionError("The final attempt returns or raises")  # pragma: no cover
 
     def _run_calls(self, calls: Iterable[ToolCall]) -> None:
         """Runs the lead's tool calls one at a time, so that each is told of when it is done."""

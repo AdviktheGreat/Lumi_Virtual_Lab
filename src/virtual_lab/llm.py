@@ -490,6 +490,11 @@ def faked_tool_calls(text: str) -> bool:
     return FAKED_CALL_PATTERN.search(text) is not None
 
 
+def without_faked_calls(text: str) -> str:
+    """A reply without the lines that read as a tool call or its result, and without the blank lines they leave."""
+    return re.sub(r"\n{3,}", "\n\n", FAKED_CALL_PATTERN.sub("", text)).strip()
+
+
 def without_speaker_echo(text: str, *names: str) -> str:
     """A reply without the speaker's name that it began with, which a model copies from the other agents' turns, and
     which the meeting's record gives it anyway."""

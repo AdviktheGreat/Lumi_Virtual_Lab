@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from virtual_lab.agent import Agent
-from virtual_lab.llm import faked_tool_calls, without_speaker_echo
+from virtual_lab.llm import faked_tool_calls, without_faked_calls, without_speaker_echo
+from virtual_lab.prompts import faked_tool_calls_prompt, out_of_tool_turns_prompt
 from virtual_lab.run_meeting import hold_meeting
 from virtual_lab.tools import Tool
 
@@ -57,6 +58,27 @@ class TestRecognising:
     )
     def test_ordinary_writing_is_not(self, text: str) -> None:
         assert not faked_tool_calls(text)
+
+    @pytest.mark.parametrize(
+        ("text", "kept"),
+        [
+            ('[You called run_code with {"code": "print(1)"}]', ""),
+            ('I will look.\n[You called run_code with {"code": "1"}]', "I will look."),
+            ('First.\n\n[You called a with {}]\n\n[What a returned to you]\n\nLast.', "First.\n\nLast."),
+            ("Nothing written out [see 1].", "Nothing written out [see 1]."),
+        ],
+    )
+    def test_the_lines_that_stand_for_a_call_are_taken_out_of_a_reply(self, text: str, kept: str) -> None:
+        assert without_faked_calls(text) == kept
+
+    def test_an_agent_with_no_tools_is_not_told_to_call_one(self) -> None:
+        assert "call it with the tool-calling feature" in faked_tool_calls_prompt()
+        assert "call it with the tool-calling feature" not in faked_tool_calls_prompt(tools_offered=False)
+        assert "No tools can be called now" in faked_tool_calls_prompt(tools_offered=False)
+        assert "Nothing was run" in faked_tool_calls_prompt(tools_offered=False)
+
+    def test_the_lead_is_told_how_many_rounds_of_calls_it_had(self) -> None:
+        assert "all 20 rounds of tool calls" in out_of_tool_turns_prompt(20)
 
     def test_the_name_a_reply_begins_with_is_taken_off_and_no_other_part_of_it(self) -> None:
         assert without_speaker_echo("Scientific_Critic: Thank you, PI.", "Scientific_Critic", "Scientific Critic") == (

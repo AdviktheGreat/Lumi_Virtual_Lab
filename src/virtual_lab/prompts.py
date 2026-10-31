@@ -387,14 +387,36 @@ def code_repair_prompt(
     )
 
 
-def faked_tool_calls_prompt() -> str:
-    """Generates the message that tells an agent that the tool calls it wrote out were only text."""
+def faked_tool_calls_prompt(tools_offered: bool = True) -> str:
+    """Generates the message that tells an agent that the tool calls it wrote out were only text.
+
+    :param tools_offered: Whether the agent has tools to call. If not, it is only told to answer in words.
+    """
+    use = (
+        "To use a tool, call it with the tool-calling feature itself, without writing it out. Otherwise, answer"
+        if tools_offered
+        else "No tools can be called now, so answer"
+    )
+
     return (
         "Nothing was run. The lines in your last reply that look like a tool call or what it returned, such as "
         '"[Someone called a_tool with {...}]", are only how this meeting\'s record shows what others did, and writing '
-        "one does nothing. To use a tool, call it with the tool-calling feature itself, without writing it out. "
-        "Otherwise, answer in your own words, without tools, and do not write what a tool returned or what another "
-        "person said."
+        f"one does nothing. {use} in your own words, without tools, and do not write what a tool returned or what "
+        "another person said."
+    )
+
+
+def out_of_tool_turns_prompt(limit: int) -> str:
+    """Generates the message that tells the lead, on its last request of a turn, that it has no tools left and is to
+    report where it is.
+
+    :param limit: How many rounds of tool calls the turn was given, all of which it has used.
+    """
+    return (
+        f"You have used all {limit} rounds of tool calls that one message is given, so no tools can be called now. "
+        "Reply to the researcher in your own words, and do not write a tool call out: it would not be run. Say what "
+        "you have done and found so far, what is left to do, and what you would do next. If they ask you to "
+        "continue, you will have more rounds, and carry on from here."
     )
 
 
