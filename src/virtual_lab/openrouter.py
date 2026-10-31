@@ -28,6 +28,10 @@ MAX_AGE_SECONDS = 24 * 60 * 60
 RETRY_AFTER_SECONDS = 5 * 60
 FETCH_TIMEOUT_SECONDS = 10
 
+# What the file a list is kept in says of how it was written, so that a list kept before it said what the cache costs is
+# read again at once, rather than a day later
+SAVED_FORMAT = 2
+
 # What a chat is for: the lead calls tools, and replies are text. A model of a batch is answered later, not as asked
 BATCH_SUFFIX = ":batch"
 
@@ -42,6 +46,10 @@ class OpenRouterModel:
     :param input_price: USD per input token, or None where it depends on what is chosen for the request, as a
         router's does.
     :param output_price: USD per output token, as for input_price.
+    :param cache_read_price: USD per input token that it reads from its cache, which is less than input_price, or None
+        where it does not cache or does not say.
+    :param cache_write_price: USD per input token that it writes to its cache, which some models charge more for than
+        for input, or None where it does not say.
     """
 
     id: str
@@ -49,6 +57,8 @@ class OpenRouterModel:
     context_length: int | None
     input_price: float | None
     output_price: float | None
+    cache_read_price: float | None = None
+    cache_write_price: float | None = None
 
     @property
     def priced(self) -> bool:
@@ -71,6 +81,8 @@ class OpenRouterModel:
             "context_length": self.context_length,
             "input_price": self.input_price,
             "output_price": self.output_price,
+            "cache_read_price": self.cache_read_price,
+            "cache_write_price": self.cache_write_price,
         }
 
 
@@ -131,6 +143,8 @@ def models_from(data: Any) -> list[OpenRouterModel]:
                 context_length=count_of(item.get("context_length")),
                 input_price=price_of(pricing.get("prompt")),
                 output_price=price_of(pricing.get("completion")),
+                cache_read_price=price_of(pricing.get("input_cache_read")),
+                cache_write_price=price_of(pricing.get("input_cache_write")),
             )
         )
 
@@ -154,6 +168,15 @@ def prices_of(models: list[OpenRouterModel]) -> dict[str, tuple[float, float]]:
         model.id: (model.input_price, model.output_price)
         for model in models
         if model.input_price is not None and model.output_price is not None
+    }
+
+
+def cache_prices_of(models: list[OpenRouterModel]) -> dict[str, tuple[float | None, float | None]]:
+    """What the models that prices_of gives charge for their cache, for those that say."""
+    return {
+        model.id: (model.cache_read_price, model.cache_write_price)
+        for model in models
+        if model.priced and (model.cache_read_price is not None or model.cache_write_price is not None)
     }
 
 
@@ -183,6 +206,7 @@ class Catalog:
         self._read_at: float | None = None
         self._failed_at: float | None = None
         self._problem: str | None = None
+        self._outdated = False
         self._load()
 
     @property
@@ -199,13 +223,13 @@ class Catalog:
 
     def ensure_prices(self) -> None:
         """Makes sure the prices of its models are known, which reads them if they never were."""
-        if not self.known:
+        if not self.known or self._outdated:
             with self._lock:
                 self._refresh()
 
     def _refresh(self) -> None:
         now = time.time()
-        if self._read_at is not None and now - self._read_at < self._max_age:
+        if self._read_at is not None and not self._outdated and now - self._read_at < self._max_age:
             return
         if self._failed_at is not None and now - self._failed_at < RETRY_AFTER_SECONDS:
             return
@@ -217,13 +241,14 @@ class Catalog:
             return
         self._failed_at = None
         self._problem = None
+        self._outdated = False
         self._use(models, now)
         self._save()
 
     def _use(self, models: list[OpenRouterModel], read_at: float) -> None:
         self._models = models
         self._read_at = read_at
-        register_prices(prices_of(models))
+        register_prices(prices_of(models), cache_prices_of(models))
 
     def _load(self) -> None:
         if self.path is None:
@@ -239,18 +264,22 @@ class Catalog:
                     context_length=count_of(item.get("context_length")),
                     input_price=price_of(item.get("input_price")),
                     output_price=price_of(item.get("output_price")),
+                    cache_read_price=price_of(item.get("cache_read_price")),
+                    cache_write_price=price_of(item.get("cache_write_price")),
                 )
                 for item in saved["models"]
             ]
+            outdated = saved.get("format") != SAVED_FORMAT
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             # A list that cannot be read is read again, from OpenRouter
             return
+        self._outdated = outdated
         self._use(models, read_at)
 
     def _save(self) -> None:
         if self.path is None:
             return
-        saved = {"read_at": self._read_at, "models": [model.to_saved() for model in self._models]}
+        saved = {"format": SAVED_FORMAT, "read_at": self._read_at, "models": [model.to_saved() for model in self._models]}
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             write_atomically(self.path, json.dumps(saved).encode("utf-8"))

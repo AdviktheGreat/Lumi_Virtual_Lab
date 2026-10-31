@@ -43,13 +43,16 @@ def make_usage(
     completion_tokens: int = 20,
     cached_tokens: int = 0,
     reasoning_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> CompletionUsage:
     """Builds a usage object of the shape the API returns."""
     return CompletionUsage(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
-        prompt_tokens_details=PromptTokensDetails(cached_tokens=cached_tokens),
+        prompt_tokens_details=PromptTokensDetails(
+            cached_tokens=cached_tokens, cache_write_tokens=cache_write_tokens
+        ),
         completion_tokens_details=CompletionTokensDetails(reasoning_tokens=reasoning_tokens),
     )
 

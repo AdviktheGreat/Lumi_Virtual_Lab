@@ -39,6 +39,7 @@ from virtual_lab.constants import (
     REPORT_FILE_NAME,
     SESSION_LOG_DIR_NAME,
 )
+from virtual_lab.utils import cost_at_prices
 
 # The most of a tool's or a session's output shown for one message, half from each end
 MAX_EXPORTED_OUTPUT_CHARS = 6_000
@@ -548,15 +549,20 @@ def usage_table(usage: dict[str, Any], prices: dict[str, Any]) -> str:
     rows = []
     for model, counts in usage["per_model"].items():
         price = prices.get(model)
-        # Priced as MeetingUsage.compute_cost prices it, cached input at the full input rate
+        # Priced as MeetingUsage.compute_cost prices it
         if not price:
             cost = "unpriced"
         elif counts.get("unreported_calls"):
             cost = "unknown"
         else:
             cost = money(
-                (counts.get("input_tokens", 0) * price["input"] + counts.get("output_tokens", 0) * price["output"])
-                / 1_000_000
+                cost_at_prices(
+                    price,
+                    counts.get("input_tokens", 0),
+                    counts.get("output_tokens", 0),
+                    counts.get("cached_input_tokens", 0),
+                    counts.get("cache_write_tokens", 0),
+                )
             )
         rows.append(
             f"<tr><td>{escape(model)}</td><td class='number'>{counts.get('num_calls', 0):,}</td>"

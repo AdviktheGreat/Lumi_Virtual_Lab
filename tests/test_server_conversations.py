@@ -648,6 +648,7 @@ class TestSwitchingModel:
     @pytest.fixture(autouse=True)
     def without_prices_left_behind(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(utils, "REGISTERED_PRICES", {})
+        monkeypatch.setattr(utils, "REGISTERED_CACHE_PRICES", {})
         monkeypatch.delenv("LLM_SOURCE", raising=False)
 
     def test_a_conversation_goes_on_with_another_model_from_where_it_was(
