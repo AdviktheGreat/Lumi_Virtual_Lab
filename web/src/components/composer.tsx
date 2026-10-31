@@ -148,7 +148,7 @@ export function Composer({
 
   // A command that is chosen is run, or begun in the box where it takes something to be finished
   function pick(row: Row) {
-    if (row.reason !== null) return;
+    if (row.reason !== null || disabled) return;
     input.current?.focus();
     if ("fill" in row.action) {
       change(row.action.fill);
@@ -169,7 +169,7 @@ export function Composer({
         event.preventDefault();
         // While commands are offered, sending is choosing one, and where none can be chosen it is nothing
         if (menuOpen) {
-          if (lit >= 0 && !disabled) pick(rows[lit]);
+          if (lit >= 0) pick(rows[lit]);
         } else if (messaging) {
           if (canSend) onSend();
         } else if (canNote) {
