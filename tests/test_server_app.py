@@ -1593,6 +1593,58 @@ class TestMessages:
             "Antibodies.",
         ]
 
+    def test_a_message_can_be_given_with_a_command(self, client: TestClient, fake_client: FakeClient) -> None:
+        made = new_chat(client)
+        assert made["directives"]["ask"] is None
+        fake_client.completions.responses.append(text_response("From memory."))
+
+        response = client.post(
+            f"/api/chats/{made['id']}/messages", json={"text": "What is a nanobody?", "directive": "ask"}
+        )
+
+        assert response.status_code == 202
+        wait_idle(client, made["id"])
+        assert "tools" not in fake_client.completions.calls[0]
+        (user,) = [event for event in handle_of(client.app, made["id"]).chat.events_since() if event.kind == "user"]
+        assert (user.text, user.data["directive"]) == ("What is a nanobody?", "ask")
+
+    @pytest.mark.parametrize(
+        ("body", "message"),
+        [
+            ({"text": "Go", "directive": "dance"}, "/dance is not a command"),
+            ({"text": "", "directive": "ask"}, "/ask needs what it is for written after it"),
+            ({"text": "Go", "directive": "review"}, "/review cannot be given: the Scientific Critic is not on the team"),
+            ({"text": "", "directive": "review"}, "/review cannot be given"),
+            ({"text": "Go", "directive": "search"}, "/search cannot be given: no literature tool"),
+        ],
+    )
+    def test_a_command_that_cannot_be_given_is_refused(
+        self, body: dict[str, Any], message: str, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        made = new_chat(client, tools=[])
+
+        response = client.post(f"/api/chats/{made['id']}/messages", json=body)
+
+        assert response.status_code == 422 and error_of(response)["code"] == "invalid"
+        assert message in error_of(response)["message"]
+        assert client.get(f"/api/chats/{made['id']}").json()["turns"] == 0
+        assert fake_client.completions.calls == []
+
+    def test_what_a_conversation_can_be_given_as_commands_is_told_of(self, client: TestClient) -> None:
+        bare = new_chat(client, tools=[])
+        assert bare["directives"]["search"] == "no literature tool is turned on for this conversation"
+        assert bare["directives"]["review"] == "the Scientific Critic is not on the team"
+
+        searching = new_chat(client, tools=["pubmed_search"])
+        assert searching["directives"]["search"] is None
+
+    def test_a_command_name_is_not_taken_for_anything_but_text(self, client: TestClient) -> None:
+        made = new_chat(client)
+
+        for directive in (5, ["ask"], "x" * 51):
+            response = client.post(f"/api/chats/{made['id']}/messages", json={"text": "Go", "directive": directive})
+            assert response.status_code == 422
+
     @pytest.mark.parametrize(
         "body",
         [{}, {"text": ""}, {"text": "  \n "}, {"text": "x", "attachments": ["missing.csv"]}, {"attachments": ["a"]}],

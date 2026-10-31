@@ -595,3 +595,63 @@ def chat_attachments_prompt(files: Iterable[tuple[str, str]], can_open: bool, ca
         )
 
     return f"The researcher attached these files, but there is no session to open them in:\n{listed}"
+
+
+# What the lead is told when the researcher gives a command with a message, by the command's name
+CHAT_DIRECTIVE_PROMPTS = {
+    "ask": (
+        "The researcher gave the /ask command: they want a direct answer. You have no tools for this message, so "
+        "answer from what you know, say plainly what you could not check, and do not say that you will look "
+        "something up or run something."
+    ),
+    "plan": (
+        "The researcher gave the /plan command: they want a plan and nothing done yet. You have no tools for this "
+        "message, and nothing will be run. Write the plan only: the steps in order, what each needs (data, tools, "
+        "code, which scientists of your team), what could go wrong, and how you would check the result. Then ask "
+        "whether to go ahead."
+    ),
+    "code": (
+        "The researcher gave the /code command: they want this done with code. Write it and run it with run_code, "
+        "and answer from what it showed, not from memory. If a run fails, fix it and run it again. Say what you "
+        "ran and what it showed."
+    ),
+    "plot": (
+        "The researcher gave the /plot command: they want a figure. Make it with code and run it with run_code, "
+        "leaving the matplotlib figure open so that it is saved and shown. Label the axes, give it a title, and "
+        "say what it shows."
+    ),
+    "search": (
+        "The researcher gave the /search command: they want the literature searched first. Before you answer, "
+        "search it with your literature tools (PubMed, Europe PMC, arXiv, or Paperclip, whichever you have), and "
+        "read beyond the abstracts where it matters. Answer from what you found, and cite each claim by the "
+        "authors, the year, and a PMID, a DOI, or a link. Say when you found nothing."
+    ),
+    "review": (
+        "The researcher gave the /review command: they want the Scientific Critic to review your last answer. Call "
+        "convene_team with the Scientific Critic as the only member. The team cannot see this conversation, so "
+        "put your last answer in full in the agenda, with the question it answered and what it relied on, and ask "
+        "the Critic what is wrong, unsupported, or missing. Then tell the researcher what the Critic found and "
+        "what you would change, and give the corrected answer if it changes."
+    ),
+}
+
+# What the lead is told when it answers a command's message without having done what the command asked for
+CHAT_DIRECTIVE_REMINDER_PROMPTS = {
+    "code": (
+        "You have not run any code for this message, and the researcher asked for it with /code. Run it now with "
+        "run_code, and answer from what it showed."
+    ),
+    "plot": (
+        "No figure was made for this message, and the researcher asked for one with /plot. Make it now with code, "
+        "leaving the figure open so that it is saved, and say what it shows."
+    ),
+    "search": (
+        "You have not searched the literature for this message, and the researcher asked for it with /search. "
+        "Search it now with your literature tools, and answer from what you found, with citations."
+    ),
+    "review": (
+        "The Scientific Critic has not reviewed your last answer, and the researcher asked for it with /review. "
+        "Call convene_team now with the Scientific Critic as the only member, with your last answer in full in the "
+        "agenda."
+    ),
+}

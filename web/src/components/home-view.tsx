@@ -17,7 +17,7 @@ import { useSettings } from "@/components/settings-provider";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
-import type { Invocation } from "@/lib/commands";
+import { isDirective, written, type Invocation } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
@@ -46,15 +46,16 @@ export function HomeView() {
     if (refused.length > 0) setProblem(plainProblem(refused.join("\n")));
   }
 
-  async function start() {
-    const text = draft.trim();
+  // A conversation is begun with what is in the box, or with a command, which is given with the message that begins it
+  async function start(command?: Invocation) {
+    const text = command ? command.arg.trim() : draft.trim();
     setSending(true);
     setProblem(null);
     let chat: ChatInfo | null = null;
     try {
       chat = await api.createChat({ ...(chosen === null ? {} : { model: chosen }), ...limitsChosen });
       const names = await attachments.upload(chat.id);
-      await api.send(chat.id, text, names);
+      await api.send(chat.id, text, names, false, command?.name);
       void refresh();
       router.push(`/chat?id=${encodeURIComponent(chat.id)}`);
     } catch (error) {
@@ -63,6 +64,7 @@ export function HomeView() {
         await api.deleteChat(chat.id).catch(() => undefined);
         attachments.requeue();
       }
+      if (command) setDraft(written(command));
       report(error);
       setProblem(problemOf(error));
       setSending(false);
@@ -73,8 +75,14 @@ export function HomeView() {
   const missing = useMissingKeys(model, settings.closed);
   const ready = server.status === "ready" ? server.settings : null;
 
-  function run({ name }: Invocation) {
-    if (name === "budget") setLimiting(true);
+  // Where code cannot run, what asks for it is not offered, which is known before there is a conversation
+  const noCode = ready !== null && ready.code === "none" ? "code is turned off in the settings" : null;
+  const directives = ready === null ? null : { code: noCode, plot: noCode };
+
+  function run(invocation: Invocation) {
+    const { name } = invocation;
+    if (isDirective(name)) void start(invocation);
+    else if (name === "budget") setLimiting(true);
     else if (name === "model") setChoosing(true);
     else if (name === "help") setHelping(true);
   }
@@ -122,7 +130,7 @@ export function HomeView() {
                   onRemove: (id) => attachments.remove([id]),
                   onRetry: attachments.retry,
                 }}
-                commands={{ place: "home", turns: 0, onRun: run }}
+                commands={{ place: "home", turns: 0, answered: 0, directives, onRun: run }}
                 autoFocus
                 roomy
                 footer={model ? <ModelButton model={model} disabled={sending} onClick={() => setChoosing(true)} /> : undefined}

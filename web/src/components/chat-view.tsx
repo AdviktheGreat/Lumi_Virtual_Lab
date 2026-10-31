@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { attachedNames, readiness } from "@/lib/attachments";
-import type { Invocation } from "@/lib/commands";
+import { isDirective, written, type Invocation } from "@/lib/commands";
 import { describeError, plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { EXPORT_CHOICES } from "@/lib/export";
 import { filesChanged } from "@/lib/files";
@@ -106,17 +106,20 @@ export function ChatView({ id }: { id: string }) {
     if (refused.length > 0) setProblem(plainProblem(refused.join("\n")));
   }
 
-  async function send() {
-    const text = draft.trim();
+  // What is in the box is sent as a message, or a command is, which is given with a message of its own and which, when it
+  // could not be sent, is put back in the box
+  async function send(command?: Invocation) {
+    const text = command ? command.arg.trim() : draft.trim();
     const sent = attachments.items.filter((item) => item.status === "ready");
     setSending(true);
     setProblem(null);
     try {
-      await api.send(id, text, attachedNames(sent));
+      await api.send(id, text, attachedNames(sent), false, command?.name);
       setDraft("");
       attachments.remove(sent.map((item) => item.id));
       jump("instant");
     } catch (error) {
+      if (command) setDraft(written(command));
       report(error);
       setProblem(problemOf(error));
     } finally {
@@ -124,12 +127,12 @@ export function ChatView({ id }: { id: string }) {
     }
   }
 
-  // The last message is sent again with the files it had, in place of it and of what came of it
+  // The last message is sent again with the files it had, and the command, in place of it and of what came of it
   async function replace(turn: Turn, text: string) {
     setSending(true);
     setProblem(null);
     try {
-      await api.send(id, text.trim(), (turn.user?.attachments ?? []).map((file) => file.name), true);
+      await api.send(id, text.trim(), (turn.user?.attachments ?? []).map((file) => file.name), true, turn.user?.directive);
       setSentNotes([]);
       jump("instant");
     } catch (error) {
@@ -186,7 +189,13 @@ export function ChatView({ id }: { id: string }) {
     }
   }
 
-  function run({ name, arg }: Invocation) {
+  function run(invocation: Invocation) {
+    const { name, arg } = invocation;
+    if (isDirective(name)) {
+      void send(invocation);
+
+      return;
+    }
     switch (name) {
       case "budget":
         setLimiting(true);
@@ -342,7 +351,13 @@ export function ChatView({ id }: { id: string }) {
                 disabled={sending || status.kind !== "ready"}
                 holdUp={readiness(attachments.items)}
                 files={{ items: attachments.items, onAdd: attach, onRemove: (item) => attachments.remove([item]), onRetry: attachments.retry }}
-                commands={{ place: "chat", turns: transcript.turns.length, onRun: run }}
+                commands={{
+                  place: "chat",
+                  turns: transcript.turns.length,
+                  answered: transcript.turns.filter((turn) => turn.outcome === "answered").length,
+                  directives: status.kind === "ready" ? status.info.directives : null,
+                  onRun: run,
+                }}
                 footer={
                   model ? (
                     <ModelButton prefix={lead} model={model} disabled={working || sending} onClick={() => setChoosingModel(true)} />

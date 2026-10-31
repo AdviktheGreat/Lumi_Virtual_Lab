@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CircleAlert, OctagonX, Paperclip, Pencil, RotateCcw, type LucideIcon } from "lucide-react";
+import { CircleAlert, Info, OctagonX, Paperclip, Pencil, RotateCcw, type LucideIcon } from "lucide-react";
 import { Steps } from "@/components/activity";
 import { Avatar } from "@/components/avatar";
 import { CopyButton } from "@/components/copy-button";
@@ -7,6 +7,7 @@ import { Markdown } from "@/components/markdown";
 import { useSettings } from "@/components/settings-provider";
 import { useSetup } from "@/components/setup-provider";
 import { Button } from "@/components/ui/button";
+import { takesText, unmetNote } from "@/lib/commands";
 import type { Problem } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { holdNotice } from "@/lib/steering";
@@ -31,10 +32,24 @@ function Files({ files }: { files: Attachment[] }) {
   );
 }
 
-export function UserMessage({ text, attachments }: { text: string; attachments: Attachment[] }) {
+// The command a message was given with, which says how the lead was to answer it
+function DirectiveChip({ name }: { name: string }) {
+  return (
+    <span
+      className="rounded-md border border-brand/30 bg-highlight px-1.5 py-0.5 font-mono text-xs font-medium text-highlight-foreground"
+      data-testid="directive-chip"
+      title="The command this message was given with"
+    >
+      /{name}
+    </span>
+  );
+}
+
+export function UserMessage({ text, attachments, directive = null }: { text: string; attachments: Attachment[]; directive?: string | null }) {
   return (
     <div className="flex flex-col items-end gap-1.5" data-testid="user-message">
       <Files files={attachments} />
+      {directive !== null && <DirectiveChip name={directive} />}
       {text && (
         <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-border bg-card px-4 py-2.5 text-[15px] leading-6">
           {text}
@@ -49,10 +64,12 @@ export function UserMessage({ text, attachments }: { text: string; attachments: 
 function ReplaceableUserMessage({
   text,
   attachments,
+  directive,
   onReplace,
 }: {
   text: string;
   attachments: Attachment[];
+  directive: string | null;
   onReplace: (text: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -69,6 +86,7 @@ function ReplaceableUserMessage({
         }}
       >
         <Files files={attachments} />
+        {directive !== null && <DirectiveChip name={directive} />}
         <textarea
           aria-label="Edit message"
           autoFocus
@@ -94,24 +112,26 @@ function ReplaceableUserMessage({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <UserMessage text={text} attachments={attachments} />
+      <UserMessage text={text} attachments={attachments} directive={directive} />
       <div className="flex gap-1">
         <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => onReplace(text)}>
           <RotateCcw aria-hidden />
           Retry
         </Button>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="text-muted-foreground"
-          onClick={() => {
-            setDraft(text);
-            setEditing(true);
-          }}
-        >
-          <Pencil aria-hidden />
-          Edit
-        </Button>
+        {(directive === null || takesText(directive)) && (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="text-muted-foreground"
+            onClick={() => {
+              setDraft(text);
+              setEditing(true);
+            }}
+          >
+            <Pencil aria-hidden />
+            Edit
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -221,9 +241,15 @@ export function TurnView({
     <section className="flex flex-col gap-5" aria-label={`Turn ${turn.number}`}>
       {turn.user &&
         (onReplace ? (
-          <ReplaceableUserMessage key={turn.user.text} text={turn.user.text} attachments={turn.user.attachments} onReplace={onReplace} />
+          <ReplaceableUserMessage
+            key={turn.user.text}
+            text={turn.user.text}
+            attachments={turn.user.attachments}
+            directive={turn.user.directive}
+            onReplace={onReplace}
+          />
         ) : (
-          <UserMessage text={turn.user.text} attachments={turn.user.attachments} />
+          <UserMessage text={turn.user.text} attachments={turn.user.attachments} directive={turn.user.directive} />
         ))}
       {(turn.steps.length > 0 || reply !== "" || thinking || held !== null) && (
         <LeadBlock speaker={lead}>
@@ -245,6 +271,11 @@ export function TurnView({
             </div>
           )}
         </LeadBlock>
+      )}
+      {turn.outcome === "answered" && turn.directiveMet === false && turn.user?.directive && unmetNote(turn.user.directive) && (
+        <Notice tone="muted" icon={Info}>
+          <span data-testid="directive-unmet">{unmetNote(turn.user.directive)}</span>
+        </Notice>
       )}
       {turn.outcome === "stopped" && <Notice tone="muted">{turn.text || "Stopped."}</Notice>}
       {turn.outcome === "failed" && (

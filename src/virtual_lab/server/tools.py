@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from virtual_lab.constants import CHAT_UPLOADS_DIR_NAME
+from virtual_lab.directives import LITERATURE_TOOL_NAMES
 from virtual_lab.tables import list_data_files
 from virtual_lab.tools import (
     DATABASE_TOOLS,
@@ -22,7 +23,7 @@ from virtual_lab.tools import (
 # The tools by what they are for, which is how the settings list them and the order of each, so that a tool is
 # listed beside those it is used with
 GROUPS: dict[str, tuple[str, ...]] = {
-    "Literature": ("pubmed_search", "europepmc_search", "europepmc_lookup", "europepmc_fulltext", "arxiv_search"),
+    "Literature": LITERATURE_TOOL_NAMES,
     "Proteins and structures": (
         "uniprot_search",
         "uniprot_lookup",

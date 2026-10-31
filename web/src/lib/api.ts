@@ -432,12 +432,14 @@ export const api = {
     request<ChatInfo>("PUT", `/chats/${encodeURIComponent(id)}/limits`, changes),
   deleteChat: (id: string) => request<void>("DELETE", `/chats/${encodeURIComponent(id)}`),
   // Attachments are named as the server named them when it was sent the files. With replaceLast the message takes the
-  // place of the last one, which is taken out of the conversation, to send it again or changed.
-  send: (id: string, text: string, attachments: string[] = [], replaceLast = false) =>
+  // place of the last one, which is taken out of the conversation, to send it again or changed. With a directive the
+  // message is given with a command, such as "ask", which says how the lead is to answer it.
+  send: (id: string, text: string, attachments: string[] = [], replaceLast = false, directive?: string | null) =>
     request<{ turn: number; state: string }>("POST", `/chats/${encodeURIComponent(id)}/messages`, {
       text,
       attachments,
       ...(replaceLast ? { replace_last: true } : {}),
+      ...(directive ? { directive } : {}),
     }),
   // What steers a turn that is running is accepted or not: a turn that has ended meanwhile has nothing to steer
   note: (id: string, text: string) =>

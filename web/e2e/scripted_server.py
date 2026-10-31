@@ -19,6 +19,8 @@ from a script: no key is needed, and every run says the same. What it says depen
   in the team for a round of discussion, and "lab:consult" ask one scientist, whose replies the script writes too.
   "lab:code" brings in one scientist who runs code in the session, if the conversation has one, before they reply.
   "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
+- A message given with a command, such as /ask, is answered as it is without one, except that /review has it bring in the
+  Scientific Critic, and that what the command tells the lead is not repeated in the reply that repeats the question.
 - "mcp:" and a word (echo, count, both, order, confirm, signed, gated) make it call the tools of the MCP servers that
   the tests of mcp/ set up, which are the test server of tests/mcp_test_server.py under the names genes, vault, and
   gate.
@@ -291,6 +293,13 @@ SCENARIOS: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
         ("Seeing what was attached.", "data_files", {}),
         ("Looking inside it.", "inspect_data_file", {"filename": "uploads/counts.csv"}),
     ],
+    "/review command": [
+        (
+            "Asking the Critic to look.",
+            "convene_team",
+            {"agenda": TEAM_AGENDA, "members": ["Scientific Critic"], "rounds": 1},
+        )
+    ],
     "lab:team": [
         (
             "Bringing in the team.",
@@ -410,6 +419,9 @@ def scientist_of(kwargs: dict[str, Any]) -> str | None:
     if tools & {"convene_team", "consult"}:
         return None
     system = next((message["content"] for message in kwargs["messages"] if message["role"] == "system"), "")
+    # The lead is the one who is talking with the researcher, which it is when it has no tools too, as it has for /ask
+    if isinstance(system, str) and "You are talking with a human researcher" in system:
+        return None
     found = re.match(r"You are an? ([^.]+)\.", system) if isinstance(system, str) else None
 
     return found.group(1) if found else None
@@ -565,6 +577,8 @@ def call_response(narration: str, name: str, arguments: dict[str, Any], call_id:
 
 
 def reply_to(question: str) -> str:
+    # What a command tells the lead goes after what the researcher wrote, and is not what they asked
+    question = question.split("\n\nThe researcher gave the /")[0]
     if "USER QUERY:" in question and "AVAILABLE TOOLS:" in question:
         return RETRIEVAL_REPLY
     if "markdown:" in question:

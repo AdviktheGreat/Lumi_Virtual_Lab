@@ -294,6 +294,14 @@ answering a message, and how many rounds each may have. It works while the lead 
 by the spending limit offers it as Raise the limit. The others stand for what the buttons do: `/model`, `/rename`,
 `/export`, `/files`, `/new`, `/pause`, `/resume`, `/stop`, and `/help`.
 
+`/ask`, `/plan`, `/search`, `/code`, `/plot`, and `/review` go with the message as a command (`directive` in
+`POST /api/chats/{id}/messages`), which the transcript shows as a chip on the message. `/ask` and `/plan` answer
+without tools, `/search` reads the literature first and cites what it found, `/code` and `/plot` run code, and `/review`
+has the Critic go over the last answer. A command is a part of the message, so Retry and Edit send it again with it, and
+the server holds the lead to it: an answer that did not do what was asked is shown with a note saying so. A command that
+cannot be carried out, such as `/code` where code is turned off in the settings, is listed with why, and one the server
+refuses puts the text back in the box. The rules are in `src/lib/commands.ts` and `src/lib/transcript.ts`.
+
 ## Files
 
 A file is attached with the paperclip, by dropping it on the composer, or by pasting it. With a conversation to send it

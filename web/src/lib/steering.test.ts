@@ -13,6 +13,7 @@ const turn = (number: number, outcome: Outcome = "running", steps: Step[] = []):
   outcome,
   text: "",
   errorType: null,
+  directiveMet: null,
 });
 
 describe("what can be done in each state", () => {

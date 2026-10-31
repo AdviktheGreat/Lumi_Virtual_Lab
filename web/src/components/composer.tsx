@@ -22,8 +22,11 @@ export interface ComposerFiles {
 // The commands that can be written in the box, which is a slash and a name
 export interface ComposerCommands {
   place: Place;
-  // How many turns the conversation has had
+  // How many turns the conversation has had, and how many of them the lead answered
   turns: number;
+  answered: number;
+  // Why the conversation cannot be given each command that goes with a message, once there is one
+  directives?: Record<string, string | null> | null;
   onRun: (invocation: Invocation) => void;
 }
 
@@ -113,9 +116,12 @@ export function Composer({
   const controls = controlsFor(state);
   const place = commands?.place;
   const turns = commands?.turns ?? 0;
+  const answered = commands?.answered ?? 0;
+  const directives = commands?.directives ?? null;
   const rows = useMemo(
-    () => (place === undefined || putAwayAt === value ? [] : rowsFor(value, { place, state, turns })),
-    [place, state, turns, value, putAwayAt],
+    () =>
+      place === undefined || putAwayAt === value ? [] : rowsFor(value, { place, state, turns, answered, holdUp, directives }),
+    [place, state, turns, answered, holdUp, directives, value, putAwayAt],
   );
   const menuOpen = rows.length > 0;
   const lit = menuOpen ? litRow(rows, cursor) : -1;
