@@ -2741,6 +2741,27 @@ class TestLab:
         meeting = request_text(fake_client, 1)
         assert "Design a nanobody against KP.3." in meeting and "1. Which epitope?" in meeting
 
+    def test_a_choice_is_checked_without_the_conversation_being_taken_for_a_turn_and_those_to_join_are_taken_as_on_the_team(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path)
+        lab = {"mode": "team", "members": ["Geneticist", "Immunologist"], "rounds": 1}
+        outside = {**lab, "members": ["Nobody Here"]}
+
+        chat.check_lab("Go", {**lab, "members": ["Immunologist"]})
+        with pytest.raises(ValueError, match='"Geneticist" is not on the team'):
+            chat.check_lab("Go", lab)
+        chat.check_lab("Go", lab, joining=["geneticist"])
+        with pytest.raises(ValueError, match='"Nobody Here" is not on the team'):
+            chat.check_lab("Go", outside, joining=["Geneticist"])
+        with pytest.raises(ValueError, match="needs what it is for"):
+            chat.check_lab("  ", lab, joining=["Geneticist"])
+        with pytest.raises(ValueError, match="at most"):
+            chat.check_lab("Go", {**lab, "rounds": 99}, joining=["Geneticist"])
+        with pytest.raises(ValueError, match="at least one scientist"):
+            chat.check_lab("Go", {"members": []})
+        assert chat.turns == 0 and chat.events_since() == [] and fake_client.completions.calls == []
+
     def test_what_the_lead_asks_for_besides_the_agenda_is_not_taken_and_its_questions_are_added(
         self, fake_client: FakeClient, tmp_path: Path
     ) -> None:

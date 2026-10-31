@@ -12,7 +12,7 @@ import math
 import re
 import shutil
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
@@ -394,13 +394,18 @@ class Conversations:
                     ) from error
             return self._reopened_with(chat_id, handle, changed)
 
-    def include_scientists(self, chat_id: str, titles: Sequence[str]) -> ChatHandle:
+    def include_scientists(
+        self, chat_id: str, titles: Sequence[str], check: Callable[[Chat, list[str]], None] | None = None
+    ) -> ChatHandle:
         """Has a conversation's team include these scientists of the library, which are those the researcher chose to
         work on a message and who it was not begun with. What was said and its files are kept, and code that was running
         starts afresh. A conversation whose team has them all is left as it is, working or not.
 
-        :raises ApiError: If there is no such conversation, a title is not in the library, the team has to change and the
-            conversation is working, or it cannot be opened with the team it would have, in which case it goes on as it was.
+        :param check: Called with the conversation and the titles of those who are to join, before the team is changed,
+            and raises ValueError if what they are to work on cannot be, so that the team is not changed for nothing.
+        :raises ApiError: If there is no such conversation, a title is not in the library, what check raises, the team
+            has to change and the conversation is working, or it cannot be opened with the team it would have, in
+            which case it goes on as it was.
         """
         with self._lock:
             handle = self.get(chat_id)
@@ -418,6 +423,11 @@ class Conversations:
                 known.add(normalize_title(missing[-1]["title"]))
             if not missing:
                 return handle
+            if check is not None:
+                try:
+                    check(handle.chat, [member["title"] for member in missing])
+                except ValueError as error:
+                    raise ApiError(422, "invalid", str(error)) from error
             if handle.chat.state != "idle":
                 raise ApiError(
                     409,

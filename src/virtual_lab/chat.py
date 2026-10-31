@@ -1091,6 +1091,21 @@ class Chat:
 
         return thread
 
+    def check_lab(self, message: str, lab: LabRequest | Mapping[str, Any], joining: Sequence[str] = ()) -> None:
+        """Checks that /lab can be given with this message, as send and start would, without taking the conversation
+        for a turn, so that a team is not changed for a command that is then refused.
+
+        :param joining: The titles of the scientists who are to be put on the team first, and so are taken to be on it.
+        :raises ValueError: If /lab cannot be given: it is not valid, needs something written with it, or the scientists
+            it names cannot work on it.
+        """
+        directive = directive_named("lab")
+        request = self._lab_request(directive, lab)
+        if not message.strip():
+            raise ValueError("/lab needs what it is for written after it")
+        if (why := self._why_not(directive, None, request, joining)) is not None:
+            raise ValueError(f"/lab cannot be given: {why}")
+
     def _begin(
         self,
         message: str,
@@ -1308,6 +1323,7 @@ class Chat:
         directive: Directive,
         messages: Sequence[dict[str, Any]] | None = None,
         lab: LabRequest | None = None,
+        joining: Sequence[str] = (),
     ) -> str | None:
         """Why a command cannot be given, in words, or None if it can.
 
@@ -1315,6 +1331,8 @@ class Chat:
             given. Without them, those are not checked for it.
         :param lab: Who /lab names, which is checked against the team. Without it, only whether the lead may start team
             sessions is.
+        :param joining: The titles of scientists who are to be put on the team before the command is given, and so are
+            taken to be on it.
         """
         match directive.name:
             case "code" | "plot":
@@ -1343,16 +1361,17 @@ class Chat:
                 if self.max_delegations == 0:
                     return "the lead may not start team sessions"
                 if lab is not None:
-                    return self._why_not_lab(lab)
+                    return self._why_not_lab(lab, joining)
 
         return None
 
-    def _why_not_lab(self, lab: LabRequest) -> str | None:
+    def _why_not_lab(self, lab: LabRequest, joining: Sequence[str] = ()) -> str | None:
         """Why the scientists a /lab names cannot work on a message, or None if they can."""
+        coming = {normalize_title(title) for title in joining}
         for title in lab.members:
             if normalize_title(title) == normalize_title(self.lead.title):
                 return f"{self.lead.title} leads the session, so choose the others"
-            if self._find_member(title) is None:
+            if self._find_member(title) is None and normalize_title(title) not in coming:
                 return f'"{title}" is not on the team'
         if lab.rounds > self.max_rounds:
             return f"a session may have at most {self.max_rounds} round{'s' if self.max_rounds != 1 else ''}"

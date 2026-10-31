@@ -1731,6 +1731,66 @@ class TestMessages:
         assert fake_client.completions.calls == []
 
     @pytest.mark.parametrize(
+        ("text", "lab", "limits", "team", "message"),
+        [
+            ("Go", {"members": ["Geneticist"], "rounds": 4}, {}, ["Immunologist", "Scientific Critic"], "at most 3 round"),
+            ("Go", {"members": ["Geneticist"], "rounds": 1}, {"max_rounds": 0}, ["Immunologist", "Scientific Critic"], "at most 0 round"),
+            ("  ", {"members": ["Geneticist"], "rounds": 0}, {}, ["Immunologist", "Scientific Critic"], "needs what it is for"),
+            (
+                "Go",
+                {"members": ["Geneticist"], "rounds": 0},
+                {"max_delegations": 0},
+                ["Immunologist", "Scientific Critic"],
+                "may not start team sessions",
+            ),
+            (
+                "Go",
+                {"mode": "individual", "members": ["Geneticist", "Immunologist"], "rounds": 0},
+                {},
+                ["Immunologist", "Scientific Critic"],
+                "one scientist",
+            ),
+            (
+                "Go",
+                {"mode": "individual", "members": ["Geneticist"], "rounds": 0},
+                {},
+                ["Immunologist"],
+                "is not on the team to review",
+            ),
+            (
+                "Go",
+                {"members": ["Principal Investigator", "Geneticist"], "rounds": 0},
+                {},
+                ["Immunologist", "Scientific Critic"],
+                "leads the session",
+            ),
+        ],
+    )
+    def test_a_lab_session_that_is_refused_for_what_is_asked_leaves_the_team_as_it_was_where_scientists_were_to_join(
+        self,
+        text: str,
+        lab: dict[str, Any],
+        limits: dict[str, Any],
+        team: list[str],
+        message: str,
+        client: TestClient,
+        fake_client: FakeClient,
+    ) -> None:
+        made = new_chat(client, team=team)
+        if limits:
+            assert client.put(f"/api/chats/{made['id']}/limits", json=limits).status_code == 200
+        before = handle_of(client.app, made["id"])
+
+        response = client.post(f"/api/chats/{made['id']}/messages", json={"text": text, "directive": "lab", "lab": lab})
+
+        assert response.status_code == 422 and error_of(response)["code"] == "invalid"
+        assert message in error_of(response)["message"]
+        info = client.get(f"/api/chats/{made['id']}").json()
+        assert [member["title"] for member in info["config"]["team"]] == team
+        assert handle_of(client.app, made["id"]) is before
+        assert info["turns"] == 0 and fake_client.completions.calls == []
+
+    @pytest.mark.parametrize(
         "lab",
         [
             {"members": ["Immunologist"], "rounds": 11},

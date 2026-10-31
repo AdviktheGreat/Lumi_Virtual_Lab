@@ -1125,7 +1125,10 @@ def create_app(
         handle = conversations.ready(chat_id)
         # The scientists a /lab names who are not on the team are put on it first, which opens the conversation again
         if body.directive == "lab" and body.lab is not None:
-            handle = conversations.include_scientists(chat_id, body.lab.members)
+            lab = body.lab.model_dump()
+            handle = conversations.include_scientists(
+                chat_id, body.lab.members, lambda chat, joining: chat.check_lab(body.text, lab, joining)
+            )
         try:
             handle.chat.start(
                 body.text,
