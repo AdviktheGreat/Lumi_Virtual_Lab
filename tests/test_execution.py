@@ -72,6 +72,26 @@ class TestSandboxCommand:
     def test_the_root_filesystem_is_read_only(self) -> None:
         assert "--read-only" in command_of()
 
+    def test_the_scratch_space_can_hold_programs_and_libraries_that_are_run(self) -> None:
+        # A tmpfs is mounted noexec unless told otherwise, so a library that pip installed for the user, in HOME, could
+        # not be loaded ("failed to map segment from shared object")
+        arguments = command_of()
+        scratch = arguments[arguments.index("--tmpfs") + 1]
+        path, _, options = scratch.partition(":")
+
+        assert path == "/tmp"
+        assert options.split(",") == ["rw", "exec", "size=256m", "mode=1777"]
+        assert "HOME=/tmp" in arguments
+
+    def test_the_scratch_space_is_still_bounded_and_the_root_is_still_read_only(self) -> None:
+        arguments = DockerExecutor(tmpfs_size="64m").build_command(
+            directory=Path("/meeting"), command=("python", "./a.py"), container_name="probe"
+        )
+
+        assert arguments[arguments.index("--tmpfs") + 1] == "/tmp:rw,exec,size=64m,mode=1777"
+        assert "--read-only" in arguments
+        assert arguments[arguments.index("--cap-drop") + 1] == "ALL"
+
     def test_only_the_meeting_directory_is_mounted(self) -> None:
         arguments = command_of(directory=Path("/meeting/artifacts/discussion"))
         mounts = [
@@ -625,6 +645,19 @@ class TestSandbox:
 
         assert "NETWORK REACHED" not in result.stdout
         assert "blocked:" in result.stdout
+
+    @needs_docker
+    def test_a_program_written_to_the_scratch_space_can_be_run(self, tmp_path) -> None:
+        (tmp_path / "script.py").write_text(
+            "import shutil, subprocess\n"
+            "shutil.copy(shutil.which('true'), '/tmp/copied')\n"
+            "print('exit status', subprocess.run(['/tmp/copied']).returncode)"
+        )
+
+        result = DOCKER.run(directory=tmp_path, command=("python", "./script.py"))
+
+        assert result.succeeded, result.stderr
+        assert "exit status 0" in result.stdout
 
     @needs_docker
     def test_the_root_filesystem_cannot_be_written(self, tmp_path) -> None:

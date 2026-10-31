@@ -453,7 +453,10 @@ class DockerExecutor:
             "bridge" if self.allow_network else "none",
             "--read-only",
             "--tmpfs",
-            f"/tmp:rw,size={self.tmpfs_size},mode=1777",
+            # exec, because a tmpfs is mounted noexec unless told otherwise, and HOME is here: what pip installs for the
+            # user (a library with a compiled part, such as pymupdf) could not be loaded from it. Code can run what it
+            # writes to the working directory all the same, so noexec kept nothing from it.
+            f"/tmp:rw,exec,size={self.tmpfs_size},mode=1777",
             "--mount",
             f"type=bind,source={directory},target={SANDBOX_WORK_DIR}",
             *self.data_lake_arguments(directory),

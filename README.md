@@ -215,7 +215,7 @@ results = run_files(
 )
 ```
 
-The container has no network access, no view of your filesystem beyond the meeting's own output directory, a read-only root filesystem, and hard limits on memory, processes, and wall clock time. It is not given your environment, so the code cannot read your API key. Scripts that genuinely need to reach the internet require `DockerExecutor(allow_network=True)`.
+The container has no network access, no view of your filesystem beyond the meeting's own output directory, a read-only root filesystem, and hard limits on memory, processes, and wall clock time. It is not given your environment, so the code cannot read your API key. Scripts that genuinely need to reach the internet require `DockerExecutor(allow_network=True)`. The one place besides the meeting's directory that code can write is a scratch space at `/tmp`, which is also its home directory, and what is put there can be run: a library that `pip install` adds for the user, such as one with a compiled part, loads from it. (A scratch space is otherwise mounted so that nothing in it can run, but code can run what it writes to the meeting's directory in any case, so that kept nothing from it.) It is emptied when the container stops, so a session that is to keep a library installs it with `--target` under the meeting's directory.
 
 The first run pulls the sandbox image, which takes a minute. Files the code writes into its working directory appear on your machine; everything else it does is discarded with the container.
 
