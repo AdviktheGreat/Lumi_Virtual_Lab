@@ -477,6 +477,9 @@ class TestAToolCallWrittenOut:
 
         assert "tools" in fake_client.completions.calls[1]
         assert "tools" not in fake_client.completions.calls[2]
+        # Nothing of it is shown, but the page is told that what it was writing is done
+        (closed,) = [event for event in of(chat.events_since(), "tool_calls") if event.data["calls"] == []]
+        assert closed.text == ""
 
     def test_on_the_last_request_it_is_asked_again_without_being_told_to_call_a_tool(
         self, fake_client: FakeClient, tmp_path: Path

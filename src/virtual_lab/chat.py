@@ -1591,6 +1591,8 @@ class Chat:
             if writes_calls and faked < MAX_FAKED_CALL_RETRIES:
                 faked += 1
                 self._append({"role": "assistant", "name": self.lead.name, "content": reply.content})
+                # Told even when nothing is left of what it wrote, since any event but a reply being written is what
+                # closes the half-written one a page is showing
                 self._emit("tool_calls", speaker=self.lead.title, text=without_faked_calls(reply.content), calls=[])
                 self._append({"role": "user", "content": faked_tool_calls_prompt(tools_offered=not final)})
                 continue
