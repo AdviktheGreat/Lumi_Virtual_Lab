@@ -1,7 +1,8 @@
 import { cellOf, type Cell } from "./cell";
 import { reduceLab, settleLab, writeLab, type LabSession } from "./lab";
 import { asNumber, asRecord, asStrings, asText } from "./read";
-import type { Attachment, ChatEvent, ChatState } from "./types";
+import { labChoiceOf } from "./team-choice";
+import type { Attachment, ChatEvent, ChatState, LabChoice } from "./types";
 
 export type { Cell };
 
@@ -95,8 +96,8 @@ export type Step =
 
 export interface Turn {
   number: number;
-  // What the researcher sent, and the command it was given with, if it was given with one
-  user: { text: string; attachments: Attachment[]; directive: string | null } | null;
+  // What the researcher sent, and the command it was given with, if it was given with one, and with /lab who was to work on it
+  user: { text: string; attachments: Attachment[]; directive: string | null; lab: LabChoice | null } | null;
   steps: Step[];
   // What the lead is writing now, which the reply that is final replaces
   writing: string;
@@ -340,6 +341,7 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
           text: event.text,
           attachments: attachmentsOf(event),
           directive: typeof event.data.directive === "string" ? event.data.directive : null,
+          lab: labChoiceOf(event.data.lab),
         },
       }));
     case "withdrawn": {

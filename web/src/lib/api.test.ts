@@ -71,12 +71,19 @@ describe("the API", () => {
     await api.send("a", "Why?", [], false, "ask");
     await api.send("a", "Why?", [], true, null);
     await api.send("a", "", [], true, "review");
+    await api.send("a", "Design", [], false, "lab", { mode: "individual", members: ["Immunologist"], rounds: 1, questions: [] });
 
     const bodies = (fetch.mock.calls as unknown as [string, RequestInit][]).map(([, options]) => options.body);
     expect(bodies).toEqual([
       JSON.stringify({ text: "Why?", attachments: [], directive: "ask" }),
       JSON.stringify({ text: "Why?", attachments: [], replace_last: true }),
       JSON.stringify({ text: "", attachments: [], replace_last: true, directive: "review" }),
+      JSON.stringify({
+        text: "Design",
+        attachments: [],
+        directive: "lab",
+        lab: { mode: "individual", members: ["Immunologist"], rounds: 1, questions: [] },
+      }),
     ]);
   });
 

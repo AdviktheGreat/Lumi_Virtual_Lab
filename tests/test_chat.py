@@ -31,6 +31,7 @@ from virtual_lab.chat import (
     title_of,
 )
 from virtual_lab.constants import HUMAN_SPEAKER
+from virtual_lab.directives import LabRequest
 from virtual_lab.events import ChatEvent
 from virtual_lab.failures import KEY_REFUSED, SAFETY_FLAGGED, UNWELL
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
@@ -2636,6 +2637,7 @@ class TestCommands:
             "plot": "nothing can run code in this conversation",
             "search": "no literature tool is turned on for this conversation",
             "review": None,
+            "lab": None,
         }
 
         equipped = make_chat(tmp_path / "equipped", session=session, tools=(looking_up("pubmed_search"),))
@@ -2683,6 +2685,278 @@ class TestCommands:
         saved = lines(tmp_path / "chat" / "events.jsonl")
 
         assert [event["data"]["directive"] for event in saved if event["kind"] == "user"] == ["plan"]
+
+
+def request_text(fake_client: FakeClient, call: int) -> str:
+    return "\n".join(str(message.get("content")) for message in request_messages(fake_client, call))
+
+
+def tool_names_of(fake_client: FakeClient, call: int) -> list[str]:
+    return [tool["function"]["name"] for tool in fake_client.completions.calls[call]["tools"]]
+
+
+class TestLab:
+    """/lab: the researcher chooses who works on a message, and the lead is left to write what they are told."""
+
+    def test_the_lead_is_given_one_tool_with_who_works_on_it_set(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("convene_team", {"agenda": "Design a nanobody against KP.3."}),
+            text_response("Opening."),
+            text_response("An immunology view."),
+            text_response("A structural view."),
+            text_response("Summary."),
+            text_response("The team agrees."),
+        ]
+        chat = make_chat(tmp_path)
+
+        reply = chat.send(
+            "Design a nanobody",
+            directive="lab",
+            lab={
+                "mode": "team",
+                "members": ["Immunologist", "Computational Biologist"],
+                "rounds": 1,
+                "questions": ["Which epitope?"],
+            },
+        )
+
+        assert reply.text == "The team agrees."
+        (tool,) = [tool for tool in fake_client.completions.calls[0]["tools"] if tool["function"]["name"] == "convene_team"]
+        assert set(tool["function"]["parameters"]["properties"]) == {"agenda", "questions"}
+        assert "consult" not in tool_names_of(fake_client, 0)
+        told = request_messages(fake_client, 0)[-1]["content"]
+        assert told.startswith("Design a nanobody\n\nThe researcher gave the /lab command")
+        assert "Immunologist, Computational Biologist" in told and "1 round " in told and "- Which epitope?" in told
+        events = chat.events_since()
+        (user,) = of(events, "user")
+        assert user.data["directive"] == "lab"
+        assert user.data["lab"] == {
+            "mode": "team",
+            "members": ["Immunologist", "Computational Biologist"],
+            "rounds": 1,
+            "questions": ["Which epitope?"],
+        }
+        assert lab_events(events, "started")[0].data["details"]["meeting_type"] == "team"
+        assert of(events, "answer")[0].data["directive_met"] is True
+        meeting = request_text(fake_client, 1)
+        assert "Design a nanobody against KP.3." in meeting and "1. Which epitope?" in meeting
+
+    def test_a_choice_is_checked_without_the_conversation_being_taken_for_a_turn_and_those_to_join_are_taken_as_on_the_team(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path)
+        lab = {"mode": "team", "members": ["Geneticist", "Immunologist"], "rounds": 1}
+        outside = {**lab, "members": ["Nobody Here"]}
+
+        chat.check_lab("Go", {**lab, "members": ["Immunologist"]})
+        with pytest.raises(ValueError, match='"Geneticist" is not on the team'):
+            chat.check_lab("Go", lab)
+        chat.check_lab("Go", lab, joining=["geneticist"])
+        with pytest.raises(ValueError, match='"Nobody Here" is not on the team'):
+            chat.check_lab("Go", outside, joining=["Geneticist"])
+        with pytest.raises(ValueError, match="needs what it is for"):
+            chat.check_lab("  ", lab, joining=["Geneticist"])
+        with pytest.raises(ValueError, match="at most"):
+            chat.check_lab("Go", {**lab, "rounds": 99}, joining=["Geneticist"])
+        with pytest.raises(ValueError, match="at least one scientist"):
+            chat.check_lab("Go", {"members": []})
+        assert chat.turns == 0 and chat.events_since() == [] and fake_client.completions.calls == []
+
+    def test_what_the_lead_asks_for_besides_the_agenda_is_not_taken_and_its_questions_are_added(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response(
+                "convene_team",
+                {
+                    "agenda": "Go.",
+                    "members": ["Scientific Critic"],
+                    "rounds": 3,
+                    "questions": ["Which epitope?", "How stable?"],
+                },
+            ),
+            text_response("Opening."),
+            text_response("One."),
+            text_response("Two."),
+            text_response("Summary."),
+            text_response("Done."),
+        ]
+        chat = make_chat(tmp_path)
+
+        chat.send(
+            "Go",
+            directive="lab",
+            lab={"members": ["Immunologist", "Computational Biologist"], "rounds": 1, "questions": ["Which epitope?"]},
+        )
+
+        turns = lab_events(chat.events_since(), "turn")
+        assert {event.speaker for event in turns} == {"Principal Investigator", "Immunologist", "Computational Biologist"}
+        # One round of discussion, and the round that ends it, and not the three the lead asked for
+        assert max(event.data["round"] for event in turns) == 2
+        meeting = request_text(fake_client, 1)
+        assert "1. Which epitope?" in meeting and "2. How stable?" in meeting and "3. " not in meeting
+
+    def test_one_scientist_works_on_it_with_the_critic_reviewing(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("consult", {"agenda": "Is it immunogenic?"}),
+            text_response("A first answer."),
+            text_response("A critique."),
+            text_response("A better answer."),
+            text_response("Not immunogenic."),
+        ]
+        chat = make_chat(tmp_path)
+
+        chat.send("Is it immunogenic?", directive="lab", lab={"mode": "individual", "members": ["Immunologist"]})
+
+        assert "convene_team" not in tool_names_of(fake_client, 0)
+        events = chat.events_since()
+        assert [event.speaker for event in lab_events(events, "turn")] == [
+            "Immunologist",
+            "Scientific Critic",
+            "Immunologist",
+        ]
+        assert "Immunologist to work on this on their own" in request_messages(fake_client, 0)[-1]["content"]
+        assert of(events, "answer")[0].data["directive_met"] is True
+
+    def test_a_lead_that_answers_without_bringing_them_together_is_told_once_to(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            text_response("I think it is fine."),
+            tool_call_response("convene_team", {"agenda": "Go."}),
+            text_response("An answer."),
+            text_response("The team found it fine."),
+        ]
+        chat = make_chat(tmp_path)
+
+        reply = chat.send("Is it fine?", directive="lab", lab={"members": ["Immunologist"], "rounds": 0})
+
+        assert reply.text == "The team found it fine."
+        assert request_messages(fake_client, 1)[-1]["content"].startswith("No team session has been held")
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is True
+
+    def test_a_lead_that_still_does_not_is_not_told_again_and_the_answer_says_so(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("Fine."), text_response("Really fine.")]
+        chat = make_chat(tmp_path)
+
+        reply = chat.send("Is it fine?", directive="lab", lab={"members": ["Immunologist"]})
+
+        assert reply.text == "Really fine."
+        assert len(fake_client.completions.calls) == 2
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is False
+
+    def test_the_next_message_has_the_teams_tools_as_they_were(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("convene_team", {"agenda": "Go."}),
+            text_response("Alone."),
+            text_response("Done."),
+            text_response("Later."),
+        ]
+        chat = make_chat(tmp_path)
+        chat.send("Go", directive="lab", lab={"members": ["Immunologist"], "rounds": 0})
+
+        chat.send("And now?")
+
+        (tool,) = [tool for tool in fake_client.completions.calls[3]["tools"] if tool["function"]["name"] == "convene_team"]
+        assert "members" in tool["function"]["parameters"]["properties"]
+        assert "consult" in tool_names_of(fake_client, 3)
+        assert "lab" not in of(chat.events_since(), "user")[1].data
+
+    @pytest.mark.parametrize(
+        ("lab", "why"),
+        [
+            ({"members": ["Astrologer"]}, '"Astrologer" is not on the team'),
+            ({"members": ["Principal Investigator"]}, "Principal Investigator leads the session"),
+            ({"members": ["Immunologist"], "rounds": 4}, "at most 3 rounds"),
+            ({"mode": "individual", "members": ["Scientific Critic"]}, "reviews, so choose another"),
+        ],
+    )
+    def test_who_cannot_work_on_it_is_refused_before_anything_is_said(
+        self, lab: dict[str, Any], why: str, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path)
+
+        with pytest.raises(ValueError, match=f"/lab cannot be given: .*{why}"):
+            chat.send("Go", directive="lab", lab=lab)
+
+        assert chat.events_since() == [] and chat.messages == [] and chat.state == "idle"
+        assert fake_client.completions.calls == []
+
+    @pytest.mark.parametrize(
+        ("directive", "lab", "why"),
+        [
+            ("lab", None, "/lab needs who is to work on it chosen"),
+            ("ask", {"members": ["Immunologist"]}, "chosen only with /lab"),
+            (None, {"members": ["Immunologist"]}, "chosen only with /lab"),
+            ("lab", {"members": []}, "at least one scientist"),
+            ("lab", {"mode": "individual", "members": ["Immunologist", "Computational Biologist"]}, "exactly one"),
+            ("lab", {"mode": "crowd", "members": ["Immunologist"]}, 'The mode of /lab is "team" or "individual"'),
+            ("lab", {"members": ["Immunologist"], "rounds": -1}, "whole number"),
+            ("lab", {"members": "Immunologist"}, "a list of text"),
+            ("lab", {"members": ["Immunologist"], "questions": [3]}, "a list of text"),
+            ("lab", "Immunologist", "given as a mode"),
+        ],
+    )
+    def test_what_is_not_a_choice_of_who_works_on_it_is_refused(
+        self, directive: str | None, lab: Any, why: str, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path)
+
+        with pytest.raises(ValueError, match=why):
+            chat.send("Go", directive=directive, lab=lab)
+
+        assert chat.events_since() == [] and chat.state == "idle"
+
+    def test_the_team_cannot_be_asked_for_where_the_lead_may_not_start_sessions(self, tmp_path: Path) -> None:
+        chat = make_chat(tmp_path, max_delegations=0)
+
+        assert chat.describe()["directives"]["lab"] == "the lead may not start team sessions"
+        with pytest.raises(ValueError, match="the lead may not start team sessions"):
+            chat.send("Go", directive="lab", lab={"members": ["Immunologist"]})
+
+    def test_a_scientist_who_is_named_twice_is_one(self) -> None:
+        lab = LabRequest.from_data({"members": ["Immunologist", " immunologist ", "Computational Biologist"]})
+
+        assert lab.members == ("Immunologist", "Computational Biologist")
+
+    def test_who_works_on_it_is_kept_when_the_message_is_replaced(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("convene_team", {"agenda": "Go."}),
+            text_response("Alone."),
+            text_response("Done."),
+            tool_call_response("consult", {"agenda": "Go again."}),
+            text_response("A."),
+            text_response("B."),
+            text_response("C."),
+            text_response("Done again."),
+        ]
+        chat = make_chat(tmp_path)
+        chat.send("Go", directive="lab", lab={"members": ["Immunologist"], "rounds": 0})
+
+        chat.send(
+            "Go again",
+            replace_last=True,
+            directive="lab",
+            lab={"mode": "individual", "members": ["Computational Biologist"], "rounds": 1},
+        )
+
+        (user,) = of(chat.events_since(), "user")
+        assert user.text == "Go again" and user.data["lab"]["members"] == ["Computational Biologist"]
+        saved = lines(tmp_path / "chat" / "events.jsonl")
+        assert [event["data"]["lab"]["mode"] for event in saved if event["kind"] == "user"] == ["individual"]
+
+    def test_a_replacement_that_cannot_be_given_changes_nothing(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [text_response("One.")]
+        chat = make_chat(tmp_path)
+        chat.send("First")
+        kept = (chat.messages, [event.id for event in chat.events_since()])
+
+        with pytest.raises(ValueError, match='"Astrologer" is not on the team'):
+            chat.send("First again", replace_last=True, directive="lab", lab={"members": ["Astrologer"]})
+
+        assert (chat.messages, [event.id for event in chat.events_since()]) == kept
 
 
 class TestFailures:

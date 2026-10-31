@@ -13,6 +13,7 @@ import type {
   Health,
   Job,
   KeyStatuses,
+  LabChoice,
   LibraryScientist,
   LimitsChange,
   McpChange,
@@ -433,13 +434,22 @@ export const api = {
   deleteChat: (id: string) => request<void>("DELETE", `/chats/${encodeURIComponent(id)}`),
   // Attachments are named as the server named them when it was sent the files. With replaceLast the message takes the
   // place of the last one, which is taken out of the conversation, to send it again or changed. With a directive the
-  // message is given with a command, such as "ask", which says how the lead is to answer it.
-  send: (id: string, text: string, attachments: string[] = [], replaceLast = false, directive?: string | null) =>
+  // message is given with a command, such as "ask", which says how the lead is to answer it, and with /lab, who is to work
+  // on it.
+  send: (
+    id: string,
+    text: string,
+    attachments: string[] = [],
+    replaceLast = false,
+    directive?: string | null,
+    lab?: LabChoice | null,
+  ) =>
     request<{ turn: number; state: string }>("POST", `/chats/${encodeURIComponent(id)}/messages`, {
       text,
       attachments,
       ...(replaceLast ? { replace_last: true } : {}),
       ...(directive ? { directive } : {}),
+      ...(lab ? { lab } : {}),
     }),
   // What steers a turn that is running is accepted or not: a turn that has ended meanwhile has nothing to steer
   note: (id: string, text: string) =>

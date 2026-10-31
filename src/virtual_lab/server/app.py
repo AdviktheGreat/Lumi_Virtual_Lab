@@ -55,7 +55,8 @@ and everything else is a request and an answer.
                                         can be changed while it works
     POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background, and
                                         which with replace_last takes the place of the last one, and with
-                                        directive is given with a command, such as ask, to answer it by
+                                        directive is given with a command, such as ask, which says how to
+                                        answer it, and with lab, who is to work on it, for the command lab
     POST   /api/chats/{id}/note         a note for the lead or the team, which they read as they work
     POST   /api/chats/{id}/pause        also resume and stop, steering the turn that is running
     POST   /api/chats/{id}/approvals/{request}   allow or decline a call that waits for it, which the events tell of
@@ -73,13 +74,13 @@ import threading
 from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, Literal, cast
+from typing import Annotated, Any, BinaryIO, Literal, cast
 
 import anyio.to_thread
 from fastapi import APIRouter, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StringConstraints
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
@@ -95,6 +96,7 @@ from virtual_lab.constants import (
     MAX_CHAT_TITLE_CHARS,
     MAX_UPLOAD_BYTES,
 )
+from virtual_lab.directives import MAX_LAB_MEMBERS, MAX_LAB_QUESTION_CHARS, MAX_LAB_QUESTIONS, MAX_LAB_TITLE_CHARS
 from virtual_lab.environment import DATA_LAKE
 from virtual_lab.export import PDFExportError, make_pdf
 from virtual_lab.export_chat import chat_html
@@ -347,12 +349,27 @@ class RenameBody(RequestModel):
     title: str = Field(min_length=1, max_length=500)
 
 
+class LabBody(RequestModel):
+    """Who works on a message given with /lab, and how: by their titles, which may be any scientist of the library."""
+
+    mode: Literal["team", "individual"] = "team"
+    members: list[Annotated[str, StringConstraints(max_length=MAX_LAB_TITLE_CHARS)]] = Field(
+        default_factory=list, max_length=MAX_LAB_MEMBERS
+    )
+    rounds: StrictInt = Field(1, ge=0, le=CEILING_CHAT_DELEGATION_ROUNDS)
+    questions: list[Annotated[str, StringConstraints(max_length=MAX_LAB_QUESTION_CHARS)]] = Field(
+        default_factory=list, max_length=MAX_LAB_QUESTIONS
+    )
+
+
 class MessageBody(RequestModel):
     text: str = Field("", max_length=MAX_MESSAGE_CHARS)
     attachments: list[str] = Field(default_factory=list, max_length=100)
     replace_last: bool = False
     # The command the message is given with, such as "ask", which says how the lead is to answer it
     directive: str | None = Field(None, max_length=50)
+    # With the command "lab", who is to work on the message, and how
+    lab: LabBody | None = None
 
 
 class NoteBody(RequestModel):
@@ -1106,8 +1123,20 @@ def create_app(
     @api.post("/chats/{chat_id}/messages", status_code=202)
     def send_message(chat_id: str, body: MessageBody) -> dict[str, Any]:
         handle = conversations.ready(chat_id)
+        # The scientists a /lab names who are not on the team are put on it first, which opens the conversation again
+        if body.directive == "lab" and body.lab is not None:
+            lab = body.lab.model_dump()
+            handle = conversations.include_scientists(
+                chat_id, body.lab.members, lambda chat, joining: chat.check_lab(body.text, lab, joining)
+            )
         try:
-            handle.chat.start(body.text, body.attachments, body.replace_last, body.directive)
+            handle.chat.start(
+                body.text,
+                body.attachments,
+                body.replace_last,
+                body.directive,
+                body.lab.model_dump() if body.lab is not None else None,
+            )
         except ChatBusyError as error:
             raise ApiError(409, "busy", str(error)) from error
         except ChatClosedError as error:

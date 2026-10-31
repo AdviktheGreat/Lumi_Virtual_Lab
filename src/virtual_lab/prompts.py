@@ -1,6 +1,6 @@
 """Prompts for the language model agents and meetings."""
 
-from typing import Iterable, TYPE_CHECKING
+from typing import Iterable, Sequence, TYPE_CHECKING
 
 from virtual_lab.agent import Agent
 from virtual_lab.constants import DEFAULT_MODEL
@@ -635,8 +635,47 @@ CHAT_DIRECTIVE_PROMPTS = {
     ),
 }
 
+def chat_lab_directive_prompt(mode: str, members: Sequence[str], rounds: int, questions: Sequence[str]) -> str:
+    """What the lead is told when the researcher gave /lab, naming who is to work on the message and how.
+
+    :param mode: "team" for a discussion among several that the lead leads, or "individual" for one scientist who the
+        Scientific Critic reviews.
+    :param members: Who the researcher chose, by title.
+    :param rounds: How many rounds of discussion or review.
+    :param questions: What the researcher wants answered by the end.
+    """
+    count = f"{rounds} round{'s' if rounds != 1 else ''}"
+    if mode == "individual":
+        what = (
+            f"they want {members[0]} to work on this on their own, with the Scientific Critic reviewing, for {count} "
+            "of review. Call consult, which has the member and the rounds set already, so that it needs only the "
+            "agenda."
+        )
+        back = "Then answer the researcher from what they gave you, and say what the Critic raised."
+    else:
+        what = (
+            f"they want a team session on this with {', '.join(members)}, which you lead, for {count} of discussion. "
+            "Call convene_team, which has the members and the rounds set already, so that it needs only the agenda."
+        )
+        back = "Then answer the researcher from the summary, and say where the team did not agree."
+    prompt = (
+        f"The researcher gave the /lab command: {what} The team cannot see this conversation, so put in the agenda "
+        "the goal, the files and data, what has been tried, and what you want back. You may use your other tools "
+        f"first to find what the agenda needs. {back}"
+    )
+    if questions:
+        listed = "\n".join(f"- {question}" for question in questions)
+        prompt += f"\n\nThe researcher wants the work to answer these, which are given to it as they are:\n{listed}"
+
+    return prompt
+
+
 # What the lead is told when it answers a command's message without having done what the command asked for
 CHAT_DIRECTIVE_REMINDER_PROMPTS = {
+    "lab": (
+        "No team session has been held for this message, and the researcher asked for one with /lab. Hold it now "
+        "with the tool you were given for it, which needs only an agenda, and answer from what it returns."
+    ),
     "code": (
         "You have not run any code for this message, and the researcher asked for it with /code. Run it now with "
         "run_code, and answer from what it showed."

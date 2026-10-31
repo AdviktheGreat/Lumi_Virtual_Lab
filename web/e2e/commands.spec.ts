@@ -44,7 +44,7 @@ test.describe("the menu of commands", () => {
 
     await box(page).fill("/");
     // What cannot be chosen is listed last, and where code is off, that is what asks for it
-    await expect.poll(() => listed(page)).toEqual(["/ask", "/plan", "/search", "/budget", "/model", "/help", "/code", "/plot"]);
+    await expect.poll(() => listed(page)).toEqual(["/ask", "/plan", "/search", "/lab", "/budget", "/model", "/help", "/code", "/plot"]);
     await expect(lit(page)).toHaveAttribute("data-command", "/ask");
     await expect(box(page)).toBeFocused();
 
@@ -97,6 +97,7 @@ test.describe("the menu of commands", () => {
       "/plan",
       "/search",
       "/review",
+      "/lab",
       "/budget",
       "/model",
       "/rename",
@@ -556,6 +557,223 @@ test.describe("the commands that go with a message", () => {
   });
 });
 
+const panel = (page: Page) => page.getByTestId("lab-dialog");
+const labChoice = (page: Page) => page.getByTestId("lab-choice");
+const startLab = (page: Page) => panel(page).getByTestId("lab-start");
+const written = (scope: Locator) => scope.getByRole("textbox", { name: "What should they work on?" });
+const labRounds = (scope: Locator) => scope.getByRole("textbox", { name: /^Rounds of / });
+const labQuestions = (scope: Locator) => scope.getByRole("textbox", { name: /^Questions they must answer/ });
+const teamMember = (scope: Locator, title: string) => scope.getByRole("checkbox", { name: title, exact: true });
+const soleMember = (scope: Locator, title: string) => scope.getByRole("radio", { name: title, exact: true });
+
+// Waits for the last message to be sent again, and answered, which the page cannot show by what it says where it says the same
+async function resent(page: Page, id: string, send: () => Promise<void>): Promise<void> {
+  const before = (await chatInfo(page, id)).last_event_id;
+  await send();
+  await expect
+    .poll(async () => {
+      const info = await chatInfo(page, id);
+
+      return info.last_event_id > before && info.state === "idle";
+    })
+    .toBe(true);
+}
+
+test.describe("/lab", () => {
+  test("opens a panel, from the list or with words after it, and closing it puts what was written back in the box", async ({ page }) => {
+    await open(page, "Lab panel");
+
+    await box(page).fill("/la");
+    await expect(options(page).first()).toContainText("Choose who works on it");
+    await box(page).press("Enter");
+    await expect(panel(page)).toBeVisible();
+    await expect(written(panel(page))).toHaveValue("");
+    await expect(startLab(page)).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(panel(page)).toHaveCount(0);
+    await expect(rawBox(page)).toHaveValue("");
+
+    await command(page, "/lab Design a nanobody");
+    await expect(panel(page)).toBeVisible();
+    await expect(written(panel(page))).toHaveValue("Design a nanobody");
+    await expect(page.getByTestId("user-message")).toHaveCount(0);
+
+    await written(panel(page)).fill("Design a nanobody against TP53");
+    await panel(page).getByRole("button", { name: "Cancel" }).click();
+    await expect(panel(page)).toHaveCount(0);
+    await expect(rawBox(page)).toHaveValue("/lab Design a nanobody against TP53");
+    await expect(page.getByTestId("user-message")).toHaveCount(0);
+  });
+
+  test("says what is missing or wrong, and starts nothing until it is put right", async ({ page }) => {
+    await open(page, "Lab choices");
+    await command(page, "/lab");
+
+    const start = startLab(page);
+    await expect(start).toBeDisabled();
+    await written(panel(page)).fill("Design a nanobody");
+    await expect(start).toBeDisabled();
+    // What is not yet chosen is said, but it is not a mistake until it has been chosen and put away
+    await expect(panel(page).getByText("Choose at least one scientist.")).toBeVisible();
+    await expect(panel(page).getByRole("alert")).toHaveCount(0);
+
+    await teamMember(panel(page), "Immunologist").check();
+    await expect(start).toBeEnabled();
+    await expect(panel(page).getByText("Choose at least one scientist.")).toHaveCount(0);
+    await teamMember(panel(page), "Immunologist").uncheck();
+    await expect(panel(page).getByRole("alert").filter({ hasText: "at least one" })).toBeVisible();
+    await expect(start).toBeDisabled();
+    await teamMember(panel(page), "Immunologist").check();
+
+    await labRounds(panel(page)).fill("9");
+    await expect(panel(page).getByRole("alert").filter({ hasText: "0 to" })).toBeVisible();
+    await expect(start).toBeDisabled();
+    await labRounds(panel(page)).fill("two");
+    await expect(panel(page).getByRole("alert").filter({ hasText: "whole number" })).toBeVisible();
+    await labRounds(panel(page)).fill("1");
+    await expect(start).toBeEnabled();
+
+    await labQuestions(panel(page)).fill("q\n".repeat(11));
+    await expect(panel(page).getByRole("alert").filter({ hasText: "at most 10" })).toBeVisible();
+    await expect(start).toBeDisabled();
+    await labQuestions(panel(page)).fill("");
+    await expect(start).toBeEnabled();
+
+    // Who works alone is one scientist, and the Critic, who reviews them, is not one to choose
+    await panel(page).getByRole("radio", { name: /One scientist/ }).check();
+    await expect(panel(page).getByRole("checkbox")).toHaveCount(0);
+    await expect(soleMember(panel(page), "Scientific Critic")).toHaveCount(0);
+    await expect(soleMember(panel(page), "Principal Investigator")).toHaveCount(0);
+    await expect(soleMember(panel(page), "Immunologist")).toBeChecked();
+    await soleMember(panel(page), "Geneticist").check();
+    await expect(soleMember(panel(page), "Immunologist")).not.toBeChecked();
+    await expect(labRounds(panel(page))).toHaveAccessibleName("Rounds of review");
+  });
+
+  test("has the team the researcher chose discuss it, and the scientists who were not on the team join it", async ({ page }) => {
+    const id = await open(page, "Lab team", { team: ["Scientific Critic", "Immunologist"] });
+    expect((await chatInfo(page, id)).team).toEqual(["Scientific Critic", "Immunologist"]);
+
+    await command(page, "/lab Design a nanobody");
+    await teamMember(panel(page), "Immunologist").check();
+    await expect(panel(page).getByText("not on this conversation's team")).toHaveCount(0);
+    await teamMember(panel(page), "Geneticist").check();
+    await expect(panel(page).getByText("Geneticist is not on this conversation's team, and joins it.")).toBeVisible();
+    await labQuestions(panel(page)).fill("Which epitope?\n\nHow stable is it?");
+    await startLab(page).click();
+
+    await expect(panel(page)).toHaveCount(0);
+    await answered(page, "That is done: 1 step ran.", 30_000);
+    await expect(chip(page)).toHaveText("/lab");
+    await expect(labChoice(page)).toHaveText("Immunologist, Geneticist · 1 round");
+    await expect(page.getByTestId("user-message")).toContainText("Design a nanobody");
+    await expect(page.getByTestId("user-message")).not.toContainText("The researcher gave");
+    await expect(page.getByTestId("lab-turn").filter({ hasText: "As the Immunologist" }).first()).toBeVisible();
+    await expect(unmet(page)).toHaveCount(0);
+    expect((await chatInfo(page, id)).team).toEqual(["Scientific Critic", "Immunologist", "Geneticist"]);
+
+    // The conversation keeps it for the next time the panel is opened, but not what was written in it
+    await command(page, "/lab");
+    await expect(written(panel(page))).toHaveValue("");
+    await expect(teamMember(panel(page), "Immunologist")).toBeChecked();
+    await expect(teamMember(panel(page), "Geneticist")).toBeChecked();
+    await expect(labQuestions(panel(page))).toHaveValue("");
+    await page.keyboard.press("Escape");
+  });
+
+  test("has one scientist work on it, and the lead says what the Critic raised", async ({ page }) => {
+    await open(page, "Lab alone");
+    await command(page, "/lab Is it immunogenic?");
+    await panel(page).getByRole("radio", { name: /One scientist/ }).check();
+    await soleMember(panel(page), "Immunologist").check();
+    await labRounds(panel(page)).fill("2");
+    await startLab(page).click();
+
+    await answered(page, "That is done: 1 step ran.", 30_000);
+    await expect(chip(page)).toHaveText("/lab");
+    await expect(labChoice(page)).toHaveText("Immunologist, with the Critic reviewing · 2 rounds");
+    await expect(page.getByText("As the Scientific Critic, I ask what shows that the epitope is exposed.").first()).toBeVisible();
+  });
+
+  test("is sent again as it was, and a lead that does not hold the session is told to, and the page says so", async ({ page }) => {
+    const id = await open(page, "Lab again");
+    await command(page, "/lab Design a nanobody");
+    await teamMember(panel(page), "Immunologist").check();
+    await startLab(page).click();
+    await answered(page, "That is done: 1 step ran.", 30_000);
+
+    await resent(page, id, () => page.getByRole("button", { name: "Retry" }).click());
+    await answered(page, "That is done: 1 step ran.", 30_000);
+    await expect(chip(page)).toHaveCount(1);
+    await expect(labChoice(page)).toHaveText("Immunologist · 1 round");
+    await expect(page.getByTestId("user-message")).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByRole("textbox", { name: "Edit message" }).fill("Design a nanobody for the spike");
+    await resent(page, id, () => page.getByRole("button", { name: "Send again" }).click());
+    await answered(page, "That is done: 1 step ran.", 30_000);
+    await expect(page.getByTestId("user-message").last()).toContainText("for the spike");
+    await expect(labChoice(page).last()).toHaveText("Immunologist · 1 round");
+
+    await command(page, "/lab lab:skip leave it be");
+    await teamMember(panel(page), "Immunologist").check();
+    await startLab(page).click();
+    await answered(page, "No team session has been held for this message", 30_000);
+    await expect(unmet(page)).toHaveText("The lead answered without bringing in the scientists you chose, though /lab asked for it.");
+  });
+
+  test("a refusal by the server is shown in the panel, which stays as it was written", async ({ page }) => {
+    await open(page, "Lab refused");
+    await page.route("**/api/chats/*/messages", (route) =>
+      route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "invalid", message: "/lab cannot be given: for the sake of a test" } }),
+      }),
+    );
+
+    await command(page, "/lab Design a nanobody");
+    await teamMember(panel(page), "Geneticist").check();
+    await startLab(page).click();
+
+    await expect(panel(page).getByRole("alert").filter({ hasText: "/lab cannot be given: for the sake of a test" })).toBeVisible();
+    await expect(written(panel(page))).toHaveValue("Design a nanobody");
+    await expect(teamMember(panel(page), "Geneticist")).toBeChecked();
+    await expect(startLab(page)).toBeEnabled();
+    await expect(page.getByTestId("user-message")).toHaveCount(0);
+  });
+
+  test("on the page where a conversation begins, it begins the conversation with the team that was chosen", async ({ page }) => {
+    await command(page, "/lab Design a nanobody against TP53");
+    await expect(panel(page)).toBeVisible();
+    await teamMember(panel(page), "Immunologist").check();
+    await startLab(page).click();
+
+    await page.waitForURL(/\/chat\?id=/);
+    await answered(page, "That is done: 1 step ran.", 30_000);
+    await expect(chip(page)).toHaveText("/lab");
+    await expect(labChoice(page)).toHaveText("Immunologist · 1 round");
+    await expect(page.getByTestId("user-message")).toContainText("Design a nanobody against TP53");
+  });
+
+  test("on the page where a conversation begins, a refusal leaves no conversation behind", async ({ page }) => {
+    await page.route("**/api/chats/*/messages", (route) =>
+      route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "invalid", message: "/lab cannot be given: for the sake of a test" } }),
+      }),
+    );
+
+    await command(page, "/lab Design a nanobody");
+    await teamMember(panel(page), "Immunologist").check();
+    await startLab(page).click();
+
+    await expect(panel(page).getByRole("alert").filter({ hasText: "for the sake of a test" })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe("/");
+  });
+});
+
 const SIZES = [
   { name: "desktop", width: 1280, height: 800 },
   { name: "phone", width: 390, height: 844 },
@@ -583,7 +801,8 @@ for (const theme of ["light", "dark"] as const) {
             document
               .getAnimations()
               .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity)
-              .map((animation) => animation.finished),
+              // One that is cut short, as when what is fading in is replaced by what has been looked for, is over
+              .map((animation) => animation.finished.catch(() => undefined)),
           ),
         );
         expect.soft(await accessibilityProblems(page, skip), `${what}: what is wrong for someone who cannot see it or use a mouse`).toEqual([]);
@@ -605,6 +824,17 @@ for (const theme of ["light", "dark"] as const) {
       await command(page, "/help");
       await expect(page.getByTestId("commands-help")).toBeVisible();
       await looksRight("the commands, listed", DIALOG_OPEN);
+      await page.keyboard.press("Escape");
+
+      await command(page, "/lab Design a nanobody");
+      await expect(panel(page)).toBeVisible();
+      await expect(teamMember(panel(page), "Immunologist")).toBeVisible();
+      await looksRight("the panel for choosing who works on it", DIALOG_OPEN);
+      await teamMember(panel(page), "Immunologist").check();
+      await labRounds(panel(page)).fill("many");
+      await looksRight("the panel for choosing who works on it, with a team and a number that is wrong", DIALOG_OPEN);
+      await panel(page).getByRole("radio", { name: /One scientist/ }).check();
+      await looksRight("the panel for choosing who works on it, for one scientist", DIALOG_OPEN);
       await page.keyboard.press("Escape");
 
       await ask(page, "A question to have a conversation");

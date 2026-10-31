@@ -53,7 +53,7 @@ describe("what is typed", () => {
 
 describe("where a command is offered", () => {
   it("has the conversation's commands in it, and a few on the page where one begins", () => {
-    expect(commandsFor("home").map((each) => each.name)).toEqual(["ask", "plan", "search", "code", "plot", "budget", "model", "help"]);
+    expect(commandsFor("home").map((each) => each.name)).toEqual(["ask", "plan", "search", "code", "plot", "lab", "budget", "model", "help"]);
     expect(commandsFor("chat").map((each) => each.name)).toEqual(COMMANDS.map((each) => each.name));
   });
 });
@@ -103,7 +103,7 @@ describe("the menu", () => {
 
     const commands = ["/budget", "/rename", "/export", "/files", "/new", "/pause", "/stop", "/help"];
     // While the lead works, a command that goes with a message waits for it to finish
-    const waiting = ["/ask", "/plan", "/search", "/code", "/plot", "/review", "/model", "/resume"];
+    const waiting = ["/ask", "/plan", "/search", "/code", "/plot", "/review", "/lab", "/model", "/resume"];
 
     expect(names.slice(0, 8)).toEqual(commands);
     expect(names.slice(8)).toEqual(waiting);
@@ -112,7 +112,17 @@ describe("the menu", () => {
   });
 
   it("lists only the page's commands where a conversation is not begun", () => {
-    expect(rowsFor("/", HOME).map((row) => row.label)).toEqual(["/ask", "/plan", "/search", "/code", "/plot", "/budget", "/model", "/help"]);
+    expect(rowsFor("/", HOME).map((row) => row.label)).toEqual([
+      "/ask",
+      "/plan",
+      "/search",
+      "/code",
+      "/plot",
+      "/lab",
+      "/budget",
+      "/model",
+      "/help",
+    ]);
   });
 
   it("narrows to the names that begin with what is typed, then those that have it", () => {
@@ -169,16 +179,17 @@ describe("the menu", () => {
 describe("the commands that go with a message", () => {
   const WRITES = ["ask", "plan", "search", "code", "plot"];
 
-  it("are the six that say how the lead is to answer, and take words but for review", () => {
-    expect(COMMANDS.filter((each) => isDirective(each.name)).map((each) => each.name)).toEqual([...WRITES, "review"]);
+  it("are the seven that say how the lead is to answer, and take words but for review", () => {
+    expect(COMMANDS.filter((each) => isDirective(each.name)).map((each) => each.name)).toEqual([...WRITES, "review", "lab"]);
     expect(WRITES.every(takesText)).toBe(true);
+    expect(takesText("lab")).toBe(true);
     expect(takesText("review")).toBe(false);
     expect(takesText("budget")).toBe(false);
     expect(isDirective("budget")).toBe(false);
   });
 
   it("are given when the lead has finished, and not while it works", () => {
-    for (const name of [...WRITES, "review"]) {
+    for (const name of [...WRITES, "review", "lab"]) {
       expect(unavailableWhy(command(name), IDLE)).toBeNull();
       expect(unavailableWhy(command(name), WORKING)).toMatch(/finished/);
       expect(unavailableWhy(command(name), { ...IDLE, state: "paused" })).toMatch(/finished/);
@@ -219,6 +230,24 @@ describe("the commands that go with a message", () => {
     expect(rowsFor("/review the statistics", IDLE)).toEqual([]);
   });
 
+  it("have lab ask who works on it in a panel, so that what is to be worked on may be left to it", () => {
+    // It is not begun in the box, as the commands that need words are, but is run as soon as it is chosen
+    expect(rowsFor("/lab", IDLE)[0].action).toEqual({ run: { name: "lab", arg: "" } });
+    expect(rowsFor("/lab ", IDLE)).toMatchObject([{ reason: null, action: { run: { name: "lab", arg: "" } } }]);
+    expect(rowsFor("/lab Design a binder", IDLE)[0].action).toEqual({ run: { name: "lab", arg: "Design a binder" } });
+    expect(rowsFor("/lab Design\na binder", IDLE)[0].action).toEqual({ run: { name: "lab", arg: "Design\na binder" } });
+    // Words that are needed still are for the others
+    expect(rowsFor("/ask ", IDLE)[0].reason).toMatch(/Type your question/);
+  });
+
+  it("have lab wait on what the server says of the team session", () => {
+    const silent = { ...IDLE, directives: { lab: "the lead may not start team sessions" } };
+
+    expect(unavailableWhy(command("lab"), silent)).toBe("The lead may not start team sessions");
+    expect(unavailableWhy(command("lab"), HOME)).toBeNull();
+    expect(unavailableWhy(command("lab"), { ...IDLE, holdUp: "A file is on its way" })).toBe("A file is on its way");
+  });
+
   it("are written out again as they were when they could not be sent", () => {
     expect(written({ name: "ask", arg: "Why?" })).toBe("/ask Why?");
     expect(written({ name: "review", arg: "" })).toBe("/review");
@@ -229,6 +258,7 @@ describe("the commands that go with a message", () => {
     expect(unmetNote("plot")).toMatch(/figure/);
     expect(unmetNote("search")).toMatch(/literature/);
     expect(unmetNote("review")).toMatch(/Critic/);
+    expect(unmetNote("lab")).toMatch(/\/lab/);
     expect(unmetNote("ask")).toBeNull();
     expect(unmetNote("plan")).toBeNull();
     expect(unmetNote("nothing")).toBeNull();

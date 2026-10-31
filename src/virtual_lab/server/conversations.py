@@ -12,7 +12,7 @@ import math
 import re
 import shutil
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
@@ -36,7 +36,16 @@ from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, detect_source
 from virtual_lab.mcp_tools import tool_prefix
 from virtual_lab.openrouter import Catalog
 from virtual_lab.server.asking import Asker
-from virtual_lab.server.config import ChatConfig, check_limits, load_config, resolve_config, save_config
+from virtual_lab.schemas import normalize_title
+from virtual_lab.server.config import (
+    ChatConfig,
+    check_limits,
+    describe_scientist,
+    library,
+    load_config,
+    resolve_config,
+    save_config,
+)
 from virtual_lab.server.connections import Connections
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.functions import function_tools
@@ -383,15 +392,65 @@ class Conversations:
                         f"{error}, so this conversation's spending limit cannot be enforced with it. Choose a model "
                         f"that is priced, or start a conversation with no limit.",
                     ) from error
-            directory = handle.directory
-            handle.close()
-            try:
-                save_config(directory, changed)
-                reopened = self._start(directory, changed, None)
-            except BaseException:
-                self._reopen_as_it_was(chat_id, directory, config)
-                raise
-            self._open[chat_id] = reopened
+            return self._reopened_with(chat_id, handle, changed)
+
+    def include_scientists(
+        self, chat_id: str, titles: Sequence[str], check: Callable[[Chat, list[str]], None] | None = None
+    ) -> ChatHandle:
+        """Has a conversation's team include these scientists of the library, which are those the researcher chose to
+        work on a message and who it was not begun with. What was said and its files are kept, and code that was running
+        starts afresh. A conversation whose team has them all is left as it is, working or not.
+
+        :param check: Called with the conversation and the titles of those who are to join, before the team is changed,
+            and raises ValueError if what they are to work on cannot be, so that the team is not changed for nothing.
+        :raises ApiError: If there is no such conversation, a title is not in the library, what check raises, the team
+            has to change and the conversation is working, or it cannot be opened with the team it would have, in
+            which case it goes on as it was.
+        """
+        with self._lock:
+            handle = self.get(chat_id)
+            config = handle.config
+            known = {normalize_title(member["title"]) for member in (config.lead, *config.team)}
+            scientists = library(self.workspace)
+            missing: list[dict[str, str]] = []
+            for title in titles:
+                if normalize_title(title) in known:
+                    continue
+                try:
+                    missing.append(describe_scientist(title, scientists))
+                except ValueError as error:
+                    raise ApiError(422, "invalid", str(error)) from error
+                known.add(normalize_title(missing[-1]["title"]))
+            if not missing:
+                return handle
+            if check is not None:
+                try:
+                    check(handle.chat, [member["title"] for member in missing])
+                except ValueError as error:
+                    raise ApiError(422, "invalid", str(error)) from error
+            if handle.chat.state != "idle":
+                raise ApiError(
+                    409,
+                    "busy",
+                    "The conversation is working. Choose scientists who are on its team, or wait until it has "
+                    "finished, or stop it first.",
+                )
+
+            return self._reopened_with(chat_id, handle, replace(config, team=(*config.team, *missing)))
+
+    def _reopened_with(self, chat_id: str, handle: ChatHandle, changed: ChatConfig) -> ChatHandle:
+        """Opens a conversation again with a changed setup, which is kept; if it cannot be opened with it, it goes on as
+        it was. With self._lock held."""
+        directory = handle.directory
+        config = handle.config
+        handle.close()
+        try:
+            save_config(directory, changed)
+            reopened = self._start(directory, changed, None)
+        except BaseException:
+            self._reopen_as_it_was(chat_id, directory, config)
+            raise
+        self._open[chat_id] = reopened
 
         return reopened
 

@@ -30,7 +30,7 @@ import re
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
@@ -57,7 +57,7 @@ from virtual_lab.constants import (
     MAX_UPLOAD_NAME_BYTES,
     SESSION_MAX_TOOL_ITERATIONS,
 )
-from virtual_lab.directives import DIRECTIVES, Check, Directive, directive_named, is_literature_tool
+from virtual_lab.directives import DIRECTIVES, Check, Directive, LabRequest, directive_named, is_literature_tool
 from virtual_lab.events import ChatEvent, ChatEventKind, MeetingEvent, NextTurn, OnChatEvent
 from virtual_lab.failures import Failure, describe_failure
 from virtual_lab.llm import ModelReply, ModelSource, ToolCall, ask, resolve_chat_models
@@ -550,9 +550,11 @@ class Chat:
         self._usage = MeetingUsage()
         self._requests = itertools.count(1)
         self._call_id: str | None = None
-        # The command the message being answered was given with, what the lead has called since, whether the Critic
-        # has reviewed its last answer, and how many cells the session had run when it began
+        # The command the message being answered was given with, and with /lab who is to work on it, what the lead has
+        # called since, whether the Critic has reviewed its last answer, and how many cells the session had run when
+        # it began
         self._directive: Directive | None = None
+        self._lab: LabRequest | None = None
         self._called: set[str] = set()
         self._reviewed = False
         self._cells_before = 0
@@ -1032,6 +1034,7 @@ class Chat:
         attachments: Iterable[Attachment | str] = (),
         replace_last: bool = False,
         directive: str | None = None,
+        lab: LabRequest | Mapping[str, Any] | None = None,
     ) -> ChatReply:
         """Sends the lead a message, and waits for its answer.
 
@@ -1043,6 +1046,9 @@ class Chat:
         :param directive: The name of a command that says how the lead is to answer this message, such as "ask",
             without the slash. It is told of with the message, and kept with it. If the lead answers without doing
             what the command asked for, it is told once to, and the answer says whether it was done.
+        :param lab: With the command "lab", who is to work on the message and how: a LabRequest, or as one is written
+            out, with a mode ("team" or "individual"), the titles of the members, the rounds, and the questions.
+            The lead is given the one tool that brings them together, which has them set, and writes the agenda.
         :raises ChatBusyError: If the last message is still being answered.
         :raises ChatClosedError: If the conversation was closed.
         :raises ValueError: If there is no message and no file, or a file was not attached, or there is no
@@ -1051,7 +1057,7 @@ class Chat:
         :return: How the turn ended. A turn that failed is reported in the reply, and told of as an
             event, rather than raised.
         """
-        text, files = self._begin(message, attachments, replace_last, directive)
+        text, files = self._begin(message, attachments, replace_last, directive, lab)
 
         return self._run_turn(text, files)
 
@@ -1061,6 +1067,7 @@ class Chat:
         attachments: Iterable[Attachment | str] = (),
         replace_last: bool = False,
         directive: str | None = None,
+        lab: LabRequest | Mapping[str, Any] | None = None,
     ) -> threading.Thread:
         """Sends the lead a message as send does, but answers in a thread of its own, followed through
         the events, and the last_reply once it has ended. The message is told of before this returns.
@@ -1070,7 +1077,7 @@ class Chat:
         :raises ValueError: As send says.
         :return: The thread, started.
         """
-        text, files = self._begin(message, attachments, replace_last, directive)
+        text, files = self._begin(message, attachments, replace_last, directive, lab)
 
         thread = threading.Thread(
             target=self._run_turn, args=(text, files), name=f"virtual-lab-chat-{self.id}", daemon=True
@@ -1084,15 +1091,32 @@ class Chat:
 
         return thread
 
+    def check_lab(self, message: str, lab: LabRequest | Mapping[str, Any], joining: Sequence[str] = ()) -> None:
+        """Checks that /lab can be given with this message, as send and start would, without taking the conversation
+        for a turn, so that a team is not changed for a command that is then refused.
+
+        :param joining: The titles of the scientists who are to be put on the team first, and so are taken to be on it.
+        :raises ValueError: If /lab cannot be given: it is not valid, needs something written with it, or the scientists
+            it names cannot work on it.
+        """
+        directive = directive_named("lab")
+        request = self._lab_request(directive, lab)
+        if not message.strip():
+            raise ValueError("/lab needs what it is for written after it")
+        if (why := self._why_not(directive, None, request, joining)) is not None:
+            raise ValueError(f"/lab cannot be given: {why}")
+
     def _begin(
         self,
         message: str,
         attachments: Iterable[Attachment | str],
         replace_last: bool = False,
         directive: str | None = None,
+        lab: LabRequest | Mapping[str, Any] | None = None,
     ) -> tuple[str, list[Attachment]]:
         """Takes the conversation for a turn, and tells of the message that begins it."""
         chosen = directive_named(directive) if directive is not None else None
+        request = self._lab_request(chosen, lab)
         text = message.strip()
         files = self._attachments(attachments)
         if chosen is not None and chosen.needs_text and not text:
@@ -1106,10 +1130,10 @@ class Chat:
             if self._state != "idle":
                 raise ChatBusyError("The lead is still answering the last message")
             if replace_last:
-                withdrawn = self._withdraw_last_turn(chosen)
+                withdrawn = self._withdraw_last_turn(chosen, request)
             else:
                 withdrawn = None
-                self._check_directive(chosen, self._messages)
+                self._check_directive(chosen, self._messages, request)
             self._turn += 1
             sent_after = len(self._messages)
             self._paused = False
@@ -1117,6 +1141,7 @@ class Chat:
             self._notes = []
             self._delegations = 0
             self._directive = chosen
+            self._lab = request
             self._called = set()
             self._reviewed = False
             told = self._change_state("running")
@@ -1133,6 +1158,7 @@ class Chat:
                 attachments=[file.to_dict() for file in files],
                 messages_before=sent_after,
                 **({"directive": chosen.name} if chosen is not None else {}),
+                **({"lab": request.to_dict()} if request is not None else {}),
             )
             if not self.title:
                 self.rename(title_of(text, files))
@@ -1142,12 +1168,12 @@ class Chat:
 
         return text, files
 
-    def _withdraw_last_turn(self, directive: Directive | None = None) -> int:
+    def _withdraw_last_turn(self, directive: Directive | None = None, lab: LabRequest | None = None) -> int:
         """Takes the last message, and all that came of it, out of the conversation and its saved files, with
         self._changed held, so that the turn can begin again.
 
-        :param directive: The command the turn is to begin again with, which is checked against what the conversation
-            will have been left with, before anything is changed.
+        :param directive: The command the turn is to begin again with, and with /lab who is to work on it, which are
+            checked against what the conversation will have been left with, before anything is changed.
         :raises ValueError: If there is no message, or it was saved without where the conversation was cut back to, or
             the command cannot be given to what is left.
         :return: The turn it began.
@@ -1162,7 +1188,7 @@ class Chat:
 
         events = self._events[:at]
         messages = self._messages[:before]
-        self._check_directive(directive, messages)
+        self._check_directive(directive, messages, lab)
         # Written before anything is changed, so that a file that cannot be written leaves the conversation as it was
         write_atomically(
             self.save_dir / CHAT_EVENTS_FILE_NAME,
@@ -1270,17 +1296,43 @@ class Chat:
                 )
             )
         if self._directive is not None:
-            parts.append(self._directive.prompt)
+            parts.append(self._directive.prompt_for(self._lab))
 
         return "\n\n".join(parts)
 
     # Commands
 
-    def _why_not(self, directive: Directive, messages: Sequence[dict[str, Any]] | None = None) -> str | None:
+    def _lab_request(
+        self, directive: Directive | None, lab: LabRequest | Mapping[str, Any] | None
+    ) -> LabRequest | None:
+        """Who a message is to be worked on by, which only /lab says, and which it must.
+
+        :raises ValueError: If /lab does not say, another command or none does, or what it says is not valid.
+        """
+        if directive is None or directive.name != "lab":
+            if lab is not None:
+                raise ValueError("Who works on a message is chosen only with /lab")
+            return None
+        if lab is None:
+            raise ValueError("/lab needs who is to work on it chosen")
+
+        return lab if isinstance(lab, LabRequest) else LabRequest.from_data(lab)
+
+    def _why_not(
+        self,
+        directive: Directive,
+        messages: Sequence[dict[str, Any]] | None = None,
+        lab: LabRequest | None = None,
+        joining: Sequence[str] = (),
+    ) -> str | None:
         """Why a command cannot be given, in words, or None if it can.
 
         :param messages: What the lead has been sent and has said, for the commands that need an answer to have been
             given. Without them, those are not checked for it.
+        :param lab: Who /lab names, which is checked against the team. Without it, only whether the lead may start team
+            sessions is.
+        :param joining: The titles of scientists who are to be put on the team before the command is given, and so are
+            taken to be on it.
         """
         match directive.name:
             case "code" | "plot":
@@ -1305,12 +1357,37 @@ class Chat:
                     for message in messages
                 ):
                     return "there is no answer to review yet"
+            case "lab":
+                if self.max_delegations == 0:
+                    return "the lead may not start team sessions"
+                if lab is not None:
+                    return self._why_not_lab(lab, joining)
 
         return None
 
-    def _check_directive(self, directive: Directive | None, messages: Sequence[dict[str, Any]]) -> None:
+    def _why_not_lab(self, lab: LabRequest, joining: Sequence[str] = ()) -> str | None:
+        """Why the scientists a /lab names cannot work on a message, or None if they can."""
+        coming = {normalize_title(title) for title in joining}
+        for title in lab.members:
+            if normalize_title(title) == normalize_title(self.lead.title):
+                return f"{self.lead.title} leads the session, so choose the others"
+            if self._find_member(title) is None and normalize_title(title) not in coming:
+                return f'"{title}" is not on the team'
+        if lab.rounds > self.max_rounds:
+            return f"a session may have at most {self.max_rounds} round{'s' if self.max_rounds != 1 else ''}"
+        if lab.mode == "individual":
+            if self._critic is None:
+                return f"the {SCIENTIFIC_CRITIC.title} is not on the team to review"
+            if self._find_member(lab.members[0]) is self._critic:
+                return f"the {SCIENTIFIC_CRITIC.title} reviews, so choose another to work on it"
+
+        return None
+
+    def _check_directive(
+        self, directive: Directive | None, messages: Sequence[dict[str, Any]], lab: LabRequest | None = None
+    ) -> None:
         """Raises if a command cannot be given to a conversation that has these messages."""
-        if directive is not None and (why := self._why_not(directive, messages)) is not None:
+        if directive is not None and (why := self._why_not(directive, messages, lab)) is not None:
             raise ValueError(f"/{directive.name} cannot be given: {why}")
 
     def _done(self, check: Check) -> bool:
@@ -1325,6 +1402,8 @@ class Chat:
                 return any(is_literature_tool(name) for name in self._called)
             case "critic":
                 return self._reviewed
+            case "team":
+                return self._delegations > 0
 
     def _carried_out(self) -> bool | None:
         """Whether the command of this message was carried out, or None if it has nothing that is checked."""
@@ -1455,7 +1534,7 @@ class Chat:
         """Asks the lead, and runs what it calls, until it answers."""
         assert self._system is not None
         withheld = self._directive is not None and self._directive.no_tools
-        definitions = [] if withheld else [tool.definition for tool in self._lead_tools]
+        definitions = [] if withheld else [tool.definition for tool in self._turn_tools()]
         reminded = False
 
         for iteration in range(self.max_tool_iterations + 1):
@@ -1532,7 +1611,7 @@ class Chat:
                 held[asked] = call.id
             self._called.add(call.function.name)
             self._call_id = call.id
-            outputs, messages = run_tool_calls([call], self._lead_tools)  # type: ignore[arg-type]
+            outputs, messages = run_tool_calls([call], self._turn_tools())  # type: ignore[arg-type]
             self._call_id = None
             self._append(dict(messages[0]))
             self._tell_cells(call.id, own=call.function.name not in (CONVENE_TOOL_NAME, CONSULT_TOOL_NAME))
@@ -1782,6 +1861,61 @@ class Chat:
                 },
                 function=self._consult,
             ),
+        )
+
+    def _turn_tools(self) -> tuple[Tool, ...]:
+        """The tools the lead is given for the message it is answering: its own, but for a message given with /lab, the
+        team's are replaced by the one the researcher has set up."""
+        lab = self._lab
+        if lab is None:
+            return self._lead_tools
+
+        others = (tool for tool in self._lead_tools if tool.name not in (CONVENE_TOOL_NAME, CONSULT_TOOL_NAME))
+
+        return (*others, self._lab_tool(lab))
+
+    def _lab_tool(self, lab: LabRequest) -> Tool:
+        """The tool that brings together who the researcher chose, with them and the rounds as they chose, so that the
+        lead is left to write the agenda, and to add questions of its own."""
+
+        # What else the lead gives, such as members it was told of before, is not taken, since they are set
+        def hold(agenda: str, questions: list[str] | None = None, **_set: Any) -> str:
+            own = [str(question) for question in questions] if isinstance(questions, list) else []
+            asked = [*lab.questions, *(question for question in own if question not in lab.questions)]
+            if lab.mode == "individual":
+                return self._consult(lab.members[0], agenda, asked, lab.rounds)
+
+            return self._convene_team(agenda, list(lab.members), asked, lab.rounds)
+
+        individual = lab.mode == "individual"
+        who = lab.members[0] if individual else ", ".join(lab.members)
+
+        return Tool(
+            name=CONSULT_TOOL_NAME if individual else CONVENE_TOOL_NAME,
+            description=(
+                f"Have {who} work on what the researcher asked for with /lab"
+                + (", with the Scientific Critic reviewing it" if individual else ", with you leading")
+                + ", and be given what comes of it. Who works on it and for how many rounds is set. "
+                "The team cannot see this conversation, so the agenda must have everything the work needs."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "agenda": {
+                        "type": "string",
+                        "description": "What they are to work on: the goal, the files and data, what has been "
+                        "tried, and what you want back.",
+                    },
+                    "questions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Further questions they must answer by the end, besides the "
+                        "researcher's own, which are asked already.",
+                    },
+                },
+                "required": ["agenda"],
+            },
+            function=hold,
         )
 
     def _find_member(self, title: str) -> Agent | None:

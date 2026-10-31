@@ -12,6 +12,7 @@ import { Composer } from "@/components/composer";
 import { ExportMenu } from "@/components/export-menu";
 import { ChatFilesProvider } from "@/components/chat-files";
 import { FilesButton, FilesPanel } from "@/components/files-panel";
+import { LabDialog } from "@/components/lab-dialog";
 import { LimitsDialog } from "@/components/limits-dialog";
 import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { LeadBlock, Notice, ProblemNotice, TurnView } from "@/components/messages";
@@ -23,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { attachedNames, readiness } from "@/lib/attachments";
 import { isDirective, written, type Invocation } from "@/lib/commands";
+import { joining } from "@/lib/team-choice";
 import { describeError, plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { EXPORT_CHOICES } from "@/lib/export";
 import { filesChanged } from "@/lib/files";
@@ -35,7 +37,7 @@ import { useExport } from "@/lib/use-export";
 import { useFiles } from "@/lib/use-files";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import { waitingOnYou, type Turn } from "@/lib/transcript";
-import type { ChatState, LimitsChange } from "@/lib/types";
+import type { ChatState, LabChoice, LimitsChange } from "@/lib/types";
 
 const STATE_LABELS: Record<ChatState, string | null> = {
   idle: null,
@@ -73,6 +75,8 @@ export function ChatView({ id }: { id: string }) {
   const [filesOpen, setFilesOpen] = useState(false);
   const [choosingModel, setChoosingModel] = useState(false);
   const [limiting, setLimiting] = useState(false);
+  // What was written after /lab while it is being chosen who works on it, which is null while it is not
+  const [labbing, setLabbing] = useState<string | null>(null);
   const [helping, setHelping] = useState(false);
   const exporter = useExport(id, setProblem);
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
@@ -127,12 +131,35 @@ export function ChatView({ id }: { id: string }) {
     }
   }
 
+  // What is to be worked on is sent with who is to work on it, which the panel that chose them is told if it could not be, since
+  // it is still open to be changed. The scientists who were not on the team are on it afterwards.
+  async function sendLab(agenda: string, lab: LabChoice) {
+    const sent = attachments.items.filter((item) => item.status === "ready");
+    setProblem(null);
+    try {
+      await api.send(id, agenda, attachedNames(sent), false, "lab", lab);
+    } catch (error) {
+      report(error);
+      throw error;
+    }
+    attachments.remove(sent.map((item) => item.id));
+    jump("instant");
+    if (status.kind === "ready" && joining(lab.members, status.info.team).length > 0) reload();
+  }
+
   // The last message is sent again with the files it had, and the command, in place of it and of what came of it
   async function replace(turn: Turn, text: string) {
     setSending(true);
     setProblem(null);
     try {
-      await api.send(id, text.trim(), (turn.user?.attachments ?? []).map((file) => file.name), true, turn.user?.directive);
+      await api.send(
+        id,
+        text.trim(),
+        (turn.user?.attachments ?? []).map((file) => file.name),
+        true,
+        turn.user?.directive,
+        turn.user?.lab,
+      );
       setSentNotes([]);
       jump("instant");
     } catch (error) {
@@ -191,6 +218,11 @@ export function ChatView({ id }: { id: string }) {
 
   function run(invocation: Invocation) {
     const { name, arg } = invocation;
+    if (name === "lab") {
+      setLabbing(arg);
+
+      return;
+    }
     if (isDirective(name)) {
       void send(invocation);
 
@@ -376,6 +408,19 @@ export function ChatView({ id }: { id: string }) {
             begun
             onSave={changeLimits}
             onClose={() => setLimiting(false)}
+          />
+        )}
+        {labbing !== null && status.kind === "ready" && (
+          <LabDialog
+            agenda={labbing}
+            lead={status.info.lead}
+            team={status.info.team}
+            ceiling={status.info.max_rounds}
+            onStart={sendLab}
+            onClose={(left) => {
+              setLabbing(null);
+              if (left !== null && left.trim() !== "") setDraft(written({ name: "lab", arg: left.trim() }));
+            }}
           />
         )}
         {helping && <CommandsHelp place="chat" onClose={() => setHelping(false)} />}

@@ -169,7 +169,8 @@ class ChatEvent:
           data["attachments"] holds the files they attached, each with its name, its path in the
           session's directory, and its size in bytes. data["messages_before"] is how many messages the lead
           had been sent and had said by then, which is where the conversation is cut back to if this one
-          is replaced. data["directive"] is the name of the command it was given with, if it was.
+          is replaced. data["directive"] is the name of the command it was given with, if it was, and for
+          /lab, data["lab"] is who was to work on it: the mode, the members' titles, the rounds, and the questions.
         - "withdrawn": the researcher replaced the last message, to send it again or changed. The turn it began,
           which is data["turn"], and all that came of it, is taken out of the conversation, and the new message
           begins that turn again. Told of just before the "user" event that does.

@@ -20,7 +20,8 @@ from a script: no key is needed, and every run says the same. What it says depen
   "lab:code" brings in one scientist who runs code in the session, if the conversation has one, before they reply.
   "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
 - A message given with a command, such as /ask, is answered as it is without one, except that /review has it bring in the
-  Scientific Critic, and that what the command tells the lead is not repeated in the reply that repeats the question.
+  Scientific Critic, that /lab has it hold the session that was asked for, with the agenda below (and "lab:skip" has it
+  not), and that what the command tells the lead is not repeated in the reply that repeats the question.
 - "mcp:" and a word (echo, count, both, order, confirm, signed, gated) make it call the tools of the MCP servers that
   the tests of mcp/ set up, which are the test server of tests/mcp_test_server.py under the names genes, vault, and
   gate.
@@ -300,6 +301,10 @@ SCENARIOS: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
             {"agenda": TEAM_AGENDA, "members": ["Scientific Critic"], "rounds": 1},
         )
     ],
+    "they want a team session on this": [("Bringing in the team you chose.", "convene_team", {"agenda": TEAM_AGENDA})],
+    "to work on this on their own": [
+        ("Asking the scientist you chose.", "consult", {"agenda": "Is a nanobody against TP53 immunogenic?"})
+    ],
     "lab:team": [
         (
             "Bringing in the team.",
@@ -545,6 +550,9 @@ def function_code(name: str) -> str:
 
 
 def scenario_for(question: str) -> list[tuple[str, str, dict[str, Any]]] | None:
+    if "lab:skip" in question:
+        return None
+
     return next((steps for word, steps in SCENARIOS.items() if word in question), None)
 
 

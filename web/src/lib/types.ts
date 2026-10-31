@@ -93,6 +93,16 @@ export interface ChatInfo {
   config: ChatConfig;
 }
 
+// Who is to work on a message given with /lab, and how: by title, any scientist of the library. A team is several
+// scientists discussing it with the lead leading, and an individual is one working on it with the Scientific Critic
+// reviewing, for the rounds that are said.
+export interface LabChoice {
+  mode: "team" | "individual";
+  members: string[];
+  rounds: number;
+  questions: string[];
+}
+
 // What a new conversation is set up with: anything left out is what the settings say
 export interface NewChat {
   title?: string;
