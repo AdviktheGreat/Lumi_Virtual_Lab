@@ -23,6 +23,7 @@ from virtual_lab.llm import (
     GEMINI_BASE_URL,
     GROQ_BASE_URL,
     OPENROUTER_BASE_URL,
+    accepts_images,
     ask,
     configure,
     detect_source,
@@ -31,6 +32,7 @@ from virtual_lab.llm import (
     meeting_source,
     openrouter_name,
     reads_speaker_names,
+    register_image_models,
     reply_from,
     resolve_chat_models,
     to_langchain_messages,
@@ -151,6 +153,76 @@ class TestDetectSource:
         monkeypatch.delenv("LLM_SOURCE", raising=False)
         with pytest.raises(ValueError, match="Unable to determine the source"):
             detect_source("mystery-model")
+
+
+class TestAcceptsImages:
+    @pytest.fixture(autouse=True)
+    def no_models_left_behind(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(llm_module, "REGISTERED_IMAGE_MODELS", set())
+        monkeypatch.delenv("LLM_SOURCE", raising=False)
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4o-2024-08-06",
+            "gpt-4.1",
+            "gpt-4.1-nano",
+            "gpt-4.5-preview",
+            "gpt-4-turbo",
+            "gpt-5",
+            "gpt-5.2",
+            "gpt-5-mini",
+            "o1",
+            "o3",
+            "o3-pro",
+            "o4-mini",
+            "claude-sonnet-4-5",
+            "claude-3-5-haiku-latest",
+            "claude-opus-4-1",
+            "gemini-2.5-pro",
+            "gemini-3-flash",
+        ],
+    )
+    def test_the_models_of_openai_anthropic_and_google_that_read_images_do(self, model: str) -> None:
+        assert accepts_images(model)
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "gpt-3.5-turbo",
+            "gpt-4",
+            "gpt-4-32k",
+            "o1-mini",
+            "o1-preview",
+            "o3-mini",
+            "claude-2.1",
+            "claude-instant-1.2",
+        ],
+    )
+    def test_the_ones_that_do_not_do_not(self, model: str) -> None:
+        assert not accepts_images(model)
+
+    @pytest.mark.parametrize(
+        "model", ["llama-3.3-70b-groq", "qwen2.5:14b", "gpt-oss-20b", "anthropic.claude-3-sonnet", "mystery-model"]
+    )
+    def test_a_model_of_any_other_source_or_that_is_not_known_is_not_taken_for_one_that_does(self, model: str) -> None:
+        assert not accepts_images(model)
+
+    def test_an_openrouter_model_does_if_openrouter_listed_it_as_taking_images_in(self) -> None:
+        assert not accepts_images("openrouter/moonshotai/kimi-k3.1-pro")
+
+        register_image_models(["openrouter/moonshotai/kimi-k3.1-pro", "openrouter/google/gemini-3-pro"])
+
+        assert accepts_images("openrouter/moonshotai/kimi-k3.1-pro")
+        assert not accepts_images("openrouter/meta-llama/llama-3.3-70b-instruct")
+        # What was listed replaces what was listed before
+        register_image_models(["openrouter/google/gemini-3-pro"])
+        assert not accepts_images("openrouter/moonshotai/kimi-k3.1-pro")
+
+    def test_an_openrouter_name_that_is_a_known_openai_model_is_not_one_that_reads_images_unless_listed(self) -> None:
+        assert not accepts_images("openrouter/openai/gpt-5.2")
 
 
 class TestGetLlm:
@@ -415,6 +487,34 @@ class TestMessages:
     def test_an_unknown_role_is_refused(self) -> None:
         with pytest.raises(ValueError, match="Unknown message role"):
             to_langchain_messages([{"role": "developer", "content": "x"}])
+
+    def test_a_message_of_the_researcher_that_is_parts_is_sent_as_parts(self) -> None:
+        parts = [
+            {"type": "text", "text": "What is it?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]
+
+        converted = to_langchain_messages([{"role": "user", "content": parts}])
+
+        assert converted[0].content == parts
+
+    def test_parts_reach_openai_as_a_question_with_an_image(self) -> None:
+        client = FakeClient()
+        parts = [
+            {"type": "text", "text": "What is it?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]
+
+        ask(fake_llm(client), [{"role": "system", "content": "Look."}, {"role": "user", "content": parts}], None)
+
+        sent = client.completions.calls[0]["messages"]
+        assert sent[0] == {"role": "system", "content": "Look."}
+        assert sent[1]["content"] == parts
+
+    def test_what_is_not_the_researchers_stays_text_even_if_it_is_not_text(self) -> None:
+        converted = to_langchain_messages([{"role": "system", "content": [{"type": "text", "text": "x"}]}])
+
+        assert converted[0].content == '[{"type": "text", "text": "x"}]'
 
 
 class TestReplies:

@@ -18,7 +18,7 @@ from typing import Any
 
 import requests
 
-from virtual_lab.llm import OPENROUTER_PREFIX
+from virtual_lab.llm import OPENROUTER_PREFIX, register_image_models
 from virtual_lab.utils import register_prices, write_atomically
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -28,9 +28,9 @@ MAX_AGE_SECONDS = 24 * 60 * 60
 RETRY_AFTER_SECONDS = 5 * 60
 FETCH_TIMEOUT_SECONDS = 10
 
-# What the file a list is kept in says of how it was written, so that a list kept before it said what the cache costs is
-# read again at once, rather than a day later
-SAVED_FORMAT = 2
+# What the file a list is kept in says of how it was written, so that a list kept before it said what the cache costs, or
+# which models read images, is read again at once, rather than a day later
+SAVED_FORMAT = 3
 
 # What a chat is for: the lead calls tools, and replies are text. A model of a batch is answered later, not as asked
 BATCH_SUFFIX = ":batch"
@@ -50,6 +50,7 @@ class OpenRouterModel:
         where it does not cache or does not say.
     :param cache_write_price: USD per input token that it writes to its cache, which some models charge more for than
         for input, or None where it does not say.
+    :param images: Whether it can be sent images.
     """
 
     id: str
@@ -59,6 +60,7 @@ class OpenRouterModel:
     output_price: float | None
     cache_read_price: float | None = None
     cache_write_price: float | None = None
+    images: bool = False
 
     @property
     def priced(self) -> bool:
@@ -83,6 +85,7 @@ class OpenRouterModel:
             "output_price": self.output_price,
             "cache_read_price": self.cache_read_price,
             "cache_write_price": self.cache_write_price,
+            "images": self.images,
         }
 
 
@@ -122,6 +125,7 @@ def models_from(data: Any) -> list[OpenRouterModel]:
         parameters = item.get("supported_parameters")
         architecture = item.get("architecture")
         outputs = architecture.get("output_modalities") if isinstance(architecture, Mapping) else None
+        inputs = architecture.get("input_modalities") if isinstance(architecture, Mapping) else None
         router = name.startswith(OPENROUTER_PREFIX)
         # A router may send an image back as well, which it is the router's business to do or not
         if (
@@ -145,6 +149,7 @@ def models_from(data: Any) -> list[OpenRouterModel]:
                 output_price=price_of(pricing.get("completion")),
                 cache_read_price=price_of(pricing.get("input_cache_read")),
                 cache_write_price=price_of(pricing.get("input_cache_write")),
+                images=isinstance(inputs, list) and "image" in inputs,
             )
         )
 
@@ -249,6 +254,7 @@ class Catalog:
         self._models = models
         self._read_at = read_at
         register_prices(prices_of(models), cache_prices_of(models))
+        register_image_models(model.id for model in models if model.images)
 
     def _load(self) -> None:
         if self.path is None:
@@ -266,6 +272,7 @@ class Catalog:
                     output_price=price_of(item.get("output_price")),
                     cache_read_price=price_of(item.get("cache_read_price")),
                     cache_write_price=price_of(item.get("cache_write_price")),
+                    images=item.get("images") is True,
                 )
                 for item in saved["models"]
             ]

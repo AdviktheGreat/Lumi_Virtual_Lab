@@ -1,5 +1,6 @@
 """Tests of the library's tools as the server gives them to a conversation, and as the settings turn them off."""
 
+import io
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -7,7 +8,9 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
+from virtual_lab import llm as llm_module
 from virtual_lab.artifacts import UnsafeFilenameError
 from virtual_lab.server.app import create_app
 from virtual_lab.server.config import ChatConfig, resolve_config
@@ -27,6 +30,7 @@ from virtual_lab.server.tools import (
 from virtual_lab.server.workspace import TOOLS_FILE_NAME, Settings, Workspace
 from virtual_lab.tables import TableError
 from virtual_lab.tools import DATABASE_TOOLS
+from virtual_lab.vision import VIEW_IMAGE_TOOL_NAME
 
 from conftest import TEST_MODEL, FakeClient, text_response, tool_call_response
 
@@ -38,7 +42,12 @@ CSV = b"gene,score\nTP53,0.91\nBRCA1,0.20\n"
 SIZE = len(CSV)
 
 # Every tool the library has that a conversation may be given: its lookups, and the tools that read files
-EVERY_TOOL = {tool.name for tool in DATABASE_TOOLS} | {"data_files", "inspect_data_file", "fetch_structure_file"}
+EVERY_TOOL = {tool.name for tool in DATABASE_TOOLS} | {
+    "data_files",
+    "inspect_data_file",
+    "fetch_structure_file",
+    VIEW_IMAGE_TOOL_NAME,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -329,6 +338,70 @@ class TestWhatTheLeadIsGiven:
 
         (output,) = [event for event in handle.chat.events_since() if event.kind == "tool_output"]
         assert output.text == f"1 files:\n  uploads/counts.csv ({SIZE} bytes)"
+
+    def test_a_model_that_cannot_read_images_is_not_given_the_tool_that_looks_at_them(
+        self, conversations: Conversations, fake_client: FakeClient
+    ) -> None:
+        handle = conversations.create({"team": [], "model": "gpt-3.5-turbo"})
+
+        handle.chat.start("Hello").join(20)
+
+        names = offered(fake_client)
+        assert VIEW_IMAGE_TOOL_NAME not in names
+        assert set(names) == EVERY_TOOL - NEEDS_CODE - {VIEW_IMAGE_TOOL_NAME}
+        # It stays among those the conversation is set up with, for when it is given a model that reads them
+        assert VIEW_IMAGE_TOOL_NAME in handle.config.tools
+
+    def test_an_openrouter_model_is_given_it_if_openrouter_lists_it_as_reading_images(
+        self, conversations: Conversations, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(llm_module, "REGISTERED_IMAGE_MODELS", set())
+        monkeypatch.delenv("LLM_SOURCE", raising=False)
+        llm_module.register_image_models(["openrouter/moonshotai/kimi-k3.1-pro"])
+
+        sees = conversations.create({"team": [], "model": "openrouter/moonshotai/kimi-k3.1-pro"})
+        blind = conversations.create({"team": [], "model": "openrouter/meta-llama/llama-3.3-70b-instruct"})
+
+        assert VIEW_IMAGE_TOOL_NAME in [tool.name for tool in sees.chat.tools]
+        assert VIEW_IMAGE_TOOL_NAME not in [tool.name for tool in blind.chat.tools]
+
+    def test_switching_the_model_gives_or_takes_away_the_tool_that_looks_at_images(
+        self, conversations: Conversations
+    ) -> None:
+        handle = conversations.create({"team": []})
+        assert VIEW_IMAGE_TOOL_NAME in [tool.name for tool in handle.chat.tools]
+
+        blind = conversations.switch_model(handle.id, "gpt-3.5-turbo")
+        assert VIEW_IMAGE_TOOL_NAME not in [tool.name for tool in blind.chat.tools]
+
+        sees = conversations.switch_model(handle.id, TEST_MODEL)
+        assert VIEW_IMAGE_TOOL_NAME in [tool.name for tool in sees.chat.tools]
+
+    @pytest.mark.parametrize("code", [None, {"where": "local"}])
+    def test_the_lead_looks_at_a_page_of_an_attached_pdf_with_its_own_model(
+        self, conversations: Conversations, fake_client: FakeClient, code: dict[str, str] | None
+    ) -> None:
+        slides = [Image.new("RGB", (300, 400), colour) for colour in ("white", "red")]
+        pdf = io.BytesIO()
+        slides[0].save(pdf, format="PDF", save_all=True, append_images=slides[1:])
+        fake_client.completions.responses = [
+            tool_call_response("view_image", {"path": "uploads/slides.pdf", "question": "Title?", "pages": [2]}),
+            text_response("The slide is red and has no text."),
+            text_response("Slide 2 is a plain red slide."),
+        ]
+        handle = conversations.create({"team": [], **({"code": code} if code else {})})
+        attached = handle.chat.save_upload("slides.pdf", pdf.getvalue())
+
+        handle.chat.start("What is on slide 2?", [attached.name]).join(20)
+
+        (output,) = [event for event in handle.chat.events_since() if event.kind == "tool_output"]
+        assert output.text == "Looked at uploads/slides.pdf, page 2 of 2.\n\nThe slide is red and has no text."
+        looking = fake_client.completions.calls[1]["messages"][-1]["content"]
+        assert [part["type"] for part in looking] == ["text", "text", "image_url"]
+        assert looking[2]["image_url"]["url"].startswith("data:image/png;base64,")
+        told = fake_client.completions.calls[0]["messages"][-1]["content"]
+        assert "view_image can look at an image among them, or at the pages of a PDF" in told
+        assert handle.chat.last_reply is not None and handle.chat.last_reply.text == "Slide 2 is a plain red slide."
 
     def test_a_conversation_opened_again_has_the_tools_it_was_set_up_with_and_not_the_workspaces_now(
         self, workspace: Workspace, fake_client: FakeClient

@@ -442,8 +442,14 @@ class TestInstalling:
             "numpy",
             "pyarrow",
             "uvicorn",
+            "Pillow",
+            "pypdfium2",
         }
+        # What the lead looks at images and the pages of PDFs with is what the server's extra installs too
+        vision = {requirement.split(">=")[0] for requirement in project["optional-dependencies"]["vision"]}
+        assert vision == {"Pillow", "pypdfium2"}
         assert any("server" in requirement for requirement in project["optional-dependencies"]["dev"])
+        assert any("vision" in requirement for requirement in project["optional-dependencies"]["dev"])
 
 
 class TestAsAModule:

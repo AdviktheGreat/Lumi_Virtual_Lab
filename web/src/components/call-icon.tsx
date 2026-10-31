@@ -1,4 +1,4 @@
-import { BookOpen, Dna, Download, FileSpreadsheet, FlaskConical, FolderOpen, MessageSquareText, Search, Terminal, Users, Wrench } from "lucide-react";
+import { BookOpen, Dna, Download, Eye, FileSpreadsheet, FlaskConical, FolderOpen, MessageSquareText, Search, Terminal, Users, Wrench } from "lucide-react";
 
 // What marks a call to the tool of this name
 export function CallIcon({ name, className }: { name: string; className?: string }) {
@@ -34,6 +34,8 @@ export function CallIcon({ name, className }: { name: string; className?: string
       return <FolderOpen className={className} aria-hidden />;
     case "inspect_data_file":
       return <FileSpreadsheet className={className} aria-hidden />;
+    case "view_image":
+      return <Eye className={className} aria-hidden />;
     default:
       return <Wrench className={className} aria-hidden />;
   }

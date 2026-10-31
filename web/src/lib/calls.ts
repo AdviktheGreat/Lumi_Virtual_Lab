@@ -87,6 +87,13 @@ const LOOKUPS: Record<string, Lookup> = {
 
     return file === null ? null : sheet === null ? file : `${file} · ${sheet}`;
   }),
+  view_image: lookup("Looking at an image", "Looked at an image", (args) => {
+    const file = oneLine(args.path, 80);
+    const pages = Array.isArray(args.pages) ? args.pages.filter((page): page is number => typeof page === "number") : [];
+    const where = file === null ? null : pages.length === 0 ? file : `${file}, page${pages.length > 1 ? "s" : ""} ${pages.join(", ")}`;
+
+    return [where, oneLine(args.question, 80)].filter(Boolean).join(" · ") || null;
+  }),
 };
 
 export function summarize(call: Pick<Call, "name" | "arguments" | "status">): CallSummary {

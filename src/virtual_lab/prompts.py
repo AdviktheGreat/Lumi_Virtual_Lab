@@ -592,6 +592,17 @@ def chat_resources_prompt(counts: dict[str, int]) -> str:
     )
 
 
+def view_image_prompt() -> str:
+    """Generates the message that tells a model what it is asked to do with the images it is sent for the lead."""
+    return (
+        "You are looking at images for a scientist's assistant, which cannot see them and will act on what you say. "
+        "Answer the question from what is shown, and say nothing that the images do not show. Transcribe text "
+        "exactly when it is asked for. Read numbers off a table, an axis, or a legend carefully. Describe a diagram "
+        "in order: its boxes, arrows, and labels, and what points to what. Say what is too small, cut off, or unclear "
+        "to read, rather than guessing."
+    )
+
+
 def chat_note_prompt(note: str) -> str:
     """Generates the message that gives the lead a note the human researcher added while it worked.
 
@@ -600,23 +611,34 @@ def chat_note_prompt(note: str) -> str:
     return f"The human researcher added a note while you were working:\n\n{note}"
 
 
-def chat_attachments_prompt(files: Iterable[tuple[str, str]], can_open: bool, can_inspect: bool = False) -> str:
+def chat_attachments_prompt(
+    files: Iterable[tuple[str, str]], can_open: bool, can_inspect: bool = False, can_view: bool = False
+) -> str:
     """Tells the lead which files the human researcher attached to their message.
 
     :param files: Each file's path in the session's working directory, and its size as a person reads it.
     :param can_open: Whether there is a session to open them in.
     :param can_inspect: Whether, with no session, the lead can still look inside a table with inspect_data_file.
+    :param can_view: Whether the lead can look at the images and PDFs among them with view_image.
     """
     listed = "\n".join(f"- {path} ({size})" for path, size in files)
     if can_open:
-        return f"The researcher attached these files, which are in the session's working directory:\n{listed}"
-    if can_inspect:
-        return (
+        told = f"The researcher attached these files, which are in the session's working directory:\n{listed}"
+    elif can_inspect:
+        told = (
             "The researcher attached these files. There is no session to run code on them, but inspect_data_file "
             f"can look inside a table or a spreadsheet:\n{listed}"
         )
+    else:
+        told = f"The researcher attached these files, but there is no session to open them in:\n{listed}"
 
-    return f"The researcher attached these files, but there is no session to open them in:\n{listed}"
+    if can_view:
+        told += (
+            "\nview_image can look at an image among them, or at the pages of a PDF, which is what to use for a "
+            "figure, a slide, or a scanned page, where the text of the file does not say enough."
+        )
+
+    return told
 
 
 # What the lead is told when the researcher gives a command with a message, by the command's name

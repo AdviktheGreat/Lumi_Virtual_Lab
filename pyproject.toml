@@ -68,9 +68,13 @@ mcp = ["mcp>=2.3,<3", "PyYAML"]
 pdf = ["weasyprint>=66"]
 # Reading papers saved as PDFs, for the tasks, databases, and software in them
 papers = ["pypdf>=5"]
+# Looking at images and at the pages of PDFs, with the view_image tool: pypdfium2 draws a page, and Pillow brings an
+# image down to a size a model is sent whole
+vision = ["pypdfium2>=4", "Pillow>=10"]
 # The server a page talks to, with virtual-lab-server or serve. keyring keeps the keys a person gives it in the
-# machine's own keychain, and pyarrow and numpy read Biomni's benchmarks for the runs it answers them in
-server = ["fastapi>=0.115", "uvicorn>=0.30", "keyring>=25", "numpy", "pyarrow"]
+# machine's own keychain, and pyarrow and numpy read Biomni's benchmarks for the runs it answers them in. It includes
+# what view_image needs, which a conversation has when its model reads images
+server = ["fastapi>=0.115", "uvicorn>=0.30", "keyring>=25", "numpy", "pyarrow", "pypdfium2>=4", "Pillow>=10"]
 nanobody-design = [
     "biopython",
     "pandas",
@@ -84,7 +88,7 @@ dev = [
     # What the server's tests send requests with, and read the server's streams with
     "httpx",
     # Every extra the tests use, so that none of them is skipped or fails for want of a package
-    "virtual-lab[bedrock,eval,mcp,ollama,papers,pdf,server]",
+    "virtual-lab[bedrock,eval,mcp,ollama,papers,pdf,server,vision]",
 ]
 
 [project.scripts]
