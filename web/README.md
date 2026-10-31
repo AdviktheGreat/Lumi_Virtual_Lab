@@ -279,6 +279,21 @@ buttons follow the state the server reports (`idle`, `running`, `pausing`, `paus
 `src/lib/steering.ts` lays out. A note stays marked as waiting until the conversation says it was read, or that it came
 too late.
 
+## Commands
+
+A slash at the start of the box opens a list of commands, which narrows as the name is written. The arrow keys choose,
+Enter runs the one that is lit, Tab writes it out, and Escape puts the list away; the slash button beside the paperclip
+opens it for touch. A command that cannot be run now is listed with why (`/stop` when nothing is running), and is not
+sent to the lead in place of itself. A line that begins with a slash and is not one of the commands, such as the path of
+a file, is a message. `src/lib/commands.ts` has the commands, where each is offered (a conversation, or the home page,
+where `/budget` and `/model` set up the conversation to begin), and when each can be run; the box is in
+`src/components/composer.tsx` and the list in `src/components/slash-menu.tsx`.
+
+`/budget` opens the limits of the conversation: what it may spend, how many team sessions the lead may start in
+answering a message, and how many rounds each may have. It works while the lead is at work, and a turn that was stopped
+by the spending limit offers it as Raise the limit. The others stand for what the buttons do: `/model`, `/rename`,
+`/export`, `/files`, `/new`, `/pause`, `/resume`, `/stop`, and `/help`.
+
 ## Files
 
 A file is attached with the paperclip, by dropping it on the composer, or by pasting it. With a conversation to send it

@@ -51,6 +51,8 @@ and everything else is a request and an answer.
     DELETE /api/mcp/servers/{name}/sign-in   forget the sign-in to it, so that the next conversation asks for one
     GET    /api/chats, POST             the conversations, and a new one
     GET    /api/chats/{id}              one conversation, which PATCH renames and DELETE removes
+    PUT    /api/chats/{id}/limits       what it may spend, and how much of the team's time the lead may ask for, which
+                                        can be changed while it works
     POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background, and
                                         which with replace_last takes the place of the last one
     POST   /api/chats/{id}/note         a note for the lead or the team, which they read as they work
@@ -83,7 +85,15 @@ from starlette.requests import ClientDisconnect
 
 from virtual_lab.__about__ import __version__
 from virtual_lab.chat import ChatBusyError, ChatClosedError, UploadTooLargeError
-from virtual_lab.constants import BIOMNI_RELEASE_URL, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
+from virtual_lab.constants import (
+    BIOMNI_RELEASE_URL,
+    CEILING_CHAT_DELEGATION_ROUNDS,
+    CEILING_CHAT_DELEGATIONS,
+    MAX_CHAT_DELEGATION_ROUNDS,
+    MAX_CHAT_DELEGATIONS,
+    MAX_CHAT_TITLE_CHARS,
+    MAX_UPLOAD_BYTES,
+)
 from virtual_lab.environment import DATA_LAKE
 from virtual_lab.export import PDFExportError, make_pdf
 from virtual_lab.export_chat import chat_html
@@ -181,6 +191,8 @@ class ChatBody(RequestModel):
     team: list[str | ScientistBody] | None = None
     code: CodeBody | None = None
     max_cost: float | None = None
+    max_delegations: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATIONS)
+    max_rounds: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATION_ROUNDS)
     stream: bool | None = None
     commercial_mode: bool = False
     tools: list[str] | None = Field(None, max_length=MAX_TOOLS)
@@ -346,6 +358,15 @@ class NoteBody(RequestModel):
 
 class ModelBody(RequestModel):
     model: str = Field(min_length=1, max_length=500)
+
+
+class LimitsBody(RequestModel):
+    """Any of what a conversation may spend, the most team sessions the lead may start in answering a message, and
+    the most rounds it may ask one for: null is no spending limit, or what the lead is given unless it is told otherwise."""
+
+    max_cost: float | None = Field(None, ge=0, allow_inf_nan=False)
+    max_delegations: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATIONS)
+    max_rounds: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATION_ROUNDS)
 
 
 class KeyBody(RequestModel):
@@ -576,7 +597,16 @@ def create_app(
         return {"status": "ok", "version": __version__}
 
     def settings_view(settings: Settings) -> dict[str, Any]:
-        return {**public_settings(settings), "workspace": str(store.root), "max_upload_bytes": max_upload_bytes}
+        return {
+            **public_settings(settings),
+            "workspace": str(store.root),
+            "max_upload_bytes": max_upload_bytes,
+            # What the lead is given of the team's time unless it is told otherwise, and the most it can be told
+            "chat_limits": {
+                "max_delegations": {"default": MAX_CHAT_DELEGATIONS, "ceiling": CEILING_CHAT_DELEGATIONS},
+                "max_rounds": {"default": MAX_CHAT_DELEGATION_ROUNDS, "ceiling": CEILING_CHAT_DELEGATION_ROUNDS},
+            },
+        }
 
     @api.get("/settings")
     def get_settings() -> dict[str, Any]:
@@ -1055,6 +1085,14 @@ def create_app(
     @api.put("/chats/{chat_id}/model")
     def switch_chat_model(chat_id: str, body: ModelBody) -> dict[str, Any]:
         return conversations.switch_model(chat_id, body.model).info()
+
+    @api.put("/chats/{chat_id}/limits")
+    def set_chat_limits(chat_id: str, body: LimitsBody) -> dict[str, Any]:
+        changes = body.model_dump(include=body.model_fields_set)
+        if not changes:
+            raise ApiError(422, "invalid", "Say which limit to change: max_cost, max_delegations, or max_rounds")
+
+        return conversations.set_limits(chat_id, changes).info()
 
     @api.delete("/chats/{chat_id}")
     def delete_chat(chat_id: str) -> Response:

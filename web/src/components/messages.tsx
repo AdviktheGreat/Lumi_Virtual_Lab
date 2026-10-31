@@ -202,12 +202,15 @@ export function TurnView({
   lead,
   state,
   onReplace,
+  onRaiseLimit,
 }: {
   turn: Turn;
   lead: string;
   state: ChatState;
   // Given for the last turn, once it is over, so that its message can be sent again
   onReplace?: (text: string) => void;
+  // Given for the last turn, so that the limit it ran into can be raised
+  onRaiseLimit?: () => void;
 }) {
   const reply = turn.outcome === "answered" ? turn.text : turn.writing;
   const thinking = isThinking(turn, state === "running");
@@ -244,7 +247,20 @@ export function TurnView({
         </LeadBlock>
       )}
       {turn.outcome === "stopped" && <Notice tone="muted">{turn.text || "Stopped."}</Notice>}
-      {turn.outcome === "failed" && <Notice tone="error">{turn.text || "Something went wrong."}</Notice>}
+      {turn.outcome === "failed" && (
+        <Notice
+          tone="error"
+          action={
+            turn.errorType === "BudgetExceededError" && onRaiseLimit ? (
+              <Button variant="outline" size="xs" onClick={onRaiseLimit} className="shrink-0 text-foreground" data-testid="raise-limit">
+                Raise the limit
+              </Button>
+            ) : undefined
+          }
+        >
+          {turn.text || "Something went wrong."}
+        </Notice>
+      )}
     </section>
   );
 }

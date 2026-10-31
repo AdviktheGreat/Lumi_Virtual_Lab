@@ -469,6 +469,11 @@ CHAT_LAB_DIR_NAME = "lab"
 MAX_CHAT_DELEGATIONS = 3
 MAX_CHAT_DELEGATION_ROUNDS = 3
 
+# The most that either may be set to once a conversation is going, which is a page's to ask for and not a limit of the
+# lead's: a conversation that is allowed more should still say how much more
+CEILING_CHAT_DELEGATIONS = 20
+CEILING_CHAT_DELEGATION_ROUNDS = 10
+
 # The most bytes of one file the researcher may attach, and the most bytes kept of its name, which
 # leaves room under the 255 that file systems take for a number to be added to it
 MAX_UPLOAD_BYTES = 4 * 1024**3

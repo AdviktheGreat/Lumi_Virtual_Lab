@@ -17,7 +17,8 @@ meetings the lead held, which are a Project. A Chat opened on a directory carrie
 One turn runs at a time, in the thread that calls send, or in one of its own with start. The
 researcher can steer it from any other thread: add a note, which the lead, or the team if it is
 working, reads before it goes on; pause it, to hold it before its next request; or stop it, which
-ends it at the next point it can be and keeps what was done.
+ends it at the next point it can be and keeps what was done. How much it may spend, and how many team
+sessions and rounds the lead may ask for, can be changed at any time with set_limits.
 """
 
 import hashlib
@@ -124,6 +125,16 @@ STOPPED_REPLY = "I was stopped by the researcher before I finished."
 
 # What the project that holds the team's meetings is for, which only has to be the same every time
 CHAT_PROJECT_GOAL = "Conversation with the head of a lab"
+
+
+class _Unchanged:
+    """What a limit that is left as it is is given as, since None is what a spending limit is when there is none."""
+
+    def __repr__(self) -> str:
+        return "UNCHANGED"
+
+
+UNCHANGED = _Unchanged()
 
 
 class ChatBusyError(RuntimeError):
@@ -542,6 +553,11 @@ class Chat:
         # Worked out on the first message, since it starts the session
         self._system: str | None = None
         self._lead_tools: tuple[Tool, ...] = ()
+        # What the lead is told and given that does not depend on who is on the team or how much it may do, which
+        # is put together with what does, again if the limits are changed
+        self._fixed_parts: tuple[str, ...] = ()
+        self._fixed_tools: tuple[Tool, ...] = ()
+        self._reassemble = False
         self._catalog: Resources | None = None
         self._cells_told = 0
 
@@ -625,6 +641,8 @@ class Chat:
                 "team": [describe_agent(agent) for agent in self.team],
                 "session": self.session.describe() if self.session is not None else None,
                 "max_cost": self.max_cost,
+                "max_delegations": self.max_delegations,
+                "max_rounds": self.max_rounds,
                 "spent": spent,
                 "turns": self._turn,
                 "events": self._next_id - 1,
@@ -737,7 +755,8 @@ class Chat:
 
         It holds its id, title, created_at, state, how many turns and team sessions there have been, what it
         has cost and may cost, its usage, the number of the last event, who leads and who is on the team by
-        title, and whether anyone can run code.
+        title, and whether anyone can run code. max_cost, max_delegations and max_rounds are the limits as
+        set_limits has left them.
         """
         with self._changed:
             return {
@@ -749,6 +768,8 @@ class Chat:
                 "lab_calls": self._lab_calls,
                 "spent": self.spent,
                 "max_cost": self.max_cost,
+                "max_delegations": self.max_delegations,
+                "max_rounds": self.max_rounds,
                 "usage": self._total_usage().to_dict(),
                 "last_event_id": self._next_id - 1,
                 "lead": self.lead.title,
@@ -850,6 +871,58 @@ class Chat:
         self._tell_state(told)
 
         return True
+
+    def set_limits(
+        self,
+        max_cost: float | None | _Unchanged = UNCHANGED,
+        max_delegations: int | _Unchanged = UNCHANGED,
+        max_rounds: int | _Unchanged = UNCHANGED,
+    ) -> None:
+        """Changes what the conversation may spend and how much of the team's time the lead may ask for, whether or not
+        a turn is running. The cost is checked before the next request, so a limit raised while a turn is stopping for
+        want of money lets the next message go on. A limit lowered below what is spent stops the next request, and a
+        turn that is running is ended at it as one that has reached its limit is.
+
+        Only what is given is changed, and nothing is if any of it is not valid. How many team sessions and rounds
+        the lead may ask for is told to it at the start of a turn, so a change to them is put to the lead from the next
+        turn, and held to at once, since a team session that asks for more than is allowed is held to what is.
+
+        :param max_cost: The most the conversation may spend in USD, as the constructor takes it, or None to take the
+            limit away.
+        :param max_delegations: The most team sessions the lead may start in answering one message.
+        :param max_rounds: The most rounds of discussion the lead may ask a team session for.
+        :raises ValueError: If a limit is not valid, as the constructor checks.
+        :raises CostUnknownError: If a spending limit is given and a model is not priced.
+        """
+        if not isinstance(max_cost, _Unchanged) and max_cost is not None:
+            if not (math.isfinite(max_cost) and max_cost >= 0):
+                raise ValueError(f"max_cost must be a finite amount, zero or more, not {max_cost}")
+            for agent in (self.lead, *self.team):
+                try:
+                    compute_token_cost(agent.model, 0, 0)
+                except CostUnknownError as error:
+                    raise CostUnknownError(
+                        f"{error}, so a max_cost cannot be enforced. Add its prices to the tables in "
+                        f"virtual_lab.constants, or run without a limit."
+                    ) from error
+        if not isinstance(max_delegations, _Unchanged) and max_delegations < 0:
+            raise ValueError(f"max_delegations must be zero or more, not {max_delegations}")
+        if not isinstance(max_rounds, _Unchanged) and max_rounds < 0:
+            raise ValueError(f"max_rounds must be zero or more, not {max_rounds}")
+
+        with self._changed:
+            changed_cost = not isinstance(max_cost, _Unchanged) and max_cost != self.max_cost
+            if not isinstance(max_cost, _Unchanged):
+                self.max_cost = max_cost
+            if not isinstance(max_delegations, _Unchanged) and max_delegations != self.max_delegations:
+                self.max_delegations = max_delegations
+                self._reassemble = True
+            if not isinstance(max_rounds, _Unchanged) and max_rounds != self.max_rounds:
+                self.max_rounds = max_rounds
+                self._reassemble = True
+            self._save_info()
+        if changed_cost:
+            self._tell_usage()
 
     def rename(self, title: str) -> None:
         """Gives the conversation another title."""
@@ -1152,8 +1225,11 @@ class Chat:
     # Getting ready
 
     def _prepare(self) -> None:
-        """Starts the session, and works out what the lead is told of it and of Biomni's resources. Once."""
+        """Starts the session, and works out what the lead is told of it and of Biomni's resources. Once, but for
+        what the limits change, which is put together again when they have."""
         if self._system is not None:
+            if self._reassemble:
+                self._assemble()
             return
 
         session = self.session
@@ -1183,8 +1259,7 @@ class Chat:
 
         self._add_late_tools()
         tools: list[Tool] = list(self.tools)
-        delegating = bool(self._consultants) and self.max_delegations > 0
-        parts = [lab_chat_prompt(self.lead, self.team if delegating else (), can_run_code=session is not None)]
+        parts: list[str] = []
 
         if session is not None:
             tools.append(session_tool(session))
@@ -1212,14 +1287,23 @@ class Chat:
             elif listed := resources_prompt(catalog, "tool", retrieved=False):
                 parts.append(listed)
 
-        if delegating:
-            tools.extend(self._delegation_tools())
-
         if instructions := tool_instructions_prompt((*self.tools, *(session.tools if session is not None else ()))):
             parts.append(instructions)
 
-        self._lead_tools = tuple(tools)
-        self._system = "\n\n".join(parts)
+        self._fixed_tools = tuple(tools)
+        self._fixed_parts = tuple(parts)
+        self._assemble()
+
+    def _assemble(self) -> None:
+        """Puts together what the lead is told and given from what was worked out, and from who is on the team and how
+        much they may be asked for, which are what the lead's limits change."""
+        # Cleared before what it is for is read, so that a limit changed while this is done is put together again
+        self._reassemble = False
+        delegating = bool(self._consultants) and self.max_delegations > 0
+        lab = lab_chat_prompt(self.lead, self.team if delegating else (), can_run_code=self.session is not None)
+        delegation = self._delegation_tools() if delegating else ()
+        self._lead_tools = (*self._fixed_tools, *delegation)
+        self._system = "\n\n".join([lab, *self._fixed_parts])
 
     def _add_late_tools(self) -> None:
         """Asks for the tools that could not be had before the first message, and adds them to the lead's and the

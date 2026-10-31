@@ -14,6 +14,7 @@ import type {
   Job,
   KeyStatuses,
   LibraryScientist,
+  LimitsChange,
   McpChange,
   McpCheck,
   McpEntry,
@@ -426,6 +427,9 @@ export const api = {
   // The conversation goes on from where it is with another model, for the lead and for the team
   switchModel: (id: string, model: string) =>
     request<ChatInfo>("PUT", `/chats/${encodeURIComponent(id)}/model`, { model }),
+  // What the conversation may spend and what the lead may ask of the team, changed while it goes on, even while it works
+  setLimits: (id: string, changes: LimitsChange) =>
+    request<ChatInfo>("PUT", `/chats/${encodeURIComponent(id)}/limits`, changes),
   deleteChat: (id: string) => request<void>("DELETE", `/chats/${encodeURIComponent(id)}`),
   // Attachments are named as the server named them when it was sent the files. With replaceLast the message takes the
   // place of the last one, which is taken out of the conversation, to send it again or changed.

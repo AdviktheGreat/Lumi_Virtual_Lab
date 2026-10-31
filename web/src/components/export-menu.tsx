@@ -1,57 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import { BookOpen, FileCode, FileDown, FileText, Loader2 } from "lucide-react";
-import { useServer } from "@/components/server-provider";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { api } from "@/lib/api";
-import { problemOf, type Problem } from "@/lib/errors";
-import { EXPORT_CHOICES, saveFile, type ExportFormat } from "@/lib/export";
+import { EXPORT_CHOICES, type ExportFormat } from "@/lib/export";
+import type { Exporter } from "@/lib/use-export";
 
 const ICONS = { html: FileCode, pdf: FileText, ipynb: BookOpen } satisfies Record<ExportFormat, typeof FileText>;
 
-// What saves the conversation as a document: a web page, a PDF, or a notebook. The document is made by the server, which can fail to
-// make a PDF, so what it says is given to onProblem, to be shown where the page shows what went wrong.
+// What saves the conversation as a document: a web page, a PDF, or a notebook
 export function ExportMenu({
-  id,
+  exporter: { saving, save },
   disabled,
-  onProblem,
 }: {
-  id: string;
+  exporter: Exporter;
   // Whether there is nothing to save yet
   disabled: boolean;
-  onProblem: (problem: Problem | null) => void;
 }) {
-  const { report } = useServer();
-  const [saving, setSaving] = useState<ExportFormat | null>(null);
-  const running = useRef<AbortController | null>(null);
-
-  // A document that is still being made when the conversation is left is not saved, which would be a surprise
-  useEffect(() => () => running.current?.abort(), []);
-
-  async function save(format: ExportFormat) {
-    // Only one at a time: the server does the work, and a second would be a second file
-    if (running.current) return;
-    const controller = new AbortController();
-    running.current = controller;
-    setSaving(format);
-    onProblem(null);
-    try {
-      const { file, name } = await api.exportChat(id, format, controller.signal);
-      saveFile(file, name);
-    } catch (error) {
-      // A request given up because the conversation was left did not fail, so there is nothing to tell of
-      if (!controller.signal.aborted) {
-        report(error);
-        onProblem(problemOf(error));
-      }
-    } finally {
-      running.current = null;
-      setSaving(null);
-    }
-  }
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>

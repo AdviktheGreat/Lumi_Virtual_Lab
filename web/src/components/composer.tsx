@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Paperclip, Pause, Play, Square } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, Paperclip, Pause, Play, Slash, Square } from "lucide-react";
 import { AttachmentTray } from "@/components/attachment-tray";
+import { SlashMenu } from "@/components/slash-menu";
 import { Button } from "@/components/ui/button";
 import type { TrayItem } from "@/lib/attachments";
+import { rowsFor, type Invocation, type Place, type Row } from "@/lib/commands";
 import { controlsFor } from "@/lib/steering";
 import type { ChatState } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -15,6 +17,14 @@ export interface ComposerFiles {
   onAdd: (files: File[]) => void;
   onRemove: (id: number) => void;
   onRetry: (id: number) => void;
+}
+
+// The commands that can be written in the box, which is a slash and a name
+export interface ComposerCommands {
+  place: Place;
+  // How many turns the conversation has had
+  turns: number;
+  onRun: (invocation: Invocation) => void;
 }
 
 interface ComposerProps {
@@ -34,6 +44,7 @@ interface ComposerProps {
   // What keeps a message from being sent as it is, in words, such as a file that is still going
   holdUp?: string | null;
   files?: ComposerFiles;
+  commands?: ComposerCommands;
   autoFocus?: boolean;
   // What goes beside the buttons
   footer?: React.ReactNode;
@@ -44,6 +55,34 @@ interface ComposerProps {
 
 function hasFiles(dataTransfer: DataTransfer | null): boolean {
   return dataTransfer !== null && Array.from(dataTransfer.types).includes("Files");
+}
+
+// The row to light for where the highlight is: the one it is on if that can be chosen, or the next that can, and none if none can
+function litRow(rows: Row[], at: number): number {
+  const from = Math.min(Math.max(at, 0), rows.length - 1);
+  if (rows[from].reason === null) return from;
+  const next = rows.findIndex((row, index) => index > from && row.reason === null);
+
+  return next >= 0 ? next : rows.findIndex((row) => row.reason === null);
+}
+
+// The row a step up or down from the lit one lands on, going round, over those that cannot be chosen
+function stepRow(rows: Row[], from: number, by: 1 | -1): number {
+  if (from < 0) return 0;
+  for (let step = 1; step <= rows.length; step += 1) {
+    const at = (((from + by * step) % rows.length) + rows.length) % rows.length;
+    if (rows[at].reason === null) return at;
+  }
+
+  return from;
+}
+
+// What Tab writes in the box for a row: the command as the row has it, with room to go on where it takes something, and
+// what has been written already where that is the same command with the words it takes
+function completion(row: Row, written: string): string {
+  if ("fill" in row.action) return row.action.fill;
+
+  return written.toLowerCase().startsWith(row.label.toLowerCase()) ? written : row.label;
 }
 
 export function Composer({
@@ -58,6 +97,7 @@ export function Composer({
   disabled = false,
   holdUp = null,
   files,
+  commands,
   autoFocus = false,
   footer,
   roomy = false,
@@ -66,7 +106,19 @@ export function Composer({
   const input = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  // Where the menu of commands has the highlight, and the words it was put away at, which are shown it again once they change
+  const [cursor, setCursor] = useState(0);
+  const [putAwayAt, setPutAwayAt] = useState<string | null>(null);
+  const menuId = useId();
   const controls = controlsFor(state);
+  const place = commands?.place;
+  const turns = commands?.turns ?? 0;
+  const rows = useMemo(
+    () => (place === undefined || putAwayAt === value ? [] : rowsFor(value, { place, state, turns })),
+    [place, state, turns, value, putAwayAt],
+  );
+  const menuOpen = rows.length > 0;
+  const lit = menuOpen ? litRow(rows, cursor) : -1;
   const empty = value.trim() === "";
   const messaging = controls.writes === "message";
   const withFiles = files?.items.some((item) => item.status === "ready" || item.status === "queued") ?? false;
@@ -89,16 +141,36 @@ export function Composer({
     if (chosen.length > 0 && !disabled) files?.onAdd(chosen);
   }
 
+  function change(next: string) {
+    setCursor(0);
+    onValueChange(next);
+  }
+
+  // A command that is chosen is run, or begun in the box where it takes something to be finished
+  function pick(row: Row) {
+    if (row.reason !== null || disabled) return;
+    input.current?.focus();
+    if ("fill" in row.action) {
+      change(row.action.fill);
+    } else {
+      change("");
+      commands?.onRun(row.action.run);
+    }
+  }
+
   return (
     <form
       data-dragging={dragging}
       className={cn(
-        "flex flex-col gap-2 rounded-3xl border border-input bg-card p-3 shadow-sm transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/25 data-[dragging=true]:border-dashed data-[dragging=true]:border-brand",
+        "relative flex flex-col gap-2 rounded-3xl border border-input bg-card p-3 shadow-sm transition-shadow focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/25 data-[dragging=true]:border-dashed data-[dragging=true]:border-brand",
         className,
       )}
       onSubmit={(event) => {
         event.preventDefault();
-        if (messaging) {
+        // While commands are offered, sending is choosing one, and where none can be chosen it is nothing
+        if (menuOpen) {
+          if (lit >= 0) pick(rows[lit]);
+        } else if (messaging) {
           if (canSend) onSend();
         } else if (canNote) {
           onNote?.();
@@ -129,8 +201,31 @@ export function Composer({
         rows={1}
         value={value}
         placeholder={controls.placeholder}
-        onChange={(event) => onValueChange(event.target.value)}
+        onChange={(event) => change(event.target.value)}
+        aria-autocomplete={menuOpen ? "list" : undefined}
+        aria-controls={menuOpen ? menuId : undefined}
+        aria-activedescendant={lit >= 0 ? `${menuId}-${lit}` : undefined}
         onKeyDown={(event) => {
+          if (menuOpen && !event.nativeEvent.isComposing) {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setCursor(stepRow(rows, lit, event.key === "ArrowDown" ? 1 : -1));
+
+              return;
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setPutAwayAt(value);
+
+              return;
+            }
+            if (event.key === "Tab" && !event.shiftKey && lit >= 0) {
+              event.preventDefault();
+              change(completion(rows[lit], value));
+
+              return;
+            }
+          }
           // Enter that picks a character of an input method is not a message
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
@@ -149,6 +244,7 @@ export function Composer({
           roomy ? "min-h-24" : "min-h-11",
         )}
       />
+      {menuOpen && <SlashMenu id={menuId} rows={rows} lit={lit} onLight={setCursor} onPick={pick} />}
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {files && (
@@ -177,6 +273,25 @@ export function Composer({
                 <Paperclip />
               </Button>
             </>
+          )}
+          {commands && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Commands"
+              aria-pressed={value === "/"}
+              disabled={disabled || (value !== "" && value !== "/")}
+              title={value !== "" && value !== "/" ? "Commands are written in an empty box, which begins with a slash" : "Commands"}
+              data-testid="commands-button"
+              onClick={() => {
+                input.current?.focus();
+                change(value === "/" ? "" : "/");
+              }}
+              className="rounded-full text-muted-foreground"
+            >
+              <Slash />
+            </Button>
           )}
           <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground" aria-live="polite">
             {holdUp ?? footer}

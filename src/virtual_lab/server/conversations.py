@@ -23,13 +23,20 @@ from langchain_core.outputs import ChatResult
 from openai import OpenAI, OpenAIError
 
 from virtual_lab.chat import Chat, is_count
-from virtual_lab.constants import CHAT_FILE_NAME, CHAT_UPLOADS_DIR_NAME, MAX_CHAT_TITLE_CHARS, MAX_UPLOAD_BYTES
+from virtual_lab.constants import (
+    CHAT_FILE_NAME,
+    CHAT_UPLOADS_DIR_NAME,
+    MAX_CHAT_DELEGATION_ROUNDS,
+    MAX_CHAT_DELEGATIONS,
+    MAX_CHAT_TITLE_CHARS,
+    MAX_UPLOAD_BYTES,
+)
 from virtual_lab.events import ChatEvent
 from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, detect_source
 from virtual_lab.mcp_tools import tool_prefix
 from virtual_lab.openrouter import Catalog
 from virtual_lab.server.asking import Asker
-from virtual_lab.server.config import ChatConfig, load_config, resolve_config, save_config
+from virtual_lab.server.config import ChatConfig, check_limits, load_config, resolve_config, save_config
 from virtual_lab.server.connections import Connections
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.functions import function_tools
@@ -388,6 +395,47 @@ class Conversations:
 
         return reopened
 
+    def set_limits(self, chat_id: str, changes: Mapping[str, Any]) -> ChatHandle:
+        """Changes what a conversation may spend, and how much of the team's time the lead may ask for: the most
+        team sessions it may start in answering a message, and the most rounds it may ask one for. It goes on as it is,
+        with no change to what was said or the code that is running, and it can be done while it is working.
+
+        :param changes: What to change, which is any of max_cost (null for no limit), max_delegations, and max_rounds
+            (null for what the lead is given unless it is told otherwise). What is not given is left as it was.
+        :raises ApiError: If there is no such conversation, a limit is not valid, or a spending limit is asked for and
+            the model is not priced.
+        """
+        try:
+            checked = check_limits(changes)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        handle = self.get(chat_id)
+        with self._lock:
+            config = handle.config
+            changed = replace(config, **checked)
+            allowed = {
+                "max_delegations": MAX_CHAT_DELEGATIONS if changed.max_delegations is None else changed.max_delegations,
+                "max_rounds": MAX_CHAT_DELEGATION_ROUNDS if changed.max_rounds is None else changed.max_rounds,
+            }
+            try:
+                handle.chat.set_limits(
+                    **({"max_cost": changed.max_cost} if "max_cost" in checked else {}),
+                    **{key: value for key, value in allowed.items() if key in checked},
+                )
+            except CostUnknownError as error:
+                raise ApiError(
+                    422,
+                    "unavailable",
+                    f"{error}, so this conversation's spending limit cannot be enforced with it. Choose a model "
+                    f"that is priced, or start a conversation with no limit.",
+                ) from error
+            except ValueError as error:
+                raise ApiError(422, "invalid", str(error)) from error
+            handle.config = changed
+            save_config(handle.directory, changed)
+
+        return handle
+
     def _reopen_as_it_was(self, chat_id: str, directory: Path, config: ChatConfig) -> None:
         """Opens a conversation again with the setup it had, after a change of it could not be made."""
         try:
@@ -506,6 +554,8 @@ class Conversations:
                 tools=(*chosen, *written),
                 late_tools=handle.connections.tools if handle.connections is not None else None,
                 max_cost=config.max_cost,
+                max_delegations=MAX_CHAT_DELEGATIONS if config.max_delegations is None else config.max_delegations,
+                max_rounds=MAX_CHAT_DELEGATION_ROUNDS if config.max_rounds is None else config.max_rounds,
                 stream=config.stream,
                 resources=config.code.resources if session is not None else "none",
                 commercial_mode=config.commercial_mode,

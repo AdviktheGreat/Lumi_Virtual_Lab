@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from virtual_lab.agent import Agent
+from virtual_lab.constants import CEILING_CHAT_DELEGATION_ROUNDS, CEILING_CHAT_DELEGATIONS
 from virtual_lab.execution import ExecutionError, check_mountable
 from virtual_lab.llm import detect_source
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
@@ -88,6 +89,9 @@ class ChatConfig:
     :param software: The names of the software the person gave the lab that the agents are told they can use.
     :param functions: The ids of the runs of papers whose functions the lead and the team may call, as tools, where code
         runs. A conversation goes on with those of them that are still there.
+    :param max_delegations: The most team sessions the lead may start in answering one message, or None for as many as
+        the lead is given unless it is told otherwise.
+    :param max_rounds: The most rounds of discussion the lead may ask a team session for, or None as above.
     """
 
     model: str
@@ -102,6 +106,8 @@ class ChatConfig:
     data: tuple[str, ...] = ()
     software: tuple[str, ...] = ()
     functions: tuple[str, ...] = ()
+    max_delegations: int | None = None
+    max_rounds: int | None = None
 
     def lead_agent(self) -> Agent:
         return agent_from({**self.lead, "model": self.model})
@@ -131,6 +137,8 @@ class ChatConfig:
             "data": list(self.data),
             "software": list(self.software),
             "functions": list(self.functions),
+            "max_delegations": self.max_delegations,
+            "max_rounds": self.max_rounds,
         }
 
     @classmethod
@@ -153,6 +161,9 @@ class ChatConfig:
             software=tuple(dict.fromkeys(str(name) for name in data.get("software", ()))),
             # A conversation begun before the lab could write functions from papers has none, and goes on without
             functions=tuple(dict.fromkeys(str(name) for name in data.get("functions", ()))),
+            # A conversation begun before the limits could be set has the lead's own, and goes on with them
+            max_delegations=data.get("max_delegations"),
+            max_rounds=data.get("max_rounds"),
         )
 
 
@@ -269,12 +280,51 @@ def describe_scientist(choice: str | Spec, scientists: Sequence[Mapping[str, Any
     return spec
 
 
+def check_allowance(name: str, value: Any, ceiling: int) -> int | None:
+    """How much of the team's time a conversation may be given, as a whole number from none to the most that can be
+    asked for, or None for what the lead is given unless it is told otherwise.
+
+    :raises ValueError: If it is not one.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= ceiling:
+        raise ValueError(f"{name} must be a whole number from 0 to {ceiling}, not {value!r}")
+
+    return value
+
+
+def check_limits(changes: Mapping[str, Any]) -> dict[str, Any]:
+    """The limits of a conversation that a request gives, checked: the most it may spend, the most team sessions the
+    lead may start in answering a message, and the most rounds of discussion it may ask one for.
+
+    :raises ValueError: If one is not valid.
+    """
+    checked: dict[str, Any] = {}
+    if "max_cost" in changes:
+        max_cost = changes["max_cost"]
+        if max_cost is not None:
+            if isinstance(max_cost, bool) or not isinstance(max_cost, (int, float)):
+                raise ValueError(f"max_cost must be an amount, not {max_cost!r}")
+            max_cost = float(max_cost)
+            if not (math.isfinite(max_cost) and max_cost >= 0):
+                raise ValueError(f"max_cost must be a finite amount, zero or more, not {max_cost}")
+        checked["max_cost"] = max_cost
+    if "max_delegations" in changes:
+        checked["max_delegations"] = check_allowance("max_delegations", changes["max_delegations"], CEILING_CHAT_DELEGATIONS)
+    if "max_rounds" in changes:
+        checked["max_rounds"] = check_allowance("max_rounds", changes["max_rounds"], CEILING_CHAT_DELEGATION_ROUNDS)
+
+    return checked
+
+
 def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Workspace) -> ChatConfig:
     """What a new conversation is set up with: what the request gives, and the settings for the rest.
 
     :param request: What the person chose. A key left out is taken from the settings, or the library: "model",
         "lead" and each of "team", by title or described, "code" with any of where, sandbox, network, python,
-        and resources, "max_cost" (null for no limit), "stream", "commercial_mode", "tools", the names of the
+        and resources, "max_cost" (null for no limit), "max_delegations" and "max_rounds" (null for what the lead is
+        given unless it is told otherwise), "stream", "commercial_mode", "tools", the names of the
         library's tools to give, which are all but those the workspace has turned off, "mcp", the names of the
         MCP servers to give, which are those the workspace has turned on, and "data" and "software", the names of
         what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of papers whose
@@ -299,6 +349,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         max_cost = float(max_cost)
         if not (math.isfinite(max_cost) and max_cost >= 0):
             raise ValueError(f"max_cost must be a finite amount, zero or more, not {max_cost}")
+    allowed = check_limits({key: request[key] for key in ("max_delegations", "max_rounds") if key in request})
 
     stream = request["stream"] if request.get("stream") is not None else settings.stream
     if request.get("tools") is not None:
@@ -337,6 +388,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         data=tuple(data),
         software=tuple(software),
         functions=tuple(functions),
+        max_delegations=allowed.get("max_delegations"),
+        max_rounds=allowed.get("max_rounds"),
     )
 
 
