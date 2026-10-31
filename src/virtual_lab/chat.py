@@ -80,6 +80,7 @@ from virtual_lab.prompts import (
     faked_tool_calls_prompt,
     lab_chat_prompt,
     out_of_tool_turns_prompt,
+    view_image_prompt,
 )
 from virtual_lab.provenance import describe_agent, utc_timestamp
 from virtual_lab.resources import (
@@ -108,6 +109,7 @@ from virtual_lab.utils import (
     get_max_input_tokens,
     write_atomically,
 )
+from virtual_lab.vision import VIEW_IMAGE_TOOL_NAME, Picture, view_content, viewable
 
 ChatState = Literal["idle", "running", "pausing", "paused", "stopping"]
 ChatStatus = Literal["answered", "stopped", "failed"]
@@ -1313,6 +1315,8 @@ class Chat:
                     [(file.path, describe_size(file.size)) for file in files],
                     can_open=self.session is not None,
                     can_inspect=any(tool.name == INSPECT_FILE_TOOL_NAME for tool in self.tools),
+                    can_view=any(tool.name == VIEW_IMAGE_TOOL_NAME for tool in self.tools)
+                    and any(viewable(file.path) for file in files),
                 )
             )
         if self._directive is not None:
@@ -1826,6 +1830,28 @@ class Chat:
         )
 
         return resources_prompt(selected, "tool", retrieved=True) or "None of the resources suit that task."
+
+    # Images
+
+    def ask_about_images(self, question: str, pictures: Sequence[Picture]) -> str:
+        """Asks the lead's own model a question about images, which it is sent in a request of their own, so that they
+        are not kept in the conversation, and counts what it costs. This is what the view_image tool asks with (see
+        virtual_lab.vision.view_image_tool).
+
+        :param question: What to find out from them.
+        :param pictures: The images, as virtual_lab.vision makes them.
+        :raises BudgetExceededError: If the conversation has no money left for the request.
+        :return: What the model said, which is empty if it said nothing.
+        """
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": view_image_prompt()},
+            {"role": "user", "content": view_content(question, pictures)},  # type: ignore[typeddict-item]
+        ]
+        self._check_budget()
+        reply = self._ask(self.lead, messages, None, speaking=False)
+        self._count(self.lead.model, reply)
+
+        return reply.content.strip()
 
     # The team
 

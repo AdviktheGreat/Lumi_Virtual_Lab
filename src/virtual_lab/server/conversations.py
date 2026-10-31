@@ -32,7 +32,7 @@ from virtual_lab.constants import (
     MAX_UPLOAD_BYTES,
 )
 from virtual_lab.events import ChatEvent
-from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, detect_source
+from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, accepts_images, detect_source
 from virtual_lab.mcp_tools import tool_prefix
 from virtual_lab.openrouter import Catalog
 from virtual_lab.server.asking import Asker
@@ -57,6 +57,7 @@ from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
 from virtual_lab.session import Session
 from virtual_lab.utils import CostUnknownError, compute_token_cost
+from virtual_lab.vision import VIEW_IMAGE_TOOL_NAME, Picture
 
 # What a conversation's code runs in, under its directory
 WORK_DIR_NAME = "work"
@@ -584,8 +585,24 @@ class Conversations:
         data, software = given(self.workspace, config.data, config.software)
         session = config.code.session(directory / WORK_DIR_NAME, data=data, software=software)
         chat_models = MissingKeysModel(needs=tuple(self.missing_keys(config))) if keyless else self.chat_models
-        available = conversation_tools(directory, session.directory if session is not None else None)
-        chosen = tuple(available[name] for name in config.tools if name in available)
+
+        def ask_about_images(question: str, pictures: Sequence[Picture]) -> str:
+            assert handle.chat is not None
+            return handle.chat.ask_about_images(question, pictures)
+
+        available = conversation_tools(
+            directory,
+            session.directory if session is not None else None,
+            ask_about_images,
+            session.where_code_runs() if session is not None else None,
+        )
+        # What looks at images asks the lead's own model, so it is only given to one that reads them
+        reads_images = accepts_images(config.model)
+        chosen = tuple(
+            available[name]
+            for name in config.tools
+            if name in available and (reads_images or name != VIEW_IMAGE_TOOL_NAME)
+        )
         # Those still set up and on, and not those it was begun with that have been turned off since, which may be why
         # it is being opened again
         stored = self.workspace.load_mcp_servers()

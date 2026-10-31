@@ -23,7 +23,7 @@ import json
 import os
 import re
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
@@ -60,6 +60,14 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # What tells an OpenRouter model from one a provider serves itself: OpenRouter names a model <author>/<model>, which
 # Biomni's rules would send to a local Ollama server
 OPENROUTER_PREFIX = "openrouter/"
+
+# The OpenRouter models, by the names they have here, that read images, as OpenRouter lists them. Which they are is told
+# by virtual_lab.openrouter, as what they cost is told to virtual_lab.utils.
+REGISTERED_IMAGE_MODELS: set[str] = set()
+
+# The models of OpenAI that read images: GPT-4o and after, and the o-series from o1 on, but for the smaller ones before
+# o3 and o4 that did not
+OPENAI_IMAGE_MODELS = re.compile(r"^(gpt-(4o|4\.1|4\.5|4-turbo|[5-9])|o1(?!-mini|-preview)|o3(?!-mini)|o4)")
 
 # How often a request that is waited on is asked whether to go on waiting
 INTERRUPT_POLL_SECONDS = 0.2
@@ -106,6 +114,34 @@ def detect_source(model: str, base_url: str | None = None) -> SourceType:
         return "OpenAI"
 
     raise ValueError(f'Unable to determine the source of "{model}". Please specify source.')
+
+
+def register_image_models(models: Iterable[str]) -> None:
+    """Tells accepts_images which OpenRouter models read images, replacing what it was told before."""
+    REGISTERED_IMAGE_MODELS.clear()
+    REGISTERED_IMAGE_MODELS.update(models)
+
+
+def accepts_images(model: str) -> bool:
+    """Whether a model can be sent an image, as far as is known: an OpenRouter model if OpenRouter's list says so, one
+    of OpenAI's, Anthropic's, or Google's by its name, and no other, since what a local or a custom model reads is not
+    known.
+
+    :param model: The model name.
+    """
+    try:
+        source = detect_source(model)
+    except ValueError:
+        return False
+
+    if source == "OpenRouter":
+        return model in REGISTERED_IMAGE_MODELS
+    if source == "OpenAI":
+        return OPENAI_IMAGE_MODELS.match(model) is not None
+    if source == "Anthropic":
+        return not model.startswith(("claude-2", "claude-instant"))
+
+    return source == "Gemini"
 
 
 def openrouter_name(model: str) -> str:
@@ -536,6 +572,8 @@ def to_langchain_messages(
     for message in messages:
         role = message.get("role")
         content = message.get("content") or ""
+        # A message of the researcher's may be parts, as a question with images is
+        parts = content if role == "user" and isinstance(content, list) else None
         if not isinstance(content, str):
             content = json.dumps(content)
         name = message.get("name")
@@ -543,7 +581,7 @@ def to_langchain_messages(
         if role == "system":
             converted.append(SystemMessage(content=content))
         elif role == "user":
-            converted.append(HumanMessage(content=content))
+            converted.append(HumanMessage(content=parts if parts is not None else content))
         elif role == "tool":
             call_id = str(message.get("tool_call_id"))
             if call_id in others_calls:

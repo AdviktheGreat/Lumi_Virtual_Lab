@@ -124,6 +124,11 @@ describe("what a call is shown as", () => {
       detail: "uploads/a.xlsx · Counts",
     });
     expect(summarize(call("data_files", {}, "running"))).toEqual({ title: "Listing the attached files", detail: null, code: null });
+    expect(
+      summarize(call("view_image", { path: "uploads/slides.pdf", question: "What is on the slide?", pages: [45, 46] }, "running")),
+    ).toEqual({ title: "Looking at an image", detail: "uploads/slides.pdf, pages 45, 46 · What is on the slide?", code: null });
+    expect(summarize(call("view_image", { path: "plots/a.png", question: "Values?", pages: [3] })).detail).toBe("plots/a.png, page 3 · Values?");
+    expect(summarize(call("view_image", { path: "plots/a.png" }))).toMatchObject({ title: "Looked at an image", detail: "plots/a.png" });
   });
 
   it("is a library tool with nothing about it when what it was given is broken", () => {

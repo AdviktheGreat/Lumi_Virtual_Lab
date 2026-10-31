@@ -114,7 +114,7 @@ from virtual_lab.function_generator import (
     saved_functions,
 )
 from virtual_lab.function_tools import FunctionToolError, tool_from_source, tools_from_saved_functions
-from virtual_lab.llm import detect_source, get_llm
+from virtual_lab.llm import accepts_images, detect_source, get_llm
 from virtual_lab.literature import (
     Article,
     ArticleResults,
@@ -228,6 +228,7 @@ from virtual_lab.tools import (
 )
 from virtual_lab.toolbox import BiomniToolError, biomni_session_tools
 from virtual_lab.utils import BudgetExceededError, CostUnknownError
+from virtual_lab.vision import ViewError, view_image_tool
 from virtual_lab.web import (
     ALLOWED_HOSTS,
     DisallowedHostError,
@@ -389,7 +390,9 @@ __all__ = [
     "UnsafeFilenameError",
     "UnsupportedLanguageError",
     "UploadTooLargeError",
+    "ViewError",
     "WebRequestError",
+    "accepts_images",
     "all_tools",
     "answer_in_terminal",
     "approve_in_terminal",
@@ -474,6 +477,7 @@ __all__ = [
     "tool_from_source",
     "tools_for",
     "tools_from_saved_functions",
+    "view_image_tool",
 ]
 
 # Imported when first used, so that python -m virtual_lab.mcp_server does not find the module it

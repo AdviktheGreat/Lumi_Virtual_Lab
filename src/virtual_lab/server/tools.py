@@ -5,6 +5,7 @@ read the files in a conversation. Each is a function of the library that the lea
 asks and is told is shown in the conversation like any other call.
 """
 
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from virtual_lab.tools import (
     inspect_data_file,
     structure_file_tool,
 )
+from virtual_lab.vision import VIEW_IMAGE_TOOL_NAME, AskAboutImages, Picture, view_image_tool
 
 # The tools by what they are for, which is how the settings list them and the order of each, so that a tool is
 # listed beside those it is used with
@@ -32,7 +34,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
         "fetch_structure_file",
     ),
     "Chemistry": ("pubchem_lookup", "chembl_search", "chembl_lookup", "chembl_target_search", "chembl_activities"),
-    "Your files": ("data_files", "inspect_data_file"),
+    "Your files": ("data_files", "inspect_data_file", VIEW_IMAGE_TOOL_NAME),
 }
 
 # The tools that only make sense where code can run, since what they write is for code to read
@@ -67,19 +69,36 @@ def attached_file_tools(directory: Path) -> tuple[Tool, ...]:
     return (replace(listing, function=show_attached), replace(inspection, function=inspect_attached))
 
 
-def conversation_tools(directory: Path, session_directory: Path | None) -> dict[str, Tool]:
+def no_model_to_ask(question: str, pictures: Sequence[Picture]) -> str:
+    raise RuntimeError("There is no model to ask about images")
+
+
+def conversation_tools(
+    directory: Path,
+    session_directory: Path | None,
+    ask_about_images: AskAboutImages | None = None,
+    where_code_runs: str | None = None,
+) -> dict[str, Tool]:
     """Every tool a conversation may be given, by name, in the order the settings list them.
 
     :param directory: The conversation's own directory.
     :param session_directory: Where the conversation's code runs, which the tools that read files see, and the one
         that fetches a structure writes in; or None where none does, when they see the files attached instead, and
         the one that fetches a structure is left out.
+    :param ask_about_images: What answers the lead's questions about images, which is its own model. Without it the
+        tool that looks at images is there to be listed, and fails if it is called.
+    :param where_code_runs: The working directory as the code sees it, if that is not where it is here.
     """
     if session_directory is None:
         files = attached_file_tools(directory)
     else:
         files = data_file_tools(session_directory)
-    made = {tool.name: tool for tool in (*DATABASE_TOOLS, *files)}
+    looking = view_image_tool(
+        session_directory if session_directory is not None else directory,
+        ask_about_images or no_model_to_ask,
+        where_code_runs,
+    )
+    made = {tool.name: tool for tool in (*DATABASE_TOOLS, *files, looking)}
     if session_directory is not None:
         fetching = structure_file_tool(session_directory)
         made[fetching.name] = fetching

@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 import openai
 import pytest
+from PIL import Image
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
@@ -38,6 +39,7 @@ from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
 from virtual_lab.utils import ContextLengthExceededError, CostUnknownError, compute_token_cost
+from virtual_lab.vision import Picture, view_image_tool
 
 from conftest import TEST_MODEL, FakeClient, make_usage, text_response, tool_call_response
 from test_events import PlottingSession
@@ -918,6 +920,138 @@ class TestFiles:
             chat.send("Look.", attachments=[name])
 
         assert chat.turns == 0
+
+
+def seeing_chat(tmp_path: Path, **options: Any) -> Chat:
+    """A conversation whose lead has the tool that looks at the images and PDFs in a folder of its own."""
+    work = tmp_path / "pictures"
+    work.mkdir(parents=True, exist_ok=True)
+    holder: list[Chat] = []
+    tool = view_image_tool(work, lambda question, pictures: holder[0].ask_about_images(question, pictures))
+    chat = make_chat(tmp_path, tools=(tool,), **options)
+    holder.append(chat)
+
+    return chat
+
+
+class TestLookingAtImages:
+    PICTURE = Picture("slides.pdf, page 2 of 9", "image/png", b"\x89PNG-bytes")
+
+    def test_the_model_is_asked_about_the_pictures_in_a_request_of_their_own(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("  A heatmap.\n")]
+        chat = make_chat(tmp_path)
+
+        answer = chat.ask_about_images("What is it?", [self.PICTURE])
+
+        assert answer == "A heatmap."
+        (call,) = fake_client.completions.calls
+        system, user = call["messages"]
+        assert system["role"] == "system" and "cannot see them" in system["content"]
+        assert user["role"] == "user"
+        assert user["content"][0] == {"type": "text", "text": "What is it?"}
+        assert user["content"][1] == {"type": "text", "text": "slides.pdf, page 2 of 9:"}
+        assert user["content"][2]["image_url"]["url"] == self.PICTURE.data_url()
+        assert not call.get("tools")
+
+    def test_what_it_costs_is_counted_and_the_images_are_not_kept_in_the_conversation(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path)
+
+        chat.ask_about_images("What is it?", [self.PICTURE])
+
+        assert chat.usage.num_calls == 1
+        assert chat.spent == pytest.approx(PER_RESPONSE)
+        assert chat.messages == []
+
+    def test_it_is_not_asked_when_the_conversation_has_no_money_left(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path, max_cost=PER_RESPONSE)
+        assert chat.send("One").status == "answered"
+
+        with pytest.raises(chat_module.BudgetExceededError):
+            chat.ask_about_images("What is it?", [self.PICTURE])
+
+        assert len(fake_client.completions.calls) == 1
+
+    def test_the_lead_looks_at_pages_of_a_pdf_and_reads_what_the_model_saw(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        pdf = tmp_path / "pictures" / "slides.pdf"
+        pdf.parent.mkdir()
+        slides = [Image.new("RGB", (300, 400), colour) for colour in ("white", "red", "blue")]
+        slides[0].save(pdf, save_all=True, append_images=slides[1:])
+        fake_client.completions.responses = [
+            tool_call_response("view_image", {"path": "slides.pdf", "question": "Title?", "pages": [2, 3]}),
+            text_response("The title is Results."),
+            text_response("Slide 2 is titled Results."),
+        ]
+        chat = seeing_chat(tmp_path)
+
+        reply = chat.send("What are slides 2 and 3?")
+
+        assert reply.text == "Slide 2 is titled Results."
+        lead, looking, final = fake_client.completions.calls
+        assert "view_image" in [tool["function"]["name"] for tool in lead["tools"]]
+        # The model that looks is sent the pages, and no tools
+        parts = looking["messages"][-1]["content"]
+        assert [part["text"] for part in parts if part["type"] == "text"] == [
+            "Title?",
+            "slides.pdf, page 2 of 3:",
+            "slides.pdf, page 3 of 3:",
+        ]
+        assert len([part for part in parts if part["type"] == "image_url"]) == 2
+        assert not looking.get("tools")
+        # The lead is told what it said, and is not sent the images, now or later
+        (output,) = of(chat.events_since(), "tool_output")
+        assert output.text == "Looked at slides.pdf, page 2 of 3; slides.pdf, page 3 of 3.\n\nThe title is Results."
+        assert "image_url" not in json.dumps(final["messages"])
+        assert "image_url" not in json.dumps(chat.messages)
+        assert chat.usage.num_calls == 3
+
+    def test_a_file_that_cannot_be_looked_at_is_told_to_the_lead_without_asking_the_model(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("view_image", {"path": "../secret.png", "question": "What?"}),
+            text_response("I could not."),
+        ]
+        chat = seeing_chat(tmp_path)
+
+        reply = chat.send("Look.")
+
+        assert reply.text == "I could not."
+        assert len(fake_client.completions.calls) == 2
+        (output,) = of(chat.events_since(), "tool_output")
+        assert output.text.startswith("Cannot look at it: Only files in the working directory")
+
+    def test_the_lead_is_told_it_can_look_at_an_attached_image_or_pdf_if_it_has_the_tool(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = seeing_chat(tmp_path)
+        figure = chat.save_upload("figure.png", b"x")
+
+        chat.send("See this.", attachments=[figure])
+
+        told = request_messages(fake_client, 0)[-1]["content"]
+        assert told.startswith("See this.\n\nThe researcher attached these files")
+        assert "view_image can look at an image among them, or at the pages of a PDF" in told
+
+    def test_it_is_not_told_so_of_files_that_are_not_images_or_without_the_tool(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        seeing = seeing_chat(tmp_path / "a")
+        counts = seeing.save_upload("counts.csv", b"a,b\n")
+        seeing.send("See this.", attachments=[counts])
+        blind = make_chat(tmp_path / "b")
+        figure = blind.save_upload("figure.png", b"x")
+        blind.send("See this.", attachments=[figure])
+
+        assert "view_image" not in request_messages(fake_client, 0)[-1]["content"]
+        assert "view_image" not in request_messages(fake_client, 1)[-1]["content"]
 
 
 class TestTeam:

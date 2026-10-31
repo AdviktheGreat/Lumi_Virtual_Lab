@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 import requests
 
-from virtual_lab import utils
+from virtual_lab import llm, utils
 from virtual_lab.openrouter import (
     SAVED_FORMAT,
     Catalog,
@@ -25,6 +25,7 @@ from virtual_lab.utils import CostUnknownError, compute_token_cost, input_cost, 
 def no_prices_left_behind(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(utils, "REGISTERED_PRICES", {})
     monkeypatch.setattr(utils, "REGISTERED_CACHE_PRICES", {})
+    monkeypatch.setattr(llm, "REGISTERED_IMAGE_MODELS", set())
 
 
 def listed(
@@ -35,16 +36,18 @@ def listed(
     outputs: tuple[str, ...] = ("text",),
     cache_read: str | None = None,
     cache_write: str | None = None,
+    inputs: tuple[str, ...] | None = None,
     **more: Any,
 ) -> dict[str, Any]:
     cache = {"input_cache_read": cache_read} if cache_read is not None else {}
     cache |= {"input_cache_write": cache_write} if cache_write is not None else {}
+    seen = {"input_modalities": list(inputs)} if inputs is not None else {}
 
     return {
         "id": name,
         "name": f"Name of {name}",
         "context_length": 200_000,
-        "architecture": {"output_modalities": list(outputs)},
+        "architecture": {"output_modalities": list(outputs), **seen},
         "pricing": {"prompt": prompt, "completion": completion, **cache},
         "supported_parameters": list(parameters),
         **more,
@@ -113,6 +116,25 @@ class TestModelsFrom:
         assert (wrong.cache_read_price, wrong.cache_write_price) == (None, None)
         assert cache_prices_of(models_from(sample())) == {
             "openrouter/anthropic/claude-sonnet-4.5": (0.0000003, 0.00000375)
+        }
+
+    def test_a_model_that_reads_images_is_known_by_what_openrouter_says_it_takes_in(self) -> None:
+        data = {
+            "data": [
+                listed("a/sees", inputs=("text", "image", "file")),
+                listed("a/reads-only", inputs=("text",)),
+                listed("a/silent"),
+                {**listed("a/wrong"), "architecture": {"input_modalities": "image", "output_modalities": ["text"]}},
+            ]
+        }
+
+        models = {model.id: model.images for model in models_from(data)}
+
+        assert models == {
+            "openrouter/a/sees": True,
+            "openrouter/a/reads-only": False,
+            "openrouter/a/silent": False,
+            "openrouter/a/wrong": False,
         }
 
     @pytest.mark.parametrize("data", [None, [], {}, {"data": "no"}, "text"])
@@ -316,6 +338,47 @@ class TestCatalog:
 
         Catalog(path, fetch=source).ensure_prices()
         assert source.asked == 1
+
+    def test_which_models_read_images_is_known_from_the_list_and_from_the_file_it_is_kept_in(
+        self, tmp_path: Path
+    ) -> None:
+        data = {"data": [listed("a/sees", inputs=("text", "image")), listed("a/blind", inputs=("text",))]}
+        path = tmp_path / "models.json"
+        Catalog(path, fetch=lambda: models_from(data)).listing()
+
+        assert llm.accepts_images("openrouter/a/sees")
+        assert not llm.accepts_images("openrouter/a/blind")
+        assert json.loads(path.read_text())["models"][0]["images"] is True
+        llm.REGISTERED_IMAGE_MODELS.clear()
+
+        Catalog(path, fetch=lambda: models_from(data))
+
+        assert llm.accepts_images("openrouter/a/sees")
+        assert not llm.accepts_images("openrouter/a/blind")
+
+    def test_a_list_kept_before_it_said_which_models_read_images_is_read_again_at_once(self, tmp_path: Path) -> None:
+        path = tmp_path / "models.json"
+        old = {
+            "format": 2,
+            "read_at": 9_999_999_999,
+            "models": [{"id": "openrouter/a/sees", "name": "Sees", "input_price": 1e-6, "output_price": 2e-6}],
+        }
+        path.write_text(json.dumps(old))
+        data = {"data": [listed("a/sees", inputs=("text", "image"))]}
+        asked: list[int] = []
+
+        def fetch() -> list[OpenRouterModel]:
+            asked.append(1)
+            return models_from(data)
+
+        catalog = Catalog(path, fetch=fetch)
+        assert catalog.known and not llm.accepts_images("openrouter/a/sees")
+        catalog.ensure_prices()
+
+        assert asked == [1]
+        assert llm.accepts_images("openrouter/a/sees")
+        Catalog(path, fetch=fetch).ensure_prices()
+        assert asked == [1]
 
     def test_a_list_kept_before_that_that_cannot_be_read_again_is_still_used(self, tmp_path: Path) -> None:
         path = tmp_path / "models.json"
