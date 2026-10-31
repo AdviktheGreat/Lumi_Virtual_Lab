@@ -9,6 +9,7 @@ from virtual_lab.constants import (
     MODEL_TO_INPUT_PRICE_PER_TOKEN,
     MODEL_TO_OUTPUT_PRICE_PER_TOKEN,
 )
+from virtual_lab import utils
 from virtual_lab.utils import (
     CostUnknownError,
     MeetingUsage,
@@ -107,6 +108,60 @@ class TestMeetingUsage:
 
         assert usage.input_tokens == 1000
         assert usage.cached_input_tokens == 400
+
+    @pytest.fixture
+    def kimi(self, monkeypatch: pytest.MonkeyPatch) -> str:
+        monkeypatch.setattr(utils, "REGISTERED_PRICES", {})
+        monkeypatch.setattr(utils, "REGISTERED_CACHE_PRICES", {})
+        utils.register_prices({"openrouter/kimi": (2e-6, 1e-5)}, {"openrouter/kimi": (2e-7, None)})
+
+        return "openrouter/kimi"
+
+    def test_cached_input_costs_what_the_provider_charges_for_it(self, kimi: str) -> None:
+        # What a long conversation reported: nearly all of its input was read from the cache
+        usage = MeetingUsage()
+        usage.add(kimi, make_usage(prompt_tokens=961_851, completion_tokens=10_612, cached_tokens=897_536))
+
+        assert usage.compute_cost() == pytest.approx(64_315 * 2e-6 + 897_536 * 2e-7 + 10_612 * 1e-5)
+        assert usage.compute_cost() < 0.42
+        assert usage.to_dict()["cost"] == pytest.approx(usage.compute_cost())
+
+    def test_cached_input_costs_as_input_where_the_model_has_no_price_for_the_cache(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(utils, "REGISTERED_PRICES", {})
+        monkeypatch.setattr(utils, "REGISTERED_CACHE_PRICES", {})
+        utils.register_prices({"openrouter/plain": (2e-6, 1e-5)})
+        usage = MeetingUsage()
+        usage.add("openrouter/plain", make_usage(prompt_tokens=1000, completion_tokens=100, cached_tokens=900))
+        usage.add(TEST_MODEL, make_usage(prompt_tokens=1000, completion_tokens=100, cached_tokens=900))
+
+        assert usage.compute_cost() == pytest.approx(
+            1000 * 2e-6 + 100 * 1e-5 + compute_token_cost(TEST_MODEL, 1000, 100)
+        )
+
+    def test_tokens_written_to_the_cache_are_counted_and_kept(self, kimi: str) -> None:
+        usage = MeetingUsage()
+        usage.add(kimi, make_usage(prompt_tokens=1000, cached_tokens=100, cache_write_tokens=200))
+        usage.add(kimi, make_usage(prompt_tokens=1000, cache_write_tokens=50))
+
+        assert usage.per_model[kimi].cache_write_tokens == 250
+        assert usage.to_dict()["per_model"][kimi]["cache_write_tokens"] == 250
+        assert MeetingUsage.from_dict(usage.to_dict()).per_model[kimi].cache_write_tokens == 250
+        # Usage kept before it was counted is read all the same
+        old = usage.to_dict()
+        del old["per_model"][kimi]["cache_write_tokens"]
+        assert MeetingUsage.from_dict(old).per_model[kimi].cache_write_tokens == 0
+
+    def test_a_count_of_tokens_written_that_is_not_one_is_not_counted(self, kimi: str) -> None:
+        usage = MeetingUsage()
+        details = make_usage(prompt_tokens=10).prompt_tokens_details
+        assert details is not None
+        for written in (None, -5, "many", 1.5):
+            object.__setattr__(details, "cache_write_tokens", written)
+            usage.add(kimi, make_usage(prompt_tokens=10).model_copy(update={"prompt_tokens_details": details}))
+
+        assert usage.per_model[kimi].cache_write_tokens == 0
 
     def test_reasoning_tokens_are_a_subset_of_output(self) -> None:
         usage = MeetingUsage()

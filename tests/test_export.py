@@ -38,6 +38,7 @@ from virtual_lab.project import Project
 from virtual_lab.run_meeting import hold_meeting
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
+from virtual_lab import utils
 from virtual_lab.utils import MeetingUsage, price_per_million
 
 from conftest import TEST_MODEL, FakeClient, make_usage, parsed_response, text_response, tool_call_response
@@ -509,6 +510,21 @@ class TestUsageTable:
         cost = export.money(usage["cost"])
         assert f"<td class='number'>{cost}</td>" in table
         assert f"<th class='number'>{cost}</th>" in table
+
+    def test_the_cache_is_priced_as_the_meeting_priced_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(utils, "REGISTERED_PRICES", {})
+        monkeypatch.setattr(utils, "REGISTERED_CACHE_PRICES", {})
+        utils.register_prices({"openrouter/kimi": (2e-6, 1e-5)}, {"openrouter/kimi": (2e-7, None)})
+        meeting = MeetingUsage()
+        meeting.add("openrouter/kimi", make_usage(prompt_tokens=1_000_000, completion_tokens=100_000, cached_tokens=900_000))
+        usage = meeting.to_dict()
+
+        table = usage_table(usage, {"openrouter/kimi": price_per_million("openrouter/kimi")})
+
+        # 100k input, 900k read from the cache, and 100k output
+        assert usage["cost"] == pytest.approx(0.2 + 0.18 + 1.0)
+        assert f"<td class='number'>{export.money(usage['cost'])}</td>" in table
+        assert f"<th class='number'>{export.money(usage['cost'])}</th>" in table
 
     def test_a_cost_worked_out_two_ways_reads_the_same(self) -> None:
         # 500 input and 100 output tokens of gpt-4o, as a model's cost and as a meeting's

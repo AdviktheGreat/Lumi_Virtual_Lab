@@ -284,17 +284,60 @@ class BudgetExceededError(RuntimeError):
 # OpenRouter's are: USD per token, input then output, for the model named exactly
 REGISTERED_PRICES: dict[str, tuple[float, float]] = {}
 
+# What the same providers charge for input tokens that they read from their cache, and for those they write to it, as for
+# REGISTERED_PRICES: USD per token, for a model that is registered, with None where the provider does not say. An input
+# token that is neither is priced as input.
+REGISTERED_CACHE_PRICES: dict[str, tuple[float | None, float | None]] = {}
 
-def register_prices(prices: Mapping[str, tuple[float, float]]) -> None:
+
+def register_prices(
+    prices: Mapping[str, tuple[float, float]],
+    cache_prices: Mapping[str, tuple[float | None, float | None]] | None = None,
+) -> None:
     """Tells compute_token_cost what models cost that are not in the tables, replacing what it was told of them before.
 
     :param prices: For each model, its USD per input token and per output token. A model is priced as named, with no
         part of its name left off, as a dated snapshot is in the tables.
+    :param cache_prices: For each model that has them, its USD per input token read from the provider's cache, and per
+        token written to it, either of which is None where the provider does not say. A model of prices that is not here
+        has none, so that what was said of it before is forgotten with its other prices.
     """
+    given = cache_prices or {}
     for model, (input_price, output_price) in prices.items():
         if not all(math.isfinite(price) and price >= 0 for price in (input_price, output_price)):
             raise ValueError(f"The price of {model} is an amount of money, zero or more, per token")
+    for model, cache in given.items():
+        if not all(price is None or (math.isfinite(price) and price >= 0) for price in cache):
+            raise ValueError(f"The price of {model}'s cache is an amount of money, zero or more, per token")
     REGISTERED_PRICES.update(prices)
+    for model in prices:
+        REGISTERED_CACHE_PRICES.pop(model, None)
+    REGISTERED_CACHE_PRICES.update({model: cache for model, cache in given.items() if model in prices})
+
+
+def input_cost(
+    input_price: float,
+    input_tokens: int,
+    cached_tokens: int = 0,
+    cache_read_price: float | None = None,
+    cache_write_tokens: int = 0,
+    cache_write_price: float | None = None,
+) -> float:
+    """What input tokens cost, those read from the provider's cache at its price for them and those written to it at
+    its, where it has one, and the rest at the price of input. Tokens that are said to be cached or written to it but
+    are more than the input are not counted twice.
+
+    :param input_price: USD per input token, or per million, in whichever the other prices are.
+    :param input_tokens: How many input tokens there were in all, which include those read from and written to the cache.
+    """
+    read = max(0, min(cached_tokens, input_tokens)) if cache_read_price is not None else 0
+    written = max(0, min(cache_write_tokens, input_tokens - read)) if cache_write_price is not None else 0
+
+    return (
+        (input_tokens - read - written) * input_price
+        + read * (cache_read_price or 0.0)
+        + written * (cache_write_price or 0.0)
+    )
 
 
 def price_key(model: str, prices: dict[str, float]) -> str | None:
@@ -317,18 +360,41 @@ def price_key(model: str, prices: dict[str, float]) -> str | None:
     return undated if undated in prices else None
 
 
-def compute_token_cost(model: str, input_token_count: int, output_token_count: int) -> float:
+def compute_token_cost(
+    model: str,
+    input_token_count: int,
+    output_token_count: int,
+    cached_input_token_count: int = 0,
+    cache_write_token_count: int = 0,
+) -> float:
     """Computes the token cost of a model given input and output token counts.
 
     :param model: The name of the model.
-    :param input_token_count: The number of tokens in the input.
+    :param input_token_count: The number of tokens in the input, which include those read from the cache and written
+        to it.
     :param output_token_count: The number of tokens in the output.
+    :param cached_input_token_count: How many of the input tokens the provider read from its cache. They are priced at
+        the cache's price where the model has one registered, and as input otherwise, which is the upper bound for a
+        provider that discounts them.
+    :param cache_write_token_count: How many of the input tokens it wrote to its cache, priced the same way.
     :raises CostUnknownError: If the model is not in the price tables.
     :return: The token cost of the model.
     """
     registered = REGISTERED_PRICES.get(model)
     if registered is not None:
-        return input_token_count * registered[0] + output_token_count * registered[1]
+        cache_read, cache_write = REGISTERED_CACHE_PRICES.get(model, (None, None))
+
+        return (
+            input_cost(
+                registered[0],
+                input_token_count,
+                cached_input_token_count,
+                cache_read,
+                cache_write_token_count,
+                cache_write,
+            )
+            + output_token_count * registered[1]
+        )
 
     input_prices, output_prices = MODEL_TO_INPUT_PRICE_PER_TOKEN, MODEL_TO_OUTPUT_PRICE_PER_TOKEN
     base = model
@@ -355,15 +421,46 @@ def price_per_million(model: str) -> dict[str, float] | None:
     """What a model is priced at, for the record of a meeting that used it.
 
     :param model: The name of the model.
-    :return: USD per million input and output tokens, or None if the model is not priced.
+    :return: USD per million input and output tokens, with those read from and written to the provider's cache as
+        cached_input and cache_write where the model has them, or None if the model is not priced.
     """
     try:
-        return {
+        prices = {
             "input": compute_token_cost(model, 10**6, 0),
             "output": compute_token_cost(model, 0, 10**6),
         }
     except CostUnknownError:
         return None
+    cache_read, cache_write = (None, None)
+    if model in REGISTERED_PRICES:
+        cache_read, cache_write = REGISTERED_CACHE_PRICES.get(model, (None, None))
+    if cache_read is not None:
+        prices["cached_input"] = cache_read * 10**6
+    if cache_write is not None:
+        prices["cache_write"] = cache_write * 10**6
+
+    return prices
+
+
+def cost_at_prices(
+    prices: Mapping[str, float],
+    input_tokens: int,
+    output_tokens: int,
+    cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float:
+    """What tokens cost at the prices per million tokens that price_per_million gave, as compute_token_cost works it out."""
+    return (
+        input_cost(
+            prices["input"],
+            input_tokens,
+            cached_tokens,
+            prices.get("cached_input"),
+            cache_write_tokens,
+            prices.get("cache_write"),
+        )
+        + output_tokens * prices["output"]
+    ) / 10**6
 
 
 class ContextLengthExceededError(ValueError):
@@ -485,6 +582,8 @@ class ModelUsage:
 
     input_tokens: int = 0
     cached_input_tokens: int = 0
+    # Input tokens that the provider wrote to its cache, which some charge more for than for input, and say when they do
+    cache_write_tokens: int = 0
     output_tokens: int = 0
     reasoning_tokens: int = 0
     max_input_tokens: int = 0
@@ -530,6 +629,8 @@ class MeetingUsage:
         prompt_details = getattr(usage, "prompt_tokens_details", None)
         if prompt_details is not None:
             model_usage.cached_input_tokens += getattr(prompt_details, "cached_tokens", 0) or 0
+            written = getattr(prompt_details, "cache_write_tokens", 0)
+            model_usage.cache_write_tokens += written if isinstance(written, int) and written > 0 else 0
 
         completion_details = getattr(usage, "completion_tokens_details", None)
         if completion_details is not None:
@@ -573,8 +674,9 @@ class MeetingUsage:
     def compute_cost(self) -> float:
         """Computes the total cost across all models.
 
-        Cached input tokens are priced at the full input rate, so the result is an upper bound
-        for models and providers that discount them.
+        Cached input tokens are priced at what the provider charges for them where that is known, as it is of the models
+        OpenRouter lists, and at the full input rate otherwise, so the result is an upper bound for a model and a
+        provider that discount them without saying so.
 
         :raises CostUnknownError: If the price of any model is not known, or any call did not
             report its usage.
@@ -592,6 +694,8 @@ class MeetingUsage:
                 model=model,
                 input_token_count=model_usage.input_tokens,
                 output_token_count=model_usage.output_tokens,
+                cached_input_token_count=model_usage.cached_input_tokens,
+                cache_write_token_count=model_usage.cache_write_tokens,
             )
             for model, model_usage in self.per_model.items()
         )

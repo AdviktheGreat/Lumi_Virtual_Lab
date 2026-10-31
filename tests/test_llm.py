@@ -457,6 +457,29 @@ class TestReplies:
         assert usage.prompt_tokens_details.cached_tokens == 200
         assert usage.completion_tokens_details.reasoning_tokens == 30
 
+    def test_tokens_written_to_the_cache_are_read_as_each_provider_says_them(self) -> None:
+        by_openrouter = AIMessage(
+            content="",
+            usage_metadata={"input_tokens": 500, "output_tokens": 7, "total_tokens": 507},
+            response_metadata={"token_usage": {"prompt_tokens_details": {"cached_tokens": 100, "cache_write_tokens": 300}}},
+        )
+        by_anthropic = AIMessage(
+            content="",
+            usage_metadata={
+                "input_tokens": 500, "output_tokens": 7, "total_tokens": 507,
+                "input_token_details": {"cache_read": 100, "cache_creation": 250},
+            },
+        )
+        neither = AIMessage(
+            content="",
+            usage_metadata={"input_tokens": 5, "output_tokens": 7, "total_tokens": 12},
+            response_metadata={"token_usage": "not a dictionary"},
+        )
+
+        assert usage_of(by_openrouter).prompt_tokens_details.cache_write_tokens == 300
+        assert usage_of(by_anthropic).prompt_tokens_details.cache_write_tokens == 250
+        assert usage_of(neither).prompt_tokens_details.cache_write_tokens == 0
+
     def test_unreported_usage_stays_unknown(self) -> None:
         assert usage_of(AIMessage(content="")) is None
 

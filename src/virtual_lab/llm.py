@@ -395,9 +395,9 @@ def usage_of(message: AIMessage) -> CompletionUsage | None:
     """The tokens a response used, in the shape the usage counters read.
 
     LangChain reports every provider's usage the same way, with cached input tokens included in
-    the input count. Anthropic bills writing to its cache at a quarter more than ordinary input,
-    which this does not see, so a cost computed from it can be slightly low for a model that
-    writes to its cache.
+    the input count. Those a provider wrote to its cache are counted too, where it says so, as
+    OpenRouter does and as LangChain reports Anthropic's: a model that is priced charges more for
+    them than for input only if its price says so (see virtual_lab.utils.register_prices).
 
     :param message: The response.
     :return: The usage, or None if the provider reported none.
@@ -410,12 +410,20 @@ def usage_of(message: AIMessage) -> CompletionUsage | None:
     output_details = metadata.get("output_token_details") or {}
     input_tokens = int(metadata.get("input_tokens") or 0)
     output_tokens = int(metadata.get("output_tokens") or 0)
+    token_usage = (message.response_metadata or {}).get("token_usage")
+    raw_details = token_usage.get("prompt_tokens_details") if isinstance(token_usage, dict) else None
+    written = input_details.get("cache_creation") or (
+        raw_details.get("cache_write_tokens") if isinstance(raw_details, dict) else 0
+    )
 
     return CompletionUsage(
         prompt_tokens=input_tokens,
         completion_tokens=output_tokens,
         total_tokens=int(metadata.get("total_tokens") or input_tokens + output_tokens),
-        prompt_tokens_details=PromptTokensDetails(cached_tokens=int(input_details.get("cache_read") or 0)),
+        prompt_tokens_details=PromptTokensDetails(
+            cached_tokens=int(input_details.get("cache_read") or 0),
+            cache_write_tokens=int(written) if isinstance(written, int | float) and written > 0 else 0,
+        ),
         completion_tokens_details=CompletionTokensDetails(reasoning_tokens=int(output_details.get("reasoning") or 0)),
     )
 

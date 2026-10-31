@@ -398,6 +398,7 @@ class TestOpenRouter:
     @pytest.fixture(autouse=True)
     def without_prices_left_behind(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(utils, "REGISTERED_PRICES", {})
+        monkeypatch.setattr(utils, "REGISTERED_CACHE_PRICES", {})
         monkeypatch.delenv("LLM_SOURCE", raising=False)
 
     @pytest.fixture
