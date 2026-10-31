@@ -41,6 +41,10 @@ export interface ChatConfig {
   team: Scientist[];
   code: CodeSetup;
   max_cost: number | null;
+  // How many team sessions the lead may start in answering a message, and how many rounds it may ask one for, or null
+  // for what the lead is given unless it is told otherwise
+  max_delegations: number | null;
+  max_rounds: number | null;
   stream: boolean;
   commercial_mode: boolean;
   // The names of the library's tools the lead may call
@@ -76,6 +80,9 @@ export interface ChatInfo {
   lab_calls: number;
   spent: number | null;
   max_cost: number | null;
+  // What the lead may ask of the team, as it stands
+  max_delegations: number;
+  max_rounds: number;
   usage: Usage;
   last_event_id: number;
   lead: string;
@@ -92,12 +99,28 @@ export interface NewChat {
   team?: (string | Scientist)[];
   code?: Partial<CodeSetup>;
   max_cost?: number | null;
+  max_delegations?: number | null;
+  max_rounds?: number | null;
   stream?: boolean;
   commercial_mode?: boolean;
   tools?: string[];
   mcp?: string[];
   data?: string[];
   software?: string[];
+}
+
+// What a conversation may be changed to while it goes on: any of these, where null is no spending limit, or what the
+// lead is given of the team's time unless it is told otherwise
+export interface LimitsChange {
+  max_cost?: number | null;
+  max_delegations?: number | null;
+  max_rounds?: number | null;
+}
+
+// What the lead is given of the team's time unless it is told otherwise, and the most it can be given
+export interface ChatLimits {
+  max_delegations: { default: number; ceiling: number };
+  max_rounds: { default: number; ceiling: number };
 }
 
 export interface Settings {
@@ -113,10 +136,11 @@ export interface Settings {
   workspace: string;
   // The largest file that can be attached to a message
   max_upload_bytes: number;
+  chat_limits: ChatLimits;
 }
 
 // What a request to change the settings may hold: any of them, each as it is to be
-export type SettingsChange = Partial<Omit<Settings, "workspace" | "max_upload_bytes">>;
+export type SettingsChange = Partial<Omit<Settings, "workspace" | "max_upload_bytes" | "chat_limits">>;
 
 export interface ModelChoice {
   id: string;

@@ -6,7 +6,9 @@ import { KeyRound } from "lucide-react";
 import { BrandLogo } from "@/components/brand";
 import { CapabilityCards } from "@/components/capability-cards";
 import { useChats } from "@/components/chats-provider";
+import { CommandsHelp } from "@/components/commands-help";
 import { Composer } from "@/components/composer";
+import { LimitsDialog } from "@/components/limits-dialog";
 import { Notice, ProblemNotice } from "@/components/messages";
 import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -15,10 +17,11 @@ import { useSettings } from "@/components/settings-provider";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
+import type { Invocation } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
-import type { ChatInfo } from "@/lib/types";
+import type { ChatInfo, LimitsChange } from "@/lib/types";
 
 export function HomeView() {
   const router = useRouter();
@@ -31,6 +34,10 @@ export function HomeView() {
   // The model chosen here for the conversation to begin, in place of the one the settings name, and whether it is being chosen
   const [chosen, setChosen] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
+  // The limits chosen here for it, which are only those that differ from what the settings say, and whether they are being chosen
+  const [limitsChosen, setLimitsChosen] = useState<LimitsChange>({});
+  const [limiting, setLimiting] = useState(false);
+  const [helping, setHelping] = useState(false);
   // There is no conversation to send files to until the message is, so they are held until then
   const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
 
@@ -45,7 +52,7 @@ export function HomeView() {
     setProblem(null);
     let chat: ChatInfo | null = null;
     try {
-      chat = await api.createChat(chosen === null ? {} : { model: chosen });
+      chat = await api.createChat({ ...(chosen === null ? {} : { model: chosen }), ...limitsChosen });
       const names = await attachments.upload(chat.id);
       await api.send(chat.id, text, names);
       void refresh();
@@ -64,6 +71,13 @@ export function HomeView() {
 
   const model = chosen ?? (server.status === "ready" ? server.settings.model : null);
   const missing = useMissingKeys(model, settings.closed);
+  const ready = server.status === "ready" ? server.settings : null;
+
+  function run({ name }: Invocation) {
+    if (name === "budget") setLimiting(true);
+    else if (name === "model") setChoosing(true);
+    else if (name === "help") setHelping(true);
+  }
 
   return (
     <>
@@ -108,6 +122,7 @@ export function HomeView() {
                   onRemove: (id) => attachments.remove([id]),
                   onRetry: attachments.retry,
                 }}
+                commands={{ place: "home", turns: 0, onRun: run }}
                 autoFocus
                 roomy
                 footer={model ? <ModelButton model={model} disabled={sending} onClick={() => setChoosing(true)} /> : undefined}
@@ -128,6 +143,22 @@ export function HomeView() {
               onClose={() => setChoosing(false)}
             />
           )}
+
+          {limiting && ready !== null && (
+            <LimitsDialog
+              current={{
+                max_cost: "max_cost" in limitsChosen ? (limitsChosen.max_cost ?? null) : ready.max_cost,
+                max_delegations: limitsChosen.max_delegations ?? ready.chat_limits.max_delegations.default,
+                max_rounds: limitsChosen.max_rounds ?? ready.chat_limits.max_rounds.default,
+              }}
+              limits={ready.chat_limits}
+              spent={null}
+              begun={false}
+              onSave={async (changes) => setLimitsChosen((was) => ({ ...was, ...changes }))}
+              onClose={() => setLimiting(false)}
+            />
+          )}
+          {helping && <CommandsHelp place="home" onClose={() => setHelping(false)} />}
 
           <CapabilityCards onChoose={setDraft} />
         </div>

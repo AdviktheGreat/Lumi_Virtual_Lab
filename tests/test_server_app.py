@@ -41,6 +41,7 @@ from virtual_lab.server.errors import ApiError, file_error
 from virtual_lab.server.files import download_headers
 from virtual_lab.server.security import TOKEN_COOKIE
 from virtual_lab.server.workspace import Settings, Workspace
+from virtual_lab.utils import CostUnknownError
 
 from conftest import TEST_MODEL, FakeClient, text_response
 from test_export import PNG
@@ -247,6 +248,10 @@ class TestSettings:
             "forward_keys": [],
             "workspace": str(workspace.root),
             "max_upload_bytes": MAX_UPLOAD_BYTES,
+            "chat_limits": {
+                "max_delegations": {"default": 3, "ceiling": 20},
+                "max_rounds": {"default": 3, "ceiling": 10},
+            },
         }
 
     def test_the_largest_file_that_can_be_attached_is_told_with_the_settings_and_kept_by_a_change(
@@ -1249,6 +1254,114 @@ class TestChats:
         assert client.get("/api/chats").json() == {"chats": []}
         assert list(workspace.chats_dir.iterdir()) == []
         assert client.delete(f"/api/chats/{made['id']}").status_code == 404
+
+
+class TestLimits:
+    def test_a_conversation_may_be_made_with_limits_of_its_own(self, client: TestClient) -> None:
+        made = client.post("/api/chats", json={"team": [], "max_cost": 3, "max_delegations": 1, "max_rounds": 0}).json()
+
+        assert (made["max_cost"], made["max_delegations"], made["max_rounds"]) == (3.0, 1, 0)
+        assert made["config"]["max_delegations"] == 1 and made["config"]["max_rounds"] == 0
+
+    def test_a_conversation_made_with_none_has_the_leads_own_limits(self, client: TestClient) -> None:
+        made = new_chat(client)
+
+        assert (made["max_delegations"], made["max_rounds"]) == (3, 3)
+        assert made["config"]["max_delegations"] is None and made["config"]["max_rounds"] is None
+
+    def test_the_limits_are_changed_kept_and_carried_on_when_it_is_opened_again(
+        self, client: TestClient, app: FastAPI, workspace: Workspace
+    ) -> None:
+        made = new_chat(client, max_cost=1.0)
+        url = f"/api/chats/{made['id']}/limits"
+
+        changed = client.put(url, json={"max_cost": 7.5, "max_delegations": 5, "max_rounds": 2})
+
+        assert changed.status_code == 200, changed.text
+        shown = changed.json()
+        assert (shown["max_cost"], shown["max_delegations"], shown["max_rounds"]) == (7.5, 5, 2)
+        assert shown["config"]["max_cost"] == 7.5 and shown["config"]["max_delegations"] == 5
+        assert client.get("/api/chats").json()["chats"][0]["max_cost"] == 7.5
+
+        close_conversations(app)
+        reopened = client.get(f"/api/chats/{made['id']}").json()
+        assert (reopened["max_cost"], reopened["max_delegations"], reopened["max_rounds"]) == (7.5, 5, 2)
+        assert reopened["config"]["max_rounds"] == 2
+
+    def test_only_what_is_given_is_changed_and_null_is_no_spending_limit_or_the_leads_own(
+        self, client: TestClient
+    ) -> None:
+        made = new_chat(client, max_cost=1.0, max_delegations=7)
+        url = f"/api/chats/{made['id']}/limits"
+
+        assert client.put(url, json={"max_rounds": 1}).json()["max_cost"] == 1.0
+        assert client.put(url, json={"max_rounds": 1}).json()["max_delegations"] == 7
+
+        cleared = client.put(url, json={"max_cost": None, "max_delegations": None}).json()
+
+        assert cleared["max_cost"] is None and cleared["max_delegations"] == 3 and cleared["max_rounds"] == 1
+        assert cleared["config"]["max_delegations"] is None
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {},
+            {"max_cost": -1},
+            {"max_cost": "plenty"},
+            {"max_cost": 1e999},
+            {"max_delegations": -1},
+            {"max_delegations": 21},
+            {"max_delegations": 1.5},
+            {"max_delegations": True},
+            {"max_rounds": 11},
+            {"max_rounds": "2"},
+            {"max_cost": 1, "colour": "red"},
+        ],
+    )
+    def test_a_limit_that_is_not_one_is_refused_and_nothing_is_changed(self, client: TestClient, body: Any) -> None:
+        made = new_chat(client, max_cost=1.0)
+        url = f"/api/chats/{made['id']}/limits"
+
+        response = client.put(url, content=json.dumps(body), headers={"content-type": "application/json"})
+
+        assert response.status_code == 422, response.text
+        assert client.get(f"/api/chats/{made['id']}").json() == made
+
+    def test_there_is_no_conversation_to_change_the_limits_of_if_there_is_none(self, client: TestClient) -> None:
+        response = client.put("/api/chats/nothing/limits", json={"max_cost": 1})
+
+        assert response.status_code == 404 and error_of(response)["code"] == "not_found"
+
+    def test_the_limits_can_be_changed_while_the_conversation_works(
+        self, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        made = new_chat(client, max_cost=1.0)
+        gate = hold_the_model(fake_client)
+        client.post(f"/api/chats/{made['id']}/messages", json={"text": "Go"})
+        wait_until(gate.reached.is_set)
+
+        try:
+            changed = client.put(f"/api/chats/{made['id']}/limits", json={"max_cost": 4})
+        finally:
+            gate.release()
+
+        assert changed.status_code == 200 and changed.json()["max_cost"] == 4.0
+        assert wait_idle(client, made["id"])["max_cost"] == 4.0
+
+    def test_a_spending_limit_is_not_set_where_the_model_has_no_price(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        made = new_chat(client)
+
+        def unpriced(*args: Any, **kwargs: Any) -> float:
+            raise CostUnknownError("Prices for the model are not known")
+
+        monkeypatch.setattr("virtual_lab.chat.compute_token_cost", unpriced)
+        response = client.put(f"/api/chats/{made['id']}/limits", json={"max_cost": 2})
+
+        assert response.status_code == 422 and error_of(response)["code"] == "unavailable"
+        assert "cannot be enforced" in error_of(response)["message"]
+        assert client.get(f"/api/chats/{made['id']}").json()["max_cost"] is None
 
 
 def close_conversations(app: FastAPI) -> None:

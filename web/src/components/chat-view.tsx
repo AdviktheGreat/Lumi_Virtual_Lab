@@ -2,14 +2,17 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowDown } from "lucide-react";
 import { NoteChip } from "@/components/activity";
 import { CaughtUpProvider } from "@/components/caught-up";
 import { useChats } from "@/components/chats-provider";
+import { CommandsHelp } from "@/components/commands-help";
 import { Composer } from "@/components/composer";
 import { ExportMenu } from "@/components/export-menu";
 import { ChatFilesProvider } from "@/components/chat-files";
 import { FilesButton, FilesPanel } from "@/components/files-panel";
+import { LimitsDialog } from "@/components/limits-dialog";
 import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { LeadBlock, Notice, ProblemNotice, TurnView } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
@@ -19,16 +22,20 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { attachedNames, readiness } from "@/lib/attachments";
+import type { Invocation } from "@/lib/commands";
 import { describeError, plainProblem, problemOf, type Problem } from "@/lib/errors";
+import { EXPORT_CHOICES } from "@/lib/export";
 import { filesChanged } from "@/lib/files";
 import { formatCost } from "@/lib/format";
+import { cleanTitle } from "@/lib/history";
 import { currentTurn, unreadNotes, type SentNote } from "@/lib/steering";
 import { useAttachments } from "@/lib/use-attachments";
 import { useChat } from "@/lib/use-chat";
+import { useExport } from "@/lib/use-export";
 import { useFiles } from "@/lib/use-files";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import { waitingOnYou, type Turn } from "@/lib/transcript";
-import type { ChatState } from "@/lib/types";
+import type { ChatState, LimitsChange } from "@/lib/types";
 
 const STATE_LABELS: Record<ChatState, string | null> = {
   idle: null,
@@ -55,6 +62,7 @@ export function ChatNotFound() {
 
 // One conversation with the lead. It is given the conversation's id as its key.
 export function ChatView({ id }: { id: string }) {
+  const router = useRouter();
   const { status, transcript, connection, reload } = useChat(id);
   const { refresh } = useChats();
   const { server, report } = useServer();
@@ -64,6 +72,9 @@ export function ChatView({ id }: { id: string }) {
   const [sentNotes, setSentNotes] = useState<SentNote[]>([]);
   const [filesOpen, setFilesOpen] = useState(false);
   const [choosingModel, setChoosingModel] = useState(false);
+  const [limiting, setLimiting] = useState(false);
+  const [helping, setHelping] = useState(false);
+  const exporter = useExport(id, setProblem);
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
   const { scroller, atBottom, jump, onScroll } = useStickToBottom<HTMLDivElement>(transcript.lastId);
   // The files are looked at again when something may have changed them: code ran, a turn ended, or a file was sent
@@ -162,6 +173,62 @@ export function ChatView({ id }: { id: string }) {
     }
   }
 
+  async function rename(typed: string) {
+    const next = cleanTitle(typed);
+    if (next === null) return;
+    setProblem(null);
+    try {
+      await api.renameChat(id, next);
+      void refresh();
+    } catch (error) {
+      report(error);
+      setProblem(problemOf(error));
+    }
+  }
+
+  function run({ name, arg }: Invocation) {
+    switch (name) {
+      case "budget":
+        setLimiting(true);
+        break;
+      case "model":
+        setChoosingModel(true);
+        break;
+      case "files":
+        setFilesOpen((was) => !was);
+        break;
+      case "export": {
+        const choice = EXPORT_CHOICES.find((each) => each.format === arg);
+        if (choice) void exporter.save(choice.format);
+        break;
+      }
+      case "rename":
+        void rename(arg);
+        break;
+      case "new":
+        router.push("/");
+        break;
+      case "pause":
+      case "resume":
+      case "stop":
+        void steer(name);
+        break;
+      case "help":
+        setHelping(true);
+        break;
+    }
+  }
+
+  async function changeLimits(changes: LimitsChange) {
+    try {
+      await api.setLimits(id, changes);
+    } catch (error) {
+      report(error);
+      throw error;
+    }
+    reload();
+  }
+
   if (status.kind === "missing") return <ChatNotFound />;
   if (status.kind === "failed") {
     return (
@@ -198,7 +265,7 @@ export function ChatView({ id }: { id: string }) {
               {transcript.maxCost !== null && ` of ${formatCost(transcript.maxCost)}`}
             </span>
           )}
-          <ExportMenu id={id} disabled={transcript.turns.length === 0} onProblem={setProblem} />
+          <ExportMenu exporter={exporter} disabled={transcript.turns.length === 0} />
           <FilesButton count={listed.loaded ? listed.files.length : null} open={filesOpen} onToggle={() => setFilesOpen((was) => !was)} />
         </PageHeader>
 
@@ -231,6 +298,7 @@ export function ChatView({ id }: { id: string }) {
                           ? (text) => void replace(turn, text)
                           : undefined
                       }
+                      onRaiseLimit={at === transcript.turns.length - 1 && status.kind === "ready" ? () => setLimiting(true) : undefined}
                     />
                   ))}
                   {waitingNotes.map((note, at) => (
@@ -274,6 +342,7 @@ export function ChatView({ id }: { id: string }) {
                 disabled={sending || status.kind !== "ready"}
                 holdUp={readiness(attachments.items)}
                 files={{ items: attachments.items, onAdd: attach, onRemove: (item) => attachments.remove([item]), onRetry: attachments.retry }}
+                commands={{ place: "chat", turns: transcript.turns.length, onRun: run }}
                 footer={
                   model ? (
                     <ModelButton prefix={lead} model={model} disabled={working || sending} onClick={() => setChoosingModel(true)} />
@@ -284,6 +353,17 @@ export function ChatView({ id }: { id: string }) {
           </div>
           {filesOpen && <FilesPanel id={id} listed={listed} onClose={() => setFilesOpen(false)} />}
         </div>
+        {limiting && status.kind === "ready" && server.status === "ready" && (
+          <LimitsDialog
+            current={{ max_cost: status.info.max_cost, max_delegations: status.info.max_delegations, max_rounds: status.info.max_rounds }}
+            limits={server.settings.chat_limits}
+            spent={transcript.spent}
+            begun
+            onSave={changeLimits}
+            onClose={() => setLimiting(false)}
+          />
+        )}
+        {helping && <CommandsHelp place="chat" onClose={() => setHelping(false)} />}
         {choosingModel && model !== null && (
           <ModelDialog
             title="Change the model"

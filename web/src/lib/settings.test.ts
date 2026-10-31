@@ -14,6 +14,7 @@ const settings: Settings = {
   forward_keys: [],
   workspace: "/work",
   max_upload_bytes: 1000,
+  chat_limits: { max_delegations: { default: 3, ceiling: 20 }, max_rounds: { default: 3, ceiling: 10 } },
 };
 
 const models: Models = {

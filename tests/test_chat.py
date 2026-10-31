@@ -1173,6 +1173,169 @@ class TestBudget:
             make_chat(tmp_path, max_cost=limit)
 
 
+class TestChangingLimits:
+    def test_a_conversation_that_stopped_at_its_limit_goes_on_when_the_limit_is_raised(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path, max_cost=PER_RESPONSE)
+        assert chat.send("One").status == "answered"
+        assert chat.send("Two").status == "failed"
+
+        chat.set_limits(max_cost=PER_RESPONSE * 5)
+
+        assert chat.send("Three").status == "answered"
+        assert len(fake_client.completions.calls) == 2
+        assert chat.max_cost == PER_RESPONSE * 5
+        assert chat.describe()["max_cost"] == PER_RESPONSE * 5
+        info = json.loads((tmp_path / "chat" / "chat.json").read_text())
+        assert info["max_cost"] == PER_RESPONSE * 5
+
+    def test_the_new_limit_is_told_of_with_the_usage_so_that_a_page_shows_it(self, tmp_path: Path) -> None:
+        chat = make_chat(tmp_path, max_cost=1.0)
+        chat.send("One")
+        before = chat.events_since()[-1].id
+
+        chat.set_limits(max_cost=2.5)
+
+        told = [event for event in chat.events_since(before) if event.kind == "usage"]
+        assert [event.data["max_cost"] for event in told] == [2.5]
+        # A limit that is set to what it is is no change, and tells of nothing
+        chat.set_limits(max_cost=2.5)
+        assert len([event for event in chat.events_since(before) if event.kind == "usage"]) == 1
+
+    def test_the_limit_can_be_taken_away(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        chat = make_chat(tmp_path, max_cost=PER_RESPONSE)
+        chat.send("One")
+
+        chat.set_limits(max_cost=None)
+
+        assert chat.send("Two").status == "answered"
+        assert chat.describe()["max_cost"] is None
+        assert of(chat.events_since(), "usage")[-1].data["max_cost"] is None
+
+    def test_a_limit_lowered_below_what_is_spent_stops_the_next_request(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path)
+        chat.send("One")
+
+        chat.set_limits(max_cost=PER_RESPONSE / 2)
+
+        reply = chat.send("Two")
+        assert reply.status == "failed" and reply.error is not None and "BudgetExceededError" in reply.error
+        assert len(fake_client.completions.calls) == 1
+
+    def test_a_limit_raised_while_a_turn_works_is_the_one_the_next_request_is_checked_against(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        def raise_the_limit(query: str) -> str:
+            chat.set_limits(max_cost=PER_RESPONSE * 10)
+            return "Raised."
+
+        fake_client.completions.responses = [
+            tool_call_response("look_up", {"query": "a"}),
+            tool_call_response("look_up", {"query": "b"}),
+            text_response("Done."),
+        ]
+        chat = Chat(
+            tmp_path / "chat",
+            LEAD,
+            TEAM,
+            resources="none",
+            max_retries=0,
+            max_cost=PER_RESPONSE * 1.5,
+            tools=(
+                Tool(
+                    name="look_up",
+                    description="Looks something up.",
+                    parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+                    function=raise_the_limit,
+                ),
+            ),
+        )
+
+        reply = chat.send("Go")
+
+        # Two requests had been paid for when the third was to be asked, which the first limit would have refused
+        assert reply.status == "answered" and len(fake_client.completions.calls) == 3
+
+    def test_nothing_is_changed_if_any_of_it_is_not_valid(self, tmp_path: Path) -> None:
+        chat = make_chat(tmp_path, max_cost=1.0)
+
+        for options, message in [
+            ({"max_cost": -1.0}, "max_cost must be a finite amount"),
+            ({"max_cost": float("nan")}, "max_cost must be a finite amount"),
+            ({"max_cost": 5.0, "max_delegations": -1}, "max_delegations must be zero or more"),
+            ({"max_rounds": -2, "max_delegations": 1}, "max_rounds must be zero or more"),
+        ]:
+            with pytest.raises(ValueError, match=message):
+                chat.set_limits(**options)
+
+        assert (chat.max_cost, chat.max_delegations, chat.max_rounds) == (1.0, 3, 3)
+
+    def test_a_limit_cannot_be_set_where_a_model_is_not_priced(self, tmp_path: Path) -> None:
+        unpriced = Agent("Immunologist", "x", "y", "z", model="not-a-priced-model")
+        chat = Chat(tmp_path / "chat", LEAD, (unpriced,), resources="none", max_retries=0)
+
+        with pytest.raises(CostUnknownError, match="max_cost cannot be enforced"):
+            chat.set_limits(max_cost=1.0)
+
+        assert chat.max_cost is None
+        chat.set_limits(max_cost=None)
+
+    def test_how_much_of_the_teams_time_may_be_asked_for_is_put_to_the_lead_from_the_next_turn(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path)
+        chat.send("One")
+
+        def names(call: int) -> list[str]:
+            return [tool["function"]["name"] for tool in fake_client.completions.calls[call].get("tools", [])]
+
+        assert names(0) == ["convene_team", "consult"]
+        assert fake_client.completions.calls[0]["tools"][0]["function"]["parameters"]["properties"]["rounds"][
+            "maximum"
+        ] == 3
+
+        chat.set_limits(max_rounds=5)
+        chat.send("Two")
+        assert fake_client.completions.calls[1]["tools"][0]["function"]["parameters"]["properties"]["rounds"][
+            "maximum"
+        ] == 5
+
+        chat.set_limits(max_delegations=0)
+        chat.send("Three")
+        # With none to ask for, the lead is not told of a team that it may not use
+        assert names(2) == []
+        assert "convene_team" not in request_messages(fake_client, 2)[0]["content"]
+
+        chat.set_limits(max_delegations=2)
+        chat.send("Four")
+        assert names(3) == ["convene_team", "consult"]
+        assert "convene_team" in request_messages(fake_client, 3)[0]["content"]
+        assert json.loads((tmp_path / "chat" / "chat.json").read_text())["max_delegations"] == 2
+
+    def test_a_team_session_is_held_to_the_limits_as_they_are_changed_in_the_turn(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_calls_response(
+                ("convene_team", {"agenda": "First.", "members": ["Immunologist"], "rounds": 0}),
+                ("convene_team", {"agenda": "Second.", "members": ["Immunologist"], "rounds": 0}),
+            ),
+            text_response("Alone."),
+            text_response("Done."),
+        ]
+        chat = make_chat(tmp_path)
+        chat.set_limits(max_delegations=1)
+
+        chat.send("Go")
+
+        outputs = of(chat.events_since(), "tool_output")
+        assert outputs[0].text.startswith("Immunologist took part")
+        assert outputs[1].text.startswith("Not held: the team has already worked 1 time on this message")
+
+
 class Silence:
     """A model that says nothing to the nth request until it is let go, and then answers it as it would have."""
 
