@@ -45,8 +45,15 @@ MAX_IMAGE_BYTES = 3 * 1024**2
 # The largest file that is opened, so that one that is not an image of a sensible size is not read into memory
 MAX_SOURCE_BYTES = 200 * 1024**2
 
+# The most pixels an image may have to be opened, which is more than a page scanned at 600 dpi has, and fewer than
+# Pillow itself warns of, since decoding one takes several bytes for each
+MAX_SOURCE_PIXELS = 80_000_000
+
 # The most a page is magnified to be drawn, which a page that is small, as a stamp is, would otherwise be drawn at
 MAX_PAGE_SCALE = 4.0
+
+# The kinds of pixels an image may have to be sent as it is, which are those that every provider takes
+SENT_AS_THEY_ARE = ("RGB", "RGBA", "L", "P")
 
 INSTALL_HELP = 'pip install "virtual-lab[vision]"'
 
@@ -93,6 +100,8 @@ def find_file(work_dir: Path, path: str, where_code_runs: str | None = None) -> 
     named = path.strip()
     if not named:
         raise ViewError("Say which file to look at, by its path in the working directory.")
+    if "\0" in named:
+        raise ViewError("A path cannot have a null character in it.")
 
     base = work_dir.resolve()
     shown_to_code = where_code_runs.rstrip("/") if where_code_runs else None
@@ -192,9 +201,17 @@ def picture_of_image(file: Path, shown_as: str) -> Picture:
 
     try:
         with Image.open(io.BytesIO(raw)) as opened:
+            width, height = opened.size
+            if width * height > MAX_SOURCE_PIXELS:
+                raise ViewError(
+                    f"{shown_as} is {width} by {height} pixels, more than the {MAX_SOURCE_PIXELS // 10**6} million "
+                    "that can be opened."
+                )
+            # As it is only if it is what its name says, in a kind of pixels every provider takes, and not a moving one
+            as_named = Image.MIME.get(str(opened.format)) == media_type
+            plain = opened.mode in SENT_AS_THEY_ARE and not getattr(opened, "is_animated", False)
             opened.load()
-            fits = max(opened.size) <= MAX_IMAGE_SIDE
-            if fits and len(raw) <= MAX_IMAGE_BYTES and opened.format != "GIF":
+            if as_named and plain and max(opened.size) <= MAX_IMAGE_SIDE and len(raw) <= MAX_IMAGE_BYTES:
                 return Picture(shown_as, media_type, raw)
             return encode(opened, shown_as)
     except ViewError:
@@ -249,6 +266,9 @@ def encode(image: Any, label: str) -> Picture:
     JPEG if that is too large a file."""
     from PIL import Image
 
+    if image.mode in ("I", "I;16", "I;16L", "I;16B"):
+        # Its values run to 65535, which converting would cut off at 255, leaving all but the darkest white
+        image = image.point(lambda value: value * (1 / 256)).convert("L")
     if image.mode in ("RGBA", "LA", "P"):
         image = image.convert("RGBA")
         flat = Image.new("RGB", image.size, "white")

@@ -104,6 +104,10 @@ class TestFindingTheFile:
             with pytest.raises(ViewError, match=f"There is no file {named} in the working directory"):
                 find_file(tmp_path, named)
 
+    def test_a_path_with_a_null_character_is_refused_as_one_that_cannot_be_looked_at(self, tmp_path: Path) -> None:
+        with pytest.raises(ViewError, match="null character"):
+            find_file(tmp_path, "a\0.png")
+
     def test_a_path_is_needed(self, tmp_path: Path) -> None:
         with pytest.raises(ViewError, match="Say which file"):
             find_file(tmp_path, "  ")
@@ -209,12 +213,17 @@ class TestImages:
         assert picture.media_type == "image/jpeg"
         assert len(picture.data) < file.stat().st_size
 
-    def test_a_gif_is_sent_as_a_png_of_its_first_frame(self, tmp_path: Path) -> None:
-        file = tmp_path / "a.gif"
-        Image.new("P", (20, 20)).save(file)
+    def test_a_gif_that_is_still_is_sent_as_it_is_and_one_that_moves_as_a_png_of_its_first_frame(
+        self, tmp_path: Path
+    ) -> None:
+        still = tmp_path / "still.gif"
+        Image.new("P", (20, 20)).save(still)
+        moving = tmp_path / "moving.gif"
+        frames = [Image.new("RGB", (20, 20), colour) for colour in ("red", "blue")]
+        frames[0].save(moving, save_all=True, append_images=frames[1:], duration=100)
 
-        (picture,) = look_at(file, "a.gif")
-
+        assert look_at(still, "still.gif")[0] == Picture("still.gif", "image/gif", still.read_bytes())
+        (picture,) = look_at(moving, "moving.gif")
         assert picture.media_type == "image/png"
         assert size_of(picture) == (20, 20)
 
@@ -225,6 +234,53 @@ class TestImages:
 
         with pytest.raises(ViewError, match="fake.png could not be read as an image"):
             look_at(tmp_path / "fake.png", "fake.png")
+
+    def test_a_file_that_is_not_the_kind_its_name_says_is_sent_as_the_kind_it_is(self, tmp_path: Path) -> None:
+        file = tmp_path / "really_a_jpeg.png"
+        Image.new("RGB", (30, 30), "red").save(file, format="JPEG")
+
+        (picture,) = look_at(file, file.name)
+
+        assert picture.media_type == "image/png" and picture.data.startswith(b"\x89PNG")
+
+    def test_an_image_that_is_sent_as_it_is_is_one_every_provider_takes(self, tmp_path: Path) -> None:
+        plain = tmp_path / "plain.jpg"
+        Image.new("RGB", (30, 30), "red").save(plain)
+        cmyk = tmp_path / "cmyk.jpg"
+        Image.new("CMYK", (30, 30), (0, 255, 255, 0)).save(cmyk)
+
+        assert look_at(plain, "plain.jpg")[0] == Picture("plain.jpg", "image/jpeg", plain.read_bytes())
+        (converted,) = look_at(cmyk, "cmyk.jpg")
+        assert converted.media_type == "image/png"
+        with Image.open(io.BytesIO(converted.data)) as opened:
+            assert opened.mode == "RGB"
+
+    def test_an_image_of_sixteen_bits_keeps_its_brightness_rather_than_going_white(self, tmp_path: Path) -> None:
+        file = tmp_path / "sixteen.png"
+        Image.new("I;16", (10, 10), 30000).save(file)
+
+        (picture,) = look_at(file, "sixteen.png")
+
+        with Image.open(io.BytesIO(picture.data)) as opened:
+            assert opened.getpixel((1, 1)) == (117, 117, 117)
+
+    def test_a_moving_image_is_sent_as_a_still_one(self, tmp_path: Path) -> None:
+        file = tmp_path / "moving.webp"
+        frames = [Image.new("RGB", (20, 20), colour) for colour in ("red", "blue")]
+        frames[0].save(file, save_all=True, append_images=frames[1:], duration=100)
+
+        (picture,) = look_at(file, "moving.webp")
+
+        assert picture.media_type == "image/png" and size_of(picture) == (20, 20)
+
+    def test_an_image_with_more_pixels_than_can_be_opened_is_refused_before_it_is_decoded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        file = image_file(tmp_path / "big.png", size=(100, 50))
+        monkeypatch.setattr(vision, "MAX_SOURCE_PIXELS", 4999)
+
+        with pytest.raises(ViewError, match="100 by 50 pixels, more than the 0 million"):
+            look_at(file, "big.png")
 
     def test_pages_are_not_something_an_image_has(self, tmp_path: Path) -> None:
         file = image_file(tmp_path / "a.png")
