@@ -54,7 +54,8 @@ and everything else is a request and an answer.
     PUT    /api/chats/{id}/limits       what it may spend, and how much of the team's time the lead may ask for, which
                                         can be changed while it works
     POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background, and
-                                        which with replace_last takes the place of the last one
+                                        which with replace_last takes the place of the last one, and with
+                                        directive is given with a command, such as ask, to answer it by
     POST   /api/chats/{id}/note         a note for the lead or the team, which they read as they work
     POST   /api/chats/{id}/pause        also resume and stop, steering the turn that is running
     POST   /api/chats/{id}/approvals/{request}   allow or decline a call that waits for it, which the events tell of
@@ -350,6 +351,8 @@ class MessageBody(RequestModel):
     text: str = Field("", max_length=MAX_MESSAGE_CHARS)
     attachments: list[str] = Field(default_factory=list, max_length=100)
     replace_last: bool = False
+    # The command the message is given with, such as "ask", which says how the lead is to answer it
+    directive: str | None = Field(None, max_length=50)
 
 
 class NoteBody(RequestModel):
@@ -1104,7 +1107,7 @@ def create_app(
     def send_message(chat_id: str, body: MessageBody) -> dict[str, Any]:
         handle = conversations.ready(chat_id)
         try:
-            handle.chat.start(body.text, body.attachments, body.replace_last)
+            handle.chat.start(body.text, body.attachments, body.replace_last, body.directive)
         except ChatBusyError as error:
             raise ApiError(409, "busy", str(error)) from error
         except ChatClosedError as error:

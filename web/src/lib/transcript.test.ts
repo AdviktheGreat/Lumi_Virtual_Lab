@@ -26,12 +26,13 @@ describe("a transcript", () => {
     expect(transcript.turns).toEqual([
       {
         number: 1,
-        user: { text: "What is a nanobody?", attachments: [{ name: "a.csv", path: "uploads/a.csv", size: 3 }] },
+        user: { text: "What is a nanobody?", attachments: [{ name: "a.csv", path: "uploads/a.csv", size: 3 }], directive: null },
         steps: [],
         writing: "Nanobodies are small",
         outcome: "running",
         text: "",
         errorType: null,
+        directiveMet: null,
       },
     ]);
 
@@ -97,7 +98,7 @@ describe("a transcript", () => {
     const transcript = replay([event("answer", 4, { text: "An answer" })]);
 
     expect(transcript.turns).toEqual([
-      { number: 4, user: null, steps: [], writing: "", outcome: "answered", text: "An answer", errorType: null },
+      { number: 4, user: null, steps: [], writing: "", outcome: "answered", text: "An answer", errorType: null, directiveMet: null },
     ]);
   });
 
@@ -138,6 +139,27 @@ describe("a transcript", () => {
     ]);
 
     expect(transcript.turns[0]).toMatchObject({ outcome: "stopped", errorType: null });
+  });
+
+  it("holds the command a message was given with, and whether the lead did what it asked", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1, { text: "Compute it", data: { directive: "code" } }),
+      event("answer", 1, { text: "Probably 42.", data: { directive_met: false } }),
+      event("user", 2, { text: "Plot it", data: { directive: "plot" } }),
+      event("answer", 2, { text: "Here.", data: { directive_met: true } }),
+      event("user", 3, { text: "Just ask", data: { directive: "ask" } }),
+      event("answer", 3, { text: "Fine." }),
+      event("user", 4, { text: "No command", data: { directive: 5 } }),
+      event("stopped", 4, { text: "Stopped.", data: { directive_met: false } }),
+    ]);
+
+    expect(transcript.turns.map((turn) => [turn.user?.directive ?? null, turn.directiveMet])).toEqual([
+      ["code", false],
+      ["plot", true],
+      ["ask", null],
+      [null, null],
+    ]);
   });
 
   it("has no files for a message whose files are not a list", () => {

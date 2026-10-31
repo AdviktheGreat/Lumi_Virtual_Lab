@@ -396,6 +396,8 @@ def call_html(call: Call, sessions: dict[str, Path], figures: Figures, max_outpu
 
 def user_html(event: ChatEvent) -> str:
     body = f'<div class="body plain">{escape(event.text)}</div>' if event.text else ""
+    if directive := event.data.get("directive"):
+        body = f'<div class="label">Command /{escape(str(directive))}</div>{body}'
     files = [file for file in event.data.get("attachments") or [] if isinstance(file, dict)]
     if files:
         items = "".join(

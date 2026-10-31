@@ -202,6 +202,8 @@ class Notebook:
 
 def user_text(event: ChatEvent) -> str:
     parts = [quoted(f"**Researcher**\n\n{event.text}") if event.text else quoted("**Researcher**")]
+    if directive := event.data.get("directive"):
+        parts.append(f">\n> Command: /{directive}")
     files = [file for file in event.data.get("attachments") or [] if isinstance(file, dict)]
     if files:
         items = "\n".join(

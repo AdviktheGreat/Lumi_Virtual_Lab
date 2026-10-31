@@ -5,7 +5,26 @@ import type { ChatState } from "./types";
 // Where a command can be given: in a conversation, or on the page where one is begun
 export type Place = "home" | "chat";
 
-export type CommandName = "budget" | "model" | "files" | "export" | "rename" | "new" | "pause" | "resume" | "stop" | "help";
+// The commands that are given with a message, which say how the lead is to answer it
+export const DIRECTIVE_NAMES = ["ask", "plan", "search", "code", "plot", "review"] as const;
+export type DirectiveName = (typeof DIRECTIVE_NAMES)[number];
+
+export type CommandName =
+  | DirectiveName
+  | "budget"
+  | "model"
+  | "files"
+  | "export"
+  | "rename"
+  | "new"
+  | "pause"
+  | "resume"
+  | "stop"
+  | "help";
+
+export function isDirective(name: string): name is DirectiveName {
+  return (DIRECTIVE_NAMES as readonly string[]).includes(name);
+}
 
 export interface Choice {
   value: string;
@@ -24,6 +43,17 @@ export interface Command {
 
 // The commands, in the order the menu lists them
 export const COMMANDS: Command[] = [
+  { name: "ask", summary: "Have the lead answer from what it knows, with no tools", places: ["home", "chat"], takes: { kind: "text", hint: "your question" } },
+  { name: "plan", summary: "Have the lead plan the work, and not do it yet", places: ["home", "chat"], takes: { kind: "text", hint: "what to plan" } },
+  {
+    name: "search",
+    summary: "Have the lead search the literature first, and cite what it finds",
+    places: ["home", "chat"],
+    takes: { kind: "text", hint: "what to look for" },
+  },
+  { name: "code", summary: "Have the lead do it by writing and running code", places: ["home", "chat"], takes: { kind: "text", hint: "what to work out" } },
+  { name: "plot", summary: "Have the lead make a figure with code", places: ["home", "chat"], takes: { kind: "text", hint: "what to plot" } },
+  { name: "review", summary: "Have the Scientific Critic review the lead's last answer", places: ["chat"] },
   { name: "budget", summary: "Set what the conversation may spend, and what the lead may ask of the team", places: ["home", "chat"] },
   { name: "model", summary: "Change the model the lead and the team answer with", places: ["home", "chat"] },
   { name: "rename", summary: "Give the conversation a new title", places: ["chat"], takes: { kind: "text", hint: "the new title" } },
@@ -60,11 +90,57 @@ export interface Surroundings {
   state: ChatState;
   // How many turns the conversation has had
   turns: number;
+  // How many of them the lead answered, which a command that works on an answer needs one of
+  answered: number;
+  // What keeps a message from being sent, which a command that is given with one waits for
+  holdUp: string | null;
+  // Why the conversation cannot be given each of the commands that are given with a message, as it says, or null where
+  // it is not begun, so that it is not known
+  directives: Record<string, string | null> | null;
+}
+
+function sentence(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// What the person is told when the lead answered without doing what a command asked for, which is nothing for a command
+// that asks for nothing that is checked
+export function unmetNote(name: string): string | null {
+  switch (name) {
+    case "code":
+      return "The lead answered without running any code, though /code asked for it.";
+    case "plot":
+      return "The lead answered without making a figure, though /plot asked for one.";
+    case "search":
+      return "The lead answered without searching the literature, though /search asked for it.";
+    case "review":
+      return "The Scientific Critic did not review the answer, though /review asked for it.";
+    default:
+      return null;
+  }
+}
+
+// What a command is as it was written in the box, to put back there when it could not be run
+export function written({ name, arg }: Invocation): string {
+  return arg === "" ? `/${name}` : `/${name} ${arg}`;
+}
+
+// Whether a command is given with words of the person's own: a message that says nothing is not one, unless the command is
+export function takesText(name: string): boolean {
+  return COMMANDS.find((command) => command.name === name)?.takes?.kind === "text";
 }
 
 // Why a command cannot be run now, in words, or null if it can
-export function unavailableWhy(command: Command, { place, state, turns }: Surroundings): string | null {
+export function unavailableWhy(command: Command, { place, state, turns, answered, holdUp, directives }: Surroundings): string | null {
   const controls = controlsFor(state);
+  if (isDirective(command.name)) {
+    if (state !== "idle") return "It is given when the lead has finished";
+    if (holdUp !== null) return holdUp;
+    if (command.name === "review" && answered === 0) return "There is no answer to review yet";
+    const why = directives?.[command.name];
+
+    return why ? sentence(why) : null;
+  }
   switch (command.name) {
     case "model":
       return place === "chat" && state !== "idle" ? "The model can be changed when the lead has finished" : null;
@@ -93,17 +169,19 @@ export type Typed =
   // The name of a command, and what has been written after it
   | { kind: "arguing"; command: Command; rest: string };
 
-// A command is the whole of the box, on one line: a slash, a name, and what the command takes. What is written to the lead
+// A command is the whole of the box, on one line unless it is given with a message: a slash, a name, and what the command takes. What is written to the lead
 // that begins with a slash, such as the path of a file, is not one unless a command has that name.
 export function typedCommand(draft: string, place: Place): Typed {
   const naming = /^\/([a-z]*)$/i.exec(draft);
   if (naming) return { kind: "naming", query: naming[1].toLowerCase() };
-  const arguing = /^\/([a-z]+)[ \t]+(.*)$/i.exec(draft);
+  const arguing = /^\/([a-z]+)[ \t]+([\s\S]*)$/i.exec(draft);
   if (!arguing) return { kind: "none" };
   const name = arguing[1].toLowerCase();
   const command = commandsFor(place).find((candidate) => candidate.name === name);
+  // What is given to the lead can be several lines, which what is given to the page cannot
+  if (!command || (arguing[2].includes("\n") && !isDirective(command.name))) return { kind: "none" };
 
-  return command ? { kind: "arguing", command, rest: arguing[2] } : { kind: "none" };
+  return { kind: "arguing", command, rest: arguing[2] };
 }
 
 // A line of the menu

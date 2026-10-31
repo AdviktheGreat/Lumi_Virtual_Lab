@@ -2406,6 +2406,285 @@ class TestReplacingTheLastMessage:
         assert [message["content"] for message in chat.messages] == ["First", "One.", "Second", "Two."]
 
 
+class TestCommands:
+    """Commands given with a message, such as /ask, which say how the lead is to answer it."""
+
+    @pytest.mark.parametrize("name", ["ask", "plan"])
+    def test_the_lead_has_no_tools_for_a_message_given_with_ask_or_plan(
+        self, name: str, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("From memory."), text_response("Now with tools."), text_response("x")]
+        chat = make_chat(tmp_path, session=session)
+
+        reply = chat.send("What is a nanobody?", directive=name)
+
+        assert reply.text == "From memory."
+        assert "tools" not in fake_client.completions.calls[0]
+        told = request_messages(fake_client, 0)[-1]["content"]
+        assert told.startswith("What is a nanobody?\n\n") and f"/{name} command" in told
+        (user,) = of(chat.events_since(), "user")
+        assert user.text == "What is a nanobody?" and user.data["directive"] == name
+        # Nothing was checked for, so the answer does not say whether it was done
+        assert "directive_met" not in of(chat.events_since(), "answer")[0].data
+
+        # The next message has the tools again, and none of the command
+        chat.send("And a camelid antibody?")
+        assert "run_code" in [tool["function"]["name"] for tool in fake_client.completions.calls[1]["tools"]]
+        assert "directive" not in of(chat.events_since(), "user")[1].data
+
+    def test_a_message_given_with_code_that_is_answered_without_running_any_is_told_once_to_run_it(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            text_response("Probably 42."),
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+        ]
+        chat = make_chat(tmp_path, session=session)
+
+        reply = chat.send("What is 6 times 7?", directive="code")
+
+        assert reply.text == "It is 42."
+        events = chat.events_since()
+        assert of(events, "answer")[0].data["directive_met"] is True
+        # What it wrote first is kept as what it said, and it was told what it had not done
+        first, _ = of(events, "tool_calls")
+        assert (first.text, first.data["calls"]) == ("Probably 42.", [])
+        told = request_messages(fake_client, 1)
+        assert [message["role"] for message in told[-2:]] == ["assistant", "user"]
+        assert told[-2]["content"] == "Probably 42."
+        assert "You have not run any code for this message" in told[-1]["content"]
+        assert [message["role"] for message in chat.messages] == ["user", "assistant", "user", "assistant", "tool", "assistant"]
+
+    def test_the_lead_is_told_only_once_and_the_answer_says_when_it_still_did_not(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("Probably 42."), text_response("Still 42.")]
+        chat = make_chat(tmp_path, session=session)
+
+        reply = chat.send("What is 6 times 7?", directive="code")
+
+        assert reply.text == "Still 42." and reply.status == "answered"
+        assert len(fake_client.completions.calls) == 2
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is False
+
+    def test_a_lead_that_did_what_the_command_asked_is_not_told_again(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(1)"}),
+            text_response("It is 1."),
+        ]
+        chat = make_chat(tmp_path, session=session)
+
+        chat.send("Print one", directive="code")
+
+        assert len(fake_client.completions.calls) == 2
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is True
+
+    def test_code_run_before_the_message_does_not_count(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        session.run("earlier = 1")
+        fake_client.completions.responses = [text_response("Guess."), text_response("Guess again.")]
+        chat = make_chat(tmp_path, session=session)
+
+        chat.send("Compute", directive="code")
+
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is False
+
+    def test_plot_is_done_when_a_figure_was_made(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(1)"}),
+            text_response("Here it is."),
+        ]
+        chat = make_chat(tmp_path, session=session)
+
+        chat.send("Plot it", directive="plot")
+
+        assert len(fake_client.completions.calls) == 2
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is True
+        assert "/plot command" in request_messages(fake_client, 0)[-1]["content"]
+
+    def test_code_that_made_no_figure_is_not_a_plot(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(1)"}),
+            text_response("No figure."),
+            text_response("Still none."),
+        ]
+        with LocalSession(tmp_path / "plain", warn=False, timeout=20) as plain:
+            chat = make_chat(tmp_path, session=plain)
+
+            chat.send("Plot it", directive="plot")
+
+        assert "No figure was made for this message" in request_messages(fake_client, 2)[-1]["content"]
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is False
+
+    @pytest.mark.parametrize("searching", ["pubmed_search", "paperclip_search"])
+    def test_search_is_done_when_the_lead_searched_the_literature(
+        self, searching: str, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            text_response("From memory."),
+            tool_call_response(searching, {"query": "KP.3"}),
+            text_response("Found it."),
+        ]
+        chat = make_chat(tmp_path, tools=(looking_up("europepmc_lookup"), looking_up(searching)))
+
+        reply = chat.send("What is known of KP.3?", directive="search")
+
+        assert reply.text == "Found it."
+        assert "You have not searched the literature" in request_messages(fake_client, 1)[-1]["content"]
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is True
+
+    def test_a_tool_that_is_not_for_the_literature_does_not_count_as_searching_it(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("look_up", {"query": "KP.3"}),
+            text_response("Done."),
+            text_response("Done."),
+        ]
+        chat = make_chat(tmp_path, tools=(looking_up("look_up"), looking_up("pubmed_search")))
+
+        chat.send("What is known of KP.3?", directive="search")
+
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is False
+
+    def test_review_is_done_when_the_critic_was_brought_in(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            text_response("Nanobodies are small."),
+            team_meeting("The answer: nanobodies are small.", members=("Scientific Critic",), rounds=1),
+            text_response("Opening."),
+            text_response("A critique."),
+            text_response("Summary of the review."),
+            text_response("The Critic found nothing wrong."),
+        ]
+        chat = make_chat(tmp_path)
+        chat.send("What is a nanobody?")
+
+        reply = chat.send("", directive="review")
+
+        assert reply.text == "The Critic found nothing wrong."
+        told = request_messages(fake_client, 1)[-1]["content"]
+        assert told.startswith("The researcher gave the /review command")
+        (user, *_) = of(chat.events_since(), "user")[1:]
+        assert (user.text, user.data["directive"]) == ("", "review")
+        assert of(chat.events_since(), "answer")[1].data["directive_met"] is True
+
+    def test_a_review_without_the_critic_is_not_done(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            text_response("Nanobodies are small."),
+            team_meeting("The answer.", members=("Immunologist",), rounds=1),
+            text_response("Opening."),
+            text_response("An immunology view."),
+            text_response("Summary."),
+            text_response("Reviewed by the Immunologist."),
+            text_response("Still no Critic."),
+        ]
+        chat = make_chat(tmp_path)
+        chat.send("What is a nanobody?")
+
+        chat.send("", directive="review")
+
+        assert of(chat.events_since(), "answer")[1].data["directive_met"] is False
+
+    def test_a_command_that_cannot_be_given_is_refused_before_anything_is_said(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = Chat(tmp_path / "chat", LEAD, (IMMUNOLOGIST,), resources="none", max_retries=0)
+
+        for name, why in (
+            ("code", "nothing can run code"),
+            ("plot", "nothing can run code"),
+            ("search", "no literature tool"),
+            ("review", "is not on the team"),
+        ):
+            with pytest.raises(ValueError, match=f"/{name} cannot be given: .*{why}"):
+                chat.send("Go", directive=name)
+
+        assert chat.events_since() == [] and chat.messages == [] and chat.state == "idle"
+        assert fake_client.completions.calls == []
+
+    def test_a_review_needs_an_answer_to_review_and_a_team_to_do_it(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        chat = make_chat(tmp_path)
+
+        with pytest.raises(ValueError, match="there is no answer to review yet"):
+            chat.send("", directive="review")
+
+        silent = make_chat(tmp_path / "silent", max_delegations=0)
+        assert "the lead may not start team sessions" in str(silent.describe()["directives"]["review"])
+        critic_alone = Chat(tmp_path / "alone", LEAD, (CRITIC,), resources="none", max_retries=0)
+        assert "whole team" in str(critic_alone.describe()["directives"]["review"])
+
+    def test_a_command_needs_something_written_with_it_unless_it_is_review(self, tmp_path: Path) -> None:
+        chat = make_chat(tmp_path)
+
+        with pytest.raises(ValueError, match="/ask needs what it is for written after it"):
+            chat.send("  ", directive="ask")
+        with pytest.raises(ValueError, match="/nothing is not a command the lead is given. They are /ask, /plan"):
+            chat.send("Hello", directive="nothing")
+
+    def test_what_each_command_needs_is_told_of_in_the_description(self, tmp_path: Path, session: LocalSession) -> None:
+        bare = make_chat(tmp_path / "bare").describe()["directives"]
+        assert bare == {
+            "ask": None,
+            "plan": None,
+            "code": "nothing can run code in this conversation",
+            "plot": "nothing can run code in this conversation",
+            "search": "no literature tool is turned on for this conversation",
+            "review": None,
+        }
+
+        equipped = make_chat(tmp_path / "equipped", session=session, tools=(looking_up("pubmed_search"),))
+        assert set(equipped.describe()["directives"].values()) == {None}
+
+    def test_a_search_is_not_refused_for_tools_that_are_not_known_until_the_first_message(
+        self, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path, late_tools=lambda: [looking_up("paperclip_search")])
+
+        assert chat.describe()["directives"]["search"] is None
+
+    def test_a_command_is_kept_when_the_message_is_replaced_and_checked_against_what_is_left(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("One."), text_response("Two."), text_response("Three.")]
+        chat = make_chat(tmp_path)
+        chat.send("First")
+        chat.send("Second", directive="ask")
+
+        chat.send("Second again", replace_last=True, directive="ask")
+
+        users = of(chat.events_since(), "user")
+        assert [(event.text, event.data.get("directive")) for event in users] == [
+            ("First", None),
+            ("Second again", "ask"),
+        ]
+        assert "tools" not in fake_client.completions.calls[2]
+
+        # The first message has no answer to review once it is the one replaced, and nothing is changed by trying
+        before = (chat.messages, [event.id for event in chat.events_since()])
+        solo = make_chat(tmp_path / "solo")
+        fake_client.completions.responses = [text_response("Only.")]
+        solo.send("Only")
+        kept = (solo.messages, [event.id for event in solo.events_since()])
+        with pytest.raises(ValueError, match="there is no answer to review yet"):
+            solo.send("", replace_last=True, directive="review")
+        assert (solo.messages, [event.id for event in solo.events_since()]) == kept
+        assert (chat.messages, [event.id for event in chat.events_since()]) == before
+
+    def test_the_command_is_kept_in_the_saved_events(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        chat = make_chat(tmp_path)
+        chat.send("Go", directive="plan")
+
+        saved = lines(tmp_path / "chat" / "events.jsonl")
+
+        assert [event["data"]["directive"] for event in saved if event["kind"] == "user"] == ["plan"]
+
+
 class TestFailures:
     def test_a_failed_turn_is_told_of_and_the_conversation_goes_on(
         self, fake_client: FakeClient, tmp_path: Path

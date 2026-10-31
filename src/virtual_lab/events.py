@@ -169,7 +169,7 @@ class ChatEvent:
           data["attachments"] holds the files they attached, each with its name, its path in the
           session's directory, and its size in bytes. data["messages_before"] is how many messages the lead
           had been sent and had said by then, which is where the conversation is cut back to if this one
-          is replaced.
+          is replaced. data["directive"] is the name of the command it was given with, if it was.
         - "withdrawn": the researcher replaced the last message, to send it again or changed. The turn it began,
           which is data["turn"], and all that came of it, is taken out of the conversation, and the new message
           begins that turn again. Told of just before the "user" event that does.
@@ -213,7 +213,8 @@ class ChatEvent:
           MeetingUsage.to_dict gives it, with its cost, or None if that is not known, and
           max_cost.
         - "answer": the lead answered, which ends the turn. text is the answer, and data holds the
-          conversation's usage and elapsed_time.
+          conversation's usage and elapsed_time, and, for a message given with a command that asks for something
+          that can be checked, directive_met, whether the lead did it.
         - "stopped": the researcher stopped the turn, which ends it. text says so.
         - "failed": the turn ended with an error. text is the error, and data holds its type, which
           is "Interrupted" for a turn that the process running it did not live to end.

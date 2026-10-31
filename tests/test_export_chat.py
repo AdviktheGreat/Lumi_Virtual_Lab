@@ -813,6 +813,20 @@ def test_what_the_researcher_wrote_and_attached_is_shown_as_text_and_never_as_a_
     assert "&lt;img src=x onerror=alert(2)&gt;.csv (3 bytes)" in body
 
 
+def test_the_command_a_message_was_given_with_is_named(tmp_path: Path) -> None:
+    events = [happened("user", text="What is a nanobody?", directive="ask"), happened("answer", text="Done.")]
+
+    text = text_of(chat_html(saved_chat(tmp_path / "chat", events)))
+
+    assert "Command /ask What is a nanobody?" in text
+
+
+def test_a_command_with_nothing_written_after_it_is_still_named(tmp_path: Path) -> None:
+    events = [happened("user", text="", directive="review"), happened("answer", text="Done.")]
+
+    assert "Command /review" in text_of(chat_html(saved_chat(tmp_path / "chat", events)))
+
+
 def test_a_step_that_says_nothing_is_not_shown_as_the_lead_having_begun(tmp_path: Path) -> None:
     events = [happened("user", text="Go"), happened("tool_calls", text="  \n", calls=[])]
 

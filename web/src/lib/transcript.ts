@@ -95,7 +95,8 @@ export type Step =
 
 export interface Turn {
   number: number;
-  user: { text: string; attachments: Attachment[] } | null;
+  // What the researcher sent, and the command it was given with, if it was given with one
+  user: { text: string; attachments: Attachment[]; directive: string | null } | null;
   steps: Step[];
   // What the lead is writing now, which the reply that is final replaces
   writing: string;
@@ -104,6 +105,8 @@ export interface Turn {
   text: string;
   // What kind of error ended a turn that failed
   errorType: string | null;
+  // Whether the lead did what the command it was given asked for, where that is checked, or null where it is not
+  directiveMet: boolean | null;
 }
 
 export interface Transcript {
@@ -127,7 +130,7 @@ export const emptyTranscript: Transcript = {
 };
 
 function blankTurn(number: number): Turn {
-  return { number, user: null, steps: [], writing: "", outcome: "running", text: "", errorType: null };
+  return { number, user: null, steps: [], writing: "", outcome: "running", text: "", errorType: null, directiveMet: null };
 }
 
 function withTurn(transcript: Transcript, number: number, change: (turn: Turn) => Turn): Turn[] {
@@ -331,7 +334,14 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
 
   switch (event.kind) {
     case "user":
-      return inTurn((turn) => ({ ...turn, user: { text: event.text, attachments: attachmentsOf(event) } }));
+      return inTurn((turn) => ({
+        ...turn,
+        user: {
+          text: event.text,
+          attachments: attachmentsOf(event),
+          directive: typeof event.data.directive === "string" ? event.data.directive : null,
+        },
+      }));
     case "withdrawn": {
       // The turn is begun again by the event that follows, so what it had is not kept
       const number = typeof event.data.turn === "number" ? event.data.turn : event.turn;
@@ -489,6 +499,7 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
           outcome,
           text: event.text,
           errorType,
+          directiveMet: event.kind === "answer" && typeof event.data.directive_met === "boolean" ? event.data.directive_met : null,
         })),
       };
     }

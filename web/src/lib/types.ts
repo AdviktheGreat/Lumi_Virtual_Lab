@@ -88,6 +88,8 @@ export interface ChatInfo {
   lead: string;
   team: string[];
   can_run_code: boolean;
+  // Why each command that is given with a message cannot be given to it, in words, or null if it can
+  directives: Record<string, string | null>;
   config: ChatConfig;
 }
 

@@ -19,6 +19,12 @@ async function listed(page: Page): Promise<(string | null)[]> {
   return options(page).evaluateAll((lines) => lines.map((line) => line.getAttribute("data-command")));
 }
 
+// Sends a message in the conversation that is open, and does not wait for the answer
+async function sendMessage(page: Page, text: string): Promise<void> {
+  await box(page).fill(text);
+  await page.getByRole("button", { name: "Send" }).click();
+}
+
 // Writes in the box, and runs what is written with Enter
 async function command(page: Page, text: string): Promise<void> {
   await box(page).fill(text);
@@ -37,8 +43,9 @@ test.describe("the menu of commands", () => {
     await expect(menu(page)).toHaveCount(0);
 
     await box(page).fill("/");
-    await expect.poll(() => listed(page)).toEqual(["/budget", "/model", "/help"]);
-    await expect(lit(page)).toHaveAttribute("data-command", "/budget");
+    // What cannot be chosen is listed last, and where code is off, that is what asks for it
+    await expect.poll(() => listed(page)).toEqual(["/ask", "/plan", "/search", "/budget", "/model", "/help", "/code", "/plot"]);
+    await expect(lit(page)).toHaveAttribute("data-command", "/ask");
     await expect(box(page)).toBeFocused();
 
     await box(page).fill("/mod");
@@ -86,6 +93,10 @@ test.describe("the menu of commands", () => {
 
     await box(page).fill("/");
     await expect.poll(() => listed(page)).toEqual([
+      "/ask",
+      "/plan",
+      "/search",
+      "/review",
       "/budget",
       "/model",
       "/rename",
@@ -93,13 +104,15 @@ test.describe("the menu of commands", () => {
       "/files",
       "/new",
       "/help",
+      "/code",
+      "/plot",
       "/pause",
       "/resume",
       "/stop",
     ]);
-    await expect(lit(page)).toHaveAttribute("data-command", "/budget");
+    await expect(lit(page)).toHaveAttribute("data-command", "/ask");
     await box(page).press("ArrowDown");
-    await expect(lit(page)).toHaveAttribute("data-command", "/model");
+    await expect(lit(page)).toHaveAttribute("data-command", "/plan");
     await box(page).press("ArrowUp");
     await box(page).press("ArrowUp");
     // Round to the last that can be chosen, which is not one of those that cannot
@@ -349,6 +362,197 @@ test.describe("the commands that stand for what the buttons do", () => {
     await expect(state(page)).toHaveText("Stopping");
     await expect(page.getByRole("status").filter({ hasText: /stopped/i })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("pending-note")).toHaveCount(0);
+  });
+});
+
+const chip = (page: Page) => page.getByTestId("directive-chip");
+const unmet = (page: Page) => page.getByTestId("directive-unmet");
+
+// Opens a conversation that has nothing in it yet, which is made through the server, titled at once so that it is not
+// taken for the button that makes one
+async function open(page: Page, title: string, config: Record<string, unknown> = {}): Promise<string> {
+  const made = await page.request.post("/api/chats", { data: { title, ...config } });
+  expect(made.status()).toBe(201);
+  const id: string = (await made.json()).id;
+  await page.goto(`/chat?id=${id}`);
+  await expect(box(page)).toBeVisible();
+
+  return id;
+}
+
+const WHERE_CODE_RUNS = { code: { where: "local" } };
+
+test.describe("the commands that go with a message", () => {
+  for (const name of ["ask", "plan"]) {
+    test(`/${name} begins a conversation with the message, which is shown with the command, and the lead has no tools for it`, async ({
+      page,
+    }) => {
+      await command(page, `/${name} tool:offered which tools do you have`);
+      await page.waitForURL(/\/chat\?id=/);
+
+      await answered(page, "Offered:");
+      await expect(chip(page)).toHaveText(`/${name}`);
+      await expect(page.getByTestId("user-message")).toContainText("tool:offered which tools do you have");
+      await expect(page.getByTestId("user-message")).not.toContainText("The researcher gave");
+      await expect(page.getByTestId("lead-message").last()).toHaveText("Offered:");
+      await expect(unmet(page)).toHaveCount(0);
+
+      // The next message has them again
+      await sendMessage(page, "tool:offered again");
+      await expect(page.getByTestId("lead-message").last()).toContainText("convene_team");
+      await expect(chip(page)).toHaveCount(1);
+    });
+  }
+
+  test("a message can be several lines, and the command is kept when it is sent again or changed", async ({ page }) => {
+    await command(page, "/ask tool:offered first line");
+    await page.waitForURL(/\/chat\?id=/);
+    await answered(page, "Offered:");
+
+    await box(page).fill("/ask tool:offered second\nline");
+    await expect(options(page)).toHaveCount(1);
+    await box(page).press("Enter");
+    await expect(page.getByTestId("user-message")).toHaveCount(2);
+    await expect(page.getByTestId("user-message").last()).toContainText("second line");
+    await answered(page, "Offered:");
+
+    await page.getByRole("button", { name: "Retry" }).click();
+    await expect(chip(page)).toHaveCount(2);
+    await answered(page, "Offered:");
+    await expect(page.getByTestId("lead-message").last()).toHaveText("Offered:");
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByRole("textbox", { name: "Edit message" }).fill("tool:offered changed");
+    await page.getByRole("button", { name: "Send again" }).click();
+    await expect(page.getByTestId("user-message").last()).toContainText("tool:offered changed");
+    await answered(page, "Offered:");
+    await expect(chip(page).last()).toHaveText("/ask");
+    await expect(page.getByTestId("lead-message").last()).toHaveText("Offered:");
+  });
+
+  test("/code is answered with code, or the answer says that there was none", async ({ page }) => {
+    await open(page, "Code on a command", WHERE_CODE_RUNS);
+
+    await command(page, "/code code:hello run it");
+    await answered(page, "That is done: 1 step ran.");
+    await expect(chip(page)).toHaveText("/code");
+    await expect(page.getByText("Running Python code").or(page.getByText("hello from the session")).first()).toBeVisible();
+    await expect(unmet(page)).toHaveCount(0);
+
+    // Told to run it, a lead that does not still has the say, and the page says what was not done
+    await command(page, "/code work it out in your head");
+    await answered(page, "You have not run any code for this message");
+    await expect(unmet(page)).toHaveText("The lead answered without running any code, though /code asked for it.");
+    await expect(unmet(page)).toHaveCount(1);
+  });
+
+  test("/plot wants a figure, and code that drew none is not one", async ({ page }) => {
+    await open(page, "Plot on a command", WHERE_CODE_RUNS);
+
+    await command(page, "/plot code:plot a figure");
+    await answered(page, "That is done: 1 step ran.");
+    await expect(unmet(page)).toHaveCount(0);
+
+    await command(page, "/plot code:hello no figure");
+    await answered(page, "No figure was made for this message");
+    await expect(unmet(page)).toHaveText("The lead answered without making a figure, though /plot asked for one.");
+  });
+
+  test("/search is offered where there is a literature tool, and says when the lead did not search", async ({ page }) => {
+    const id = await open(page, "Search on a command", { tools: ["pubmed_search"] });
+    expect((await chatInfo(page, id)).directives.search).toBeNull();
+
+    await command(page, "/search what is known of KP.3");
+    await answered(page, "You have not searched the literature for this message");
+    await expect(chip(page)).toHaveText("/search");
+    await expect(unmet(page)).toContainText("without searching the literature");
+
+    await open(page, "No search on a command", { tools: [] });
+    await box(page).fill("/sea");
+    await expect(options(page).first()).toHaveAttribute("aria-disabled", "true");
+    await expect(options(page).first()).toContainText("No literature tool is turned on for this conversation");
+  });
+
+  test("/review waits for an answer, and has the Critic review it", async ({ page }) => {
+    await open(page, "Review on a command");
+    await box(page).fill("/rev");
+    await expect(options(page).first()).toHaveAttribute("aria-disabled", "true");
+    await expect(options(page).first()).toContainText("There is no answer to review yet");
+    await box(page).fill("");
+
+    await box(page).fill("A question to be reviewed");
+    await box(page).press("Enter");
+    await answered(page, "You asked: A question to be reviewed");
+
+    await command(page, "/review");
+    await expect(chip(page)).toHaveText("/review");
+    await answered(page, "That is done: 1 step ran.");
+    await expect(page.getByTestId("user-message")).toHaveCount(2);
+    await expect(page.getByText("Scientific Critic").first()).toBeVisible();
+    await expect(unmet(page)).toHaveCount(0);
+
+    // With nothing written, there is nothing to change when it is sent again
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
+  });
+
+  test("on the page where a conversation begins, what asks for code says that it is off, and review is not there", async ({ page }) => {
+    await box(page).fill("/");
+    await expect.poll(() => listed(page)).not.toContain("/review");
+    await expect(options(page).filter({ hasText: "Code is turned off in the settings" })).toHaveCount(2);
+    await expect(options(page).filter({ hasText: "Code is turned off in the settings" }).first()).toHaveAttribute("aria-disabled", "true");
+    await expect(lit(page)).toHaveAttribute("data-command", "/ask");
+
+    await box(page).fill("/code ");
+    await box(page).press("Enter");
+    await expect(box(page)).toHaveValue("/code ");
+    await expect(page.getByTestId("user-message")).toHaveCount(0);
+  });
+
+  test("they wait for the lead to finish, and say so", async ({ page }) => {
+    await askWhereCodeRuns(page, "code:slow wait for the end of it");
+    await expect(page.getByText("Running Python code")).toBeVisible();
+
+    await box(page).fill("/as");
+    await expect(options(page).first()).toHaveAttribute("aria-disabled", "true");
+    await expect(options(page).first()).toContainText("It is given when the lead has finished");
+    await box(page).press("Enter");
+    await expect(box(page)).toHaveValue("/as");
+
+    await answered(page, "That is done: 1 step ran.", 30_000);
+  });
+
+  test("a command the server turns away is put back in the box, with what it said", async ({ page }) => {
+    await open(page, "A command that is turned away");
+    await page.route("**/api/chats/*/messages", (route) =>
+      route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "invalid", message: "/ask cannot be given: for the sake of a test" } }),
+      }),
+    );
+
+    await command(page, "/ask what is a nanobody");
+
+    await expect(page.getByRole("alert").filter({ hasText: "/ask cannot be given: for the sake of a test" })).toBeVisible();
+    await expect(box(page)).toHaveValue("/ask what is a nanobody");
+    await expect(page.getByTestId("user-message")).toHaveCount(0);
+  });
+
+  test("a command that is turned away on the page where a conversation begins leaves no conversation behind", async ({ page }) => {
+    await page.route("**/api/chats/*/messages", (route) =>
+      route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "invalid", message: "/plan cannot be given: for the sake of a test" } }),
+      }),
+    );
+
+    await command(page, "/plan the work");
+
+    await expect(page.getByRole("alert").filter({ hasText: "/plan cannot be given: for the sake of a test" })).toBeVisible();
+    await expect(box(page)).toHaveValue("/plan the work");
+    expect(new URL(page.url()).pathname).toBe("/");
   });
 });
 

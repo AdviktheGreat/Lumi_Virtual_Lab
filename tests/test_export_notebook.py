@@ -208,6 +208,13 @@ class TestNotebook:
 
         assert source_of(notebook["cells"][-1]) == "*This turn had not ended when the conversation was saved.*"
 
+    def test_the_command_a_message_was_given_with_is_named(self, tmp_path: Path) -> None:
+        notebook = chat_notebook(
+            saved_chat(tmp_path / "chat", [happened("user", text="Hi", directive="ask"), happened("answer", text="Hello")])
+        )
+
+        assert source_of(notebook["cells"][1]) == "## Turn 1\n\n> **Researcher**\n>\n> Hi\n>\n> Command: /ask"
+
     def test_what_is_not_a_conversation_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             chat_notebook(tmp_path / "nowhere")
