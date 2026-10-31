@@ -32,6 +32,7 @@ from virtual_lab.constants import (
     HUMAN_SPEAKER,
     PROJECT_FILE_NAME,
 )
+from virtual_lab.directives import describe_lab
 from virtual_lab.events import ChatEvent
 from virtual_lab.export import (
     AGENT_COLOURS,
@@ -397,7 +398,9 @@ def call_html(call: Call, sessions: dict[str, Path], figures: Figures, max_outpu
 def user_html(event: ChatEvent) -> str:
     body = f'<div class="body plain">{escape(event.text)}</div>' if event.text else ""
     if directive := event.data.get("directive"):
-        body = f'<div class="label">Command /{escape(str(directive))}</div>{body}'
+        what = describe_lab(event.data.get("lab")) if directive == "lab" else None
+        label = f"Command /{escape(str(directive))}" + (f": {escape(what)}" if what else "")
+        body = f'<div class="label">{label}</div>{body}'
     files = [file for file in event.data.get("attachments") or [] if isinstance(file, dict)]
     if files:
         items = "".join(

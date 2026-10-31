@@ -26,7 +26,7 @@ describe("a transcript", () => {
     expect(transcript.turns).toEqual([
       {
         number: 1,
-        user: { text: "What is a nanobody?", attachments: [{ name: "a.csv", path: "uploads/a.csv", size: 3 }], directive: null },
+        user: { text: "What is a nanobody?", attachments: [{ name: "a.csv", path: "uploads/a.csv", size: 3 }], directive: null, lab: null },
         steps: [],
         writing: "Nanobodies are small",
         outcome: "running",
@@ -160,6 +160,20 @@ describe("a transcript", () => {
       ["ask", null],
       [null, null],
     ]);
+  });
+
+  it("holds who a message given with /lab was to be worked on by, where it says so as it should", () => {
+    next = 0;
+    const lab = { mode: "team", members: ["Immunologist", "Geneticist"], rounds: 2, questions: ["Which epitope?"] };
+    const transcript = replay([
+      event("user", 1, { text: "Design", data: { directive: "lab", lab } }),
+      event("answer", 1, { text: "Done.", data: { directive_met: true } }),
+      event("user", 2, { text: "Again", data: { directive: "lab", lab: { mode: "crowd", members: [], rounds: -1 } } }),
+      event("answer", 2, { text: "Done." }),
+      event("user", 3, { text: "No lab" }),
+    ]);
+
+    expect(transcript.turns.map((turn) => turn.user?.lab ?? null)).toEqual([lab, null, null]);
   });
 
   it("has no files for a message whose files are not a list", () => {

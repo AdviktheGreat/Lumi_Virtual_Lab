@@ -6,7 +6,7 @@ import type { ChatState } from "./types";
 export type Place = "home" | "chat";
 
 // The commands that are given with a message, which say how the lead is to answer it
-export const DIRECTIVE_NAMES = ["ask", "plan", "search", "code", "plot", "review"] as const;
+export const DIRECTIVE_NAMES = ["ask", "plan", "search", "code", "plot", "review", "lab"] as const;
 export type DirectiveName = (typeof DIRECTIVE_NAMES)[number];
 
 export type CommandName =
@@ -38,7 +38,8 @@ export interface Command {
   places: Place[];
   // What may follow the name: one of a few things, or words of the person's own. A command that takes something is not
   // run by choosing it from the menu, which has what it takes written after it first.
-  takes?: { kind: "choice"; choices: Choice[] } | { kind: "text"; hint: string };
+  // Words that may be left out are for a command that asks the rest in a panel of its own.
+  takes?: { kind: "choice"; choices: Choice[] } | { kind: "text"; hint: string; optional?: boolean };
 }
 
 // The commands, in the order the menu lists them
@@ -54,6 +55,12 @@ export const COMMANDS: Command[] = [
   { name: "code", summary: "Have the lead do it by writing and running code", places: ["home", "chat"], takes: { kind: "text", hint: "what to work out" } },
   { name: "plot", summary: "Have the lead make a figure with code", places: ["home", "chat"], takes: { kind: "text", hint: "what to plot" } },
   { name: "review", summary: "Have the Scientific Critic review the lead's last answer", places: ["chat"] },
+  {
+    name: "lab",
+    summary: "Choose who works on it: a team that discusses it, or one scientist the Critic reviews",
+    places: ["home", "chat"],
+    takes: { kind: "text", hint: "what they are to work on", optional: true },
+  },
   { name: "budget", summary: "Set what the conversation may spend, and what the lead may ask of the team", places: ["home", "chat"] },
   { name: "model", summary: "Change the model the lead and the team answer with", places: ["home", "chat"] },
   { name: "rename", summary: "Give the conversation a new title", places: ["chat"], takes: { kind: "text", hint: "the new title" } },
@@ -115,6 +122,8 @@ export function unmetNote(name: string): string | null {
       return "The lead answered without searching the literature, though /search asked for it.";
     case "review":
       return "The Scientific Critic did not review the answer, though /review asked for it.";
+    case "lab":
+      return "The lead answered without bringing in the scientists you chose, though /lab asked for it.";
     default:
       return null;
   }
@@ -128,6 +137,12 @@ export function written({ name, arg }: Invocation): string {
 // Whether a command is given with words of the person's own: a message that says nothing is not one, unless the command is
 export function takesText(name: string): boolean {
   return COMMANDS.find((command) => command.name === name)?.takes?.kind === "text";
+}
+
+// Whether a command has more to be written after its name before it can be run, which one that asks for it in a panel of its
+// own does not
+function needsWords(command: Command): boolean {
+  return command.takes !== undefined && !(command.takes.kind === "text" && command.takes.optional === true);
 }
 
 // Why a command cannot be run now, in words, or null if it can
@@ -202,7 +217,7 @@ function nameRow(command: Command, surroundings: Surroundings): Row {
     label: `/${command.name}`,
     summary: command.summary,
     reason: unavailableWhy(command, surroundings),
-    action: command.takes ? { fill: `/${command.name} ` } : { run: { name: command.name, arg: "" } },
+    action: needsWords(command) ? { fill: `/${command.name} ` } : { run: { name: command.name, arg: "" } },
   };
 }
 
@@ -230,12 +245,14 @@ export function rowsFor(draft: string, surroundings: Surroundings): Row[] {
   if (takes.kind === "text") {
     const text = rest.trim();
 
+    const needed = text === "" && takes.optional !== true;
+
     return [
       {
         key: command.name,
         label: `/${command.name}`,
-        summary: text === "" ? `Type ${takes.hint}` : `${command.summary}: ${text}`,
-        reason: reason ?? (text === "" ? `Type ${takes.hint}` : null),
+        summary: text === "" ? (needed ? `Type ${takes.hint}` : command.summary) : `${command.summary}: ${text}`,
+        reason: reason ?? (needed ? `Type ${takes.hint}` : null),
         action: { run: { name: command.name, arg: text } },
       },
     ];

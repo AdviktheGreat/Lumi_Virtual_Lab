@@ -215,6 +215,19 @@ class TestNotebook:
 
         assert source_of(notebook["cells"][1]) == "## Turn 1\n\n> **Researcher**\n>\n> Hi\n>\n> Command: /ask"
 
+    def test_who_a_lab_session_was_asked_for_is_in_the_command(self, tmp_path: Path) -> None:
+        lab = {"mode": "individual", "members": ["Immunologist"], "rounds": 1, "questions": []}
+        notebook = chat_notebook(
+            saved_chat(
+                tmp_path / "chat",
+                [happened("user", text="Hi", directive="lab", lab=lab), happened("answer", text="Hello")],
+            )
+        )
+
+        assert source_of(notebook["cells"][1]).endswith(
+            "> Command: /lab, Immunologist working on it, with the Scientific Critic reviewing, for 1 round"
+        )
+
     def test_what_is_not_a_conversation_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             chat_notebook(tmp_path / "nowhere")

@@ -294,13 +294,24 @@ answering a message, and how many rounds each may have. It works while the lead 
 by the spending limit offers it as Raise the limit. The others stand for what the buttons do: `/model`, `/rename`,
 `/export`, `/files`, `/new`, `/pause`, `/resume`, `/stop`, and `/help`.
 
-`/ask`, `/plan`, `/search`, `/code`, `/plot`, and `/review` go with the message as a command (`directive` in
+`/ask`, `/plan`, `/search`, `/code`, `/plot`, `/review`, and `/lab` go with the message as a command (`directive` in
 `POST /api/chats/{id}/messages`), which the transcript shows as a chip on the message. `/ask` and `/plan` answer
 without tools, `/search` reads the literature first and cites what it found, `/code` and `/plot` run code, and `/review`
 has the Critic go over the last answer. A command is a part of the message, so Retry and Edit send it again with it, and
 the server holds the lead to it: an answer that did not do what was asked is shown with a note saying so. A command that
 cannot be carried out, such as `/code` where code is turned off in the settings, is listed with why, and one the server
 refuses puts the text back in the box. The rules are in `src/lib/commands.ts` and `src/lib/transcript.ts`.
+
+`/lab` is a command whose choices are made in a panel (`src/components/lab-dialog.tsx`), which opens with what was
+written after it as what the scientists are to work on. The researcher chooses a team that discusses it, with the lead
+leading, or one scientist whom the Critic reviews, who takes part from the whole library of scientists (not only those
+on the conversation's team: the server adds the others to it, when the lead is not at work), how many rounds, and
+what they must answer. That is sent with the message as `lab` beside `directive: "lab"`, and the lead is given only
+the tool that holds that session, with who and how many rounds set, so that it writes the agenda. The transcript
+shows who was chosen beside the chip. A problem with a field is said once the field has been changed, Start waits
+for the form to be right, a refusal by the server is shown in the panel, which stays open, and closing the panel puts
+what was written back in the box as `/lab …`. Who and how many rounds are remembered for the next time
+(`localStorage`, key `vl-lab`). The form's rules are in `src/lib/team-choice.ts`.
 
 ## Files
 

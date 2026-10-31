@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from virtual_lab.chat import describe_size
+from virtual_lab.directives import describe_lab
 from virtual_lab.events import ChatEvent
 from virtual_lab.export import MAX_EXPORTED_OUTPUT_CHARS, figure_file, money, shorten, when
 from virtual_lab.export_chat import (
@@ -203,7 +204,8 @@ class Notebook:
 def user_text(event: ChatEvent) -> str:
     parts = [quoted(f"**Researcher**\n\n{event.text}") if event.text else quoted("**Researcher**")]
     if directive := event.data.get("directive"):
-        parts.append(f">\n> Command: /{directive}")
+        what = describe_lab(event.data.get("lab")) if directive == "lab" else None
+        parts.append(f">\n> Command: /{directive}" + (f", {what}" if what else ""))
     files = [file for file in event.data.get("attachments") or [] if isinstance(file, dict)]
     if files:
         items = "\n".join(

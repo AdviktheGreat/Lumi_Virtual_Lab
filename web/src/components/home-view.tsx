@@ -8,6 +8,7 @@ import { CapabilityCards } from "@/components/capability-cards";
 import { useChats } from "@/components/chats-provider";
 import { CommandsHelp } from "@/components/commands-help";
 import { Composer } from "@/components/composer";
+import { LabDialog } from "@/components/lab-dialog";
 import { LimitsDialog } from "@/components/limits-dialog";
 import { Notice, ProblemNotice } from "@/components/messages";
 import { ModelButton, ModelDialog } from "@/components/model-dialog";
@@ -19,9 +20,10 @@ import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
 import { isDirective, written, type Invocation } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
+import { DEFAULT_LEAD_TITLE } from "@/lib/team-choice";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
-import type { ChatInfo, LimitsChange } from "@/lib/types";
+import type { ChatInfo, LabChoice, LimitsChange } from "@/lib/types";
 
 export function HomeView() {
   const router = useRouter();
@@ -37,6 +39,8 @@ export function HomeView() {
   // The limits chosen here for it, which are only those that differ from what the settings say, and whether they are being chosen
   const [limitsChosen, setLimitsChosen] = useState<LimitsChange>({});
   const [limiting, setLimiting] = useState(false);
+  // What was written after /lab while it is being chosen who works on it, which is null while it is not
+  const [labbing, setLabbing] = useState<string | null>(null);
   const [helping, setHelping] = useState(false);
   // There is no conversation to send files to until the message is, so they are held until then
   const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
@@ -46,16 +50,14 @@ export function HomeView() {
     if (refused.length > 0) setProblem(plainProblem(refused.join("\n")));
   }
 
-  // A conversation is begun with what is in the box, or with a command, which is given with the message that begins it
-  async function start(command?: Invocation) {
-    const text = command ? command.arg.trim() : draft.trim();
-    setSending(true);
-    setProblem(null);
+  // A conversation is begun with a message, which a command may be given with, and with /lab who is to work on it. If it could
+  // not be, there is no conversation, and the error is thrown.
+  async function begin(text: string, directive?: string, lab?: LabChoice) {
     let chat: ChatInfo | null = null;
     try {
       chat = await api.createChat({ ...(chosen === null ? {} : { model: chosen }), ...limitsChosen });
       const names = await attachments.upload(chat.id);
-      await api.send(chat.id, text, names, false, command?.name);
+      await api.send(chat.id, text, names, false, directive, lab);
       void refresh();
       router.push(`/chat?id=${encodeURIComponent(chat.id)}`);
     } catch (error) {
@@ -64,10 +66,35 @@ export function HomeView() {
         await api.deleteChat(chat.id).catch(() => undefined);
         attachments.requeue();
       }
+      throw error;
+    }
+  }
+
+  // A conversation is begun with what is in the box, or with a command, which is given with the message that begins it
+  async function start(command?: Invocation) {
+    const text = command ? command.arg.trim() : draft.trim();
+    setSending(true);
+    setProblem(null);
+    try {
+      await begin(text, command?.name);
+    } catch (error) {
       if (command) setDraft(written(command));
       report(error);
       setProblem(problemOf(error));
       setSending(false);
+    }
+  }
+
+  // The same, from the panel that chose who is to work on it, which stays open to be changed where it could not be begun
+  async function startLab(agenda: string, lab: LabChoice) {
+    setSending(true);
+    setProblem(null);
+    try {
+      await begin(agenda, "lab", lab);
+    } catch (error) {
+      report(error);
+      setSending(false);
+      throw error;
     }
   }
 
@@ -80,8 +107,9 @@ export function HomeView() {
   const directives = ready === null ? null : { code: noCode, plot: noCode };
 
   function run(invocation: Invocation) {
-    const { name } = invocation;
-    if (isDirective(name)) void start(invocation);
+    const { name, arg } = invocation;
+    if (name === "lab") setLabbing(arg);
+    else if (isDirective(name)) void start(invocation);
     else if (name === "budget") setLimiting(true);
     else if (name === "model") setChoosing(true);
     else if (name === "help") setHelping(true);
@@ -164,6 +192,19 @@ export function HomeView() {
               begun={false}
               onSave={async (changes) => setLimitsChosen((was) => ({ ...was, ...changes }))}
               onClose={() => setLimiting(false)}
+            />
+          )}
+          {labbing !== null && ready !== null && (
+            <LabDialog
+              agenda={labbing}
+              lead={DEFAULT_LEAD_TITLE}
+              team={null}
+              ceiling={limitsChosen.max_rounds ?? ready.chat_limits.max_rounds.default}
+              onStart={startLab}
+              onClose={(left) => {
+                setLabbing(null);
+                if (left !== null && left.trim() !== "") setDraft(written({ name: "lab", arg: left.trim() }));
+              }}
             />
           )}
           {helping && <CommandsHelp place="home" onClose={() => setHelping(false)} />}

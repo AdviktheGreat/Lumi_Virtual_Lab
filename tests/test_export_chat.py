@@ -827,6 +827,24 @@ def test_a_command_with_nothing_written_after_it_is_still_named(tmp_path: Path) 
     assert "Command /review" in text_of(chat_html(saved_chat(tmp_path / "chat", events)))
 
 
+def test_who_a_lab_session_was_asked_for_is_told_of_with_the_command(tmp_path: Path) -> None:
+    lab = {"mode": "team", "members": ["Immunologist", "<b>Hacker</b>"], "rounds": 2, "questions": []}
+    events = [happened("user", text="Design", directive="lab", lab=lab), happened("answer", text="Done.")]
+
+    document = chat_html(saved_chat(tmp_path / "chat", events))
+
+    assert "Command /lab: a team session with Immunologist, &lt;b&gt;Hacker&lt;/b&gt;, for 2 rounds" in document
+    assert "<b>Hacker</b>" not in document
+
+
+def test_a_lab_command_with_nothing_readable_is_named_but_not_described(tmp_path: Path) -> None:
+    events = [happened("user", text="Go", directive="lab", lab="nonsense"), happened("answer", text="Done.")]
+
+    text = text_of(chat_html(saved_chat(tmp_path / "chat", events)))
+
+    assert "Command /lab Go" in text
+
+
 def test_a_step_that_says_nothing_is_not_shown_as_the_lead_having_begun(tmp_path: Path) -> None:
     events = [happened("user", text="Go"), happened("tool_calls", text="  \n", calls=[])]
 

@@ -43,7 +43,7 @@ from virtual_lab.server.security import TOKEN_COOKIE
 from virtual_lab.server.workspace import Settings, Workspace
 from virtual_lab.utils import CostUnknownError
 
-from conftest import TEST_MODEL, FakeClient, text_response
+from conftest import TEST_MODEL, FakeClient, text_response, tool_call_response
 from test_export import PNG
 from setup_fakes import Bucket, FakeDocker, wait_for
 from test_server_conversations import hold_the_model, wait_until
@@ -1644,6 +1644,130 @@ class TestMessages:
         for directive in (5, ["ask"], "x" * 51):
             response = client.post(f"/api/chats/{made['id']}/messages", json={"text": "Go", "directive": directive})
             assert response.status_code == 422
+
+    LAB = {"mode": "team", "members": ["Immunologist", "Nanobody Engineer"], "rounds": 0, "questions": ["Which?"]}
+    ENGINEER = {"title": "Nanobody Engineer", "expertise": "nanobodies", "goal": "design binders", "role": "propose"}
+
+    def test_a_scientist_of_the_library_who_is_chosen_for_a_lab_session_joins_the_team(
+        self, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        client.put("/api/scientists", json=self.ENGINEER)
+        made = new_chat(client, team=["Immunologist", "Scientific Critic"])
+        before = handle_of(client.app, made["id"])
+        fake_client.completions.responses.extend(
+            [
+                tool_call_response("convene_team", {"agenda": "Design a binder."}),
+                text_response("Together."),
+                text_response("The team designed one."),
+            ]
+        )
+
+        response = client.post(
+            f"/api/chats/{made['id']}/messages", json={"text": "Design", "directive": "lab", "lab": self.LAB}
+        )
+
+        assert response.status_code == 202
+        info = wait_idle(client, made["id"])
+        assert [member["title"] for member in info["config"]["team"]] == [
+            "Immunologist",
+            "Scientific Critic",
+            "Nanobody Engineer",
+        ]
+        after = handle_of(client.app, made["id"])
+        assert after is not before
+        events = after.chat.events_since()
+        (user,) = [event for event in events if event.kind == "user"]
+        assert user.data["lab"] == self.LAB and user.data["directive"] == "lab"
+        assert [event.data["directive_met"] for event in events if event.kind == "answer"] == [True]
+        # The team is kept, so the lead may bring them in later too
+        assert [member["title"] for member in client.get(f"/api/chats/{made['id']}").json()["config"]["team"]][-1] == (
+            "Nanobody Engineer"
+        )
+
+    def test_a_conversation_is_not_opened_again_when_those_chosen_are_on_its_team(
+        self, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        made = new_chat(client, team=["Immunologist", "Scientific Critic"])
+        before = handle_of(client.app, made["id"])
+        fake_client.completions.responses.extend(
+            [tool_call_response("convene_team", {"agenda": "Go."}), text_response("Alone."), text_response("Done.")]
+        )
+
+        client.post(
+            f"/api/chats/{made['id']}/messages",
+            json={"text": "Go", "directive": "lab", "lab": {"members": ["immunologist"], "rounds": 0}},
+        )
+
+        wait_idle(client, made["id"])
+        assert handle_of(client.app, made["id"]) is before
+
+    @pytest.mark.parametrize(
+        ("body", "message"),
+        [
+            ({"directive": "lab"}, "/lab needs who is to work on it chosen"),
+            ({"lab": {"members": ["Immunologist"]}}, "chosen only with /lab"),
+            ({"directive": "ask", "lab": {"members": ["Immunologist"]}}, "chosen only with /lab"),
+            ({"directive": "lab", "lab": {"members": []}}, "at least one scientist"),
+            ({"directive": "lab", "lab": {"members": ["Astrologer"]}}, 'There is no scientist titled "Astrologer"'),
+            ({"directive": "lab", "lab": {"members": ["Nobody Here"]}}, "There is no scientist titled"),
+            (
+                {"directive": "lab", "lab": {"mode": "individual", "members": ["Scientific Critic"]}},
+                "reviews, so choose another",
+            ),
+            ({"directive": "lab", "lab": {"members": ["Immunologist"], "rounds": 4}}, "at most 3 round"),
+        ],
+    )
+    def test_a_lab_session_that_cannot_be_asked_for_is_refused_and_the_team_is_left_as_it_was(
+        self, body: dict[str, Any], message: str, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        made = new_chat(client, team=["Immunologist", "Scientific Critic"])
+
+        response = client.post(f"/api/chats/{made['id']}/messages", json={"text": "Go", **body})
+
+        assert response.status_code == 422 and error_of(response)["code"] == "invalid"
+        assert message in error_of(response)["message"]
+        info = client.get(f"/api/chats/{made['id']}").json()
+        assert info["turns"] == 0 and len(info["config"]["team"]) == 2
+        assert fake_client.completions.calls == []
+
+    @pytest.mark.parametrize(
+        "lab",
+        [
+            {"members": ["Immunologist"], "rounds": 11},
+            {"members": ["Immunologist"], "rounds": 1.5},
+            {"members": ["Immunologist"], "rounds": True},
+            {"members": ["Immunologist"], "mode": "crowd"},
+            {"members": "Immunologist"},
+            {"members": ["x" * 201]},
+            {"members": ["Immunologist"] * 51},
+            {"members": ["Immunologist"], "questions": ["q"] * 11},
+            {"members": ["Immunologist"], "extra": 1},
+        ],
+    )
+    def test_the_choice_of_who_works_on_it_is_checked_for_its_shape(self, lab: dict[str, Any], client: TestClient) -> None:
+        made = new_chat(client, team=["Immunologist", "Scientific Critic"])
+
+        response = client.post(f"/api/chats/{made['id']}/messages", json={"text": "Go", "directive": "lab", "lab": lab})
+
+        assert response.status_code == 422
+
+    def test_a_conversation_that_is_working_does_not_take_scientists_onto_its_team(
+        self, client: TestClient, fake_client: FakeClient
+    ) -> None:
+        made = new_chat(client, team=["Immunologist", "Scientific Critic"])
+        gate = hold_the_model(fake_client)
+        client.post(f"/api/chats/{made['id']}/messages", json={"text": "Think"})
+        assert gate.reached.wait(10)
+
+        refused = client.post(
+            f"/api/chats/{made['id']}/messages",
+            json={"text": "Go", "directive": "lab", "lab": {"members": ["Geneticist"], "rounds": 0}},
+        )
+
+        assert refused.status_code == 409 and error_of(refused)["code"] == "busy"
+        assert len(client.get(f"/api/chats/{made['id']}").json()["config"]["team"]) == 2
+        gate.release()
+        wait_idle(client, made["id"])
 
     @pytest.mark.parametrize(
         "body",

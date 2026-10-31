@@ -11,8 +11,9 @@ import { takesText, unmetNote } from "@/lib/commands";
 import type { Problem } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { holdNotice } from "@/lib/steering";
+import { describeChoice } from "@/lib/team-choice";
 import { isThinking, type Turn } from "@/lib/transcript";
-import type { Attachment, ChatState } from "@/lib/types";
+import type { Attachment, ChatState, LabChoice } from "@/lib/types";
 
 function Files({ files }: { files: Attachment[] }) {
   if (files.length === 0) return null;
@@ -32,24 +33,41 @@ function Files({ files }: { files: Attachment[] }) {
   );
 }
 
-// The command a message was given with, which says how the lead was to answer it
-function DirectiveChip({ name }: { name: string }) {
+// The command a message was given with, which says how the lead was to answer it, and with /lab who was to work on it
+function DirectiveChip({ name, lab }: { name: string; lab: LabChoice | null }) {
   return (
-    <span
-      className="rounded-md border border-brand/30 bg-highlight px-1.5 py-0.5 font-mono text-xs font-medium text-highlight-foreground"
-      data-testid="directive-chip"
-      title="The command this message was given with"
-    >
-      /{name}
+    <span className="flex max-w-full flex-wrap items-center justify-end gap-x-2 gap-y-1">
+      <span
+        className="rounded-md border border-brand/30 bg-highlight px-1.5 py-0.5 font-mono text-xs font-medium text-highlight-foreground"
+        data-testid="directive-chip"
+        title="The command this message was given with"
+      >
+        /{name}
+      </span>
+      {lab && (
+        <span className="text-xs text-muted-foreground" data-testid="lab-choice">
+          {describeChoice(lab)}
+        </span>
+      )}
     </span>
   );
 }
 
-export function UserMessage({ text, attachments, directive = null }: { text: string; attachments: Attachment[]; directive?: string | null }) {
+export function UserMessage({
+  text,
+  attachments,
+  directive = null,
+  lab = null,
+}: {
+  text: string;
+  attachments: Attachment[];
+  directive?: string | null;
+  lab?: LabChoice | null;
+}) {
   return (
     <div className="flex flex-col items-end gap-1.5" data-testid="user-message">
       <Files files={attachments} />
-      {directive !== null && <DirectiveChip name={directive} />}
+      {directive !== null && <DirectiveChip name={directive} lab={lab} />}
       {text && (
         <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-border bg-card px-4 py-2.5 text-[15px] leading-6">
           {text}
@@ -65,11 +83,13 @@ function ReplaceableUserMessage({
   text,
   attachments,
   directive,
+  lab,
   onReplace,
 }: {
   text: string;
   attachments: Attachment[];
   directive: string | null;
+  lab: LabChoice | null;
   onReplace: (text: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -86,7 +106,7 @@ function ReplaceableUserMessage({
         }}
       >
         <Files files={attachments} />
-        {directive !== null && <DirectiveChip name={directive} />}
+        {directive !== null && <DirectiveChip name={directive} lab={lab} />}
         <textarea
           aria-label="Edit message"
           autoFocus
@@ -112,7 +132,7 @@ function ReplaceableUserMessage({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <UserMessage text={text} attachments={attachments} directive={directive} />
+      <UserMessage text={text} attachments={attachments} directive={directive} lab={lab} />
       <div className="flex gap-1">
         <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => onReplace(text)}>
           <RotateCcw aria-hidden />
@@ -246,10 +266,11 @@ export function TurnView({
             text={turn.user.text}
             attachments={turn.user.attachments}
             directive={turn.user.directive}
+            lab={turn.user.lab}
             onReplace={onReplace}
           />
         ) : (
-          <UserMessage text={turn.user.text} attachments={turn.user.attachments} directive={turn.user.directive} />
+          <UserMessage text={turn.user.text} attachments={turn.user.attachments} directive={turn.user.directive} lab={turn.user.lab} />
         ))}
       {(turn.steps.length > 0 || reply !== "" || thinking || held !== null) && (
         <LeadBlock speaker={lead}>
