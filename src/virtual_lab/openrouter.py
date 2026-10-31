@@ -279,7 +279,11 @@ class Catalog:
     def _save(self) -> None:
         if self.path is None:
             return
-        saved = {"format": SAVED_FORMAT, "read_at": self._read_at, "models": [model.to_saved() for model in self._models]}
+        saved = {
+            "format": SAVED_FORMAT,
+            "read_at": self._read_at,
+            "models": [model.to_saved() for model in self._models],
+        }
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             write_atomically(self.path, json.dumps(saved).encode("utf-8"))

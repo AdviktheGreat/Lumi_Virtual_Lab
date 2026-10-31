@@ -431,7 +431,9 @@ def price_per_million(model: str) -> dict[str, float] | None:
         }
     except CostUnknownError:
         return None
-    cache_read, cache_write = REGISTERED_CACHE_PRICES.get(model, (None, None)) if model in REGISTERED_PRICES else (None, None)
+    cache_read, cache_write = (None, None)
+    if model in REGISTERED_PRICES:
+        cache_read, cache_write = REGISTERED_CACHE_PRICES.get(model, (None, None))
     if cache_read is not None:
         prices["cached_input"] = cache_read * 10**6
     if cache_write is not None:
