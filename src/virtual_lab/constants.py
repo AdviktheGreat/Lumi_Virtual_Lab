@@ -322,7 +322,8 @@ DEFAULT_CPU_LIMIT = "2"
 DEFAULT_PIDS_LIMIT = 256
 
 # Size of the writable scratch space mounted at /tmp, since the container's root filesystem
-# is read-only and many libraries expect somewhere to write
+# is read-only and many libraries expect somewhere to write. Programs and libraries can be run
+# from it, which is where a library installed for the user is put.
 DEFAULT_TMPFS_SIZE = "256m"
 
 # The same ceilings for a session (see virtual_lab.session), which holds a whole meeting's
