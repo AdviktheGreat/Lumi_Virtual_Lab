@@ -37,8 +37,21 @@ DOCKER_TIMEOUT = 10.0
 STAGES = {
     "base": ("Biomni's analysis libraries", "a few minutes"),
     "bio": ("Adds Biomni's bioinformatics tools", "about half an hour"),
+    "bio-r": ("Adds R with the packages analyses use, and a few Python ones", "about ten minutes after bio"),
     "full": ("Adds R and the command-line tools", "hours"),
 }
+
+
+
+def environment_name(target: str) -> str:
+    """What a stage's image is called to the person. Biomni's own stages are Biomni's; bio-r is this lab's."""
+    return "the Bio + R environment" if target == "bio-r" else f"Biomni's {target} environment"
+
+
+def sentence_start(text: str) -> str:
+    """The text with its first letter a capital."""
+    return text[:1].upper() + text[1:]
+
 
 # The architectures that run the image without being emulated
 NATIVE_MACHINES = ("x86_64", "amd64")
@@ -90,7 +103,7 @@ def checklist(
 
     if settings.sandbox in SANDBOX_TARGETS:
         stage = next(item for item in images["stages"] if item["target"] == settings.sandbox)
-        title = f"Biomni's {settings.sandbox} environment"
+        title = sentence_start(environment_name(settings.sandbox))
         if stage["built"]:
             steps.append(step("image", title, "done", "Built", wanted))
         elif ("image", settings.sandbox) in running:
@@ -250,10 +263,10 @@ class Setup:
         if not docker["running"]:
             raise ApiError(409, "docker_unavailable", docker["message"])
         if sandbox_image_exists(sandbox_image(target), self.docker_command):
-            raise ApiError(409, "already_built", f"Biomni's {target} environment is already built")
+            raise ApiError(409, "already_built", f"{sentence_start(environment_name(target))} is already built")
 
         def work(job: Job) -> str:
-            job.update(f"Building Biomni's {target} environment")
+            job.update(f"Building {environment_name(target)}")
 
             def output(line: str) -> None:
                 job.log(line)
@@ -262,9 +275,9 @@ class Setup:
 
             build_sandbox_image(target, docker_command=self.docker_command, on_output=output, stop=job.stop)
 
-            return f"Built Biomni's {target} environment"
+            return f"Built {environment_name(target)}"
 
-        return self._start("image", target, f"Building Biomni's {target} environment", work)
+        return self._start("image", target, f"Building {environment_name(target)}", work)
 
     def download_data_lake(self, settings: Settings, names: Sequence[str] | None = None) -> Job:
         """Starts fetching the data lake, or some of it. What is there already is left alone.
@@ -337,7 +350,8 @@ class Setup:
         target = code.sandbox
         if target in SANDBOX_TARGETS and not sandbox_image_exists(sandbox_image(target), self.docker_command):
             message = (
-                f"Biomni's {target} environment is not built. Build it in the setup, which takes {STAGES[target][1]}"
+                f"{sentence_start(environment_name(target))} is not built. Build it in the setup, which takes "
+                f"{STAGES[target][1]}"
             )
             return [{"id": "image", "message": message}]
 

@@ -104,6 +104,7 @@ describe("the name of a stage of the image", () => {
   it("is as the settings give it, and made from the stage if they do not know it", () => {
     expect(stageLabel("base")).toBe("Biomni base");
     expect(stageLabel("full")).toBe("Biomni full");
+    expect(stageLabel("bio-r")).toBe("Bio + R");
     expect(stageLabel("huge")).toBe("Biomni huge");
   });
 });

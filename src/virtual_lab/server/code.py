@@ -8,7 +8,7 @@ from virtual_lab.execution import ENVIRONMENT_VARIABLE_NAME, DockerExecutor
 from virtual_lab.session import DockerSession, LocalSession, Session, session_executor
 
 CODE_PLACES = ("none", "docker", "local")
-SANDBOXES = ("python", "base", "bio", "full")
+SANDBOXES = ("python", "base", "bio", "bio-r", "full")
 RESOURCE_MODES = ("retrieve", "all", "none")
 
 
@@ -19,7 +19,7 @@ class CodeSetup:
     :param where: "none" for nowhere, "docker" for a container, or "local" for this machine,
         with no isolation.
     :param sandbox: With Docker, "python" for a plain Python image, or the stage of Biomni's
-        environment to run in: "base", "bio", or "full", which must have been built.
+        environment to run in: "base", "bio", "bio-r", or "full", which must have been built.
     :param network: With Docker, whether code can reach the network.
     :param python: On this machine, the interpreter to run, or "" for this one.
     :param resources: What of Biomni's tools, data, and know-how the agents are told they can use

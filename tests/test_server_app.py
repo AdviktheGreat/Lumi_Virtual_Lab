@@ -651,6 +651,7 @@ class TestSetup:
         assert [(stage["target"], stage["built"]) for stage in shown["images"]["stages"]] == [
             ("base", False),
             ("bio", False),
+            ("bio-r", False),
             ("full", False),
         ]
         assert shown["data_lake"]["directory"] == str(workspace.data_lake_dir)
@@ -692,6 +693,7 @@ class TestSetup:
         assert [(stage["target"], stage["building"]) for stage in building["images"]["stages"]] == [
             ("base", False),
             ("bio", True),
+            ("bio-r", False),
             ("full", False),
         ]
         assert [item["id"] for item in building["jobs"]] == [job["id"]]

@@ -1,0 +1,48 @@
+# R, and the packages that analyses of published studies most often use, from conda-forge and
+# Bioconda, which are built, so that this stage takes minutes where the full stage's compiling of
+# Biomni's R packages takes hours. This file is this project's and not Biomni's, and it is
+# installed in an environment of its own so that it cannot conflict with the Python libraries.
+name: r_e1
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - r-base>=4.4
+  - r-recommended
+  - r-tidyverse
+  - r-data.table
+  - r-lme4
+  - r-glmnet
+  - r-vegan
+  - r-ape
+  - r-phangorn
+  - r-pheatmap
+  - r-ggrepel
+  - r-rcolorbrewer
+  - r-reshape2
+  - r-broom
+  - r-proc
+  - r-randomforest
+  - r-ggpubr
+  - r-survminer
+  - r-biocmanager
+  - r-remotes
+  - bioconductor-deseq2
+  - bioconductor-edger
+  - bioconductor-limma
+  - bioconductor-apeglm
+  - bioconductor-sva
+  - bioconductor-genefilter
+  - bioconductor-clusterprofiler
+  - bioconductor-enrichplot
+  - bioconductor-dose
+  - bioconductor-fgsea
+  - bioconductor-annotationdbi
+  - bioconductor-go.db
+  - bioconductor-org.hs.eg.db
+  - bioconductor-org.mm.eg.db
+  - bioconductor-genomicranges
+  - bioconductor-summarizedexperiment
+  - bioconductor-biostrings
+  - bioconductor-complexheatmap
