@@ -47,7 +47,7 @@ class TestCodeSetup:
         lake = tmp_path / "lake"
         lake.mkdir()
 
-        for sandbox in ("python", "base", "bio", "full"):
+        for sandbox in ("python", "base", "bio", "bio-r", "full"):
             executor = CodeSetup(where="docker", sandbox=sandbox, data_lake=str(lake)).docker_executor()
 
             assert executor.data_lake == lake

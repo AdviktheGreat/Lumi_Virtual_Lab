@@ -389,7 +389,7 @@ class TestWhatCodeHas:
     def test_code_in_one_of_biomnis_environments_is_given_the_data_lake_in_the_workspace(
         self, workspace: Workspace
     ) -> None:
-        for sandbox in ("base", "bio", "full"):
+        for sandbox in ("base", "bio", "bio-r", "full"):
             config = resolve_config({"code": {"where": "docker", "sandbox": sandbox}}, settings(), workspace)
 
             assert config.code.data_lake == str(workspace.data_lake_dir)
