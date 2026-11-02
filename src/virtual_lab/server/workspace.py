@@ -110,7 +110,7 @@ class Settings:
     :param max_cost: The budget a conversation starts with, in USD, or None for none.
     :param code: Where agents' code runs: "none", "docker", or "local".
     :param sandbox: The sandbox image a session runs in with Docker: "python", or a stage of
-        Biomni's environment, "base", "bio", or "full".
+        Biomni's environment, "base", "bio", "bio-r", or "full".
     :param network: Whether code in a session can reach the network.
     :param python: The interpreter code runs with on this machine, or "" for this one.
     :param data_lake: The directory Biomni's data lake is kept in, or "" for the workspace's own.

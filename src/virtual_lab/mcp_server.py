@@ -474,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
     session.add_argument("--directory", type=Path, help="the session's working directory, where files are kept")
     session.add_argument(
         "--image-target",
-        choices=("full", "bio", "base"),
+        choices=("full", "bio-r", "bio", "base"),
         default="full",
         help="which stage of the sandbox image to use, for docker (default: full)",
     )

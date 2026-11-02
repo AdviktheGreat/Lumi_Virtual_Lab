@@ -128,7 +128,7 @@ class TestImages:
 
         assert shown["platform"] == SANDBOX_PLATFORM
         assert [stage["target"] for stage in shown["stages"]] == list(SANDBOX_TARGETS)
-        assert [stage["built"] for stage in shown["stages"]] == [False, True, False]
+        assert [stage["built"] for stage in shown["stages"]] == [False, True, False, False]
         assert [stage["tag"] for stage in shown["stages"]] == [sandbox_image(target) for target in SANDBOX_TARGETS]
         assert all(stage["building"] is False for stage in shown["stages"])
         base = shown["stages"][0]
@@ -144,7 +144,7 @@ class TestImages:
 
         shown = machine.images(machine.docker())
 
-        assert [stage["built"] for stage in shown["stages"]] == [None, None, None]
+        assert [stage["built"] for stage in shown["stages"]] == [None, None, None, None]
 
     @pytest.mark.parametrize(
         ("architecture", "emulated"),
@@ -164,7 +164,7 @@ class TestImages:
 
         stages = {stage["target"]: stage for stage in machine.images(machine.docker())["stages"]}
 
-        assert [stages[target]["building"] for target in SANDBOX_TARGETS] == [False, True, False]
+        assert [stages[target]["building"] for target in SANDBOX_TARGETS] == [False, True, False, False]
         docker.release()
         wait_for(lambda: done(job))
         assert machine.images(machine.docker())["stages"][1]["building"] is False
@@ -377,7 +377,7 @@ class TestBuildingAnImage:
             machine.build_image(target)
 
         assert (refused.value.status, refused.value.code) == (422, "invalid")
-        assert refused.value.message == "A stage of the image is one of base, bio, full"
+        assert refused.value.message == "A stage of the image is one of base, bio, bio-r, full"
 
     def test_a_build_does_not_keep_the_data_lake_from_being_fetched(
         self, machine: Setup, docker: FakeDocker, bucket: Bucket
@@ -680,7 +680,7 @@ class TestChecklist:
         steps = checklist(
             settings(code="docker", sandbox="bio"),
             DOCKER_DOWN,
-            images_of(None, None, None),
+            images_of(None, None, None, None),
             lake(),
             [],
             ["OPENAI_API_KEY"],
@@ -719,7 +719,7 @@ class TestChecklist:
 
     def test_everything_done(self) -> None:
         steps = checklist(
-            settings(code="docker", sandbox="base"), DOCKER_UP, images_of(True, False, False), lake(76), [], []
+            settings(code="docker", sandbox="base"), DOCKER_UP, images_of(True, False, False, False), lake(76), [], []
         )
 
         assert [(step["id"], step["state"]) for step in steps] == [
@@ -738,7 +738,7 @@ class TestChecklist:
         steps = checklist(
             settings(code="docker", sandbox="base"),
             {**DOCKER_UP, "version": None},
-            images_of(False, False, False),
+            images_of(False, False, False, False),
             lake(),
             [],
             [],
@@ -748,7 +748,7 @@ class TestChecklist:
 
     def test_an_image_not_built_while_docker_runs_says_how_long_it_takes(self) -> None:
         steps = checklist(
-            settings(code="docker", sandbox="full"), DOCKER_UP, images_of(True, True, False), lake(), [], []
+            settings(code="docker", sandbox="full"), DOCKER_UP, images_of(True, True, False, False), lake(), [], []
         )
 
         assert by_id(steps)["image"] == {
@@ -761,7 +761,7 @@ class TestChecklist:
 
     def test_it_is_the_chosen_stage_that_counts(self) -> None:
         steps = checklist(
-            settings(code="docker", sandbox="bio"), DOCKER_UP, images_of(True, False, True), lake(), [], []
+            settings(code="docker", sandbox="bio"), DOCKER_UP, images_of(True, False, False, True), lake(), [], []
         )
 
         assert by_id(steps)["image"]["state"] == "todo"
@@ -770,7 +770,7 @@ class TestChecklist:
         mine = checklist(
             settings(code="docker", sandbox="bio"),
             DOCKER_UP,
-            images_of(False, False, False),
+            images_of(False, False, False, False),
             lake(),
             [job_of("image", "bio")],
             [],
@@ -778,7 +778,7 @@ class TestChecklist:
         other = checklist(
             settings(code="docker", sandbox="bio"),
             DOCKER_UP,
-            images_of(False, False, False),
+            images_of(False, False, False, False),
             lake(),
             [job_of("image", "full")],
             [],
@@ -791,7 +791,7 @@ class TestChecklist:
         ended = checklist(
             settings(code="docker", sandbox="bio"),
             DOCKER_UP,
-            images_of(False, False, False),
+            images_of(False, False, False, False),
             lake(),
             [job_of("image", "bio", "failed"), job_of("data_lake", "data_lake", "succeeded")],
             [],
@@ -799,7 +799,7 @@ class TestChecklist:
         stopping = checklist(
             settings(code="docker", sandbox="bio"),
             DOCKER_UP,
-            images_of(False, False, False),
+            images_of(False, False, False, False),
             lake(),
             [job_of("image", "bio", "stopping"), job_of("data_lake", "data_lake", "stopping")],
             [],
@@ -812,7 +812,7 @@ class TestChecklist:
         steps = checklist(
             settings(code="docker", sandbox="bio"),
             DOCKER_UP,
-            images_of(False, True, False),
+            images_of(False, True, False, False),
             lake(),
             [job_of("image", "bio")],
             [],
@@ -822,7 +822,7 @@ class TestChecklist:
 
     def test_the_plain_python_image_has_no_step_for_an_image(self) -> None:
         steps = checklist(
-            settings(code="docker", sandbox="python"), DOCKER_UP, images_of(False, False, False), lake(), [], []
+            settings(code="docker", sandbox="python"), DOCKER_UP, images_of(False, False, False, False), lake(), [], []
         )
 
         assert [step["id"] for step in steps] == ["docker", "data_lake", "model_key"]
@@ -831,7 +831,7 @@ class TestChecklist:
         steps = checklist(
             settings(code="docker", sandbox="bio"),
             DOCKER_UP,
-            images_of(True, True, True),
+            images_of(True, True, True, True),
             lake(10),
             [job_of("data_lake", "data_lake")],
             [],
@@ -849,7 +849,7 @@ class TestChecklist:
         for where, required in (("docker", True), ("local", False), ("none", False)):
             steps = by_id(
                 checklist(
-                    settings(code=where, sandbox="bio"), DOCKER_UP, images_of(False, False, False), lake(), [], []
+                    settings(code=where, sandbox="bio"), DOCKER_UP, images_of(False, False, False, False), lake(), [], []
                 )
             )
 
@@ -860,7 +860,7 @@ class TestChecklist:
     def test_the_data_lake_is_never_required_whether_or_not_it_is_there(self) -> None:
         for present in (0, 30, 76):
             steps = by_id(
-                checklist(settings(code="docker"), DOCKER_UP, images_of(True, True, True), lake(present), [], [])
+                checklist(settings(code="docker"), DOCKER_UP, images_of(True, True, True, True), lake(present), [], [])
             )
 
             assert steps["data_lake"]["required"] is False

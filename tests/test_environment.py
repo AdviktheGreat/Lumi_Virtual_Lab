@@ -36,7 +36,7 @@ DOCKERFILE = sandbox_context() / "Dockerfile"
 
 class TestImageDefinition:
     def test_the_stages_are_the_targets(self) -> None:
-        stages = re.findall(r"^FROM \S+ AS (\w+)$", DOCKERFILE.read_text(), flags=re.MULTILINE)
+        stages = re.findall(r"^FROM \S+ AS ([\w-]+)$", DOCKERFILE.read_text(), flags=re.MULTILINE)
 
         assert tuple(stages) == SANDBOX_TARGETS
 

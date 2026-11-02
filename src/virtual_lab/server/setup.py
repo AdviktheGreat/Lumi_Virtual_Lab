@@ -37,6 +37,7 @@ DOCKER_TIMEOUT = 10.0
 STAGES = {
     "base": ("Biomni's analysis libraries", "a few minutes"),
     "bio": ("Adds Biomni's bioinformatics tools", "about half an hour"),
+    "bio-r": ("Adds R with the packages analyses use, and a few Python ones", "about ten minutes after bio"),
     "full": ("Adds R and the command-line tools", "hours"),
 }
 

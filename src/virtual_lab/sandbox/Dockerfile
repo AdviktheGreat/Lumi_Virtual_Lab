@@ -4,11 +4,13 @@
 #
 # The environment files in biomni_env/ are copied unchanged from snap-stanford/Biomni (Apache
 # License 2.0; see NOTICE), and each stage installs them the way Biomni's biomni_env/setup.sh
-# does. There are three stages, since the whole environment takes hours to build and tens of
+# does. There are four stages, since the whole environment takes hours to build and tens of
 # gigabytes to hold:
 #
 #   base  Python 3.11 with Biomni's analysis libraries (environment.yml)
 #   bio   base, plus the bioinformatics tools and libraries (bio_env.yml)
+#   bio-r bio, plus R with the packages analyses most often use, built rather than compiled, and
+#         the Python packages bio lacks (bio_r_env.yml, this project's own)
 #   full  bio, plus R with Biomni's CRAN and Bioconductor packages, the command-line tools in
 #         cli_tools_config.json, and the software added in Biomni 0.0.8
 #
@@ -72,6 +74,41 @@ RUN python3 -c "import scanpy, Bio, rdkit, pysam, gseapy, lifelines" \
     && samtools --version \
     && bwa 2>&1 | grep -q Version \
     && blastn -version
+
+
+FROM bio AS bio-r
+
+# R goes in an environment of its own, so that its packages and the Python libraries cannot hold
+# each other's versions back, and is put after the Python environment on the path, so that
+# "python3" is still Biomni's and "Rscript" is this one's. The Python packages are those the
+# analyses in Biomni's data and in published studies call for that bio lacks: pydeseq2 and its
+# R original's counts differ in the last few genes, PhyKIT reads trees, and mygene, harmonypy,
+# and ete3 are the usual way to name genes, correct batches, and handle trees in Python.
+COPY bio_r_env.yml ./
+RUN conda env create -f bio_r_env.yml \
+    && conda clean -afy \
+    && rm -rf /tmp/.cache
+ENV PATH=$PATH:/opt/conda/envs/r_e1/bin
+
+RUN pip install --no-cache-dir pydeseq2 phykit mygene harmonypy ete3 \
+    && rm -rf /tmp/.cache
+
+# Whether what the files name is there, since conda says nothing of a package that is missing
+# from a channel until it is asked for, and a stage that builds without it would only be found
+# lacking in the middle of an analysis
+RUN python3 -c "import pydeseq2, phykit, mygene, harmonypy, ete3" \
+    && Rscript -e ' \
+        wanted <- c("ggplot2", "dplyr", "tidyr", "readr", "stringr", "data.table", "lme4", "glmnet", \
+                    "survival", "MASS", "vegan", "ape", "phangorn", "pheatmap", "ggrepel", "reshape2", \
+                    "broom", "pROC", "randomForest", "ggpubr", "survminer", "DESeq2", "edgeR", "limma", \
+                    "apeglm", "sva", "genefilter", "clusterProfiler", "enrichplot", "DOSE", "fgsea", \
+                    "AnnotationDbi", "GO.db", "org.Hs.eg.db", "org.Mm.eg.db", "GenomicRanges", \
+                    "SummarizedExperiment", "Biostrings", "ComplexHeatmap"); \
+        missing <- wanted[!vapply(wanted, requireNamespace, logical(1), quietly = TRUE)]; \
+        if (length(missing)) stop("R packages not installed: ", paste(missing, collapse = ", ")); \
+        library(DESeq2); library(clusterProfiler)' \
+    && python3 -c "import scanpy" \
+    && which python3 | grep -q biomni_e1
 
 
 FROM bio AS full

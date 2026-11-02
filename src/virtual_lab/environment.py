@@ -6,9 +6,10 @@ use what the sandbox it runs in has, so this module builds Biomni's environment 
 image and fetches its data lake, to be mounted into that sandbox read-only.
 
 The image is built from Biomni's own environment files, which ship with this package (see
-virtual_lab/sandbox). It is built in stages, "base", "bio", and "full", because the full
-environment takes hours to build and tens of gigabytes to hold, and most analyses need far
-less of it.
+virtual_lab/sandbox). It is built in stages, "base", "bio", "bio-r", and "full", because the
+full environment takes hours to build and tens of gigabytes to hold, and most analyses need far
+less of it. "bio-r" adds R, and the Python packages that analyses of published studies call for,
+to "bio" in minutes, from packages that are built, and is not Biomni's own.
 """
 
 import os
@@ -35,7 +36,7 @@ from virtual_lab.constants import (
 )
 from virtual_lab.execution import DockerUnavailableError, ExecutionError
 
-SANDBOX_TARGETS = ("base", "bio", "full")
+SANDBOX_TARGETS = ("base", "bio", "bio-r", "full")
 
 # Every file in Biomni's data lake, with Biomni's description of it
 DATA_LAKE: dict[str, str] = dict(data_lake_dict)
@@ -64,7 +65,7 @@ def sandbox_image(target: str = "full", platform: str | None = SANDBOX_PLATFORM)
     since Docker keeps one image per tag: a native build under the same tag as an x86-64 one
     would replace it, and would then be reused for a run that asks for x86-64 and cannot have it.
 
-    :param target: "base", "bio", or "full".
+    :param target: "base", "bio", "bio-r", or "full".
     :param platform: The platform the image is built for, or None for this machine's own.
     :raises ValueError: If the target is not one of those.
     :return: The image tag.
@@ -142,7 +143,8 @@ def build_sandbox_image(
     on_output is given to take it.
 
     :param target: "base" for Biomni's analysis libraries, "bio" to add its bioinformatics
-        tools, or "full" to add R and the command-line tools as well.
+        tools, "bio-r" to add to those R with the packages analyses most often use, or "full"
+        for R with Biomni's packages and the command-line tools as well.
     :param tag: The tag to build under, defaulting to sandbox_image(target, platform).
     :param platform: The platform to build for. Biomni's environment is published for x86-64
         Linux only, so the default is "linux/amd64" even on an ARM machine, where Docker
