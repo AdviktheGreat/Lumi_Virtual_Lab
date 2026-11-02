@@ -849,7 +849,12 @@ class TestChecklist:
         for where, required in (("docker", True), ("local", False), ("none", False)):
             steps = by_id(
                 checklist(
-                    settings(code=where, sandbox="bio"), DOCKER_UP, images_of(False, False, False, False), lake(), [], []
+                    settings(code=where, sandbox="bio"),
+                    DOCKER_UP,
+                    images_of(False, False, False, False),
+                    lake(),
+                    [],
+                    [],
                 )
             )
 

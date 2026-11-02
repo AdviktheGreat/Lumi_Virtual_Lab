@@ -18,7 +18,7 @@ export const SANDBOXES = [
   { value: "bio", label: "Biomni bio", about: "Adds Biomni's bioinformatics tools. Built first, in about half an hour." },
   {
     value: "bio-r",
-    label: "Biomni bio + R",
+    label: "Bio + R",
     about: "Adds R with DESeq2, edgeR, limma, and clusterProfiler, and a few Python packages. Built after bio, in minutes.",
   },
   { value: "full", label: "Biomni full", about: "Adds R and the command-line tools. Built first, in hours." },

@@ -846,7 +846,13 @@ class TestCommandLine:
         assert seen["settings"].chat == {
             "model": "openrouter/m",
             "team": ["Scientific Critic"],
-            "code": {"where": "docker", "sandbox": "bio", "network": True, "resources": "retrieve", "forward_env": []},
+            "code": {
+                "where": "docker",
+                "sandbox": "bio-r",
+                "network": True,
+                "resources": "retrieve",
+                "forward_env": [],
+            },
             "tools": ["uniprot_lookup", "inspect_data_file"],
             "mcp": [],
             "data": [],

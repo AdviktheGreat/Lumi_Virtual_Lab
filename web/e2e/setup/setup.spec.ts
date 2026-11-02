@@ -96,7 +96,7 @@ test.describe("the setup", () => {
     await expect(steps.getByRole("listitem", { name: "Biomni's base environment" })).toContainText("Waiting:");
     await expect(steps.getByRole("listitem", { name: "Biomni's base environment" })).toContainText("Needs Docker");
     await expect(dialog.getByRole("button", { name: /^Build / })).toHaveCount(0);
-    await expect(dialog.getByRole("list", { name: "Stages of the image" }).getByText("Needs Docker")).toHaveCount(3);
+    await expect(dialog.getByRole("list", { name: "Stages of the image" }).getByText("Needs Docker")).toHaveCount(4);
 
     await arrange(page, { docker: { daemon: "up" } });
     await docker.getByRole("button", { name: "Check again" }).click();
@@ -127,9 +127,10 @@ test.describe("the setup", () => {
     const dialog = await openSetup(page);
     const stages = dialog.getByRole("list", { name: "Stages of the image" });
 
-    await expect(stages.getByRole("listitem")).toHaveCount(3);
+    await expect(stages.getByRole("listitem")).toHaveCount(4);
     await expect(stages.getByRole("listitem", { name: "Biomni base" })).toContainText("Chosen in the settings");
     await expect(stages.getByRole("listitem", { name: "Biomni bio" })).not.toContainText("Chosen in the settings");
+    await expect(stages.getByRole("listitem", { name: "Bio + R" })).toContainText("Adds R with the packages analyses use");
     await expect(stages.getByRole("listitem", { name: "Biomni full" })).toContainText("Adds R and the command-line tools. Takes hours to build.");
     await expect(stages.getByRole("listitem", { name: "Biomni bio" })).toContainText("Not built");
     // The page is tested on a machine that is, or is not, the one the image is for

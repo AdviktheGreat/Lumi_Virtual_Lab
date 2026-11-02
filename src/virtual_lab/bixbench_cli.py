@@ -95,7 +95,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="TITLE",
         help="scientists the lead may consult (default: it works alone)",
     )
-    run.add_argument("--sandbox", default="bio", choices=("python", *SANDBOX_TARGETS), help="(default: bio)")
+    run.add_argument(
+        "--sandbox", default="bio-r", choices=("python", *SANDBOX_TARGETS), help="must be built (default: bio-r)"
+    )
     run.add_argument("--resources", default="retrieve", choices=("retrieve", "all", "none"))
     run.add_argument(
         "--max-cost", type=float, default=3.0, help="most USD one question may cost (default: %(default)s)"
