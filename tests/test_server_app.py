@@ -1300,9 +1300,13 @@ class TestLimits:
     ) -> None:
         made = new_chat(client)
 
+        handle = handle_of(client.app, made["id"])
+
         closed = client.post(f"/api/chats/{made['id']}/close")
 
         assert closed.status_code == 204 and closed.content == b""
+        assert handle.closed
+        assert handle_of(client.app, made["id"]) is not handle
         assert client.get(f"/api/chats/{made['id']}").json()["id"] == made["id"]
         assert client.post("/api/chats/2020-01-01_0000_nothing/close").status_code == 404
 

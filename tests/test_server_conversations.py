@@ -441,6 +441,51 @@ class TestRemoving:
         assert conversations.get(handle.id) is not handle
         assert conversations.get(handle.id).info()["turns"] == 1
 
+    def test_a_conversation_that_is_working_is_stopped_before_it_is_released(
+        self, conversations: Conversations, workspace: Workspace, fake_client: FakeClient
+    ) -> None:
+        handle = conversations.create({"team": []})
+        gate = hold_the_model(fake_client)
+        handle.chat.start("Go")
+        wait_until(lambda: gate.reached.is_set())
+        threading.Timer(0.2, gate.release).start()
+
+        conversations.release(handle.id)
+
+        assert handle.closed
+        assert handle.chat.state == "idle"
+        assert directories(workspace) == [handle.id]
+
+    def test_a_conversation_is_not_opened_again_while_it_is_still_being_released(
+        self, conversations: Conversations
+    ) -> None:
+        handle = conversations.create({"team": []})
+        closing, go_on = threading.Event(), threading.Event()
+        close = handle.close
+
+        def slow_close() -> None:
+            closing.set()
+            go_on.wait(10)
+            close()
+
+        handle.close = slow_close  # type: ignore[method-assign]
+        releasing = threading.Thread(target=conversations.release, args=(handle.id,))
+        releasing.start()
+        wait_until(closing.is_set)
+        reopened: list[Any] = []
+        asking = threading.Thread(target=lambda: reopened.append(conversations.get(handle.id)))
+        asking.start()
+
+        asking.join(0.3)
+        assert asking.is_alive(), "The conversation was opened again before it had been closed"
+        go_on.set()
+        releasing.join(10)
+        asking.join(10)
+
+        assert handle.closed
+        assert len(reopened) == 1 and reopened[0] is not handle and not reopened[0].closed
+        assert conversations.get(handle.id) is reopened[0]
+
     def test_there_is_no_conversation_to_release_if_there_is_none(self, conversations: Conversations) -> None:
         with pytest.raises(ApiError) as refused:
             conversations.release("2020-01-01_0000_nothing")

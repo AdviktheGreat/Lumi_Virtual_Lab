@@ -523,10 +523,12 @@ class Conversations:
         :raises ApiError: If there is no such conversation.
         """
         self.directory(chat_id)
+        # Closed with the lock held, as a conversation opened again with another setup is, so that nothing opens it
+        # again from what it saved while the turn that is running is still being waited for
         with self._lock:
             handle = self._open.pop(chat_id, None)
-        if handle is not None:
-            handle.close()
+            if handle is not None:
+                handle.close()
 
     def delete(self, chat_id: str) -> None:
         """Stops a conversation, if it is running, and removes it and everything it saved."""
