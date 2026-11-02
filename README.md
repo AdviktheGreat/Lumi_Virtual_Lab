@@ -704,6 +704,33 @@ VIRTUAL_LAB_BENCHMARK_DIR=data/benchmarks VIRTUAL_LAB_BIOMNI_DIR=Biomni pytest t
 
 The one difference found: when a model refuses every LAB-Bench question, Biomni's precision is the mean of nothing, which current scikit-learn raises on, and here it is `None`.
 
+## Measuring the lab on BixBench-Verified-50
+
+[BixBench](https://arxiv.org/abs/2503.00096) (FutureHouse, Apache 2.0) asks questions that need real analysis of real data, each with the files of a published study. [BixBench-Verified-50](https://huggingface.co/datasets/phylobio/BixBench-Verified-50) (Phylo) is 50 of them, over 33 datasets, whose wording and answers experts checked. Unlike Biomni's benchmarks, a question comes with files, and a person would answer it in a conversation with the lab, so `virtual-lab-bixbench` asks each one of a running server, in a conversation of its own, and nothing in it says it is a benchmark. Install it with `pip install "virtual-lab[eval]"`.
+
+The dataset is gated. Accept its terms on its Hugging Face page while logged in, make a token with Read access at <https://huggingface.co/settings/tokens>, and give it to your own terminal with `hf auth login`, so that it is never typed anywhere else:
+
+```bash
+hf auth login
+virtual-lab-bixbench fetch ~/bixbench                  # the questions and 33 datasets, 2.8 GB; --limit 3 or --only bix-12-q2 fetch fewer
+
+virtual-lab-server --workspace ~/bixbench_workspace --token bench      # a workspace of its own, in another terminal
+virtual-lab-bixbench run ~/bixbench --workspace ~/bixbench_workspace --token bench \
+    --model openrouter/moonshotai/kimi-k3.1-pro --only bix-12-q2 --results ~/bixbench/smoke
+virtual-lab-bixbench run ~/bixbench --workspace ~/bixbench_workspace --token bench \
+    --model openrouter/moonshotai/kimi-k3.1-pro --max-total-cost 150 --results ~/bixbench/kimi
+virtual-lab-bixbench report ~/bixbench --results ~/bixbench/kimi
+```
+
+- Each question's data is unpacked into its conversation's `uploads/`, from the dataset's `CapsuleData-*` folder. The `CapsuleNotebook-*` folder, which holds the analysis the answer was taken from, and any `.ipynb` file, are never given to the lead. The message names the files, says nobody is there to answer questions, and asks for a last line of the form `FINAL ANSWER: ...`. The question's ideal answer and the dataset's hypothesis are not in it.
+- The lead has what a conversation has: the model, the sandbox (`--sandbox`, `bio` by default), the data lake and tools of `--resources`, and `--team` if a team is named. The code runs in Docker with none of your keys passed in. Each conversation may spend `--max-cost` (3 dollars by default), and may take `--timeout` seconds (2,400) before it is stopped and what it has said is graded.
+- `--max-total-cost` stops the run from starting more questions once the lead has spent that much. Three questions in a row that fail stop it too, since that is more likely a bad key than three hard questions. A run saves each question under `--results` as soon as it is graded, so running the same command again carries on, `--retry-failed` asks the failed ones again, and a directory that holds a run set up differently (another model, team, sandbox, or judge) is refused. `--jobs` asks several at once, and each of them has a sandbox that may use as much memory as sandboxes are allowed.
+- Every answer is graded two ways, and both scores are always reported together. **Official** is FutureHouse's grader (`bixbench/graders.py`) with its judge prompts word for word: a `str_verifier` answer is the ideal once everything but letters and digits is dropped and case is ignored, and otherwise a model judges it; a `range_verifier` answer is a number in the ideal's range, and otherwise a model judges it; an `llm_verifier` answer is judged. One deliberate difference: FutureHouse's accepts an answer that is only a piece of the ideal, so "CDK" passes for "CDKN1A", and here that is left to the judge. **Lenient** accepts in addition what rounding or an R-versus-Python difference in the last digits fails: a number within half a unit of the ideal's last digit or 1% of it, a fraction written as a percentage, any number in the answer that is in the range, and a judge that allows 3%. Names and ratios get no leeway. Others who report scores on this set have loosened the grading in similar ways, so say which you mean when you quote one.
+- The judge is `--judge-model`, by default the lead's model, and what it costs is not counted in the lead's. `virtual-lab-bixbench regrade ~/bixbench --results ... --judge-model ...` grades the saved answers again without asking anything.
+- Each record in `questions/<id>.json` holds the lead's whole last message, the answer taken from it, both grades and how they were reached, the time, the cost, the tools called, and the conversation's id, so the conversation can be opened in the interface and read. `summary.json` holds the scores, overall and by kind of question.
+
+The questions, their data, and their answers are the dataset's, under its own license, and are not shipped with this package. The dataset's canary string asks that it be kept out of training data.
+
 ## Querying scientific databases
 
 Tools that look something up go through `virtual_lab.web`, which decides where a request may be sent. An agent chooses the arguments to a tool, which means a model's output determines part of every URL, so the destination cannot be left to the tool:
