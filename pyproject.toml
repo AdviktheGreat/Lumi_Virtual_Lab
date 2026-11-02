@@ -58,8 +58,8 @@ keywords = [
 ollama = ["langchain-ollama>=1.0"]
 bedrock = ["langchain-aws>=1.0"]
 # Biomni's benchmarks: pyarrow reads their files, numpy shuffles LAB-Bench's options as Biomni
-# does, and pandas gives Biomni's BiomniEval1 its DataFrames
-eval = ["numpy", "pandas", "pyarrow"]
+# does, and pandas gives Biomni's BiomniEval1 its DataFrames. huggingface_hub fetches BixBench-Verified-50
+eval = ["huggingface_hub>=0.24", "numpy", "pandas", "pyarrow"]
 # Tools from MCP servers, with connect_mcp, and tools served over MCP, with serve_mcp and
 # virtual-lab-mcp. PyYAML reads Biomni's YAML configs
 mcp = ["mcp>=2.3,<3", "PyYAML"]
@@ -92,6 +92,7 @@ dev = [
 ]
 
 [project.scripts]
+virtual-lab-bixbench = "virtual_lab.bixbench_cli:main"
 virtual-lab-functions = "virtual_lab.functions_cli:main"
 virtual-lab-mcp = "virtual_lab.mcp_server:main"
 virtual-lab-papers = "virtual_lab.papers_cli:main"
