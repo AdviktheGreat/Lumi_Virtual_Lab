@@ -604,6 +604,17 @@ class TestRun:
 
         assert sum("cost of a question is not known" in line for line in logged) == 1
 
+    def test_a_question_that_was_not_asked_is_not_said_to_have_a_cost_that_is_not_known(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
+    ) -> None:
+        lab = setup[2]
+        lab.create_error = LabError("POST /chats was refused with 422")
+        logged: list[str] = []
+
+        self.run(setup, [question("bix-1-q1")], tmp_path, max_total_cost=100.0, logged=logged)
+
+        assert not any("cost of a question is not known" in line for line in logged)
+
     def test_the_spending_of_an_earlier_run_counts_towards_the_limit(
         self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
     ) -> None:

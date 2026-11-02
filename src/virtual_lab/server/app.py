@@ -204,6 +204,7 @@ class ChatBody(RequestModel):
     mcp: list[str] | None = Field(None, max_length=MAX_SERVERS)
     data: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
     software: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
+    functions: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
 
 
 class SettingsBody(RequestModel):

@@ -470,7 +470,9 @@ def run_bixbench(
                 records[question.id] = record
                 save_record(results, question, record)
             state["spent"] += record.spent or 0.0
-            if record.spent is None and max_total_cost is not None and not state["warned"]:
+            # A question that was never asked has no cost to know
+            unpriced = record.status != NOT_ASKED and record.spent is None
+            if unpriced and max_total_cost is not None and not state["warned"]:
                 state["warned"] = True
                 log("The cost of a question is not known, so the limit on the run's cost cannot be kept to.")
             failed = record.status in (FAILED, NOT_ASKED)

@@ -1284,6 +1284,17 @@ class TestLimits:
         assert response.status_code == 422, response.text
         assert client.get("/api/chats").json() == {"chats": []}
 
+    def test_the_run_of_papers_whose_functions_a_conversation_is_given_may_be_named_or_left_out(
+        self, client: TestClient
+    ) -> None:
+        assert new_chat(client, functions=[])["config"]["functions"] == []
+
+        refused = client.post("/api/chats", json={"team": [], "functions": ["no-such-run"]})
+
+        assert refused.status_code == 422, refused.text
+        assert "no-such-run" in refused.json()["error"]["message"]
+        assert len(client.get("/api/chats").json()["chats"]) == 1
+
     def test_a_conversation_made_with_none_has_the_leads_own_limits(self, client: TestClient) -> None:
         made = new_chat(client)
 
