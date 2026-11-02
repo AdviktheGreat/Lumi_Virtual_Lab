@@ -1295,6 +1295,17 @@ class TestLimits:
         assert "no-such-run" in refused.json()["error"]["message"]
         assert len(client.get("/api/chats").json()["chats"]) == 1
 
+    def test_a_conversation_is_closed_with_what_it_saved_kept_and_opened_again_when_asked_for(
+        self, client: TestClient
+    ) -> None:
+        made = new_chat(client)
+
+        closed = client.post(f"/api/chats/{made['id']}/close")
+
+        assert closed.status_code == 204 and closed.content == b""
+        assert client.get(f"/api/chats/{made['id']}").json()["id"] == made["id"]
+        assert client.post("/api/chats/2020-01-01_0000_nothing/close").status_code == 404
+
     def test_a_conversation_made_with_none_has_the_leads_own_limits(self, client: TestClient) -> None:
         made = new_chat(client)
 

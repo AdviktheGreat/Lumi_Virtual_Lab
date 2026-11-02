@@ -96,6 +96,10 @@ class LabClient:
     def stop(self, chat_id: str) -> None:
         self._call("POST", f"/chats/{chat_id}/stop")
 
+    def close_chat(self, chat_id: str) -> None:
+        """Has the server free what a conversation holds, its container, keeping what it saved."""
+        self._call("POST", f"/chats/{chat_id}/close")
+
     def tools(self) -> list[dict[str, Any]]:
         """The tools the server has, each with its name and the group the settings put it in."""
         return list(self._call("GET", "/tools")["tools"])
@@ -292,6 +296,13 @@ def answer_question(
         record.error = f"{type(error).__name__}: {error}"
 
     record.elapsed = round(time.monotonic() - start, 1)
+    if record.chat_id:
+        # Each question's container stays up with what it loaded until it is closed, and fifty of them are more than
+        # the machine holds. What the conversation saved, which is what is read from it, is kept.
+        try:
+            client.close_chat(record.chat_id)
+        except LabError:
+            pass
     grade_record(question, record, judge)
 
     return record

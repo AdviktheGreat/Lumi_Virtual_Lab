@@ -83,6 +83,8 @@ class FakeLab(LabClient):
         self.created: list[dict[str, Any]] = []
         self.messages: list[tuple[str, str]] = []
         self.stopped: list[str] = []
+        self.closed: list[str] = []
+        self.close_error: Exception | None = None
         self.uploads: dict[str, list[str]] = {}
         self.titles: dict[str, str] = {}
         self.spent = 0.25
@@ -127,6 +129,11 @@ class FakeLab(LabClient):
 
     def stop(self, chat_id: str) -> None:
         self.stopped.append(chat_id)
+
+    def close_chat(self, chat_id: str) -> None:
+        self.closed.append(chat_id)
+        if self.close_error is not None:
+            raise self.close_error
 
 
 @pytest.fixture
@@ -266,6 +273,50 @@ class TestAnswerQuestion:
 
         assert record.status == STOPPED
         assert record.correct(OFFICIAL)
+
+    def test_the_conversation_is_closed_once_it_is_answered_so_that_its_container_does_not_pile_up(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+
+        record = answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
+
+        assert record.status == ANSWERED
+        assert lab.closed == ["chat-1"]
+        assert (workspace / "chats" / "chat-1").is_dir()
+
+    def test_a_conversation_that_failed_or_timed_out_is_closed_too(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+        lab.hangs = True
+        settings.timeout = 0.0
+
+        record = answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
+
+        assert record.status == TIMED_OUT
+        assert lab.closed == ["chat-1"]
+
+    def test_a_question_that_was_not_asked_has_no_conversation_to_close(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+        lab.create_error = LabError("POST /chats was refused with 422")
+
+        answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
+
+        assert lab.closed == []
+
+    def test_a_conversation_that_will_not_close_does_not_change_what_the_question_came_to(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+        lab.close_error = LabError("The server could not be reached")
+
+        record = answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
+
+        assert record.status == ANSWERED and record.error is None
+        assert record.answer == "42"
 
     def test_a_question_that_takes_too_long_is_stopped_and_what_it_said_is_still_graded(
         self, setup: tuple[Path, Path, FakeLab, RunSettings]

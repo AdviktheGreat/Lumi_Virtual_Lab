@@ -427,6 +427,26 @@ class TestRemoving:
         assert handle.id not in conversations._open
         assert not conversations._deleting
 
+    def test_a_conversation_that_is_released_frees_what_it_holds_and_keeps_what_it_saved(
+        self, conversations: Conversations, workspace: Workspace, fake_client: FakeClient
+    ) -> None:
+        handle = conversations.create({"team": [], "code": {"where": "local"}})
+        say(handle)
+
+        conversations.release(handle.id)
+        conversations.release(handle.id)
+
+        assert handle.closed
+        assert directories(workspace) == [handle.id]
+        assert conversations.get(handle.id) is not handle
+        assert conversations.get(handle.id).info()["turns"] == 1
+
+    def test_there_is_no_conversation_to_release_if_there_is_none(self, conversations: Conversations) -> None:
+        with pytest.raises(ApiError) as refused:
+            conversations.release("2020-01-01_0000_nothing")
+
+        assert refused.value.status == 404
+
     def test_a_conversation_is_removed_with_everything_it_saved(
         self, conversations: Conversations, workspace: Workspace, fake_client: FakeClient
     ) -> None:

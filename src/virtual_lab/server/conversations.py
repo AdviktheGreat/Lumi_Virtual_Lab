@@ -515,6 +515,19 @@ class Conversations:
         ):
             self.catalog.ensure_prices()
 
+    def release(self, chat_id: str) -> None:
+        """Closes a conversation that is open, ending its turn if one is running, and frees what it holds, which is
+        its session and so its container. What it saved is kept, and it is opened again when it is next asked for.
+        Nothing is done if it is not open.
+
+        :raises ApiError: If there is no such conversation.
+        """
+        self.directory(chat_id)
+        with self._lock:
+            handle = self._open.pop(chat_id, None)
+        if handle is not None:
+            handle.close()
+
     def delete(self, chat_id: str) -> None:
         """Stops a conversation, if it is running, and removes it and everything it saved."""
         with self._lock:
