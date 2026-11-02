@@ -375,9 +375,10 @@ def format_summary(summary: Mapping[str, Any]) -> str:
 
 def describe_run(settings: RunSettings, judge_model: str, repo: str) -> dict[str, Any]:
     """What identifies a run, which a run carried on from the same directory must match, so that its results are of one
-    way of asking. The time limit and the spending limit are left out, since raising them to try a question again does
-    not change what the answers of the others mean."""
-    chat = {key: value for key, value in settings.chat.items() if key not in ("max_cost", "title")}
+    way of asking. The time limit, the spending limit, and the most tool calls for a message are left out, since raising
+    them to try a question again does not change what the answers of the others mean."""
+    left_out = ("max_cost", "max_tool_iterations", "title")
+    chat = {key: value for key, value in settings.chat.items() if key not in left_out}
 
     return json.loads(json.dumps({"dataset": repo, "chat": chat, "judge": judge_model}, sort_keys=True))
 

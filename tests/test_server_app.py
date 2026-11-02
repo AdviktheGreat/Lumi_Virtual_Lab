@@ -1266,6 +1266,24 @@ class TestLimits:
         assert (made["max_cost"], made["max_delegations"], made["max_rounds"]) == (3.0, 1, 0)
         assert made["config"]["max_delegations"] == 1 and made["config"]["max_rounds"] == 0
 
+    def test_a_conversation_may_be_made_with_more_tool_calls_for_a_message_and_keeps_them(
+        self, client: TestClient
+    ) -> None:
+        made = new_chat(client, max_tool_iterations=80)
+
+        assert made["config"]["max_tool_iterations"] == 80
+        assert client.get(f"/api/chats/{made['id']}").json()["config"]["max_tool_iterations"] == 80
+        assert new_chat(client)["config"]["max_tool_iterations"] is None
+
+    @pytest.mark.parametrize("value", [0, -3, 201, 2.5, "20", True])
+    def test_a_most_tool_calls_that_is_not_one_is_refused_and_no_conversation_is_made(
+        self, client: TestClient, value: Any
+    ) -> None:
+        response = client.post("/api/chats", json={"team": [], "max_tool_iterations": value})
+
+        assert response.status_code == 422, response.text
+        assert client.get("/api/chats").json() == {"chats": []}
+
     def test_a_conversation_made_with_none_has_the_leads_own_limits(self, client: TestClient) -> None:
         made = new_chat(client)
 

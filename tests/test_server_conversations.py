@@ -11,7 +11,7 @@ import pytest
 
 from virtual_lab import llm as llm_module
 from virtual_lab import utils
-from virtual_lab.constants import CHAT_FILE_NAME, SANDBOX_DATA_LAKE_DIR
+from virtual_lab.constants import CHAT_FILE_NAME, SANDBOX_DATA_LAKE_DIR, SESSION_MAX_TOOL_ITERATIONS
 from virtual_lab.environment import sandbox_image
 from virtual_lab.openrouter import Catalog, models_from
 from virtual_lab.server.config import CONFIG_FILE_NAME, load_config
@@ -188,6 +188,17 @@ class TestCreating:
         plain = conversations.create({"team": [], "stream": False, "max_cost": None, "commercial_mode": False})
 
         assert (plain.chat.stream, plain.chat.max_cost, plain.chat.commercial_mode) == (False, None, False)
+
+    def test_the_most_tool_calls_for_a_message_is_what_the_conversation_is_set_up_with_or_the_chats_own(
+        self, conversations: Conversations
+    ) -> None:
+        own = conversations.create({"team": [], "code": {"where": "local"}})
+        more = conversations.create({"team": [], "code": {"where": "local"}, "max_tool_iterations": 60})
+        without_code = conversations.create({"team": [], "code": {"where": "none"}, "max_tool_iterations": 2})
+
+        assert own.chat.max_tool_iterations == SESSION_MAX_TOOL_ITERATIONS
+        assert more.chat.max_tool_iterations == 60
+        assert without_code.chat.max_tool_iterations == 2
 
     def test_where_no_code_runs_nothing_is_said_of_resources_to_use(self, conversations: Conversations) -> None:
         handle = conversations.create({"team": [], "code": {"where": "none", "resources": "retrieve"}})

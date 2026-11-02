@@ -45,6 +45,9 @@ DEFAULT_URL = "http://127.0.0.1:8765"
 LITERATURE_GROUP = "Literature"
 TOKEN_VARIABLE = "VIRTUAL_LAB_TOKEN"
 INTERRUPTED = 130
+# A question takes the lead from the data to a number, a step of code at a time, and the conversation's own limit of
+# 20 is too few for that. What it may spend is held by --max-cost.
+DEFAULT_MAX_TOOL_CALLS = 80
 
 
 def selection_parser() -> argparse.ArgumentParser:
@@ -102,6 +105,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--max-cost", type=float, default=3.0, help="most USD one question may cost (default: %(default)s)"
     )
+    run.add_argument(
+        "--max-tool-calls",
+        type=int,
+        default=DEFAULT_MAX_TOOL_CALLS,
+        help="most tool calls and runs of code the lead makes for a question (default: %(default)s)",
+    )
     run.add_argument("--max-total-cost", type=float, help="most USD the run may cost the lead before it stops")
     run.add_argument("--timeout", type=float, default=2400.0, help="seconds a question may take (default: %(default)s)")
     run.add_argument("--jobs", type=int, default=1, help="questions to ask at once (default: %(default)s)")
@@ -147,6 +156,7 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
         "software": [],
         "functions": [],
         "max_cost": arguments.max_cost,
+        "max_tool_iterations": arguments.max_tool_calls,
     }
 
 

@@ -91,6 +91,7 @@ from virtual_lab.constants import (
     BIOMNI_RELEASE_URL,
     CEILING_CHAT_DELEGATION_ROUNDS,
     CEILING_CHAT_DELEGATIONS,
+    CEILING_CHAT_TOOL_ITERATIONS,
     MAX_CHAT_DELEGATION_ROUNDS,
     MAX_CHAT_DELEGATIONS,
     MAX_CHAT_TITLE_CHARS,
@@ -196,6 +197,7 @@ class ChatBody(RequestModel):
     max_cost: float | None = None
     max_delegations: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATIONS)
     max_rounds: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATION_ROUNDS)
+    max_tool_iterations: StrictInt | None = Field(None, ge=1, le=CEILING_CHAT_TOOL_ITERATIONS)
     stream: bool | None = None
     commercial_mode: bool = False
     tools: list[str] | None = Field(None, max_length=MAX_TOOLS)
