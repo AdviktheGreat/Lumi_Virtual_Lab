@@ -350,11 +350,11 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
     :param request: What the person chose. A key left out is taken from the settings, or the library: "model",
         "lead" and each of "team", by title or described, "code" with any of where, sandbox, network, python,
         and resources, "max_cost" (null for no limit), "max_delegations", "max_rounds" and "max_tool_iterations"
-        (null for what the lead is given unless it is told otherwise), "stream", "commercial_mode", "tools", the names of the
-        library's tools to give, which are all but those the workspace has turned off, "mcp", the names of the
-        MCP servers to give, which are those the workspace has turned on, and "data" and "software", the names of
-        what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of papers whose
-        functions to give, which are those the person gave to conversations.
+        (null for what the lead is given unless it is told otherwise), "stream", "commercial_mode", "tools", the
+        names of the library's tools to give, which are all but those the workspace has turned off, "mcp", the names
+        of the MCP servers to give, which are those the workspace has turned on, and "data" and "software", the
+        names of what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of
+        papers whose functions to give, which are those the person gave to conversations.
     :raises ValueError: If something chosen cannot be used.
     """
     scientists = library(workspace)

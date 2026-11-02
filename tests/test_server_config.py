@@ -74,11 +74,13 @@ class TestResolving:
     def test_the_most_tool_calls_for_a_message_is_the_leads_own_unless_the_request_gives_one(
         self, workspace: Workspace
     ) -> None:
-        assert resolve_config({"team": []}, settings(), workspace).max_tool_iterations is None
-        assert resolve_config({"team": [], "max_tool_iterations": None}, settings(), workspace).max_tool_iterations is None
-        assert resolve_config({"team": [], "max_tool_iterations": 60}, settings(), workspace).max_tool_iterations == 60
-        most = CEILING_CHAT_TOOL_ITERATIONS
-        assert resolve_config({"team": [], "max_tool_iterations": most}, settings(), workspace).max_tool_iterations == most
+        def given(**request: Any) -> int | None:
+            return resolve_config({"team": [], **request}, settings(), workspace).max_tool_iterations
+
+        assert given() is None
+        assert given(max_tool_iterations=None) is None
+        assert given(max_tool_iterations=60) == 60
+        assert given(max_tool_iterations=CEILING_CHAT_TOOL_ITERATIONS) == CEILING_CHAT_TOOL_ITERATIONS
 
     @pytest.mark.parametrize("value", [0, -1, CEILING_CHAT_TOOL_ITERATIONS + 1, 1.5, "20", True, [20]])
     def test_a_most_tool_calls_that_is_not_a_whole_number_from_one_to_the_ceiling_is_refused(
