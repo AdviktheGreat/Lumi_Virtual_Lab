@@ -475,6 +475,11 @@ MAX_CHAT_DELEGATION_ROUNDS = 3
 CEILING_CHAT_DELEGATIONS = 20
 CEILING_CHAT_DELEGATION_ROUNDS = 10
 
+# The most tool calls and runs of code a conversation may be begun with for answering one message, in place of
+# SESSION_MAX_TOOL_ITERATIONS. A question that takes an analysis from the data to the answer can need more than the
+# default gives, and what a conversation spends is held to its max_cost, not to this.
+CEILING_CHAT_TOOL_ITERATIONS = 200
+
 # The most bytes of one file the researcher may attach, and the most bytes kept of its name, which
 # leaves room under the 255 that file systems take for a number to be added to it
 MAX_UPLOAD_BYTES = 4 * 1024**3

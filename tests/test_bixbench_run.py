@@ -547,9 +547,9 @@ class TestRun:
         with pytest.raises(BixBenchError, match="different judge"):
             self.run(setup, questions, tmp_path, description=describe_run(setup[3], "other-judge", "repo"))
 
-    def test_raising_the_spending_limit_or_the_title_is_not_a_different_way_of_asking(self) -> None:
-        a = RunSettings(chat={"model": "m", "max_cost": 2.0, "title": "x"}, timeout=10)
-        b = RunSettings(chat={"model": "m", "max_cost": 9.0}, timeout=99)
+    def test_raising_the_spending_limit_the_tool_calls_or_the_title_is_not_a_different_way_of_asking(self) -> None:
+        a = RunSettings(chat={"model": "m", "max_cost": 2.0, "max_tool_iterations": 80, "title": "x"}, timeout=10)
+        b = RunSettings(chat={"model": "m", "max_cost": 9.0, "max_tool_iterations": 150}, timeout=99)
 
         assert describe_run(a, "j", "r") == describe_run(b, "j", "r")
 
@@ -859,6 +859,7 @@ class TestCommandLine:
             "software": [],
             "functions": [],
             "max_cost": 5.0,
+            "max_tool_iterations": 80,
         }
         assert (seen["jobs"], seen["retry_failed"], seen["max_total_cost"]) == (2, True, 40.0)
         assert seen["description"]["judge"] == "openrouter/m"
@@ -879,6 +880,20 @@ class TestCommandLine:
 
         assert seen["chat"]["tools"] == ["pubmed_search", "europepmc_fulltext", "uniprot_lookup", "inspect_data_file"]
         assert seen["chat"]["mcp"] == []
+
+    def test_the_most_tool_calls_for_a_question_can_be_changed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: seen.update(chat=args[4].chat) or {}
+        )
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(bixbench_cli, "format_summary", lambda summary: "")
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--max-tool-calls", "120")])
+
+        assert seen["chat"]["max_tool_iterations"] == 120
 
     def test_a_run_needs_a_workspace_to_put_the_data_in(self, tmp_path: Path) -> None:
         directory = self.dataset(tmp_path)

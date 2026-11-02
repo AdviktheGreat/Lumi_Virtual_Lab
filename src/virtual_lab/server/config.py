@@ -13,7 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from virtual_lab.agent import Agent
-from virtual_lab.constants import CEILING_CHAT_DELEGATION_ROUNDS, CEILING_CHAT_DELEGATIONS
+from virtual_lab.constants import (
+    CEILING_CHAT_DELEGATION_ROUNDS,
+    CEILING_CHAT_DELEGATIONS,
+    CEILING_CHAT_TOOL_ITERATIONS,
+)
 from virtual_lab.execution import ExecutionError, check_mountable
 from virtual_lab.llm import detect_source
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
@@ -92,6 +96,8 @@ class ChatConfig:
     :param max_delegations: The most team sessions the lead may start in answering one message, or None for as many as
         the lead is given unless it is told otherwise.
     :param max_rounds: The most rounds of discussion the lead may ask a team session for, or None as above.
+    :param max_tool_iterations: The most tool calls and runs of code the lead may make in answering one message, or
+        None for what it is given unless it is told otherwise.
     """
 
     model: str
@@ -108,6 +114,7 @@ class ChatConfig:
     functions: tuple[str, ...] = ()
     max_delegations: int | None = None
     max_rounds: int | None = None
+    max_tool_iterations: int | None = None
 
     def lead_agent(self) -> Agent:
         return agent_from({**self.lead, "model": self.model})
@@ -139,6 +146,7 @@ class ChatConfig:
             "functions": list(self.functions),
             "max_delegations": self.max_delegations,
             "max_rounds": self.max_rounds,
+            "max_tool_iterations": self.max_tool_iterations,
         }
 
     @classmethod
@@ -164,6 +172,8 @@ class ChatConfig:
             # A conversation begun before the limits could be set has the lead's own, and goes on with them
             max_delegations=data.get("max_delegations"),
             max_rounds=data.get("max_rounds"),
+            # A conversation begun before it could be set has the lead's own, and goes on with it
+            max_tool_iterations=data.get("max_tool_iterations"),
         )
 
 
@@ -294,6 +304,22 @@ def check_allowance(name: str, value: Any, ceiling: int) -> int | None:
     return value
 
 
+def check_tool_iterations(value: Any) -> int | None:
+    """How many tool calls and runs of code the lead may make in answering one message, as a whole number from one to
+    the most that can be asked for, or None for what the lead is given unless it is told otherwise.
+
+    :raises ValueError: If it is not one.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= CEILING_CHAT_TOOL_ITERATIONS:
+        raise ValueError(
+            f"max_tool_iterations must be a whole number from 1 to {CEILING_CHAT_TOOL_ITERATIONS}, not {value!r}"
+        )
+
+    return value
+
+
 def check_limits(changes: Mapping[str, Any]) -> dict[str, Any]:
     """The limits of a conversation that a request gives, checked: the most it may spend, the most team sessions the
     lead may start in answering a message, and the most rounds of discussion it may ask one for.
@@ -323,8 +349,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
 
     :param request: What the person chose. A key left out is taken from the settings, or the library: "model",
         "lead" and each of "team", by title or described, "code" with any of where, sandbox, network, python,
-        and resources, "max_cost" (null for no limit), "max_delegations" and "max_rounds" (null for what the lead is
-        given unless it is told otherwise), "stream", "commercial_mode", "tools", the names of the
+        and resources, "max_cost" (null for no limit), "max_delegations", "max_rounds" and "max_tool_iterations"
+        (null for what the lead is given unless it is told otherwise), "stream", "commercial_mode", "tools", the names of the
         library's tools to give, which are all but those the workspace has turned off, "mcp", the names of the
         MCP servers to give, which are those the workspace has turned on, and "data" and "software", the names of
         what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of papers whose
@@ -390,6 +416,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         functions=tuple(functions),
         max_delegations=allowed.get("max_delegations"),
         max_rounds=allowed.get("max_rounds"),
+        max_tool_iterations=check_tool_iterations(request.get("max_tool_iterations")),
     )
 
 

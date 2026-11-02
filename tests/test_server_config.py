@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from virtual_lab.constants import CEILING_CHAT_TOOL_ITERATIONS
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.scientists import SCIENTISTS
 from virtual_lab.server.code import CodeSetup
@@ -69,6 +70,22 @@ class TestResolving:
         assert config.max_cost == 1.5
         assert config.stream is False
         assert config.commercial_mode is False
+
+    def test_the_most_tool_calls_for_a_message_is_the_leads_own_unless_the_request_gives_one(
+        self, workspace: Workspace
+    ) -> None:
+        assert resolve_config({"team": []}, settings(), workspace).max_tool_iterations is None
+        assert resolve_config({"team": [], "max_tool_iterations": None}, settings(), workspace).max_tool_iterations is None
+        assert resolve_config({"team": [], "max_tool_iterations": 60}, settings(), workspace).max_tool_iterations == 60
+        most = CEILING_CHAT_TOOL_ITERATIONS
+        assert resolve_config({"team": [], "max_tool_iterations": most}, settings(), workspace).max_tool_iterations == most
+
+    @pytest.mark.parametrize("value", [0, -1, CEILING_CHAT_TOOL_ITERATIONS + 1, 1.5, "20", True, [20]])
+    def test_a_most_tool_calls_that_is_not_a_whole_number_from_one_to_the_ceiling_is_refused(
+        self, workspace: Workspace, value: Any
+    ) -> None:
+        with pytest.raises(ValueError, match="max_tool_iterations must be a whole number from 1 to"):
+            resolve_config({"team": [], "max_tool_iterations": value}, settings(), workspace)
 
     def test_what_the_request_gives_is_what_it_is_set_up_with(self, workspace: Workspace) -> None:
         config = resolve_config(
@@ -232,6 +249,20 @@ class TestKeeping:
         assert load_config(directory) == config
         assert not list(directory.glob("*.tmp"))
         assert json.loads((directory / CONFIG_FILE_NAME).read_text())["code"]["python"] == "/opt/python"
+
+    def test_the_most_tool_calls_is_kept_and_a_conversation_begun_before_it_could_be_set_goes_on_without(
+        self, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        directory = tmp_path / "chat"
+        directory.mkdir()
+        config = resolve_config({"team": [], "max_tool_iterations": 60}, settings(), workspace)
+
+        save_config(directory, config)
+
+        loaded = load_config(directory)
+        assert loaded is not None and loaded.max_tool_iterations == 60
+        old = {key: value for key, value in config.to_dict().items() if key != "max_tool_iterations"}
+        assert ChatConfig.from_dict(old).max_tool_iterations is None
 
     def test_a_conversation_that_was_set_not_to_stream_or_to_leave_out_what_is_not_for_commerce_is_read_back_so(
         self, workspace: Workspace, tmp_path: Path

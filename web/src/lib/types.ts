@@ -45,6 +45,8 @@ export interface ChatConfig {
   // for what the lead is given unless it is told otherwise
   max_delegations: number | null;
   max_rounds: number | null;
+  // How many tool calls and runs of code the lead may make in answering a message, which only a request can set
+  max_tool_iterations?: number | null;
   stream: boolean;
   commercial_mode: boolean;
   // The names of the library's tools the lead may call
