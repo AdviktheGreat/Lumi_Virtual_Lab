@@ -1123,6 +1123,12 @@ def create_app(
 
         return Response(status_code=204)
 
+    @api.post("/chats/{chat_id}/close", status_code=204)
+    def close_chat(chat_id: str) -> Response:
+        conversations.release(chat_id)
+
+        return Response(status_code=204)
+
     @api.post("/chats/{chat_id}/messages", status_code=202)
     def send_message(chat_id: str, body: MessageBody) -> dict[str, Any]:
         handle = conversations.ready(chat_id)
