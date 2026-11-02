@@ -15,6 +15,7 @@ from virtual_lab.bixbench import LENIENT, OFFICIAL, BixBenchError, BixQuestion, 
 from virtual_lab.bixbench_run import (
     ANSWERED,
     FAILED,
+    NOT_ASKED,
     STOPPED,
     TIMED_OUT,
     LabClient,
@@ -294,17 +295,17 @@ class TestAnswerQuestion:
         assert record.status == FAILED
         assert record.error is not None and "did not stop" in record.error
 
-    def test_missing_data_is_a_failure_that_asks_nothing(self, setup: tuple[Path, Path, FakeLab, RunSettings]) -> None:
+    def test_missing_data_means_the_question_is_not_asked(self, setup: tuple[Path, Path, FakeLab, RunSettings]) -> None:
         data, workspace, lab, settings = setup
         (data / "CapsuleFolder-abc.zip").unlink()
 
         record = answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
 
-        assert record.status == FAILED
+        assert record.status == NOT_ASKED
         assert record.error is not None and "virtual-lab-bixbench fetch" in record.error
         assert lab.created == [] and lab.messages == []
 
-    def test_a_server_that_refuses_is_a_failure_that_is_recorded(
+    def test_a_server_that_refuses_means_the_question_is_not_asked(
         self, setup: tuple[Path, Path, FakeLab, RunSettings]
     ) -> None:
         data, workspace, lab, settings = setup
@@ -312,8 +313,23 @@ class TestAnswerQuestion:
 
         record = answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
 
-        assert record.status == FAILED
+        assert record.status == NOT_ASKED
         assert record.error == "LabError: POST /chats was refused with 401"
+
+    def test_a_server_that_goes_away_after_the_question_was_sent_is_a_failure_of_the_question(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+
+        def chat(chat_id: str) -> dict[str, Any]:
+            raise LabError("The server could not be reached")
+
+        lab.chat = chat  # type: ignore[method-assign]
+
+        record = answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
+
+        assert record.status == FAILED
+        assert record.chat_id == "chat-1"
 
     def test_a_judge_that_cannot_be_reached_leaves_the_answer_ungraded_not_the_run_stopped(
         self, setup: tuple[Path, Path, FakeLab, RunSettings]
@@ -486,6 +502,39 @@ class TestRun:
         assert summary["status"] == {"answered": 1}
         assert summary["scores"][OFFICIAL]["right"] == 1
 
+    def test_a_question_that_could_not_be_set_up_is_not_recorded_and_is_asked_again_by_a_plain_rerun(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
+    ) -> None:
+        lab = setup[2]
+        lab.create_error = LabError("POST /chats was refused with 503")
+        logged: list[str] = []
+        questions = [question("bix-1-q1")]
+
+        summary = self.run(setup, questions, tmp_path, logged=logged)
+
+        assert summary["finished"] == 0
+        assert not (tmp_path / "results" / "questions").exists()
+        assert any("was not asked, and is not counted" in line for line in logged)
+
+        lab.create_error = None
+        summary = self.run(setup, questions, tmp_path)
+
+        assert summary["finished"] == 1
+        assert summary["scores"][OFFICIAL]["right"] == 1
+
+    def test_setup_failures_in_a_row_stop_the_run_and_say_how_to_carry_on(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
+    ) -> None:
+        setup[2].create_error = LabError("The server could not be reached")
+        logged: list[str] = []
+        questions = [question(f"bix-{number}-q1") for number in range(1, 8)]
+
+        summary = self.run(setup, questions, tmp_path, logged=logged)
+
+        assert summary["stopped"] is not None and "3 questions in a row failed" in summary["stopped"]
+        assert len(setup[2].messages) == 0
+        assert "--retry-failed" in logged[-1]
+
     def test_a_run_is_not_carried_on_with_a_different_way_of_asking(
         self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
     ) -> None:
@@ -515,6 +564,45 @@ class TestRun:
         assert summary["finished"] == 2
         assert summary["stopped"] is not None and "limit of $0.50" in summary["stopped"]
         assert "Stopped early" in logged[-1]
+
+    def test_what_a_question_under_way_may_still_spend_counts_towards_the_limit(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
+    ) -> None:
+        lab = setup[2]
+        release = threading.Event()
+        original = lab.send_message
+
+        def send_message(chat_id: str, text: str) -> dict[str, Any]:
+            result = original(chat_id, text)
+            if chat_id == "chat-1":
+                # Held until the other worker has had its chance to start a question
+                release.wait(timeout=10)
+            return result
+
+        lab.send_message = send_message  # type: ignore[method-assign]
+        timer = threading.Timer(0.3, release.set)
+        timer.start()
+        questions = [question(f"bix-{number}-q1") for number in range(1, 5)]
+
+        summary = self.run(setup, questions, tmp_path, jobs=2, max_total_cost=2.0)
+        timer.join()
+
+        # Nothing is spent yet, but the question under way may spend its whole limit of 2.0, which is the run's
+        assert summary["finished"] == 1
+        assert len(lab.created) == 1
+        assert summary["stopped"] is not None and "limit of $2.00" in summary["stopped"]
+
+    def test_a_cost_that_is_not_known_is_said_once_when_there_is_a_limit_on_cost(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
+    ) -> None:
+        lab = setup[2]
+        lab.spent = None  # type: ignore[assignment]
+        logged: list[str] = []
+        questions = [question(f"bix-{number}-q1") for number in range(1, 4)]
+
+        self.run(setup, questions, tmp_path, max_total_cost=100.0, logged=logged)
+
+        assert sum("cost of a question is not known" in line for line in logged) == 1
 
     def test_the_spending_of_an_earlier_run_counts_towards_the_limit(
         self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
@@ -672,6 +760,18 @@ class TestJudgeFor:
         assert steps == ["recall keychain"]
 
 
+class FakeServer(LabClient):
+    """Stands in for the server where the command line asks which tools it has."""
+
+    def tools(self) -> list[dict[str, Any]]:
+        return [
+            {"name": "pubmed_search", "group": "Literature"},
+            {"name": "europepmc_fulltext", "group": "Literature"},
+            {"name": "uniprot_lookup", "group": "Proteins and structures"},
+            {"name": "inspect_data_file", "group": "Your files"},
+        ]
+
+
 class TestCommandLine:
     def dataset(self, tmp_path: Path) -> Path:
         directory = make_data(tmp_path / "data")
@@ -689,6 +789,13 @@ class TestCommandLine:
         (directory / "BixBench-Verified-50.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n")
 
         return directory
+
+    def run_command(self, tmp_path: Path, *options: str) -> list[str]:
+        return ["run", str(self.dataset(tmp_path)), "--workspace", str(tmp_path / "ws"), "--model", "a", *options]
+
+    @pytest.fixture(autouse=True)
+    def server(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(bixbench_cli, "LabClient", FakeServer)
 
     def test_a_run_is_set_up_from_the_options_and_prints_both_scores(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -740,6 +847,11 @@ class TestCommandLine:
             "model": "openrouter/m",
             "team": ["Scientific Critic"],
             "code": {"where": "docker", "sandbox": "bio", "network": True, "resources": "retrieve", "forward_env": []},
+            "tools": ["uniprot_lookup", "inspect_data_file"],
+            "mcp": [],
+            "data": [],
+            "software": [],
+            "functions": [],
             "max_cost": 5.0,
         }
         assert (seen["jobs"], seen["retry_failed"], seen["max_total_cost"]) == (2, True, 40.0)
@@ -747,25 +859,45 @@ class TestCommandLine:
         output = capsys.readouterr().out
         assert "official grading" in output and "lenient grading" in output
 
-    def test_the_judge_can_be_another_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_the_lead_can_be_given_the_tools_that_search_papers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: seen.update(chat=args[4].chat) or {}
+        )
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(bixbench_cli, "format_summary", lambda summary: "")
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--literature")])
+
+        assert seen["chat"]["tools"] == ["pubmed_search", "europepmc_fulltext", "uniprot_lookup", "inspect_data_file"]
+        assert seen["chat"]["mcp"] == []
+
+    def test_a_run_needs_a_workspace_to_put_the_data_in(self, tmp_path: Path) -> None:
         directory = self.dataset(tmp_path)
+
+        with pytest.raises(SystemExit) as stopped:
+            bixbench_cli.main(["run", str(directory), "--token", "t", "--model", "a"])
+
+        assert stopped.value.code == 2
+
+    def test_the_judge_can_be_another_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         judges: list[str] = []
         monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: summarize(questions, {}))
         monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: judges.append(model))
 
-        bixbench_cli.main(["run", str(directory), "--token", "t", "--model", "a", "--judge-model", "b"])
+        bixbench_cli.main(self.run_command(tmp_path, "--token", "t", "--judge-model", "b"))
 
         assert judges == ["b"]
 
     def test_a_run_without_the_token_says_so_and_asks_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        directory = self.dataset(tmp_path)
         monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda *args, **kwargs: pytest.fail("it asked"))
-        monkeypatch.setattr(bixbench_cli, "build_parser", bixbench_cli.build_parser)
         monkeypatch.delenv(bixbench_cli.TOKEN_VARIABLE, raising=False)
 
-        assert bixbench_cli.main(["run", str(directory), "--model", "a", "--token", ""]) == 2
+        assert bixbench_cli.main(self.run_command(tmp_path, "--token", "")) == 2
         assert "token is needed" in capsys.readouterr().err
 
     def test_a_question_that_does_not_exist_is_an_error_and_not_a_traceback(
@@ -820,7 +952,6 @@ class TestCommandLine:
     def test_a_server_that_cannot_be_reached_is_an_error_and_not_a_traceback(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        directory = self.dataset(tmp_path)
 
         def refuse(*args: Any, **kwargs: Any) -> None:
             raise LabError("The server could not be reached")
@@ -828,13 +959,12 @@ class TestCommandLine:
         monkeypatch.setattr(bixbench_cli, "run_bixbench", refuse)
         monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
 
-        assert bixbench_cli.main(["run", str(directory), "--token", "t", "--model", "a"]) == 1
+        assert bixbench_cli.main(self.run_command(tmp_path, "--token", "t")) == 1
         assert "Error: The server could not be reached" in capsys.readouterr().err
 
     def test_an_interruption_says_how_to_carry_on(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        directory = self.dataset(tmp_path)
 
         def interrupt(*args: Any, **kwargs: Any) -> None:
             raise KeyboardInterrupt
@@ -842,5 +972,5 @@ class TestCommandLine:
         monkeypatch.setattr(bixbench_cli, "run_bixbench", interrupt)
         monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
 
-        assert bixbench_cli.main(["run", str(directory), "--token", "t", "--model", "a"]) == bixbench_cli.INTERRUPTED
+        assert bixbench_cli.main(self.run_command(tmp_path, "--token", "t")) == bixbench_cli.INTERRUPTED
         assert "Run the same command again" in capsys.readouterr().err

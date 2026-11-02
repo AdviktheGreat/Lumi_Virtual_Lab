@@ -116,6 +116,8 @@ class TestNumbers:
             ("12,345 genes of 1,000,000", [12345.0, 1000000.0]),
             ("30/41 (≈ 0.7317, or 73.2%)", [30.0, 41.0, 0.7317, 73.2]),
             ("a minus sign − is a dash: −4", [-4.0]),
+            ("TP53 and chr5 have 12 variants, IL-6 is up 3.2-fold", [12.0, 3.2]),
+            ("R2 = 0.8, p < 1e-5", [0.8, 1e-5]),
             ("none here", []),
         ],
     )
@@ -138,7 +140,11 @@ class TestNumbers:
             ("2118", (2118.0, True, 0)),
             ("5.83", (5.83, False, 2)),
             ("10%", (10.0, True, 0)),
-            ("1.5e-2", (0.015, False, 1)),
+            ("1.5e-2", (0.015, False, 3)),
+            ("1.2e-7", (1.2e-7, False, 8)),
+            ("1.5e3", (1500.0, False, -2)),
+            ("nan", None),
+            ("inf", None),
             ("1,234", (1234.0, True, 0)),
             ("5:1", None),
             ("8/49", None),
@@ -249,6 +255,21 @@ class TestLenientGrading:
             ("0.1", "50", False),
             ("2500", "25", False),
             ("1,234", "1240", True),
+            ("1.2e-7", "1.23e-7", True),
+            ("1.2e-7", "1.2 × 10⁻⁷", True),
+            ("1.2e-7", "0", False),
+            ("1.2e-7", "0.01", False),
+            ("1.2e-7", "3e-7", False),
+            ("1", "100", False),
+            ("1", "There are 100 genes", False),
+            ("5", "chr5 has 25 genes", False),
+            ("12", "12 or 120", True),
+            ("120", "12 or 120", False),
+            ("0.73", "73%", True),
+            ("0.73", "73.4%", True),
+            ("0.73", "74%", False),
+            ("0.73", "0.7317 (30/41)", True),
+            ("0.001", "0", False),
         ],
     )
     def test_a_number_is_accepted_when_it_rounds_to_the_ideal_and_nothing_else_is(
@@ -256,9 +277,10 @@ class TestLenientGrading:
     ) -> None:
         assert self.lenient(ideal, answer) is accepted
 
-    def test_a_number_among_words_is_found(self) -> None:
+    def test_a_number_among_words_is_found_when_it_is_the_first(self) -> None:
         assert self.lenient("2118", "2101 genes at padj < 0.05")
         assert not self.lenient("2118", "about 40 genes at padj < 0.05")
+        assert not self.lenient("2118", "padj < 0.05 gave 2118 genes")
 
     def test_any_number_in_the_answer_that_is_in_the_range_is_accepted(self) -> None:
         assert self.lenient("(0.7, 0.8)", "30/41 (≈ 0.7317, or 73.2%)", "range_verifier")
@@ -413,6 +435,25 @@ class TestCapsules:
         with pytest.raises(BixBenchError, match="outside"):
             stage_capsule(archive, tmp_path / "out")
         assert not (tmp_path / "evil.txt").exists()
+
+    def test_a_notebook_is_withheld_whatever_the_case_of_its_name_and_wherever_it_is(self, tmp_path: Path) -> None:
+        data = "CapsuleFolder-abc/CapsuleData-abc/"
+        archive = make_capsule(
+            tmp_path / "c.zip",
+            {
+                f"{data}ok.csv": b"1",
+                f"{data}N.IPYNB": b"{}",
+                f"{data}sub/x.Ipynb": b"{}",
+                f"{data}.ipynb_checkpoints/x-checkpoint.ipynb": b"{}",
+                f"{data}CapsuleNotebook-abc/y.txt": b"answer",
+                "CapsuleFolder-abc/CAPSULENOTEBOOK-abc/z.txt": b"answer",
+            },
+        )
+
+        staged = stage_capsule(archive, tmp_path / "out")
+
+        assert staged.files == ("ok.csv",)
+        assert len(staged.withheld) == 5
 
     def test_a_symbolic_link_is_not_unpacked(self, tmp_path: Path) -> None:
         archive = make_capsule(tmp_path / "c.zip", {"CapsuleData-abc/ok.txt": b"1"}, links=("CapsuleData-abc/passwd",))

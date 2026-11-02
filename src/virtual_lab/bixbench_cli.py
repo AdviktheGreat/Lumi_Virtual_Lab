@@ -36,10 +36,13 @@ from virtual_lab.bixbench_run import (
     run_bixbench,
     summarize,
 )
+from virtual_lab.environment import SANDBOX_TARGETS
 
 PROGRAM = "virtual-lab-bixbench"
 DEFAULT_URL = "http://127.0.0.1:8765"
-DEFAULT_WORKSPACE = Path.home() / "virtual_lab_workspace"
+# The group the server's settings put the tools that search papers in. The studies the questions are from are papers,
+# and a lead that can find them is not answering from the data
+LITERATURE_GROUP = "Literature"
 TOKEN_VARIABLE = "VIRTUAL_LAB_TOKEN"
 INTERRUPTED = 130
 
@@ -80,8 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--workspace",
         type=Path,
-        default=DEFAULT_WORKSPACE,
-        help="the server's workspace, on this machine (default: %(default)s)",
+        required=True,
+        help="the server's workspace, on this machine, which should be one made for the run",
     )
     run.add_argument("--model", required=True, help="the model the lead answers with")
     run.add_argument("--judge-model", help="the model that judges answers (default: the lead's)")
@@ -92,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="TITLE",
         help="scientists the lead may consult (default: it works alone)",
     )
-    run.add_argument("--sandbox", default="bio", choices=("python", "base", "bio", "full"), help="(default: bio)")
+    run.add_argument("--sandbox", default="bio", choices=("python", *SANDBOX_TARGETS), help="(default: bio)")
     run.add_argument("--resources", default="retrieve", choices=("retrieve", "all", "none"))
     run.add_argument(
         "--max-cost", type=float, default=3.0, help="most USD one question may cost (default: %(default)s)"
@@ -101,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--timeout", type=float, default=2400.0, help="seconds a question may take (default: %(default)s)")
     run.add_argument("--jobs", type=int, default=1, help="questions to ask at once (default: %(default)s)")
     run.add_argument("--retry-failed", action="store_true", help="ask again those that failed or timed out")
+    run.add_argument(
+        "--literature",
+        action="store_true",
+        help="let the lead search papers (by default it cannot, nor use the MCP servers, data, and software the "
+        "server's workspace has)",
+    )
 
     commands.add_parser("report", parents=[selection_parser(), results_parser()], help="the score of a run so far")
 
@@ -112,9 +121,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def chat_request(arguments: argparse.Namespace) -> dict[str, Any]:
+def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """What each question's conversation is made with: the lead's model, its team, and code in Docker with no keys of
-    the user's passed in. Everything else is the server's settings."""
+    the user's passed in. It is given the server's tools except those that search papers, unless --literature, and none
+    of the MCP servers, data, software, or functions the workspace has, so that the questions are answered from the
+    data they come with. Everything else is the server's settings.
+
+    :param tools: The server's tools, as it describes them.
+    """
     return {
         "model": arguments.model,
         "team": list(arguments.team),
@@ -125,6 +139,11 @@ def chat_request(arguments: argparse.Namespace) -> dict[str, Any]:
             "resources": arguments.resources,
             "forward_env": [],
         },
+        "tools": [tool["name"] for tool in tools if arguments.literature or tool.get("group") != LITERATURE_GROUP],
+        "mcp": [],
+        "data": [],
+        "software": [],
+        "functions": [],
         "max_cost": arguments.max_cost,
     }
 
@@ -151,14 +170,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not arguments.token:
             print(f"The server's token is needed: pass --token or set ${TOKEN_VARIABLE}", file=sys.stderr)
             return 2
-        settings = RunSettings(chat=chat_request(arguments), timeout=arguments.timeout)
+        client = LabClient(arguments.url, arguments.token)
+        settings = RunSettings(chat=chat_request(arguments, client.tools()), timeout=arguments.timeout)
         judge_model = arguments.judge_model or arguments.model
         summary = run_bixbench(
             questions,
             directory,
             results,
             arguments.workspace,
-            LabClient(arguments.url, arguments.token),
+            client,
             settings,
             judge_for(judge_model),
             describe_run(settings, judge_model, DATASET_REPO),

@@ -53,6 +53,8 @@ ANSWERED = "answered"
 FAILED = "failed"
 STOPPED = "stopped"
 TIMED_OUT = "timeout"
+# Setting up the question failed before the lead was asked anything, so it has not been attempted and is not recorded
+NOT_ASKED = "not_asked"
 
 
 class LabError(RuntimeError):
@@ -94,13 +96,18 @@ class LabClient:
     def stop(self, chat_id: str) -> None:
         self._call("POST", f"/chats/{chat_id}/stop")
 
+    def tools(self) -> list[dict[str, Any]]:
+        """The tools the server has, each with its name and the group the settings put it in."""
+        return list(self._call("GET", "/tools")["tools"])
+
 
 @dataclass
 class QuestionRecord:
     """What asking one question came to, saved as questions/<id>.json.
 
     :param question_id: The question.
-    :param status: "answered", "failed" (with the error), "stopped", or "timeout".
+    :param status: "answered", "failed" (with the error), "stopped", or "timeout", or "not_asked" for a question whose
+        setup failed before the lead was asked, which is never saved.
     :param reply: The lead's last message, whole.
     :param answer: The answer taken from it, and answer_source where it was found.
     :param chat_id: The conversation, which is in the server's workspace to be opened and read.
@@ -240,10 +247,11 @@ def answer_question(
 ) -> QuestionRecord:
     """Asks the lead one question in a conversation of its own, and grades its answer.
 
-    A failure to ask, or the lead's failing, is part of the record rather than raised, so that the run goes on.
+    A failure to ask, or the lead's failing, is part of the record rather than raised, so that the run goes on. A
+    failure before the lead was sent the question has the status NOT_ASKED, and one after it, FAILED.
     """
     start = time.monotonic()
-    record = QuestionRecord(question_id=question.id, status=FAILED)
+    record = QuestionRecord(question_id=question.id, status=NOT_ASKED)
     try:
         archive = Path(data_directory) / question.archive
         if not archive.is_file():
@@ -254,6 +262,7 @@ def answer_question(
         staged = stage_capsule(archive, chat_directory / WORK_DIRECTORY / UPLOADS_DIRECTORY)
         record.files = len(staged.files)
         client.send_message(chat_id, question_message(question, staged.files))
+        record.status = FAILED
 
         timed_out = False
         deadline = start + settings.timeout
@@ -280,7 +289,7 @@ def answer_question(
         else:
             record.status = ANSWERED
     except (BixBenchError, LabError, OSError, KeyError) as error:
-        record.status, record.error = FAILED, f"{type(error).__name__}: {error}"
+        record.error = f"{type(error).__name__}: {error}"
 
     record.elapsed = round(time.monotonic() - start, 1)
     grade_record(question, record, judge)
@@ -397,8 +406,10 @@ def run_bixbench(
     :param description: What describes the run, as describe_run gives it.
     :param jobs: How many questions to ask at once. Each has its own sandbox, which may use as much memory as the
         sandbox is allowed, so more than one needs Docker to have that much for each.
-    :param retry_failed: Whether to ask again those that failed, were stopped, or timed out.
-    :param max_total_cost: The most the run may spend on the lead, in USD, before no more questions are started.
+    :param retry_failed: Whether to ask again those that failed, were stopped, or timed out. A question that could not
+        be set up was never recorded, and is asked again whether or not this is set.
+    :param max_total_cost: The most the run may spend on the lead, in USD, before no more questions are started. What
+        questions under way may still spend, up to the limit each conversation has, is counted as spent.
     :param max_consecutive_failures: How many questions in a row may fail before the run stops, since that is more
         likely a mistake in setting it up than in the questions. None never stops.
     :raises BixBenchError: If results holds a run of a different kind.
@@ -427,23 +438,42 @@ def run_bixbench(
         if question.id not in records or (retry_failed and records[question.id].status != ANSWERED)
     ]
     lock = threading.Lock()
-    state = {"spent": sum(record.spent or 0.0 for record in records.values()), "failures": 0, "stopped": None}
+    reserve = float(settings.chat.get("max_cost") or 0.0)
+    state: dict[str, Any] = {
+        "spent": sum(record.spent or 0.0 for record in records.values()),
+        "failures": 0,
+        "in_flight": 0,
+        "stopped": None,
+        "warned": False,
+    }
 
     def work(question: BixQuestion) -> None:
         with lock:
             if state["stopped"] is not None:
                 return
-            if max_total_cost is not None and state["spent"] >= max_total_cost:
+            committed = state["spent"] + reserve * state["in_flight"]
+            if max_total_cost is not None and committed >= max_total_cost:
                 state["stopped"] = (
-                    f"The run has spent ${state['spent']:.2f}, which reaches its limit of ${max_total_cost:.2f}"
+                    f"The run has spent ${state['spent']:.2f}, and ${committed - state['spent']:.2f} more may be "
+                    f"spent by questions under way, which reaches its limit of ${max_total_cost:.2f}"
                 )
                 return
-        record = answer_question(question, data_directory, workspace, client, settings, judge)
+            state["in_flight"] += 1
+        try:
+            record = answer_question(question, data_directory, workspace, client, settings, judge)
+        finally:
+            with lock:
+                state["in_flight"] -= 1
         with lock:
-            records[question.id] = record
-            save_record(results, question, record)
+            if record.status != NOT_ASKED:
+                records[question.id] = record
+                save_record(results, question, record)
             state["spent"] += record.spent or 0.0
-            state["failures"] = state["failures"] + 1 if record.status == FAILED else 0
+            if record.spent is None and max_total_cost is not None and not state["warned"]:
+                state["warned"] = True
+                log("The cost of a question is not known, so the limit on the run's cost cannot be kept to.")
+            failed = record.status in (FAILED, NOT_ASKED)
+            state["failures"] = state["failures"] + 1 if failed else 0
             if max_consecutive_failures is not None and state["failures"] >= max_consecutive_failures:
                 state["stopped"] = f"{state['failures']} questions in a row failed, the last with {record.error}"
             verdict = {name: "right" if record.correct(name) else "wrong" for name in PROFILES}
@@ -451,6 +481,8 @@ def run_bixbench(
                 f"{question.id}: {record.status}, {verdict[OFFICIAL]} (lenient: {verdict[LENIENT]}), "
                 f"{record.elapsed / 60:.1f} min, ${record.spent or 0.0:.3f}, answer: {record.answer[:80]!r}"
             )
+            if record.status == NOT_ASKED:
+                log(f"{question.id} was not asked, and is not counted: {record.error}")
 
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         list(pool.map(work, pending))
@@ -459,7 +491,10 @@ def run_bixbench(
     summary["stopped"] = state["stopped"]
     write_atomically(results / SUMMARY_FILE, json.dumps(summary, indent=2).encode("utf-8"))
     if state["stopped"] is not None:
-        log(f"Stopped early: {state['stopped']}. Run it again on {results} to carry on.")
+        log(
+            f"Stopped early: {state['stopped']}. Run it again on {results} to carry on, adding --retry-failed to ask "
+            "again the questions that failed."
+        )
 
     return summary
 

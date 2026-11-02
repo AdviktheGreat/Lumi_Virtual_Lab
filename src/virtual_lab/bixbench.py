@@ -23,6 +23,7 @@ only the first is the benchmark's own.
 
 import ast
 import json
+import math
 import re
 import threading
 import zipfile
@@ -44,7 +45,7 @@ EVAL_MODES = ("str_verifier", "range_verifier", "llm_verifier")
 # was taken from, which would give the answer away and is never handed to the lab
 DATA_FOLDER_PREFIX = "CapsuleData-"
 NOTEBOOK_FOLDER_PREFIX = "CapsuleNotebook-"
-NOTEBOOK_SUFFIX = ".ipynb"
+NOTEBOOK_EXTENSION = ".ipynb"
 
 # Where a question's files are put in the working directory of the conversation that answers it
 UPLOADS_DIRECTORY = "uploads"
@@ -282,10 +283,16 @@ def plan_capsule(capsule: zipfile.ZipFile, name: str) -> tuple[list[CapsuleFile]
             raise BixBenchError(f"{name} holds {member.filename!r}, which is outside where it is unpacked")
         if not parts or parts[0] == "__MACOSX" or parts[-1] == ".DS_Store":
             continue
-        if any(part.startswith(NOTEBOOK_FOLDER_PREFIX) for part in parts) or parts[-1].endswith(NOTEBOOK_SUFFIX):
+        # Compared without regard to case, and a notebook's name is looked for anywhere in a part, so that neither
+        # N.IPYNB nor .ipynb_checkpoints gets through
+        names = [part.casefold() for part in parts]
+        notebook_folder = NOTEBOOK_FOLDER_PREFIX.casefold()
+        if any(name.startswith(notebook_folder) or NOTEBOOK_EXTENSION in name for name in names):
             withheld.append("/".join(parts))
             continue
-        data_at = next((index for index, part in enumerate(parts) if part.startswith(DATA_FOLDER_PREFIX)), None)
+        data_at = next(
+            (index for index, name in enumerate(names) if name.startswith(DATA_FOLDER_PREFIX.casefold())), None
+        )
         # A symbolic link in a zip is a file holding where it points to, which unpacked as a file would read as data,
         # and as a link would lead out of the directory
         if data_at is None or data_at == len(parts) - 1 or (member.external_attr >> 28) == 0xA:
@@ -406,11 +413,14 @@ def normalise_numbers(text: str) -> str:
 
 
 def numbers_in(text: str) -> list[float]:
-    """Every number in a text, in order."""
+    """Every number in a text, in order, except those in a name, such as the 5 of chr5 or the 53 of TP53."""
+    text = normalise_numbers(text)
     found: list[float] = []
-    for match in NUMBER.findall(normalise_numbers(text)):
+    for match in NUMBER.finditer(text):
+        if match.start() and text[match.start() - 1].isalpha():
+            continue
         try:
-            found.append(float(match))
+            found.append(float(match.group()))
         except ValueError:
             continue
 
@@ -434,8 +444,9 @@ def parse_range(ideal: str) -> tuple[float, float] | None:
 
 
 def pure_number(text: str) -> tuple[float, bool, int] | None:
-    """A text that is one number, as its value, whether it is a whole number, and its decimal places; None for any
-    other, including a ratio such as 5:1 or 8/49, which a lenient grading does not give any leeway."""
+    """A text that is one number, as its value, whether it is a whole number, and how many places after the decimal
+    point its last digit is, which is negative for 1.5e3 and 8 for 1.2e-7; None for any other text, including a ratio
+    such as 5:1 or 8/49, which a lenient grading does not give any leeway."""
     stripped = text.strip().rstrip("%").replace(",", "").strip()
     if not stripped or ":" in stripped or "/" in stripped:
         return None
@@ -443,10 +454,14 @@ def pure_number(text: str) -> tuple[float, bool, int] | None:
         value = float(stripped)
     except ValueError:
         return None
-    mantissa = re.split(r"[eE]", stripped, maxsplit=1)[0]
+    if not math.isfinite(value):
+        return None
+    mantissa, _, exponent = stripped.lower().partition("e")
     places = len(mantissa.split(".", 1)[1]) if "." in mantissa else 0
+    if exponent:
+        places -= int(exponent)
 
-    return value, "." not in stripped and "e" not in stripped.lower(), places
+    return value, "." not in stripped and not exponent, places
 
 
 def parse_grade(response: str) -> bool:
@@ -507,27 +522,27 @@ def grade_official(question: BixQuestion, answer: str, judge: Judge | None) -> G
 def grade_lenient(question: BixQuestion, answer: str, official: Grade, judge: Judge | None) -> Grade:
     """Grades an answer more leniently than the benchmark does.
 
-    What the official grading accepts is accepted. Beyond it, a number in the answer that is a pure-number ideal to
-    within 1% or the rounding of its last digit, or 100 times an ideal that is a fraction, is accepted for a
-    str_verifier; any number in the answer that is in the range is accepted for a range_verifier; and a judge that
-    allows 3% is asked about a llm_verifier. A named thing and a ratio get no leeway.
+    What the official grading accepts is accepted. Beyond it, the first number in the answer, if the ideal is one
+    number, is accepted for a str_verifier when it is the ideal to within 1% or the rounding of the ideal's last digit,
+    or 100 times an ideal that is a decimal fraction; any number in the answer that is in the range is accepted for a
+    range_verifier; and a judge that allows 3% is asked about a llm_verifier. A named thing and a ratio get no leeway.
     """
     if official.correct or not answer.strip():
         return official
 
     if question.eval_mode == "str_verifier":
         wanted = pure_number(question.ideal)
-        if wanted is not None and (numbers := numbers_in(answer)):
+        if wanted is not None and (numbers := numbers_in(answer)[:1]):
             value, whole, places = wanted
             # The ideal is a number someone rounded, so an answer that rounds to it is the same number: within half
             # a unit of its last digit, or 1% of it, whichever is more
             allowed = max(0.0 if whole else 0.5 * 10.0**-places, RELATIVE_TOLERANCE * abs(value))
-            if close := [number for number in numbers if abs(number - value) <= allowed]:
-                return Grade(True, "numeric", f"{close[0]} is within {allowed:.4g} of {value}")
-            if 0 < abs(value) <= 1:
+            if abs(numbers[0] - value) <= allowed:
+                return Grade(True, "numeric", f"{numbers[0]} is within {allowed:.4g} of {value}")
+            if not whole and 0 < abs(value) <= 1:
                 percent = value * 100
-                if close := [number for number in numbers if abs(number - percent) <= max(0.01 * percent, 0.5)]:
-                    return Grade(True, "percent", f"{close[0]} is the ideal {value} as a percentage")
+                if abs(numbers[0] - percent) <= max(0.5 * 10.0 ** (2 - places), RELATIVE_TOLERANCE * percent):
+                    return Grade(True, "percent", f"{numbers[0]} is the ideal {value} as a percentage")
     elif question.eval_mode == "range_verifier":
         bounds = parse_range(question.ideal)
         numbers = numbers_in(answer)
