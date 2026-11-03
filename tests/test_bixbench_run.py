@@ -82,6 +82,7 @@ class FakeLab(LabClient):
         self.events = events or (lambda title: answered("42"))
         self.created: list[dict[str, Any]] = []
         self.messages: list[tuple[str, str]] = []
+        self.labs: list[dict[str, Any] | None] = []
         self.stopped: list[str] = []
         self.closed: list[str] = []
         self.close_error: Exception | None = None
@@ -107,7 +108,8 @@ class FakeLab(LabClient):
 
         return {"id": chat_id}
 
-    def send_message(self, chat_id: str, text: str) -> dict[str, Any]:
+    def send_message(self, chat_id: str, text: str, lab: Any = None) -> dict[str, Any]:
+        self.labs.append(lab)
         directory = self.workspace / "chats" / chat_id
         self.uploads[chat_id] = sorted(
             path.relative_to(directory / "work" / "uploads").as_posix()
@@ -196,6 +198,26 @@ class TestReadTurn:
 
 
 class TestAnswerQuestion:
+    def test_it_gives_the_question_with_lab_when_the_run_is_set_to(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+        settings.lab = {"mode": "team", "members": ["Scientific Critic"], "rounds": 2}
+
+        answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
+
+        assert lab.labs == [{"mode": "team", "members": ["Scientific Critic"], "rounds": 2}]
+        assert "/lab" not in lab.messages[0][1]
+
+    def test_it_asks_plainly_unless_the_run_is_set_to_give_it_with_lab(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+
+        answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
+
+        assert lab.labs == [None]
+
     def test_it_asks_in_a_conversation_of_its_own_with_the_data_in_place_and_grades_the_answer(
         self, setup: tuple[Path, Path, FakeLab, RunSettings]
     ) -> None:
@@ -604,6 +626,15 @@ class TestRun:
 
         assert describe_run(a, "j", "r") == describe_run(b, "j", "r")
 
+    def test_giving_the_questions_with_lab_is_a_different_way_of_asking_and_not_doing_so_is_what_it_was(self) -> None:
+        plain = RunSettings(chat={"model": "m"})
+        lab = RunSettings(chat={"model": "m"}, lab={"mode": "team", "members": ["A"], "rounds": 1})
+        more = RunSettings(chat={"model": "m"}, lab={"mode": "team", "members": ["A"], "rounds": 2})
+
+        assert "lab" not in describe_run(plain, "j", "r")
+        assert describe_run(lab, "j", "r")["lab"] == {"mode": "team", "members": ["A"], "rounds": 1}
+        assert len({json.dumps(describe_run(each, "j", "r")) for each in (plain, lab, more)}) == 3
+
     def test_it_stops_starting_questions_once_it_has_spent_its_limit(
         self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
     ) -> None:
@@ -623,8 +654,8 @@ class TestRun:
         release = threading.Event()
         original = lab.send_message
 
-        def send_message(chat_id: str, text: str) -> dict[str, Any]:
-            result = original(chat_id, text)
+        def send_message(chat_id: str, text: str, lab_request: Any = None) -> dict[str, Any]:
+            result = original(chat_id, text, lab_request)
             if chat_id == "chat-1":
                 # Held until the other worker has had its chance to start a question
                 release.wait(timeout=10)
@@ -778,6 +809,20 @@ class TestLabClient:
         ]
         assert calls[0][2] == {"title": "t"} and calls[1][2] == {"text": "hello"}
         assert all(headers == {"Authorization": "Bearer secret"} for _, _, _, headers in calls)
+
+    def test_a_message_given_with_lab_says_who_works_on_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        bodies: list[Any] = []
+
+        def request(method: str, url: str, json: Any = None, headers: Any = None, timeout: Any = None) -> FakeResponse:
+            bodies.append(json)
+            return FakeResponse(202)
+
+        monkeypatch.setattr(requests, "request", request)
+        lab = {"mode": "individual", "members": ["Scientific Critic"], "rounds": 1}
+
+        LabClient("http://host:1", "t").send_message("c1", "hello", lab)
+
+        assert bodies == [{"text": "hello", "directive": "lab", "lab": lab}]
 
     def test_it_asks_where_the_servers_data_lake_is(self, monkeypatch: pytest.MonkeyPatch) -> None:
         lake = {"directory": "/ws/data_lake", "files": 76, "present": 3}
@@ -1122,6 +1167,66 @@ class TestCommandLine:
         bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--resources", "none")])
 
         assert capsys.readouterr().err == ""
+
+    def test_the_questions_can_be_given_with_lab_to_the_scientists_the_team_names(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: seen.update(settings=args[4]) or {}
+        )
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(bixbench_cli, "format_summary", lambda summary: "")
+
+        code = bixbench_cli.main(
+            [
+                *self.run_command(tmp_path, "--token", "t", "--lab", "team", "--lab-rounds", "2"),
+                "--team", "Data Scientist", "scientific critic", "Data Scientist",
+            ]
+        )  # fmt: skip
+
+        assert code == 0
+        assert seen["settings"].lab == {"mode": "team", "members": ["Data Scientist", "scientific critic"], "rounds": 2}
+        assert seen["settings"].chat["team"] == ["Data Scientist", "scientific critic", "Data Scientist"]
+
+    def test_the_questions_are_given_plainly_unless_lab_is_asked_for(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: seen.update(settings=args[4]) or {}
+        )
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(bixbench_cli, "format_summary", lambda summary: "")
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--team", "Scientific Critic")])
+
+        assert seen["settings"].lab is None
+
+    @pytest.mark.parametrize(
+        ("options", "message"),
+        [
+            (["--lab", "team"], "named with --team"),
+            (["--lab", "individual", "--team", "A", "B"], "--team names 2"),
+            (["--lab", "team", "--team", "A", "--lab-rounds", "-1"], "zero or more"),
+        ],
+    )
+    def test_a_lab_that_cannot_be_given_stops_the_run_before_it_asks_anything(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        options: list[str],
+        message: str,
+    ) -> None:
+        asked: list[bool] = []
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda *args, **kwargs: asked.append(True))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+
+        code = bixbench_cli.main([*self.run_command(tmp_path, "--token", "t"), *options])
+
+        assert code == 1 and asked == []
+        assert message in capsys.readouterr().err
 
     def test_the_most_tool_calls_for_a_question_can_be_changed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

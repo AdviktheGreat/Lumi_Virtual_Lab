@@ -51,6 +51,7 @@ INTERRUPTED = 130
 # A question takes the lead from the data to a number, a step of code at a time, and the conversation's own limit of
 # 20 is too few for that. What it may spend is held by --max-cost.
 DEFAULT_MAX_TOOL_CALLS = 80
+DEFAULT_LAB_ROUNDS = 1
 
 
 def selection_parser() -> argparse.ArgumentParser:
@@ -103,6 +104,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--sandbox", default="bio-r", choices=("python", *SANDBOX_TARGETS), help="must be built (default: bio-r)"
+    )
+    run.add_argument(
+        "--lab",
+        choices=("team", "individual"),
+        help="give every question with /lab, so that the lead has the scientists --team names work on it: as a team "
+        "session it leads (team), or one scientist with the Scientific Critic reviewing (individual, which needs "
+        "exactly one). By default the lead decides whether to call on them",
+    )
+    run.add_argument(
+        "--lab-rounds",
+        type=int,
+        default=DEFAULT_LAB_ROUNDS,
+        help="rounds of discussion, or of review, for --lab (default: %(default)s)",
     )
     run.add_argument("--resources", default="retrieve", choices=("retrieve", "all", "none"))
     run.add_argument(
@@ -189,6 +203,29 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
     }
 
 
+def lab_request(arguments: argparse.Namespace) -> dict[str, Any] | None:
+    """Who works on each question with /lab, and how, or None if the questions are not given with it.
+
+    :raises BixBenchError: If it cannot be given: no scientists are named with --team, or --lab individual is not given
+        exactly one, or --lab-rounds is below zero. The server would refuse each, after the run had begun.
+    """
+    if arguments.lab is None:
+        return None
+    # A title named twice is one scientist, as the server takes it
+    first: dict[str, str] = {}
+    for title in arguments.team:
+        first.setdefault(title.casefold(), title)
+    members = list(first.values())
+    if not members:
+        raise BixBenchError("--lab needs the scientists to work on each question, named with --team")
+    if arguments.lab == "individual" and len(members) != 1:
+        raise BixBenchError(f"--lab individual is one scientist, and --team names {len(members)}")
+    if arguments.lab_rounds < 0:
+        raise BixBenchError("--lab-rounds is zero or more")
+
+    return {"mode": arguments.lab, "members": members, "rounds": arguments.lab_rounds}
+
+
 def data_lake_warning(arguments: argparse.Namespace, client: LabClient) -> str | None:
     """What to tell the person starting a run when the lead will have no data lake to read, which is when the
     directory it is told to use has nothing in it, or when it is left to the server and the server's has none of its
@@ -245,10 +282,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not arguments.token:
             print(f"The server's token is needed: pass --token or set ${TOKEN_VARIABLE}", file=sys.stderr)
             return 2
+        lab = lab_request(arguments)
         client = LabClient(arguments.url, arguments.token)
         if (warning := data_lake_warning(arguments, client)) is not None:
             print(f"Warning: {warning}", file=sys.stderr)
-        settings = RunSettings(chat=chat_request(arguments, client.tools()), timeout=arguments.timeout)
+        settings = RunSettings(
+            chat=chat_request(arguments, client.tools()), timeout=arguments.timeout, lab=lab
+        )
         judge_model = arguments.judge_model or arguments.model
         summary = run_bixbench(
             questions,
