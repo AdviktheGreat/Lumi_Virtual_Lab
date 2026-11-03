@@ -1189,6 +1189,53 @@ class TestCommandLine:
         assert seen["settings"].lab == {"mode": "team", "members": ["Data Scientist", "scientific critic"], "rounds": 2}
         assert seen["settings"].chat["team"] == ["Data Scientist", "scientific critic", "Data Scientist"]
 
+    def settings_of(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *options: str
+    ) -> RunSettings:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: seen.update(settings=args[4]) or {}
+        )
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(bixbench_cli, "format_summary", lambda summary: "")
+
+        assert bixbench_cli.main([*self.run_command(tmp_path, "--token", "t"), *options]) == 0
+
+        return seen["settings"]
+
+    def test_one_scientist_working_with_the_critic_reviewing_has_the_critic_on_the_team(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = self.settings_of(tmp_path, monkeypatch, "--lab", "individual", "--team", "Data Scientist")
+
+        assert settings.lab == {"mode": "individual", "members": ["Data Scientist"], "rounds": 1}
+        assert settings.chat["team"] == ["Data Scientist", "Scientific Critic"]
+
+    def test_the_critic_is_not_one_of_the_scientists_an_individual_lab_counts_nor_put_on_the_team_twice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = self.settings_of(
+            tmp_path, monkeypatch, "--lab", "individual", "--team", "scientific  critic", "Data Scientist"
+        )
+
+        assert settings.lab == {"mode": "individual", "members": ["Data Scientist"], "rounds": 1}
+        assert settings.chat["team"] == ["scientific  critic", "Data Scientist"]
+
+    def test_titles_are_taken_as_the_server_takes_them(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        settings = self.settings_of(tmp_path, monkeypatch, "--lab", "team", "--team", " ", "A  B", "a b", "C")
+
+        assert settings.lab is not None and settings.lab["members"] == ["A B", "C"]
+
+    def test_more_rounds_than_a_conversation_allows_are_asked_for_in_the_conversation_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        more = self.settings_of(tmp_path, monkeypatch, "--lab", "team", "--team", "A", "--lab-rounds", "5")
+        usual = self.settings_of(tmp_path / "again", monkeypatch, "--lab", "team", "--team", "A", "--lab-rounds", "3")
+        plain = self.settings_of(tmp_path / "plain", monkeypatch)
+
+        assert more.lab is not None and more.lab["rounds"] == 5 and more.chat["max_rounds"] == 5
+        assert "max_rounds" not in usual.chat and "max_rounds" not in plain.chat
+
     def test_the_questions_are_given_plainly_unless_lab_is_asked_for(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1208,7 +1255,10 @@ class TestCommandLine:
         [
             (["--lab", "team"], "named with --team"),
             (["--lab", "individual", "--team", "A", "B"], "--team names 2"),
-            (["--lab", "team", "--team", "A", "--lab-rounds", "-1"], "zero or more"),
+            (["--lab", "team", "--team", "A", "--lab-rounds", "-1"], "from 0 to 10"),
+            (["--lab", "team", "--team", "A", "--lab-rounds", "11"], "from 0 to 10"),
+            (["--lab", "team", "--team", "  "], "named with --team"),
+            (["--lab", "individual", "--team", "Scientific Critic"], "besides the Scientific Critic"),
         ],
     )
     def test_a_lab_that_cannot_be_given_stops_the_run_before_it_asks_anything(
