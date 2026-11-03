@@ -94,6 +94,13 @@ export function choiceKept(skills: SkillInfo[], picked: ReadonlySet<string>): st
   return names.length === on.length && names.every((name, index) => name === on[index]) ? null : names;
 }
 
+// The names that were chosen of skills that are not there any more, since one may be taken away before the conversation is begun
+export function vanished(skills: SkillInfo[], chosen: string[]): string[] {
+  const there = new Set(skills.map((skill) => skill.name));
+
+  return chosen.filter((name) => !there.has(name));
+}
+
 // The choice once each of the names given is chosen or not, with the rest as they were
 export function pickedWhen(picked: ReadonlySet<string>, names: string[], chosen: boolean): Set<string> {
   const next = new Set(picked);

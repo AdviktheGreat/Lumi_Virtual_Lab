@@ -146,6 +146,32 @@ test.describe("choosing the skills of a conversation on the page where it begins
     await expect(dialog(page).getByText("No skill has all of those words.")).toBeVisible();
   });
 
+  test("drops a skill that was taken away after it was chosen, so that the next send is not refused for it", async ({ page }) => {
+    await open(page);
+    await tick(page, "gamma-skill").uncheck();
+    await dialog(page).getByRole("button", { name: "Use these" }).click();
+    await expect(button(page)).toHaveText("Skills · 2");
+
+    expect((await page.request.delete("/api/skills/beta-skill")).status()).toBe(200);
+    await box(page).fill("Is beta there?");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect(page.getByText("There is no skill called 'beta-skill'")).toBeVisible();
+    await expect(button(page)).toHaveText("Skills · 1");
+    await expect(page).toHaveURL(/\/$/);
+
+    await open(page);
+    await expect(chosen(page)).toHaveText("1 of 2 skills chosen");
+    await expect(tick(page, "alpha-skill")).toBeChecked();
+    await expect(tick(page, "gamma-skill")).not.toBeChecked();
+    await dialog(page).getByRole("button", { name: "Cancel" }).click();
+
+    await page.getByRole("button", { name: "Send" }).click();
+    await page.waitForURL(/\/chat\?id=/);
+    const id = new URL(page.url()).searchParams.get("id") ?? "";
+    expect(await skillsOf(page, id)).toEqual(["alpha-skill"]);
+  });
+
   test("/skills opens the same choice", async ({ page }) => {
     await box(page).fill("/skills");
     await box(page).press("Enter");

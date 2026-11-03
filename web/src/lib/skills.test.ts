@@ -14,6 +14,7 @@ import {
   pickedWhen,
   putInSaid,
   skillsFrom,
+  vanished,
   whereFound,
 } from "./skills";
 import type { SkillInfo } from "./types";
@@ -162,6 +163,13 @@ describe("choosing the skills of a conversation", () => {
 
   it("is kept in the order the skills are listed, whatever the order of choosing", () => {
     expect(choiceKept(skills, new Set(["Plot-Style", "rna-seq"]))).toEqual(["rna-seq", "Plot-Style"]);
+  });
+
+  it("finds the names chosen of skills that were taken away since, in the order they were chosen", () => {
+    expect(vanished(skills, ["rna-seq", "gone", "dose-response", "also-gone"])).toEqual(["gone", "also-gone"]);
+    expect(vanished(skills, ["rna-seq"])).toEqual([]);
+    expect(vanished(skills, [])).toEqual([]);
+    expect(vanished([], ["a"])).toEqual(["a"]);
   });
 
   it("is changed for each name given and for no other, without changing what it was", () => {

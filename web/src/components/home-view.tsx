@@ -21,7 +21,7 @@ import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
 import { isDirective, written, type Invocation } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
-import { choiceButtonText } from "@/lib/skills";
+import { choiceButtonText, choiceKept, choiceStart, vanished } from "@/lib/skills";
 import { DEFAULT_LEAD_TITLE } from "@/lib/team-choice";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
@@ -96,6 +96,15 @@ export function HomeView() {
     }
   }
 
+  // Where a conversation could not be begun, the skills that were chosen for it and have been taken away since are dropped from
+  // the choice, so that the next try is not refused for them again
+  async function forgetGoneSkills() {
+    if (skillsChosen === null) return;
+    const library = await api.skills().catch(() => null);
+    if (library === null || vanished(library.skills, skillsChosen).length === 0) return;
+    setSkillsChosen(choiceKept(library.skills, choiceStart(library.skills, skillsChosen)));
+  }
+
   // A conversation is begun with what is in the box, or with a command, which is given with the message that begins it
   async function start(command?: Invocation) {
     const text = command ? command.arg.trim() : draft.trim();
@@ -107,6 +116,7 @@ export function HomeView() {
       if (command) setDraft(written(command));
       report(error);
       setProblem(problemOf(error));
+      await forgetGoneSkills();
       setSending(false);
     }
   }
@@ -119,6 +129,7 @@ export function HomeView() {
       await begin(agenda, "lab", lab);
     } catch (error) {
       report(error);
+      await forgetGoneSkills();
       setSending(false);
       throw error;
     }
