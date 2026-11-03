@@ -381,7 +381,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         of the MCP servers to give, which are those the workspace has turned on, and "data" and "software", the
         names of what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of
         papers whose functions to give, which are those the person gave to conversations, and "skills", the names of
-        the skills to give, which are all there are.
+        the skills to give, which are all there are but those the workspace has turned off.
     :raises ValueError: If something chosen cannot be used.
     """
     scientists = library(workspace)
@@ -429,11 +429,11 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
     )
 
     found = load_skills(workspace)
-    skills = (
-        check_skill_names(request["skills"], found)
-        if request.get("skills") is not None
-        else [skill.name for skill in found.skills]
-    )
+    if request.get("skills") is not None:
+        skills = check_skill_names(request["skills"], found)
+    else:
+        turned_off = workspace.load_disabled_skills()
+        skills = [skill.name for skill in found.skills if skill.name not in turned_off]
 
     return ChatConfig(
         model=model,

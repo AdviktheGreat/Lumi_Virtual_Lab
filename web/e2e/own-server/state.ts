@@ -62,3 +62,13 @@ export async function resetOwn(page: Page): Promise<void> {
     expect((await page.request.delete(`/api/own/software/${encodeURIComponent(software.name)}`)).ok()).toBe(true);
   }
 }
+
+// Takes away the skills that were put in the lab's own folder and turns the rest back on, which is how the server begins,
+// so that no conversation made after is given them
+export async function resetSkills(page: Page): Promise<void> {
+  const { skills } = await (await page.request.get("/api/skills")).json();
+  for (const skill of skills) {
+    if (skill.removable) expect((await page.request.delete(`/api/skills/${encodeURIComponent(skill.name)}`)).ok()).toBe(true);
+  }
+  expect((await page.request.put("/api/skills", { data: { disabled: [] } })).ok()).toBe(true);
+}

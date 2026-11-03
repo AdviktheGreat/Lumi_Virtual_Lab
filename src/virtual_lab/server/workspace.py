@@ -9,6 +9,7 @@ one workspace directory.
         own.json                                         the data and software the person gave every conversation
         own_data/                                        the files the person uploaded, which own.json describes
         skills/                                          the skills the person put there, each a folder with a SKILL.md
+        skills.json                                      which skills a new conversation is not given
         chats/2026-10-07_1500_what-is-a-nanobody/        a conversation with the head of a lab, as Chat saves it
         data_lake/                                       Biomni's data lake, unless the settings keep it elsewhere
         papers/                                          the runs that read papers, each in a directory of its own
@@ -51,8 +52,10 @@ MCP_FILE_NAME = "mcp.json"
 OWN_FILE_NAME = "own.json"
 OWN_DATA_DIR_NAME = "own_data"
 
-# The skills the person put in the workspace, each a folder with a SKILL.md
+# The skills the person put in the workspace, each a folder with a SKILL.md, and those they turned off, to leave out of
+# a new conversation
 SKILLS_DIR_NAME = "skills"
+SKILLS_FILE_NAME = "skills.json"
 
 # What the lab was asked to read of papers, a directory for each run
 PAPERS_DIR_NAME = "papers"
@@ -336,6 +339,23 @@ class Workspace:
     def skills_dir(self) -> Path:
         """Where the skills put in the workspace are kept, each in a folder of its own, which may be missing."""
         return self.root / SKILLS_DIR_NAME
+
+    @property
+    def skills_path(self) -> Path:
+        return self.root / SKILLS_FILE_NAME
+
+    def load_disabled_skills(self) -> list[str]:
+        """The names of the skills that a new conversation is not given, which is none until some are turned off.
+
+        Those turned off are kept, and not those on, so that a skill that is put in later is on.
+        """
+        data = read_json(self.skills_path)
+        disabled = data.get("disabled") if isinstance(data, dict) else None
+
+        return [name for name in disabled if isinstance(name, str)] if isinstance(disabled, list) else []
+
+    def save_disabled_skills(self, names: list[str]) -> None:
+        write_atomically(self.skills_path, json.dumps({"disabled": names}, indent=4).encode("utf-8"))
 
     @property
     def own_path(self) -> Path:

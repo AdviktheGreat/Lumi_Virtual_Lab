@@ -14,6 +14,7 @@ others, and is reported as a problem rather than raised.
 """
 
 import difflib
+import errno
 import os
 import re
 import shutil
@@ -267,19 +268,30 @@ def parse_skill(file: Path, source: str) -> Skill:
     )
 
 
-def find_skill_files(root: Path) -> list[Path]:
+def search_skill_files(root: Path, most_folders: int | None = None) -> tuple[list[Path], bool]:
     """The SKILL.md files in a folder and in the folders below it. A folder that has one is a skill, and what is in it
     is not searched, since it may hold examples of skills that are not. Links to folders are followed, once each, as the
-    tools that install skills make them."""
+    tools that install skills make them.
+
+    :param most_folders: How many folders to look in at most, for a folder that may be a whole disk. None looks in all.
+    :return: The files, and whether every folder was searched, which is False where it stopped at most_folders.
+    """
     found: list[Path] = []
     seen: set[Path] = set()
+    searched_all = True
 
     def search(directory: Path, depth: int) -> None:
+        nonlocal searched_all
+        if not searched_all:
+            return
         try:
             real = directory.resolve()
         except (OSError, RuntimeError):
             return
         if real in seen:
+            return
+        if most_folders is not None and len(seen) >= most_folders:
+            searched_all = False
             return
         seen.add(real)
         file = directory / SKILL_FILE_NAME
@@ -303,7 +315,12 @@ def find_skill_files(root: Path) -> list[Path]:
 
     search(root, 0)
 
-    return found
+    return found, searched_all
+
+
+def find_skill_files(root: Path) -> list[Path]:
+    """The SKILL.md files in a folder and in the folders below it (see search_skill_files)."""
+    return search_skill_files(root)[0]
 
 
 def discover_skills(roots: Sequence[tuple[str, Path]]) -> SkillLibrary:
@@ -485,6 +502,8 @@ def files_in(folder: Path, root: Path) -> list[str]:
 def copy_skill(source: Path, target: Path) -> int:
     """Copies a skill's folder, without links, which may lead out of it, or what a repository's folders hold that a
     skill does not need. It stops at MAX_COPIED_FILES files or MAX_COPIED_BYTES bytes, and is whole or not there at all.
+    The SKILL.md is copied first and always, as a file even where it is a link to one inside the folder, since a skill
+    is not one without it.
 
     :param source: The skill's folder.
     :param target: Where to put it, which must not be there.
@@ -502,9 +521,13 @@ def copy_skill(source: Path, target: Path) -> int:
             )
             destination = staging / Path(directory).relative_to(source)
             destination.mkdir(parents=True, exist_ok=True)
-            for file in sorted(files):
+            at_root = Path(directory) == source
+            for file in sorted(files, key=lambda name: (not (at_root and name == SKILL_FILE_NAME), name)):
                 path = Path(directory) / file
-                if path.is_symlink() or not path.is_file():
+                is_instructions = at_root and file == SKILL_FILE_NAME
+                if path.is_symlink() and not (is_instructions and is_inside(path, source)):
+                    continue
+                if not path.is_file():
                     continue
                 length = path.stat().st_size
                 if copied >= MAX_COPIED_FILES or size + length > MAX_COPIED_BYTES:
@@ -513,11 +536,18 @@ def copy_skill(source: Path, target: Path) -> int:
                 shutil.copy2(path, destination / file)
                 copied += 1
                 size += length
-        staging.rename(target)
+        if not (staging / SKILL_FILE_NAME).is_file():
+            raise OSError(errno.ENOENT, f"there is no {SKILL_FILE_NAME} in {source.name} to copy")
+        try:
+            staging.rename(target)
+        except OSError:
+            if not target.is_dir():
+                raise
+            # A copy put there meanwhile is as good as this one
+            shutil.rmtree(staging, ignore_errors=True)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
-        if not target.is_dir():
-            raise
+        raise
 
     return left_out
 

@@ -103,6 +103,7 @@ from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import benchmarks as benchmark_runs  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
 from virtual_lab.server.keychain import Keychain  # noqa: E402
+from virtual_lab.server.skills import USER_SKILLS_DIR_VARIABLE  # noqa: E402
 from virtual_lab.server.workspace import Workspace  # noqa: E402
 
 TOKEN = "e2e-token"
@@ -875,6 +876,9 @@ def main() -> None:
     # for one: a test follows the link the page shows, as a person would
     sign_ins = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-sign-ins-"))
     os.environ[MCP_AUTH_DIRECTORY_VARIABLE] = str(sign_ins)
+    # The skills of the person running the tests are not the server's: it looks in a folder of its own, which is empty
+    own_skills = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-skills-"))
+    os.environ[USER_SKILLS_DIR_VARIABLE] = str(own_skills)
     webbrowser.open = lambda *arguments, **keywords: False  # type: ignore[assignment]
     setup = None
     stand_ins: dict[str, Any] = {}
@@ -898,6 +902,7 @@ def main() -> None:
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
         shutil.rmtree(sign_ins, ignore_errors=True)
+        shutil.rmtree(own_skills, ignore_errors=True)
         if setup is not None:
             shutil.rmtree(setup.docker.directory, ignore_errors=True)
             setup.bucket.close()

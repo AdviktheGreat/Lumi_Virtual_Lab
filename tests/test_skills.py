@@ -577,6 +577,50 @@ class TestActivating:
 
         assert list(target.parent.iterdir()) == []
 
+    @pytest.mark.parametrize("failure", [OSError("disk full"), KeyboardInterrupt()])
+    def test_a_copy_that_fails_is_raised_also_where_a_folder_is_there_and_leaves_nothing_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: BaseException
+    ) -> None:
+        skill = make_skill(tmp_path, files={"data/d.csv": "1"})
+        target = tmp_path / "work" / "skills" / "dose-response"
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text("what was there")
+
+        def fail(*args: Any, **kwargs: Any) -> None:
+            raise failure
+
+        monkeypatch.setattr(skills_module.shutil, "copy2", fail)
+
+        with pytest.raises(type(failure)):
+            skills_module.copy_skill(skill.directory, target)
+
+        assert [path.name for path in target.parent.iterdir()] == ["dose-response"]
+        assert (target / "SKILL.md").read_text() == "what was there"
+
+    def test_a_folder_with_no_instructions_in_it_is_not_copied(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "notes.md").write_text("Not a skill.")
+        target = tmp_path / "work" / "skills" / "notes"
+        target.parent.mkdir(parents=True)
+
+        with pytest.raises(OSError, match="SKILL.md"):
+            skills_module.copy_skill(source, target)
+
+        assert list(target.parent.iterdir()) == []
+
+    def test_instructions_that_are_a_link_to_a_file_in_the_folder_are_copied_as_a_file(self, tmp_path: Path) -> None:
+        skill = make_skill(tmp_path)
+        (skill.directory / "SKILL.md").rename(skill.directory / "text.md")
+        (skill.directory / "SKILL.md").symlink_to("text.md")
+        target = tmp_path / "work" / "skills" / "dose-response"
+        target.parent.mkdir(parents=True)
+
+        skills_module.copy_skill(skill.directory, target)
+
+        assert (target / "SKILL.md").is_file() and not (target / "SKILL.md").is_symlink()
+        assert "name: dose-response" in (target / "SKILL.md").read_text()
+
     def test_links_and_a_repositorys_own_folders_are_not_copied(self, tmp_path: Path) -> None:
         secret = tmp_path / "secret.txt"
         secret.write_text("private")

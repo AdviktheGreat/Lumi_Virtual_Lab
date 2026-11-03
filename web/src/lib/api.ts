@@ -28,6 +28,10 @@ import type {
   OpenRouterList,
   Own,
   OwnPreview,
+  SkillPreview,
+  Skills,
+  SkillsFrom,
+  SkillsPutIn,
   PaperFunction,
   PaperFunctionsOptions,
   PaperReadOptions,
@@ -365,6 +369,16 @@ export const api = {
   // Some software and what it is for, in place of any with the name
   saveOwnSoftware: (name: string, description: string) => request<Own>("PUT", "/own/software", { name, description }),
   removeOwnSoftware: (name: string) => request<Own>("DELETE", `/own/software/${encodeURIComponent(name)}`),
+  // The skills there are, which a new conversation is given unless they are turned off. A change gives back all of them.
+  skills: (signal?: AbortSignal) => request<Skills>("GET", "/skills", undefined, signal),
+  // The names of the skills a new conversation is not given
+  saveSkills: (disabled: string[]) => request<Skills>("PUT", "/skills", { disabled }),
+  // Puts in copies of the skills of a Git repository, or of a folder on the server's machine, which can take a while
+  putInSkills: (from: SkillsFrom) => request<SkillsPutIn>("POST", "/skills/install", from),
+  previewSkill: (name: string, signal?: AbortSignal) =>
+    request<SkillPreview>("GET", `/skills/${encodeURIComponent(name)}`, undefined, signal),
+  // Only a skill in the lab's own folder is deleted
+  removeSkill: (name: string) => request<Skills>("DELETE", `/skills/${encodeURIComponent(name)}`),
   // The runs that read papers, and what a new one is asked for
   papers: (signal?: AbortSignal) => request<PapersList>("GET", "/papers", undefined, signal),
   makePaperRun: (run: NewPaperRun) => request<PaperRun>("POST", "/papers/runs", run),
