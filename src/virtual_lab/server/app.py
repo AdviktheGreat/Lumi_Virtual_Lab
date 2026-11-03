@@ -23,6 +23,9 @@ and everything else is a request and an answer.
     PATCH  /api/own/data/{name}         say again what it is; DELETE gives it up, deleting it only if it was uploaded
     GET    /api/own/data/{name}/preview what is at the start of it
     PUT    /api/own/software            some software to give, and what it is for; DELETE /software/{name} gives it up
+    GET    /api/skills, PUT             the skills there are, and which a new conversation is not given
+    POST   /api/skills/install          put in the skills of a Git repository, or of a folder on this machine
+    GET    /api/skills/{name}           what a skill tells the lead, and its files; DELETE deletes one the lab was given
     GET    /api/papers                  the runs that read papers, and what a page needs to make one
     POST   /api/papers/runs             a run, whose papers are uploaded, in a folder on this machine, or from bioRxiv
     GET    /api/papers/runs/{id}        one run, with each paper and what they share; DELETE deletes it
@@ -127,6 +130,7 @@ from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_
 from virtual_lab.server.projects import MAX_GOAL_CHARS, Projects
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
 from virtual_lab.server.setup import Setup
+from virtual_lab.server.skills import Skills
 from virtual_lab.server.stream import follow
 from virtual_lab.server.tools import check_tool_names, describe_tools
 from virtual_lab.server.workspace import DEFAULT_WORKSPACE, Settings, Workspace
@@ -226,6 +230,19 @@ class ToolsBody(RequestModel):
     """The tools a new conversation is not given, which are none until some are turned off."""
 
     disabled: list[str] = Field(default_factory=list, max_length=MAX_TOOLS)
+
+
+class SkillsBody(RequestModel):
+    """The skills a new conversation is not given, which are none until some are turned off."""
+
+    disabled: list[str] = Field(default_factory=list, max_length=MAX_SKILLS)
+
+
+class SkillInstallBody(RequestModel):
+    """Where to put in skills from: the address of a Git repository, or the path of a folder on this machine."""
+
+    git: str | None = Field(None, max_length=MAX_PATH_CHARS)
+    path: str | None = Field(None, max_length=MAX_PATH_CHARS)
 
 
 class OwnPathBody(RequestModel):
@@ -531,6 +548,7 @@ def create_app(
         catalog=models_of_openrouter,
     )
     own = Own(store, max_upload_bytes)
+    skills = Skills(store)
     papers = Papers(
         store,
         setup.jobs,
@@ -859,6 +877,29 @@ def create_app(
         own.remove_software(name)
 
         return own.describe()
+
+    @api.get("/skills")
+    def get_skills() -> dict[str, Any]:
+        return skills.describe()
+
+    @api.put("/skills")
+    def change_skills(body: SkillsBody) -> dict[str, Any]:
+        try:
+            return skills.set_disabled(body.disabled)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+
+    @api.post("/skills/install")
+    def install_skills(body: SkillInstallBody) -> dict[str, Any]:
+        return skills.install(body.git, body.path)
+
+    @api.get("/skills/{name}")
+    def preview_skill(name: str) -> dict[str, Any]:
+        return skills.preview(name)
+
+    @api.delete("/skills/{name}")
+    def remove_skill(name: str) -> dict[str, Any]:
+        return skills.remove(name)
 
     @api.get("/papers")
     def get_papers() -> dict[str, Any]:

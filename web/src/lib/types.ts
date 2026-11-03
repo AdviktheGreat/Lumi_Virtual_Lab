@@ -494,6 +494,62 @@ export interface Own {
   max_upload_bytes: number;
 }
 
+// A skill: written guidance on a kind of work, as the Data page lists it
+export interface SkillInfo {
+  name: string;
+  // What it is for and when to use it, which the lead is told
+  description: string;
+  // Where it was found: the lab's own skills folder (workspace), or the person's own, which other tools read too (user)
+  source: string;
+  directory: string;
+  license: string | null;
+  compatibility: string | null;
+  metadata: Record<string, string>;
+  // Ways it departs from the standard that did not stop it being used
+  notes: string[];
+  // Whether a new conversation is given it, and whether it can be deleted from here
+  enabled: boolean;
+  removable: boolean;
+}
+
+// A SKILL.md that was found and could not be used, and why
+export interface SkillProblem {
+  path: string;
+  message: string;
+}
+
+// A folder skills are looked for in
+export interface SkillFolder {
+  source: string;
+  path: string;
+  exists: boolean;
+}
+
+export interface Skills {
+  skills: SkillInfo[];
+  problems: SkillProblem[];
+  folders: SkillFolder[];
+}
+
+// Where skills are put in from: the address of a Git repository, or the full path of a folder on the server's machine
+export type SkillsFrom = { git: string } | { path: string };
+
+// What putting in skills did: those that were put in, with how many of their files were too many or too big to copy, and
+// those that were left with why, beside the skills as they now are
+export interface SkillsPutIn extends Skills {
+  installed: { name: string; left_out: number }[];
+  skipped: { name: string; reason: string }[];
+}
+
+// What a skill tells the lead, as far as it is worth showing, and the files that come with it
+export interface SkillPreview {
+  name: string;
+  instructions: string;
+  characters: number;
+  files: string[];
+  more_files: number;
+}
+
 // The start of a piece of data, as far as it is worth showing
 export type OwnPreview =
   | { kind: "text"; lines: string[]; truncated: boolean }
