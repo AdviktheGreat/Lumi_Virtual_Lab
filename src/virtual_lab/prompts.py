@@ -420,6 +420,33 @@ def out_of_tool_turns_prompt(limit: int) -> str:
     )
 
 
+def result_check_prompt() -> str:
+    """Generates the message that asks the lead, when it has written an answer to a message it ran code for, to check
+    the result before the researcher is given it."""
+    return (
+        "Before the researcher is given this, check the result against what they asked. Re-read their message and "
+        "confirm that what you computed is the quantity they asked for, and look at each number, name, or list in "
+        "your answer for these mistakes:\n"
+        "- Direction and sign: whether a larger value means more of what is named (a score where lower means "
+        "more, such as a dependency or loss score, is not \"higher is more\" until it is flipped), and what up, "
+        "down, positive, and negative are relative to.\n"
+        "- Selection: that every filter, threshold, cutoff, and background or reference set is what the message states "
+        "or implies, applied to what it says, and whether a stricter or looser reading would change the answer.\n"
+        "- Units and scale: a fraction or a percent, the base of a log, whether values were transformed first, and "
+        "the number of decimals asked for.\n"
+        "- The data: how many rows, samples, or genes went in compared with what you expected, repeated or "
+        "mismatched identifiers, missing values, and whether the files were joined on the right key.\n"
+        "- Plausibility: compare with something you know, such as a control, the other end of a distribution, or a "
+        "published value. Treat a result that is empty, zero, or just either side of a threshold as a reason to "
+        "look again.\n"
+        "Where a second way of getting the number can be run, such as another method or library, or recomputing a "
+        "key step on its own, run it now and do not argue it. If you find a mistake, fix it and run it again. If "
+        "the answer depends on a choice the message does not settle, and the reasonable choices differ, say which "
+        "you chose and what the other gives. Then give your answer again in full, in the same form as before, "
+        "including any last line the researcher asked for."
+    )
+
+
 def human_note_prompt(note: str) -> str:
     """Generates the message that gives the agents a note from the person following the meeting.
 

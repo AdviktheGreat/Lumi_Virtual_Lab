@@ -98,6 +98,7 @@ class ChatConfig:
     :param max_rounds: The most rounds of discussion the lead may ask a team session for, or None as above.
     :param max_tool_iterations: The most tool calls and runs of code the lead may make in answering one message, or
         None for what it is given unless it is told otherwise.
+    :param check_results: Whether the lead is asked to check its result before answering a message it ran code for.
     """
 
     model: str
@@ -115,6 +116,7 @@ class ChatConfig:
     max_delegations: int | None = None
     max_rounds: int | None = None
     max_tool_iterations: int | None = None
+    check_results: bool = True
 
     def lead_agent(self) -> Agent:
         return agent_from({**self.lead, "model": self.model})
@@ -147,6 +149,7 @@ class ChatConfig:
             "max_delegations": self.max_delegations,
             "max_rounds": self.max_rounds,
             "max_tool_iterations": self.max_tool_iterations,
+            "check_results": self.check_results,
         }
 
     @classmethod
@@ -174,6 +177,8 @@ class ChatConfig:
             max_rounds=data.get("max_rounds"),
             # A conversation begun before it could be set has the lead's own, and goes on with it
             max_tool_iterations=data.get("max_tool_iterations"),
+            # A conversation begun before the lead could be asked to check its results is asked to, as any is now
+            check_results=bool(data.get("check_results", True)),
         )
 
 
@@ -320,6 +325,19 @@ def check_tool_iterations(value: Any) -> int | None:
     return value
 
 
+def check_results_choice(value: Any) -> bool:
+    """Whether the lead is asked to check its results before answering: true unless the request says it is not.
+
+    :raises ValueError: If it is neither true nor false.
+    """
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        raise ValueError(f"check_results is true or false, not {value!r}")
+
+    return value
+
+
 def check_limits(changes: Mapping[str, Any]) -> dict[str, Any]:
     """The limits of a conversation that a request gives, checked: the most it may spend, the most team sessions the
     lead may start in answering a message, and the most rounds of discussion it may ask one for.
@@ -350,7 +368,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
     :param request: What the person chose. A key left out is taken from the settings, or the library: "model",
         "lead" and each of "team", by title or described, "code" with any of where, sandbox, network, python,
         and resources, "max_cost" (null for no limit), "max_delegations", "max_rounds" and "max_tool_iterations"
-        (null for what the lead is given unless it is told otherwise), "stream", "commercial_mode", "tools", the
+        (null for what the lead is given unless it is told otherwise), "check_results" (whether the lead is asked to
+        check a result before answering, which it is unless this is false), "stream", "commercial_mode", "tools", the
         names of the library's tools to give, which are all but those the workspace has turned off, "mcp", the names
         of the MCP servers to give, which are those the workspace has turned on, and "data" and "software", the
         names of what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of
@@ -417,6 +436,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         max_delegations=allowed.get("max_delegations"),
         max_rounds=allowed.get("max_rounds"),
         max_tool_iterations=check_tool_iterations(request.get("max_tool_iterations")),
+        check_results=check_results_choice(request.get("check_results")),
     )
 
 

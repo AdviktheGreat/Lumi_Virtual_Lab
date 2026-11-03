@@ -991,6 +991,7 @@ class TestCommandLine:
             "functions": [],
             "max_cost": 5.0,
             "max_tool_iterations": 80,
+            "check_results": True,
         }
         assert (seen["jobs"], seen["retry_failed"], seen["max_total_cost"]) == (2, True, 40.0)
         assert seen["description"]["judge"] == "openrouter/m"
@@ -1235,6 +1236,15 @@ class TestCommandLine:
 
         assert more.lab is not None and more.lab["rounds"] == 5 and more.chat["max_rounds"] == 5
         assert "max_rounds" not in usual.chat and "max_rounds" not in plain.chat
+
+    def test_the_lead_checks_its_result_unless_the_run_is_told_not_to(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checked = self.settings_of(tmp_path, monkeypatch)
+        unchecked = self.settings_of(tmp_path / "off", monkeypatch, "--no-result-check")
+
+        assert checked.chat["check_results"] is True
+        assert unchecked.chat["check_results"] is False
 
     def test_the_questions_are_given_plainly_unless_lab_is_asked_for(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

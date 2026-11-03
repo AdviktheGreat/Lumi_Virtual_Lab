@@ -648,6 +648,7 @@ class Conversations:
                 max_delegations=MAX_CHAT_DELEGATIONS if config.max_delegations is None else config.max_delegations,
                 max_rounds=MAX_CHAT_DELEGATION_ROUNDS if config.max_rounds is None else config.max_rounds,
                 max_tool_iterations=config.max_tool_iterations,
+                check_results=config.check_results,
                 stream=config.stream,
                 resources=config.code.resources if session is not None else "none",
                 commercial_mode=config.commercial_mode,

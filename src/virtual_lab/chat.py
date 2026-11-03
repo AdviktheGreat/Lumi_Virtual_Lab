@@ -80,6 +80,7 @@ from virtual_lab.prompts import (
     faked_tool_calls_prompt,
     lab_chat_prompt,
     out_of_tool_turns_prompt,
+    result_check_prompt,
     view_image_prompt,
 )
 from virtual_lab.provenance import describe_agent, utc_timestamp
@@ -420,6 +421,11 @@ class Chat:
         commercially, as hold_meeting takes it.
     :param max_tool_iterations: The most tool calls the lead makes in answering one message before it
         is asked to answer without them. Defaults to 20 with a session, and 5 without one.
+    :param check_results: Whether the lead, having run code for a message and written its answer, is asked once to
+        check the result before the researcher is given it: that it is the quantity asked for, its sign and
+        direction, the filters and thresholds, the units, the data that went in, and whether it is plausible, with a
+        second way of getting the number run where there is one. It costs one more request of the lead, and what the
+        checks need to run, for each message that ran code.
     :param max_delegations: The most team sessions the lead may start in answering one message.
         With none, the lead does not have the tools to start any.
     :param max_rounds: The most rounds of discussion the lead may ask a team session for.
@@ -459,6 +465,7 @@ class Chat:
         resources: Literal["retrieve", "all", "none"] | Resources = "retrieve",
         commercial_mode: bool = False,
         max_tool_iterations: int | None = None,
+        check_results: bool = False,
         max_delegations: int = MAX_CHAT_DELEGATIONS,
         max_rounds: int = MAX_CHAT_DELEGATION_ROUNDS,
         stream: bool = False,
@@ -527,6 +534,7 @@ class Chat:
         self.resources = resources
         self.commercial_mode = commercial_mode
         self.max_tool_iterations = max_tool_iterations
+        self.check_results = check_results
         self.max_delegations = max_delegations
         self.max_rounds = max_rounds
         self.stream = stream
@@ -1452,6 +1460,27 @@ class Chat:
 
         return True
 
+    def _ask_to_check(self, reply: ModelReply) -> bool:
+        """Asks the lead to check its result, if it ran code for this message and wrote an answer from it, putting
+        what it wrote as its say before. What it writes next is the answer the researcher is given.
+
+        :return: Whether it was asked.
+        """
+        session = self.session
+        if (
+            not self.check_results
+            or session is None
+            or len(session.history) <= self._cells_before
+            or not reply.content.strip()
+        ):
+            return False
+
+        self._append({"role": "assistant", "name": self.lead.name, "content": reply.content})
+        self._emit("tool_calls", speaker=self.lead.title, text=reply.content, calls=[])
+        self._append({"role": "user", "content": result_check_prompt()})
+
+        return True
+
     # Getting ready
 
     def _prepare(self) -> None:
@@ -1560,6 +1589,7 @@ class Chat:
         withheld = self._directive is not None and self._directive.no_tools
         definitions = [] if withheld else [tool.definition for tool in self._turn_tools()]
         reminded = False
+        checked = False
         # Replies that were a tool call written out as text, which are not counted as one of the rounds of tool calls
         faked = 0
         iteration = 0
@@ -1605,6 +1635,11 @@ class Chat:
             if not final and not reply.tool_calls and not reminded and self._remind(reply):
                 reminded = True
                 continue
+            # Not on the last round, which has no tools to run the checks with
+            if not final and not reply.tool_calls and not checked and iteration < self.max_tool_iterations:
+                if self._ask_to_check(reply):
+                    checked = True
+                    continue
 
             if final or not reply.tool_calls:
                 answer = reply.content

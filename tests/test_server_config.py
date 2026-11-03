@@ -82,6 +82,34 @@ class TestResolving:
         assert given(max_tool_iterations=60) == 60
         assert given(max_tool_iterations=CEILING_CHAT_TOOL_ITERATIONS) == CEILING_CHAT_TOOL_ITERATIONS
 
+    def test_the_lead_is_asked_to_check_its_results_unless_the_request_says_not(self, workspace: Workspace) -> None:
+        def given(**request: Any) -> bool:
+            return resolve_config({"team": [], **request}, settings(), workspace).check_results
+
+        assert given() is True
+        assert given(check_results=None) is True
+        assert given(check_results=True) is True
+        assert given(check_results=False) is False
+
+    @pytest.mark.parametrize("value", ["false", 0, 1, [], {}])
+    def test_a_check_results_that_is_not_true_or_false_is_refused(self, workspace: Workspace, value: Any) -> None:
+        with pytest.raises(ValueError, match="check_results is true or false"):
+            resolve_config({"team": [], "check_results": value}, settings(), workspace)
+
+    def test_whether_results_are_checked_is_kept_and_a_conversation_begun_before_it_is_checked_as_any_is_now(
+        self, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        directory = tmp_path / "chat"
+        directory.mkdir()
+        config = resolve_config({"team": [], "check_results": False}, settings(), workspace)
+
+        save_config(directory, config)
+
+        loaded = load_config(directory)
+        assert loaded is not None and loaded.check_results is False
+        old = {key: value for key, value in config.to_dict().items() if key != "check_results"}
+        assert ChatConfig.from_dict(old).check_results is True
+
     @pytest.mark.parametrize("value", [0, -1, CEILING_CHAT_TOOL_ITERATIONS + 1, 1.5, "20", True, [20]])
     def test_a_most_tool_calls_that_is_not_a_whole_number_from_one_to_the_ceiling_is_refused(
         self, workspace: Workspace, value: Any

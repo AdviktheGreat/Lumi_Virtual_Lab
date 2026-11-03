@@ -200,6 +200,15 @@ class TestCreating:
         assert more.chat.max_tool_iterations == 60
         assert without_code.chat.max_tool_iterations == 2
 
+    def test_the_lead_is_asked_to_check_its_results_unless_the_conversation_is_set_up_not_to(
+        self, conversations: Conversations
+    ) -> None:
+        own = conversations.create({"team": [], "code": {"where": "none"}})
+        off = conversations.create({"team": [], "code": {"where": "none"}, "check_results": False})
+
+        assert own.chat.check_results is True
+        assert off.chat.check_results is False
+
     def test_where_no_code_runs_nothing_is_said_of_resources_to_use(self, conversations: Conversations) -> None:
         handle = conversations.create({"team": [], "code": {"where": "none", "resources": "retrieve"}})
 
