@@ -104,7 +104,7 @@ from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import benchmarks as benchmark_runs  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
 from virtual_lab.server.keychain import Keychain  # noqa: E402
-from virtual_lab.server.skills import USER_SKILLS_DIR_VARIABLE  # noqa: E402
+from virtual_lab.server.skills import BUILTIN_SKILLS_DIR_VARIABLE, USER_SKILLS_DIR_VARIABLE  # noqa: E402
 from virtual_lab.server.workspace import Workspace  # noqa: E402
 
 TOKEN = "e2e-token"
@@ -893,6 +893,11 @@ def main() -> None:
     # The skills of the person running the tests are not the server's: it looks in a folder of its own, which is empty
     own_skills = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-skills-"))
     os.environ[USER_SKILLS_DIR_VARIABLE] = str(own_skills)
+    # Nor are the skills that come with the lab, so that what the tests count is what they put in. Its folder is beside the
+    # workspace, so that a test that is about those can put one in
+    builtin_skills = workspace.parent / f"{workspace.name}-builtin-skills"
+    builtin_skills.mkdir()
+    os.environ[BUILTIN_SKILLS_DIR_VARIABLE] = str(builtin_skills)
     webbrowser.open = lambda *arguments, **keywords: False  # type: ignore[assignment]
     setup = None
     stand_ins: dict[str, Any] = {}

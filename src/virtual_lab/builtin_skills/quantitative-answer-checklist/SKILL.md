@@ -1,24 +1,14 @@
+---
+name: quantitative-answer-checklist
+description: "Use for any question that asks for a number from data files (count, p-value, correlation, percentage, ratio): restate it, read the inputs, orient signs and units, take the literal reading, test open choices."
+license: MIT
+metadata:
+  author: virtual_lab contributors
+  version: "1.0"
+  source: "Written for virtual_lab from general practice in computational biology."
+---
+
 # Checklist for Questions That Ask for a Number From Data
-
----
-
-## Metadata
-
-**Short Description**: A checklist for any question that asks for a count, p-value, correlation, percentage, ratio, or other number from supplied data files: restate the question, read the inputs, orient signs and units, take the literal reading, test the open choices, and state what was done.
-
-**Authors**: virtual_lab contributors
-
-**Version**: 1.0
-
-**Last Updated**: November 2026
-
-**License**: MIT
-
-**Commercial Use**: ✅ Allowed
-
-**Source**: Written for virtual_lab from general practice in computational biology.
-
----
 
 ## Overview
 

@@ -1,24 +1,14 @@
+---
+name: variant-call-statistics
+description: "Use when computing Ts/Tv, SNP and indel counts, or heterozygosity from VCF files: what in the caller, filters, variant types, and regions changes them, and how to check the VCF is the call set the question means."
+license: MIT
+metadata:
+  author: virtual_lab contributors
+  version: "1.0"
+  source: "Written for virtual_lab from the documentation of bcftools, GATK, and general practice."
+---
+
 # Variant Call Summary Statistics and Their Dependence on Caller and Filters
-
----
-
-## Metadata
-
-**Short Description**: How to compute the transition/transversion ratio (Ts/Tv), SNP and indel counts, and heterozygosity from VCF files, which choices of caller, filters, variant types, and regions change them, and how to check that a supplied VCF is the call set the question means.
-
-**Authors**: virtual_lab contributors
-
-**Version**: 1.0
-
-**Last Updated**: November 2026
-
-**License**: MIT
-
-**Commercial Use**: ✅ Allowed
-
-**Source**: Written for virtual_lab from the documentation of bcftools, GATK, and general practice.
-
----
 
 ## Overview
 

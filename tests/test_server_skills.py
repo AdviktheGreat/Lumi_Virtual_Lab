@@ -100,8 +100,10 @@ class TestWhereSkillsAre:
         monkeypatch.setenv(USER_SKILLS_DIR_VARIABLE, "~/elsewhere")
         assert user_skills_dir() == Path("~/elsewhere").expanduser()
 
-    def test_the_workspace_is_searched_before_the_persons_folder(self, workspace: Workspace) -> None:
-        assert [source for source, _ in skill_roots(workspace)] == ["workspace", "user"]
+    def test_the_workspace_is_searched_before_the_persons_folder_and_both_before_the_labs_own(
+        self, workspace: Workspace
+    ) -> None:
+        assert [source for source, _ in skill_roots(workspace)] == ["workspace", "user", "builtin"]
 
     def test_names_are_checked_against_the_skills_there_are(self, workspace: Workspace) -> None:
         write_skill(workspace.skills_dir, name="alpha")

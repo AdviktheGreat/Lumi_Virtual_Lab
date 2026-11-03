@@ -1,24 +1,14 @@
+---
+name: multiple-testing-small-panels
+description: "Use when counting significant features after Bonferroni, Holm, BH, or BY correction, above all small counts (0, 1, 2) in qPCR, miRNA, or targeted panels; includes delta Ct basics and how to check a count holds."
+license: MIT
+metadata:
+  author: virtual_lab contributors
+  version: "1.0"
+  source: "Written for virtual_lab from the documentation of statsmodels and R's p.adjust, the delta-delta Ct method (Livak and Schmittgen, 2001), and general practice."
+---
+
 # Multiple-Testing Corrections and Borderline Counts in Small Panels
-
----
-
-## Metadata
-
-**Short Description**: How to apply Bonferroni, Holm, Benjamini-Hochberg, and Benjamini-Yekutieli corrections, count significant features, and check that a small count (0, 1, 2) holds up under the choice of test and normalisation, for qPCR, miRNA, and other targeted panels; includes the basics of delta Ct analysis.
-
-**Authors**: virtual_lab contributors
-
-**Version**: 1.0
-
-**Last Updated**: November 2026
-
-**License**: MIT
-
-**Commercial Use**: ✅ Allowed
-
-**Source**: Written for virtual_lab from the documentation of statsmodels and R's p.adjust, the delta-delta Ct method (Livak and Schmittgen, 2001), and general practice.
-
----
 
 ## Overview
 

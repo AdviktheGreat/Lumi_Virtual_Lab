@@ -131,7 +131,8 @@ export function SkillRow({
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
             <code className="break-all text-sm font-medium">{skill.name}</code>
-            {skill.source !== "workspace" && <Badge variant="outline">Shared with other tools</Badge>}
+            {skill.source === "user" && <Badge variant="outline">Shared with other tools</Badge>}
+            {skill.source === "builtin" && <Badge variant="outline">Comes with the lab</Badge>}
           </div>
           <p className={open ? "break-words text-sm" : "line-clamp-2 break-words text-sm text-muted-foreground"}>
             {skill.description}

@@ -195,20 +195,46 @@ def load_know_how(directory: Path | None = None, commercial_mode: bool = False) 
     return tuple(documents)
 
 
-def lumi_know_how_directory() -> Path:
-    """The directory of know-how documents that ship with virtual_lab, apart from Biomni's."""
-    return Path(__file__).parent / "know_how"
+def builtin_know_how() -> tuple[KnowHow, ...]:
+    """The skills that come with the lab (see virtual_lab.skills.builtin_skills), as know-how documents.
+
+    A conversation has them as skills, which the lead reads of in every request. A meeting has no skills, so it is
+    offered them here, after Biomni's documents. They are the lab's own, under the MIT license, so commercial mode
+    leaves none out.
+
+    :return: The documents ordered by id, each with the skill's name as its id and the skill's description as what
+        retrieval reads.
+    """
+    # Imported here, since a session imports this module and skills import a session
+    from virtual_lab.skills import SkillError, builtin_skills, read_body
+
+    documents = []
+    for skill in builtin_skills():
+        try:
+            content = read_body(skill)
+        except SkillError:
+            continue
+        title = content.splitlines()[0].removeprefix("# ").strip() if content.startswith("# ") else skill.name
+        documents.append(
+            KnowHow(
+                id=skill.name,
+                name=title,
+                description=skill.description,
+                content=content,
+                metadata={"short_description": skill.description, "license": skill.license or "", **skill.metadata},
+            )
+        )
+
+    return tuple(sorted(documents, key=lambda document: document.id))
 
 
 def all_know_how(commercial_mode: bool = False) -> tuple[KnowHow, ...]:
-    """The know-how documents agents are offered: Biomni's, then virtual_lab's own.
+    """The know-how documents agents are offered: Biomni's, then the lab's own built-in skills as documents.
 
     :param commercial_mode: Whether to leave out documents that may not be used commercially.
-    :return: Biomni's documents ordered by id, then virtual_lab's ordered by id.
+    :return: Biomni's documents ordered by id, then the lab's ordered by id.
     """
-    return load_know_how(commercial_mode=commercial_mode) + load_know_how(
-        lumi_know_how_directory(), commercial_mode=commercial_mode
-    )
+    return load_know_how(commercial_mode=commercial_mode) + builtin_know_how()
 
 
 @dataclass(frozen=True)
@@ -415,7 +441,7 @@ def available_resources(session: Any, commercial_mode: bool = False) -> Resource
     Tools and software are offered only where code can import Biomni's tools, since both come
     with Biomni's environment, and then only the software that is installed and the tools whose
     modules import. Data lake files are offered only where the data lake is mounted. Know-how,
-    Biomni's and virtual_lab's own, is offered everywhere: it is advice, not something to run.
+    Biomni's and the lab's own built-in skills as documents, is offered everywhere: it is advice, not something to run.
 
     :param session: The session, as in DockerSession or LocalSession, which is started to check
         what it has installed.

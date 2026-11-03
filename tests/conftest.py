@@ -296,8 +296,10 @@ class FakeClient:
 
 @pytest.fixture(autouse=True)
 def no_skills_of_the_machine(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keeps the skills of whoever runs the tests, in ~/.agents/skills, out of the conversations they make."""
+    """Keeps the skills of whoever runs the tests, in ~/.agents/skills, and those that come with the lab, out of the
+    conversations they make, so that what a test counts of skills is what it put in."""
     monkeypatch.setenv("VIRTUAL_LAB_USER_SKILLS_DIR", str(tmp_path_factory.mktemp("user-skills")))
+    monkeypatch.setenv("VIRTUAL_LAB_BUILTIN_SKILLS_DIR", str(tmp_path_factory.mktemp("builtin-skills")))
 
 
 @pytest.fixture(autouse=True)
