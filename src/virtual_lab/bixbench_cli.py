@@ -111,6 +111,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--sandbox", default="bio-r", choices=("python", *SANDBOX_TARGETS), help="must be built (default: bio-r)"
     )
     run.add_argument(
+        "--no-result-check",
+        action="store_true",
+        help="do not have the lead check its result before it answers, as a conversation has it do unless it is made "
+        "not to (it is asked once, after it writes an answer from code it ran)",
+    )
+    run.add_argument(
         "--lab",
         choices=("team", "individual"),
         help="give every question with /lab, so that the lead has the scientists --team names work on it: as a team "
@@ -206,6 +212,8 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
         "functions": [],
         "max_cost": arguments.max_cost,
         "max_tool_iterations": arguments.max_tool_calls,
+        # Always said, so that results of a server that has the check are not counted with those of one that does not
+        "check_results": not arguments.no_result_check,
     }
     # A conversation allows a session a few rounds unless it is told it may have more
     if arguments.lab is not None and arguments.lab_rounds > MAX_CHAT_DELEGATION_ROUNDS:

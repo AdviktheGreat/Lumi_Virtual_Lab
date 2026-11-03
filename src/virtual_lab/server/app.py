@@ -198,6 +198,7 @@ class ChatBody(RequestModel):
     max_delegations: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATIONS)
     max_rounds: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATION_ROUNDS)
     max_tool_iterations: StrictInt | None = Field(None, ge=1, le=CEILING_CHAT_TOOL_ITERATIONS)
+    check_results: StrictBool | None = None
     stream: bool | None = None
     commercial_mode: bool = False
     tools: list[str] | None = Field(None, max_length=MAX_TOOLS)

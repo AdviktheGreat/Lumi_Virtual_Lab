@@ -1275,6 +1275,22 @@ class TestLimits:
         assert client.get(f"/api/chats/{made['id']}").json()["config"]["max_tool_iterations"] == 80
         assert new_chat(client)["config"]["max_tool_iterations"] is None
 
+    def test_a_conversation_checks_its_results_unless_made_not_to_and_keeps_which(self, client: TestClient) -> None:
+        off = new_chat(client, check_results=False)
+
+        assert new_chat(client)["config"]["check_results"] is True
+        assert off["config"]["check_results"] is False
+        assert client.get(f"/api/chats/{off['id']}").json()["config"]["check_results"] is False
+
+    @pytest.mark.parametrize("value", ["false", 0, 1, []])
+    def test_a_check_results_that_is_not_true_or_false_is_refused_and_no_conversation_is_made(
+        self, client: TestClient, value: Any
+    ) -> None:
+        response = client.post("/api/chats", json={"team": [], "check_results": value})
+
+        assert response.status_code == 422, response.text
+        assert client.get("/api/chats").json() == {"chats": []}
+
     @pytest.mark.parametrize("value", [0, -3, 201, 2.5, "20", True])
     def test_a_most_tool_calls_that_is_not_one_is_refused_and_no_conversation_is_made(
         self, client: TestClient, value: Any

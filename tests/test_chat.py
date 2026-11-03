@@ -31,14 +31,14 @@ from virtual_lab.chat import (
     safe_filename,
     title_of,
 )
-from virtual_lab.constants import HUMAN_SPEAKER
+from virtual_lab.constants import HUMAN_SPEAKER, MAX_FAKED_CALL_RETRIES
 from virtual_lab.directives import LabRequest
 from virtual_lab.events import ChatEvent
 from virtual_lab.failures import KEY_REFUSED, SAFETY_FLAGGED, UNWELL
-from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
+from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC, result_check_prompt
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
-from virtual_lab.utils import ContextLengthExceededError, CostUnknownError, compute_token_cost
+from virtual_lab.utils import BudgetExceededError, ContextLengthExceededError, CostUnknownError, compute_token_cost
 from virtual_lab.vision import Picture, view_image_tool
 
 from conftest import TEST_MODEL, FakeClient, make_usage, text_response, tool_call_response
@@ -2681,6 +2681,175 @@ class TestReplacingTheLastMessage:
         thread.join(timeout=20)
 
         assert [message["content"] for message in chat.messages] == ["First", "One.", "Second", "Two."]
+
+
+class TestResultCheck:
+    """The lead, having run code for a message and written its answer, is asked once to check the result."""
+
+    def test_an_answer_written_after_running_code_is_checked_before_the_researcher_is_given_it(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+            text_response("Checked: it is 42."),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert reply.text == "Checked: it is 42."
+        assert len(fake_client.completions.calls) == 3
+        told = request_messages(fake_client, 2)
+        assert [message["role"] for message in told[-2:]] == ["assistant", "user"]
+        assert told[-2]["content"] == "It is 42."
+        assert told[-1]["content"] == result_check_prompt()
+        # What it wrote first is kept as what it said, and only what it wrote after is the answer
+        events = chat.events_since()
+        assert [(event.text, event.data["calls"]) for event in of(events, "tool_calls")][-1] == ("It is 42.", [])
+        assert [event.text for event in of(events, "answer")] == ["Checked: it is 42."]
+
+    def test_the_lead_may_run_code_to_check_and_is_asked_only_once(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+            tool_call_response("run_code", {"code": "print(7 * 6)"}),
+            text_response("Still 42."),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert reply.text == "Still 42."
+        assert len(fake_client.completions.calls) == 4
+        asked = [message for message in chat.messages if message.get("content") == result_check_prompt()]
+        assert len(asked) == 1
+
+    def test_it_is_asked_for_only_when_the_lead_is_set_to(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(1)"}),
+            text_response("It is 1."),
+        ]
+        chat = make_chat(tmp_path, session=session)
+
+        reply = chat.send("Print one")
+
+        assert reply.text == "It is 1." and len(fake_client.completions.calls) == 2
+        assert not any(message.get("content") == result_check_prompt() for message in chat.messages)
+
+    def test_an_answer_that_ran_no_code_is_not_checked(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("A nanobody is a single-domain antibody.")]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        chat.send("What is a nanobody?")
+
+        assert len(fake_client.completions.calls) == 1
+
+    def test_code_run_for_an_earlier_message_does_not_count(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        session.run("earlier = 1")
+        fake_client.completions.responses = [text_response("Fine.")]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        chat.send("Is it fine?")
+
+        assert len(fake_client.completions.calls) == 1
+
+    def test_without_a_session_there_is_nothing_to_check_with(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [text_response("Fine.")]
+        chat = make_chat(tmp_path, check_results=True)
+
+        chat.send("Is it fine?")
+
+        assert len(fake_client.completions.calls) == 1
+
+    def test_it_is_not_asked_when_no_round_is_left_to_run_the_checks_in(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(1)"}),
+            text_response("It is 1."),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True, max_tool_iterations=2)
+
+        reply = chat.send("Print one")
+
+        assert reply.text == "It is 1." and len(fake_client.completions.calls) == 2
+
+    def test_the_researcher_is_given_the_answer_that_was_written_if_the_check_cannot_be_afforded(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+        asked = []
+
+        def check_budget() -> None:
+            asked.append(True)
+            if len(asked) == 3:
+                raise BudgetExceededError(spent=1.0, limit=1.0, what="conversation")
+
+        chat._check_budget = check_budget  # type: ignore[method-assign]
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert (reply.status, reply.text) == ("answered", "It is 42.")
+        assert len(fake_client.completions.calls) == 2
+
+    def test_the_researcher_is_given_the_answer_that_was_written_if_the_check_is_answered_with_nothing(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+            text_response(""),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert (reply.status, reply.text) == ("answered", "It is 42.")
+
+    def test_a_reply_that_writes_a_call_out_is_not_checked(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            *[text_response(f"It is 42.\n{WRITTEN_OUT}")] * (MAX_FAKED_CALL_RETRIES + 1),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert reply.text == "It is 42."
+        assert not any(message.get("content") == result_check_prompt() for message in chat.messages)
+
+    def test_a_command_that_was_not_carried_out_is_asked_first_and_the_result_is_checked_after(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            text_response("Probably 42."),
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+            text_response("Checked: 42."),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?", directive="code")
+
+        assert reply.text == "Checked: 42." and len(fake_client.completions.calls) == 4
+        assert "You have not run any code for this message" in request_messages(fake_client, 1)[-1]["content"]
+        assert request_messages(fake_client, 3)[-1]["content"] == result_check_prompt()
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is True
 
 
 class TestCommands:
