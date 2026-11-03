@@ -11,7 +11,15 @@ import pytest
 import requests
 
 from virtual_lab import bixbench_cli, bixbench_run
-from virtual_lab.bixbench import LENIENT, OFFICIAL, BixBenchError, BixQuestion, Grade
+from virtual_lab.bixbench import (
+    INSUFFICIENT_INFORMATION,
+    LENIENT,
+    OFFICIAL,
+    BixBenchError,
+    BixQuestion,
+    Grade,
+    multiple_choice,
+)
 from virtual_lab.bixbench_run import (
     ANSWERED,
     FAILED,
@@ -23,6 +31,7 @@ from virtual_lab.bixbench_run import (
     QuestionRecord,
     RunSettings,
     answer_question,
+    choose_skills,
     describe_run,
     format_summary,
     grade_record,
@@ -40,7 +49,9 @@ CAPSULE = {
 Events = list[dict[str, Any]]
 
 
-def question(question_id: str, ideal: str = "42", mode: str = "str_verifier") -> BixQuestion:
+def question(
+    question_id: str, ideal: str = "42", mode: str = "str_verifier", distractors: tuple[str, ...] = ("1", "2", "3")
+) -> BixQuestion:
     return BixQuestion(
         id=question_id,
         question=f"What is the answer to {question_id}?",
@@ -48,6 +59,7 @@ def question(question_id: str, ideal: str = "42", mode: str = "str_verifier") ->
         eval_mode=mode,
         capsule="abc",
         archive="CapsuleFolder-abc.zip",
+        distractors=distractors,
     )
 
 
@@ -217,6 +229,70 @@ class TestAnswerQuestion:
         answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
 
         assert lab.labs == [None]
+
+    def test_a_question_can_be_asked_as_multiple_choice_and_the_letter_is_graded(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+        settings.multiple_choice = True
+        asked = question("bix-1-q1")
+        right = multiple_choice(asked).right
+        lab.events = lambda title: answered(right)
+
+        record = answer_question(asked, data, workspace, lab, settings, None)
+
+        text = lab.messages[0][1]
+        assert "Options:" in text and f"{right}) 42" in text and INSUFFICIENT_INFORMATION in text
+        assert record.choices == list(multiple_choice(asked).options)
+        assert record.right_choice == right
+        assert (record.answer, record.status) == (right, ANSWERED)
+        assert record.grades[OFFICIAL] == record.grades[LENIENT]
+        assert record.grades[OFFICIAL].method == "choice" and record.correct(OFFICIAL)
+
+    def test_a_wrong_letter_and_the_refusal_are_not_right(self, setup: tuple[Path, Path, FakeLab, RunSettings]) -> None:
+        data, workspace, lab, settings = setup
+        settings.multiple_choice = True
+        asked = question("bix-1-q1")
+        options = multiple_choice(asked).options
+        wrong = next(letter for letter, option in zip("ABCD", options, strict=False) if option == "1")
+        lab.events = lambda title: answered(wrong)
+
+        record = answer_question(asked, data, workspace, lab, settings, None)
+        assert not record.correct(OFFICIAL) and not record.correct(LENIENT)
+
+        lab.events = lambda title: answered("E")
+        refused = answer_question(asked, data, workspace, lab, settings, None)
+        assert not refused.correct(OFFICIAL)
+        assert "not enough information" in refused.grades[OFFICIAL].note
+
+    def test_the_refusal_option_can_be_left_out(self, setup: tuple[Path, Path, FakeLab, RunSettings]) -> None:
+        data, workspace, lab, settings = setup
+        settings.multiple_choice, settings.refusal_option = True, False
+
+        record = answer_question(question("bix-1-q1"), data, workspace, lab, settings, None)
+
+        assert len(record.choices) == 4 and INSUFFICIENT_INFORMATION not in lab.messages[0][1]
+
+    def test_a_question_without_distractors_is_not_asked_as_multiple_choice(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+        settings.multiple_choice = True
+
+        record = answer_question(question("bix-1-q1", distractors=()), data, workspace, lab, settings, None)
+
+        assert record.status == NOT_ASKED and "no distractors" in (record.error or "")
+        assert lab.created == []
+
+    def test_an_open_question_has_no_options_and_is_judged(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings]
+    ) -> None:
+        data, workspace, lab, settings = setup
+
+        record = answer_question(question("bix-1-q1"), data, workspace, lab, settings, FakeJudge())
+
+        assert record.choices == [] and record.right_choice == ""
+        assert "Options:" not in lab.messages[0][1]
 
     def test_it_asks_in_a_conversation_of_its_own_with_the_data_in_place_and_grades_the_answer(
         self, setup: tuple[Path, Path, FakeLab, RunSettings]
@@ -442,6 +518,40 @@ class TestRecords:
 
         assert load_records(tmp_path, [asked, question("bix-2-q1")]) == {"bix-1-q1": record}
 
+    def test_the_options_a_question_was_asked_with_are_saved_and_loaded(self, tmp_path: Path) -> None:
+        asked = question("bix-1-q1")
+        record = QuestionRecord(
+            question_id="bix-1-q1", status=ANSWERED, reply="FINAL ANSWER: B", choices=["1", "42", "2"], right_choice="B"
+        )
+
+        bixbench_run.save_record(tmp_path, asked, record)
+
+        loaded = load_records(tmp_path, [asked])["bix-1-q1"]
+        assert (loaded.choices, loaded.right_choice) == (["1", "42", "2"], "B")
+
+    def test_a_record_saved_before_there_were_options_is_one_without(self) -> None:
+        record = QuestionRecord.from_dict({"question_id": "bix-1-q1", "status": "answered"})
+
+        assert record.choices == [] and record.right_choice == ""
+
+    def test_grading_a_multiple_choice_record_again_needs_no_judge_and_goes_by_the_options_it_was_given(self) -> None:
+        record = QuestionRecord(
+            question_id="bix-1-q1",
+            status=ANSWERED,
+            reply="Worked it out.\nFINAL ANSWER: **B**",
+            answer="old",
+            choices=["1", "42", "2"],
+            right_choice="B",
+        )
+
+        grade_record(question("bix-1-q1"), record, None)
+
+        assert record.answer == "B"
+        assert record.correct(OFFICIAL) and record.correct(LENIENT)
+        record.right_choice = "A"
+        grade_record(question("bix-1-q1"), record, None)
+        assert not record.correct(OFFICIAL)
+
     def test_grading_again_takes_the_answer_from_the_reply_again(self) -> None:
         record = QuestionRecord(question_id="bix-1-q1", status=ANSWERED, reply="FINAL ANSWER: 42", answer="old")
 
@@ -491,6 +601,28 @@ class TestSummary:
         assert summary["scores"][OFFICIAL]["accuracy"] is None
         assert "n/a" in format_summary(summary)
 
+    def test_a_run_of_open_answers_has_nothing_about_multiple_choice(self) -> None:
+        summary = summarize([question("a")], {"a": graded("a", ANSWERED, True, True)})
+
+        assert "multiple_choice" not in summary
+
+    def test_a_run_of_multiple_choice_counts_the_refusals_and_is_read_as_one_score(self) -> None:
+        options = [*"1 42 2".split(), INSUFFICIENT_INFORMATION]
+        right = QuestionRecord("a", ANSWERED, answer="B", choices=options, right_choice="B", spent=1.0)
+        right.grades = {OFFICIAL: Grade(True, "choice"), LENIENT: Grade(True, "choice")}
+        refused = QuestionRecord("b", ANSWERED, answer="D", choices=options, right_choice="B", spent=1.0)
+        refused.grades = {OFFICIAL: Grade(False, "choice"), LENIENT: Grade(False, "choice")}
+
+        summary = summarize([question("a"), question("b")], {"a": right, "b": refused})
+        text = format_summary(summary)
+
+        assert summary["multiple_choice"] == {"questions": 2, "refused": 1}
+        assert (
+            "multiple choice (the letter of the right option; not comparable with an open answer's score): 1/2" in text
+        )
+        assert "lenient" not in text and "official" not in text
+        assert 'chose "insufficient information": 1 of 2 multiple choice' in text
+
     def test_it_reads_as_both_scores_one_under_the_other(self) -> None:
         questions = [question("a"), question("b")]
         text = format_summary(summarize(questions, {"a": graded("a", ANSWERED, True, True)}))
@@ -499,6 +631,140 @@ class TestSummary:
         assert "official grading (FutureHouse's): 1/2 = 50.0%" in text
         assert "lenient grading" in text
         assert "cost of the lead: $1.00" in text
+
+
+class TestDescribeRun:
+    def settings(self, **chat: Any) -> RunSettings:
+        return RunSettings(chat={"model": "m", **chat})
+
+    def test_a_run_without_skills_is_described_as_one_made_before_there_were_skills(self) -> None:
+        assert describe_run(self.settings(skills=[]), "j", "r") == describe_run(self.settings(), "j", "r")
+        assert "skills" not in describe_run(self.settings(skills=[]), "j", "r")["chat"]
+
+    def test_the_skills_given_are_part_of_what_a_run_is(self) -> None:
+        with_skills = describe_run(self.settings(skills=["a", "b"]), "j", "r")
+
+        assert with_skills["chat"]["skills"] == ["a", "b"]
+        assert with_skills != describe_run(self.settings(skills=["a"]), "j", "r")
+        assert with_skills != describe_run(self.settings(), "j", "r")
+
+    def test_multiple_choice_and_its_refusal_option_are_part_of_what_a_run_is(self) -> None:
+        plain = self.settings()
+        choosing = RunSettings(chat={"model": "m"}, multiple_choice=True)
+        without = RunSettings(chat={"model": "m"}, multiple_choice=True, refusal_option=False)
+
+        assert "multiple_choice" not in describe_run(plain, "j", "r")
+        assert describe_run(choosing, "j", "r")["multiple_choice"] == {"refusal_option": True}
+        assert describe_run(without, "j", "r")["multiple_choice"] == {"refusal_option": False}
+        assert len({json.dumps(describe_run(each, "j", "r")) for each in (plain, choosing, without)}) == 3
+
+    def test_a_run_of_multiple_choice_is_not_carried_on_as_one_of_open_answers(
+        self, setup: tuple[Path, Path, FakeLab, RunSettings], tmp_path: Path
+    ) -> None:
+        data, workspace, lab, settings = setup
+        run = lambda description: run_bixbench(  # noqa: E731
+            [question("bix-1-q1")], data, tmp_path / "results", workspace, lab, settings, FakeJudge(), description,
+            log=lambda line: None,
+        )  # fmt: skip
+        run(describe_run(settings, "j", "r"))
+        settings.multiple_choice = True
+
+        with pytest.raises(BixBenchError, match="different multiple_choice"):
+            run(describe_run(settings, "j", "r"))
+
+
+class FakeSkillsServer(LabClient):
+    """Stands in for a server that has skills, and puts in those of a folder when it is asked to."""
+
+    def __init__(self, has: list[str], installs: dict[str, list[str]] | None = None) -> None:
+        super().__init__("http://fake-server", "token")
+        self.has = list(has)
+        self.installs = installs or {}
+        self.asked: list[str] = []
+
+    def skills(self) -> list[dict[str, Any]]:
+        return [{"name": name, "source": "workspace"} for name in self.has]
+
+    def install_skills(self, path: str) -> dict[str, Any]:
+        self.asked.append(path)
+        put_in = self.installs.get(path, [])
+        self.has += put_in
+
+        return {"installed": [{"name": name} for name in put_in], "skipped": []}
+
+
+def write_skills(folder: Path, *names: str) -> Path:
+    for name in names:
+        (folder / name).mkdir(parents=True)
+        (folder / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Use it for {name}.\n---\n\nDo it.\n")
+
+    return folder
+
+
+class TestChooseSkills:
+    def test_no_skills_is_the_default_and_asks_the_server_nothing(self) -> None:
+        server = FakeSkillsServer([])
+
+        assert choose_skills([], server) == [] and choose_skills(["none"], server) == []
+        assert server.asked == []
+
+    def test_none_cannot_be_given_with_others(self) -> None:
+        with pytest.raises(BixBenchError, match="cannot be given with others"):
+            choose_skills(["none", "builtin"], FakeSkillsServer([]))
+
+    def test_the_skills_that_come_with_the_lab_are_the_ones_it_names_and_the_server_must_have_them(self) -> None:
+        from virtual_lab.skills import builtin_skills
+
+        names = [skill.name for skill in builtin_skills()]
+
+        assert choose_skills(["builtin"], FakeSkillsServer(names)) == names
+        with pytest.raises(BixBenchError, match="does not have the skills .*latest code"):
+            choose_skills(["builtin"], FakeSkillsServer(names[1:]))
+
+    def test_the_skills_of_a_folder_are_put_in_the_servers_workspace_and_named(self, tmp_path: Path) -> None:
+        folder = write_skills(tmp_path / "skills", "fit-curve", "plot-it")
+        server = FakeSkillsServer([], {str(folder.resolve()): ["fit-curve", "plot-it"]})
+        logged: list[str] = []
+
+        names = choose_skills([str(folder)], server, log=logged.append)
+
+        assert names == ["fit-curve", "plot-it"]
+        assert server.asked == [str(folder.resolve())]
+        assert "2 skills put in" in logged[0]
+
+    def test_a_folder_and_the_built_in_skills_together_are_one_list_without_repeats(self, tmp_path: Path) -> None:
+        from virtual_lab.skills import builtin_skills
+
+        built = [skill.name for skill in builtin_skills()]
+        folder = write_skills(tmp_path / "skills", "fit-curve", built[0])
+        server = FakeSkillsServer([*built, "fit-curve"])
+
+        names = choose_skills(["builtin", str(folder)], server, log=lambda line: None)
+
+        assert names == [*built, "fit-curve"]
+
+    def test_a_folder_that_is_not_one_or_has_no_skill_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "empty").mkdir()
+
+        with pytest.raises(BixBenchError, match="is not a folder"):
+            choose_skills([str(tmp_path / "missing")], FakeSkillsServer([]))
+        with pytest.raises(BixBenchError, match="no skill in"):
+            choose_skills([str(tmp_path / "empty")], FakeSkillsServer([]))
+
+    def test_nothing_is_put_in_the_server_when_a_later_folder_is_not_one(self, tmp_path: Path) -> None:
+        folder = write_skills(tmp_path / "skills", "fit-curve")
+        server = FakeSkillsServer([], {str(folder.resolve()): ["fit-curve"]})
+
+        with pytest.raises(BixBenchError, match="is not a folder"):
+            choose_skills([str(folder), str(tmp_path / "missing")], server)
+
+        assert server.asked == [] and server.has == []
+
+    def test_a_skill_the_server_does_not_end_up_with_is_refused_and_named(self, tmp_path: Path) -> None:
+        folder = write_skills(tmp_path / "skills", "fit-curve")
+
+        with pytest.raises(BixBenchError, match="does not have the skills fit-curve"):
+            choose_skills([str(folder)], FakeSkillsServer([]))
 
 
 class TestRun:
@@ -898,6 +1164,16 @@ class FakeServer(LabClient):
         ]
 
     lake: dict[str, Any] = {"directory": "/workspace/data_lake", "files": 76, "present": 76}
+    has: list[str] = []
+    installed: list[str] = []
+
+    def skills(self) -> list[dict[str, Any]]:
+        return [{"name": name} for name in self.has]
+
+    def install_skills(self, path: str) -> dict[str, Any]:
+        self.installed.append(path)
+
+        return {"installed": [], "skipped": []}
 
     def data_lake(self) -> dict[str, Any]:
         return dict(self.lake)
@@ -914,6 +1190,7 @@ class TestCommandLine:
                 "eval_mode": "str_verifier",
                 "capsule_uuid": "abc",
                 "data_folder": "CapsuleFolder-abc.zip",
+                "distractors": ["1", "2", "3"],
             }
             for number_id in ("bix-1-q1", "bix-2-q1", "bix-3-q1")
         ]
@@ -989,6 +1266,7 @@ class TestCommandLine:
             "data": [],
             "software": [],
             "functions": [],
+            "skills": [],
             "max_cost": 5.0,
             "max_tool_iterations": 80,
             "check_results": True,
@@ -1402,3 +1680,100 @@ class TestCommandLine:
 
         assert bixbench_cli.main(self.run_command(tmp_path, "--token", "t")) == bixbench_cli.INTERRUPTED
         assert "Run the same command again" in capsys.readouterr().err
+
+    def test_every_conversation_is_given_no_skills_unless_the_run_names_some(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = self.settings_of(tmp_path, monkeypatch)
+
+        assert settings.chat["skills"] == []
+
+    def test_the_skills_that_come_with_the_lab_can_be_given_to_every_conversation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from virtual_lab.skills import builtin_skills
+
+        names = [skill.name for skill in builtin_skills()]
+        monkeypatch.setattr(FakeServer, "has", names)
+
+        settings = self.settings_of(tmp_path, monkeypatch, "--skills", "builtin")
+
+        assert settings.chat["skills"] == names
+        assert describe_run(settings, "j", "r")["chat"]["skills"] == names
+
+    def test_the_skills_of_a_folder_are_put_in_the_server_and_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        folder = write_skills(tmp_path / "mine", "fit-curve")
+        monkeypatch.setattr(FakeServer, "has", ["fit-curve"])
+        monkeypatch.setattr(FakeServer, "installed", [])
+
+        settings = self.settings_of(tmp_path, monkeypatch, "--skills", str(folder))
+
+        assert settings.chat["skills"] == ["fit-curve"]
+        assert FakeServer.installed == [str(folder.resolve())]
+
+    def test_skills_that_cannot_be_given_stop_the_run_before_it_asks_anything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        asked: list[bool] = []
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda *args, **kwargs: asked.append(True))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(FakeServer, "has", [])
+
+        code = bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--skills", "builtin")])
+
+        assert code == 1 and asked == []
+        assert "does not have the skills" in capsys.readouterr().err
+
+    def test_questions_are_asked_plainly_unless_multiple_choice_is_asked_for(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plain = self.settings_of(tmp_path, monkeypatch)
+        choosing = self.settings_of(tmp_path / "mc", monkeypatch, "--multiple-choice")
+        without = self.settings_of(tmp_path / "no", monkeypatch, "--multiple-choice", "--no-refusal-option")
+
+        assert (plain.multiple_choice, plain.refusal_option) == (False, True)
+        assert (choosing.multiple_choice, choosing.refusal_option) == (True, True)
+        assert (without.multiple_choice, without.refusal_option) == (True, False)
+
+    def test_the_refusal_option_is_for_multiple_choice_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        asked: list[bool] = []
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda *args, **kwargs: asked.append(True))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+
+        code = bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--no-refusal-option")])
+
+        assert code == 1 and asked == []
+        assert "--no-refusal-option is for --multiple-choice" in capsys.readouterr().err
+
+    def test_multiple_choice_needs_distractors_for_every_question_and_says_so_before_it_asks_anything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        directory = self.dataset(tmp_path)
+        path = directory / "BixBench-Verified-50.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        rows[1].pop("distractors")
+        path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+        asked: list[bool] = []
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda *args, **kwargs: asked.append(True))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+
+        code = bixbench_cli.main(
+            [
+                "run",
+                str(directory),
+                "--workspace",
+                str(tmp_path / "ws"),
+                "--model",
+                "a",
+                "--token",
+                "t",
+                "--multiple-choice",
+            ]
+        )
+
+        assert code == 1 and asked == []
+        assert "bix-2-q1 has no distractors" in capsys.readouterr().err

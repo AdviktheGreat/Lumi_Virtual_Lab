@@ -32,11 +32,11 @@ from virtual_lab.chat import (
     safe_filename,
     title_of,
 )
-from virtual_lab.constants import HUMAN_SPEAKER, MAX_FAKED_CALL_RETRIES
+from virtual_lab.constants import CHECK_TOOL_ROUNDS, HUMAN_SPEAKER, MAX_FAKED_CALL_RETRIES
 from virtual_lab.directives import LabRequest
 from virtual_lab.events import ChatEvent
 from virtual_lab.failures import KEY_REFUSED, SAFETY_FLAGGED, UNWELL
-from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC, result_check_prompt
+from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC, checks_over_prompt, result_check_prompt
 from virtual_lab.resources import KnowHow
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
@@ -2954,6 +2954,72 @@ class TestResultCheck:
 
         assert reply.text == "It is 42."
         assert not any(message.get("content") == result_check_prompt() for message in chat.messages)
+
+    def test_the_checks_are_given_a_few_rounds_of_tool_calls_and_then_the_answer_is_asked_for_again(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        checks = [tool_call_response("run_code", {"code": f"print({number})"}) for number in range(CHECK_TOOL_ROUNDS)]
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+            *checks,
+            text_response("Checked as far as I could: it is 42."),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?")
+
+        calls = fake_client.completions.calls
+        assert reply.text == "Checked as far as I could: it is 42."
+        assert len(calls) == 2 + CHECK_TOOL_ROUNDS + 1
+        assert all(call.get("tools") for call in calls[:-1])
+        assert "tools" not in calls[-1]
+        assert calls[-1]["messages"][-1] == {"role": "user", "content": checks_over_prompt()}
+        # Said to that request alone, and not kept in what the lead reads of the conversation afterwards
+        assert not any(message.get("content") == checks_over_prompt() for message in chat.messages)
+        assert [event.text for event in of(chat.events_since(), "answer")] == ["Checked as far as I could: it is 42."]
+
+    def test_a_check_that_is_not_finished_in_its_rounds_does_not_cost_the_researcher_the_answer(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        checks = [tool_call_response("run_code", {"code": f"print({number})"}) for number in range(CHECK_TOOL_ROUNDS)]
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+            *checks,
+            text_response(WRITTEN_OUT),
+            text_response(WRITTEN_OUT),
+            text_response(WRITTEN_OUT),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert (reply.status, reply.text) == ("answered", "It is 42.")
+
+    def test_the_rounds_for_the_checks_are_not_more_than_the_message_has_left(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+            tool_call_response("run_code", {"code": "print(7 * 6)"}),
+            text_response("Checked: it is 42."),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True, max_tool_iterations=3)
+
+        reply = chat.send("What is 6 times 7?")
+
+        calls = fake_client.completions.calls
+        assert reply.text == "Checked: it is 42." and len(calls) == 4
+        assert "tools" not in calls[-1]
+        assert calls[-1]["messages"][-1] == {"role": "user", "content": checks_over_prompt()}
+
+    def test_the_lead_is_told_to_keep_a_check_short_and_in_the_foreground(self) -> None:
+        prompt = result_check_prompt()
+
+        assert "nohup" in prompt and "foreground" in prompt and "whole analysis" in prompt
+        assert f"{CHECK_TOOL_ROUNDS} rounds" in prompt
 
     def test_a_command_that_was_not_carried_out_is_asked_first_and_the_result_is_checked_after(
         self, fake_client: FakeClient, session: LocalSession, tmp_path: Path

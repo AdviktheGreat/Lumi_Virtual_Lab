@@ -25,16 +25,21 @@ from virtual_lab.bixbench import (
     PROFILES,
     BixBenchError,
     BixQuestion,
+    Choices,
     Grade,
     Judge,
     ModelJudge,
+    chose_refusal,
     final_answer,
     grade_answer,
+    grade_choice,
+    multiple_choice,
     question_message,
     stage_capsule,
 )
 from virtual_lab.llm import OPENROUTER_PREFIX
 from virtual_lab.openrouter import Catalog
+from virtual_lab.skills import MAX_SKILLS, builtin_skills, discover_skills
 from virtual_lab.utils import write_atomically
 
 RUN_FILE = "run.json"
@@ -55,6 +60,10 @@ STOPPED = "stopped"
 TIMED_OUT = "timeout"
 # Setting up the question failed before the lead was asked anything, so it has not been attempted and is not recorded
 NOT_ASKED = "not_asked"
+
+# What --skills takes besides the folder of some skills
+NO_SKILLS = "none"
+BUILTIN_SKILLS = "builtin"
 
 
 class LabError(RuntimeError):
@@ -110,6 +119,15 @@ class LabClient:
         """The tools the server has, each with its name and the group the settings put it in."""
         return list(self._call("GET", "/tools")["tools"])
 
+    def skills(self) -> list[dict[str, Any]]:
+        """The skills the server has, each with its name and where it was found."""
+        return list(self._call("GET", "/skills")["skills"])
+
+    def install_skills(self, path: str) -> dict[str, Any]:
+        """Has the server put in the skills of a folder on the machine it is on, as copies, leaving those whose names
+        it has, and say which it put in and which it left."""
+        return self._call("POST", "/skills/install", {"path": path})
+
     def data_lake(self) -> dict[str, Any]:
         """Where the server keeps Biomni's data lake, and how many of its files are there."""
         lake = (self._call("GET", "/setup/data-lake") or {}).get("data_lake")
@@ -133,6 +151,8 @@ class QuestionRecord:
     :param elapsed: Seconds from asking to the end.
     :param tool_calls: The tools the lead called, and cells the code it ran came to.
     :param grades: How the answer was graded, under each of the gradings.
+    :param choices: For a question asked as multiple choice, its options in the order of their letters, and right_choice
+        the letter of the right one; none and empty for a question that was asked for an open answer.
     """
 
     question_id: str
@@ -148,6 +168,8 @@ class QuestionRecord:
     cells: int = 0
     files: int = 0
     grades: dict[str, Grade] = field(default_factory=dict)
+    choices: list[str] = field(default_factory=list)
+    right_choice: str = ""
 
     def correct(self, profile: str) -> bool:
         grade = self.grades.get(profile)
@@ -169,6 +191,8 @@ class QuestionRecord:
             "cells": self.cells,
             "files": self.files,
             "grades": {name: grade.to_dict() for name, grade in self.grades.items()},
+            "choices": list(self.choices),
+            "right_choice": self.right_choice,
         }
 
     @classmethod
@@ -187,6 +211,8 @@ class QuestionRecord:
             cells=int(data.get("cells", 0)),
             files=int(data.get("files", 0)),
             grades={name: Grade.from_dict(grade) for name, grade in data.get("grades", {}).items()},
+            choices=[str(option) for option in data.get("choices", ())],
+            right_choice=str(data.get("right_choice", "")),
         )
 
 
@@ -251,12 +277,18 @@ class RunSettings:
     :param lab: With each question given as the researcher would give it with /lab, who works on it and how, as the
         server takes it: a mode, the members' titles, and the rounds. None for the question to be asked plainly, which
         leaves it to the lead whether to call on its team.
+    :param multiple_choice: Whether to ask each question with options to choose from, the ideal answer among the
+        distractors the dataset has for it, rather than for an answer of the lead's own.
+    :param refusal_option: With multiple_choice, whether the options include one that says there is not enough
+        information.
     """
 
     chat: dict[str, Any]
     timeout: float = 2400.0
     poll: float = POLL_SECONDS
     lab: dict[str, Any] | None = None
+    multiple_choice: bool = False
+    refusal_option: bool = True
 
 
 def answer_question(
@@ -275,6 +307,10 @@ def answer_question(
     start = time.monotonic()
     record = QuestionRecord(question_id=question.id, status=NOT_ASKED)
     try:
+        choices: Choices | None = None
+        if settings.multiple_choice:
+            choices = multiple_choice(question, settings.refusal_option)
+            record.choices, record.right_choice = list(choices.options), choices.right
         archive = Path(data_directory) / question.archive
         if not archive.is_file():
             raise BixBenchError(f"{archive} is not there. Fetch it with: virtual-lab-bixbench fetch {data_directory}")
@@ -283,7 +319,7 @@ def answer_question(
         chat_directory = Path(workspace) / CHATS_DIRECTORY / chat_id
         staged = stage_capsule(archive, chat_directory / WORK_DIRECTORY / UPLOADS_DIRECTORY)
         record.files = len(staged.files)
-        client.send_message(chat_id, question_message(question, staged.files), settings.lab)
+        client.send_message(chat_id, question_message(question, staged.files, choices), settings.lab)
         record.status = FAILED
 
         timed_out = False
@@ -327,10 +363,14 @@ def answer_question(
 
 
 def grade_record(question: BixQuestion, record: QuestionRecord, judge: Judge | None) -> None:
-    """Takes the answer out of a record's reply and grades it, both ways. A record with no reply is not correct."""
+    """Takes the answer out of a record's reply and grades it, both ways. A record with no reply is not correct. One
+    that was asked as multiple choice is right if the answer chooses the right option, which both ways agree on."""
     record.answer, record.answer_source = final_answer(record.reply)
     try:
-        record.grades = grade_answer(question, record.answer, judge)
+        if record.choices:
+            record.grades = dict.fromkeys(PROFILES, grade_choice(record.answer, record.choices, record.right_choice))
+        else:
+            record.grades = grade_answer(question, record.answer, judge)
     except Exception as error:
         # A judge that cannot be reached leaves the answer ungraded, which regrading can put right, and a note of why
         note = f"not graded: {type(error).__name__}: {error}"
@@ -378,6 +418,12 @@ def summarize(questions: Sequence[BixQuestion], records: Mapping[str, QuestionRe
         summary["by_mode"][profile] = {
             mode: {"right": counts[0], "of": counts[1]} for mode, counts in sorted(modes.items())
         }
+    if choosing := [records[question.id] for question in finished if records[question.id].choices]:
+        # Left out of a run of open answers, whose scores are not these
+        summary["multiple_choice"] = {
+            "questions": len(choosing),
+            "refused": sum(chose_refusal(record.answer, record.choices) for record in choosing),
+        }
 
     return summary
 
@@ -388,13 +434,20 @@ def format_summary(summary: Mapping[str, Any]) -> str:
     if summary["status"]:
         lines.append("status: " + ", ".join(f"{name} {count}" for name, count in sorted(summary["status"].items())))
     labels = {OFFICIAL: "official grading (FutureHouse's)", LENIENT: "lenient grading (rounding and R/Python noise)"}
-    for profile in PROFILES:
+    choice = summary.get("multiple_choice")
+    # What was asked as multiple choice has one grading, the letter, which the two gradings agree on, and a score that
+    # is not an open answer's and is called what it is
+    only_choices = choice is not None and choice["questions"] == summary["finished"]
+    for profile in PROFILES[:1] if only_choices else PROFILES:
         score = summary["scores"][profile]
         accuracy = score["accuracy"]
         text = "n/a" if accuracy is None else f"{score['right']}/{score['of_asked']} = {100 * accuracy:.1f}%"
         by_mode = summary["by_mode"][profile]
         modes = ", ".join(f"{mode} {entry['right']}/{entry['of']}" for mode, entry in by_mode.items())
-        lines.append(f"{labels[profile]}: {text}  ({modes})")
+        label = "multiple choice (the letter of the right option; not comparable with an open answer's score)"
+        lines.append(f"{label if only_choices else labels[profile]}: {text}  ({modes})")
+    if choice is not None:
+        lines.append(f'chose "insufficient information": {choice["refused"]} of {choice["questions"]} multiple choice')
     if summary["spent"] is not None:
         lines.append(f"cost of the lead: ${summary['spent']:.2f}")
     lines.append(f"time: {summary['elapsed'] / 60:.0f} minutes of work, {summary['tool_calls']} tool calls")
@@ -408,13 +461,66 @@ def describe_run(settings: RunSettings, judge_model: str, repo: str) -> dict[str
     them to try a question again does not change what the answers of the others mean."""
     left_out = ("max_cost", "max_tool_iterations", "title")
     chat = {key: value for key, value in settings.chat.items() if key not in left_out}
+    # Left out when there are none, as the lab is, so that a run made before skills could be given matches one without
+    if not chat.get("skills"):
+        chat.pop("skills", None)
 
     description: dict[str, Any] = {"dataset": repo, "chat": chat, "judge": judge_model}
-    # Left out when there is none, so that a run made before there was a way to give one still matches a run without it
     if settings.lab is not None:
         description["lab"] = settings.lab
+    if settings.multiple_choice:
+        description["multiple_choice"] = {"refusal_option": settings.refusal_option}
 
     return json.loads(json.dumps(description, sort_keys=True))
+
+
+def choose_skills(specs: Sequence[str], client: LabClient, log: Callable[[str], None] = print) -> list[str]:
+    """The names of the skills every conversation of a run is to be given, which the server is asked to put in where
+    they are folders.
+
+    :param specs: What --skills was given: "none", or any of "builtin" (the skills that come with the lab) and folders
+        of skills on this machine, which the server, which is on it too, puts in its workspace, leaving any whose
+        names it has already, so that a workspace made for the run is one whose skills are these.
+    :raises BixBenchError: If one is not a folder with skills in it, "none" is given with others, or the server does
+        not have a skill that was asked for, as a server of older code does not have the built-in ones.
+    """
+    if not specs or list(specs) == [NO_SKILLS]:
+        return []
+    if NO_SKILLS in specs:
+        raise BixBenchError(f"--skills {NO_SKILLS} is for no skills, and cannot be given with others")
+
+    # Every spec is checked before the server is asked to put anything in, so that a mistake in a later one does not
+    # leave the skills of an earlier one in its workspace
+    wanted: list[str] = []
+    folders: list[Path] = []
+    for spec in specs:
+        if spec == BUILTIN_SKILLS:
+            wanted += [skill.name for skill in builtin_skills()]
+            continue
+        folder = Path(spec).expanduser().resolve()
+        if not folder.is_dir():
+            raise BixBenchError(f"--skills {spec} is not a folder, nor {BUILTIN_SKILLS!r}, nor {NO_SKILLS!r}")
+        found = discover_skills([("folder", folder)])
+        if not found.skills:
+            raise BixBenchError(f"There is no skill in {folder}: a skill is a folder with a SKILL.md in it")
+        folders.append(folder)
+        wanted += [skill.name for skill in found.skills]
+    if len(set(wanted)) > MAX_SKILLS:
+        raise BixBenchError(f"A conversation can be given {MAX_SKILLS} skills, and {len(set(wanted))} were asked for")
+    for folder in folders:
+        result = client.install_skills(str(folder))
+        log(
+            f"{folder}: {len(result.get('installed', ()))} skills put in the server's workspace, "
+            f"{len(result.get('skipped', ()))} left as they were or not put in"
+        )
+
+    names = list(dict.fromkeys(wanted))
+    has = {skill["name"] for skill in client.skills()}
+    if missing := [name for name in names if name not in has]:
+        shown = ", ".join(missing[:8]) + (f", and {len(missing) - 8} more" if len(missing) > 8 else "")
+        raise BixBenchError(f"The server does not have the skills {shown}. Is it running the lab's latest code?")
+
+    return names
 
 
 def run_bixbench(
