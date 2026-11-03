@@ -49,6 +49,7 @@ from virtual_lab.server.config import (
 from virtual_lab.server.connections import Connections
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.functions import function_tools
+from virtual_lab.server.skills import load_skills
 from virtual_lab.server.library import missing_keys
 from virtual_lab.server.mcp import is_on, server_title
 from virtual_lab.server.own import given
@@ -633,6 +634,7 @@ class Conversations:
         if servers and not keyless:
             asker = Asker(handle.tell, handle.stopping, lambda name: server_title(name, servers.get(name)))
             handle.connections = Connections(servers, handle.tell, handle.stopping, asker)
+        skills = load_skills(self.workspace).only(config.skills)
         try:
             handle.chat = Chat(
                 directory,
@@ -644,6 +646,7 @@ class Conversations:
                 title=title,
                 tools=(*chosen, *written),
                 late_tools=handle.connections.tools if handle.connections is not None else None,
+                skills=skills,
                 max_cost=config.max_cost,
                 max_delegations=MAX_CHAT_DELEGATIONS if config.max_delegations is None else config.max_delegations,
                 max_rounds=MAX_CHAT_DELEGATION_ROUNDS if config.max_rounds is None else config.max_rounds,

@@ -130,6 +130,7 @@ from virtual_lab.server.setup import Setup
 from virtual_lab.server.stream import follow
 from virtual_lab.server.tools import check_tool_names, describe_tools
 from virtual_lab.server.workspace import DEFAULT_WORKSPACE, Settings, Workspace
+from virtual_lab.skills import MAX_SKILLS
 
 # The most characters of a message, which no one writes by hand
 # Where the server's own messages go, which the server shows as it runs
@@ -206,6 +207,7 @@ class ChatBody(RequestModel):
     data: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
     software: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
     functions: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
+    skills: list[str] | None = Field(None, max_length=MAX_SKILLS)
 
 
 class SettingsBody(RequestModel):

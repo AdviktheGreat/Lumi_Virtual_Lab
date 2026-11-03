@@ -194,6 +194,15 @@ from virtual_lab.session import (
     session_tool,
     session_tools_prompt,
 )
+from virtual_lab.skills import (
+    Skill,
+    SkillError,
+    SkillLibrary,
+    SkillProblem,
+    discover_skills,
+    skill_tools,
+    skills_prompt,
+)
 from virtual_lab.structured import StructuredOutputError
 from virtual_lab.tables import (
     Column,
@@ -379,6 +388,10 @@ __all__ = [
     "SessionError",
     "SignInError",
     "SingleAgent",
+    "Skill",
+    "SkillError",
+    "SkillLibrary",
+    "SkillProblem",
     "SolverContext",
     "Structure",
     "StructuredOutputError",
@@ -420,6 +433,7 @@ __all__ = [
     "data_file_tools",
     "describe_table",
     "detect_source",
+    "discover_skills",
     "download_benchmarks",
     "download_data_lake",
     "download_structure",
@@ -482,6 +496,8 @@ __all__ = [
     "session_tool",
     "session_tools_prompt",
     "sign_out_mcp",
+    "skill_tools",
+    "skills_prompt",
     "split_text",
     "structure_file_tool",
     "summarize_papers",

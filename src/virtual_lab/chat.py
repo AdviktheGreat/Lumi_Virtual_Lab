@@ -96,6 +96,7 @@ from virtual_lab.resources import (
 from virtual_lab.run_meeting import MeetingResult, TruncatedResponseError
 from virtual_lab.schemas import normalize_title
 from virtual_lab.session import CODE_TOOL_NAME, Session, own_resources_prompt, session_tool
+from virtual_lab.skills import CATALOG_CHARS, SKILL_TOOL_NAMES, Skill, skill_tools, skills_prompt
 from virtual_lab.tools import PUBMED_TOOL, Tool, run_tool_calls, tool_instructions_prompt
 from virtual_lab.utils import (
     BudgetExceededError,
@@ -119,7 +120,9 @@ ChatStatus = Literal["answered", "stopped", "failed"]
 FIND_RESOURCES_TOOL_NAME = "find_resources"
 CONVENE_TOOL_NAME = "convene_team"
 CONSULT_TOOL_NAME = "consult"
-RESERVED_TOOL_NAMES = frozenset({CODE_TOOL_NAME, FIND_RESOURCES_TOOL_NAME, CONVENE_TOOL_NAME, CONSULT_TOOL_NAME})
+RESERVED_TOOL_NAMES = frozenset(
+    {CODE_TOOL_NAME, FIND_RESOURCES_TOOL_NAME, CONVENE_TOOL_NAME, CONSULT_TOOL_NAME, *SKILL_TOOL_NAMES}
+)
 
 # The tool of the library's that looks inside a table, which a conversation with no session can be given, and which
 # then tells the lead that the files attached can be looked into
@@ -419,6 +422,12 @@ class Chat:
         The team's meetings are given the same. Only used with a session.
     :param commercial_mode: Whether to leave out data and know-how that may not be used
         commercially, as hold_meeting takes it.
+    :param skills: Skills, as virtual_lab.skills finds them, which the lead is told the name and purpose of and can
+        read, with the tools to do so. One that is activated has its folder copied into the session, if there is one,
+        so that code can run its scripts. They are the lead's alone: the team is not given the tools, so the lead
+        passes on what they need. None are listed with none.
+    :param skills_catalog_chars: The most characters to tell the lead of its skills in, which is in every request it
+        makes. Each skill's purpose is cut short to fit them all.
     :param max_tool_iterations: The most tool calls the lead makes in answering one message before it
         is asked to answer without them. Defaults to 20 with a session, and 5 without one.
     :param check_results: Whether the lead, having run code for a message and written its answer, is asked once to
@@ -464,6 +473,8 @@ class Chat:
         late_tools: Callable[[], Iterable[Tool]] | None = None,
         resources: Literal["retrieve", "all", "none"] | Resources = "retrieve",
         commercial_mode: bool = False,
+        skills: Sequence[Skill] = (),
+        skills_catalog_chars: int = CATALOG_CHARS,
         max_tool_iterations: int | None = None,
         check_results: bool = False,
         max_delegations: int = MAX_CHAT_DELEGATIONS,
@@ -481,6 +492,12 @@ class Chat:
             max_tool_iterations = SESSION_MAX_TOOL_ITERATIONS if session is not None else MAX_TOOL_ITERATIONS
         elif max_tool_iterations < 1:
             raise ValueError(f"max_tool_iterations must be at least 1, not {max_tool_iterations}")
+        if skills_catalog_chars < 1:
+            raise ValueError(f"skills_catalog_chars must be at least 1, not {skills_catalog_chars}")
+        if not_skills := [type(skill).__name__ for skill in skills if not isinstance(skill, Skill)]:
+            raise TypeError(f"A conversation's skills are Skills, not {', '.join(not_skills)}")
+        if len({skill.name.casefold() for skill in skills}) != len(skills):
+            raise ValueError("Skill names must be unique, whatever their case")
         if max_delegations < 0:
             raise ValueError(f"max_delegations must be zero or more, not {max_delegations}")
         if max_rounds < 0:
@@ -533,6 +550,8 @@ class Chat:
         self.max_completion_tokens = max_completion_tokens
         self.resources = resources
         self.commercial_mode = commercial_mode
+        self.skills = tuple(skills)
+        self.skills_catalog_chars = skills_catalog_chars
         self.max_tool_iterations = max_tool_iterations
         self.check_results = check_results
         self.max_delegations = max_delegations
@@ -815,6 +834,7 @@ class Chat:
                 "lead": self.lead.title,
                 "team": [agent.title for agent in self.team],
                 "can_run_code": self.session is not None,
+                "skills": [skill.name for skill in self.skills],
                 "directives": {name: self._why_not(directive) for name, directive in DIRECTIVES.items()},
             }
 
@@ -1527,6 +1547,10 @@ class Chat:
             )
             if own := own_resources_prompt(session, not_found):
                 parts.append(own)
+
+        if self.skills:
+            tools.extend(skill_tools(self.skills, session))
+            parts.append(skills_prompt(self.skills, self.skills_catalog_chars))
 
         retrieving = catalog is not None and self.resources == "retrieve" and not catalog.is_empty()
         if catalog is not None:

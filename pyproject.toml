@@ -31,6 +31,8 @@ dependencies = [
     "pydantic>=2.4",
     # Reads API keys from a .env file, as Biomni does
     "python-dotenv>=1.0",
+    # Reads the YAML at the top of a skill's SKILL.md, and Biomni's configs
+    "PyYAML>=6",
     "requests",
     "tiktoken",
     "tqdm",

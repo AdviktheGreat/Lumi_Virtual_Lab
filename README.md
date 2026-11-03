@@ -881,6 +881,24 @@ Software is not installed for you: it must be in the image, or in the `python` a
 
 The data and software are listed after the session's own tools, ahead of Biomni's resources, as added for this work and to be preferred, as Biomni lists what is added to its agent. Changing them changes the inputs of every project step held with the session. Data counts by name and description, not by where it is on your machine or what the files hold, so a project resumed with different contents under the same name does not notice the change.
 
+### Skills
+
+A skill is written guidance on a kind of work: a folder with a `SKILL.md`, which has a block of YAML at the top giving its `name` and a `description` of what it is for and when to use it, and then the instructions. Scripts, references, and templates may sit beside it. This is the [Agent Skills](https://agentskills.io) format, which Claude Code, Codex, and other tools read too, so a skill written for one of them works here, and there are libraries of them, such as [K-Dense's scientific skills](https://github.com/K-Dense-AI/scientific-agent-skills).
+
+```python
+from virtual_lab import Chat, discover_skills
+
+library = discover_skills([("mine", Path("~/skills").expanduser())])
+print([problem.message for problem in library.problems])  # a SKILL.md that could not be used, and why
+chat = Chat(Path("results/chat"), lead, session=session, skills=library.skills)
+```
+
+The lead is told the name and purpose of each skill in every request, which is little, and reads the rest when a task calls for it: `activate_skill` gives a skill's instructions and lists the files that come with it, and `read_skill_file` reads one of them, in parts if it is long. When there is a session, an activated skill's folder is copied into the session's directory under `skills/`, so code can run its scripts. A skill never runs by itself, and the files read are those inside its folder: a path that leaves it, or a link that leads out of it (a `SKILL.md` too), is refused, and links are not copied. Each result stays under a tool's 25,000-character limit, with the files listed at most 40 and 3,000 characters long.
+
+A folder is searched five levels down, so a whole repository of skills can be put in it. What is wrong with one skill leaves out that skill and not the others. A description or compatibility longer than the standard allows, or a name that is not lowercase, is noted and used (the compatibility is cut to the 500 characters it allows). Names that differ only in case are one name, since each skill is a folder in the session, so the first found is used. YAML that is not valid, such as a description with an unquoted colon, is read line by line, as other tools read it. A library with too many skills to list whole, such as 170, has each description cut to a share of `skills_catalog_chars` (20,000 by default, about 5,000 tokens in each request), and the lead sees all of a skill when it activates it. The team is not given the tools: the lead passes on what they need.
+
+The server finds skills in the workspace's `skills/` folder and in `~/.agents/skills`, where other tools put theirs, and the workspace's wins where both have one of a name. A new conversation is given every skill there is, or the ones named in `"skills"` in the request, and goes on with those of them that are still there when it is opened again. Set `VIRTUAL_LAB_USER_SKILLS_DIR` to look in another folder than `~/.agents/skills`. Skills are instructions written by someone else, which the lead follows and whose scripts it may run, so install only those you would trust with that.
+
 ### Tools from MCP servers
 
 `connect_mcp` makes tools of the tools of [MCP](https://modelcontextprotocol.io) servers, as Biomni's `add_mcp` does, from the same YAML config, or from the JSON config that Claude Desktop, Claude Code, Cursor, and others write. It needs the MCP SDK: `pip install "virtual-lab[mcp]"`.
