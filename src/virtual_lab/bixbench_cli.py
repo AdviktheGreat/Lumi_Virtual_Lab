@@ -106,6 +106,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--resources", default="retrieve", choices=("retrieve", "all", "none"))
     run.add_argument(
+        "--data-lake",
+        type=Path,
+        metavar="DIRECTORY",
+        help="the directory of Biomni's data lake, which code can read (default: the server's own, which is in its "
+        "workspace unless its settings say where, and is empty in a workspace made for a run)",
+    )
+    run.add_argument(
         "--max-cost", type=float, default=3.0, help="most USD one question may cost (default: %(default)s)"
     )
     run.add_argument(
@@ -157,16 +164,20 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
 
     :param tools: The server's tools, as it describes them.
     """
+    code: dict[str, Any] = {
+        "where": "docker",
+        "sandbox": arguments.sandbox,
+        "network": True,
+        "resources": arguments.resources,
+        "forward_env": [],
+    }
+    if arguments.data_lake is not None:
+        code["data_lake"] = str(arguments.data_lake.expanduser().resolve())
+
     return {
         "model": arguments.model,
         "team": list(arguments.team),
-        "code": {
-            "where": "docker",
-            "sandbox": arguments.sandbox,
-            "network": True,
-            "resources": arguments.resources,
-            "forward_env": [],
-        },
+        "code": code,
         "tools": [tool["name"] for tool in tools if allowed(arguments, tool.get("group"))],
         "mcp": [],
         "data": [],
@@ -175,6 +186,31 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
         "max_cost": arguments.max_cost,
         "max_tool_iterations": arguments.max_tool_calls,
     }
+
+
+def data_lake_warning(arguments: argparse.Namespace, client: LabClient) -> str | None:
+    """What to tell the person starting a run when the lead will have no data lake to read, which is when the
+    directory it is told to use is empty, or when it is left to the server and the server's has none of its files.
+
+    :raises BixBenchError: If the directory it is told to use is not one.
+    """
+    if arguments.resources == "none":
+        return None
+    if arguments.data_lake is not None:
+        directory = arguments.data_lake.expanduser()
+        if not directory.is_dir():
+            raise BixBenchError(f"--data-lake {directory} is not a directory")
+        if not any(directory.iterdir()):
+            return f"The data lake {directory} is empty, so the lead has no data lake to read."
+        return None
+    lake = client.data_lake()
+    if lake["present"] == 0:
+        return (
+            f"The server's data lake, {lake['directory']}, has none of its {lake['files']} files, so the lead has no "
+            "data lake to read. Pass --data-lake with the directory of yours."
+        )
+
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -200,6 +236,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"The server's token is needed: pass --token or set ${TOKEN_VARIABLE}", file=sys.stderr)
             return 2
         client = LabClient(arguments.url, arguments.token)
+        if (warning := data_lake_warning(arguments, client)) is not None:
+            print(f"Warning: {warning}", file=sys.stderr)
         settings = RunSettings(chat=chat_request(arguments, client.tools()), timeout=arguments.timeout)
         judge_model = arguments.judge_model or arguments.model
         summary = run_bixbench(

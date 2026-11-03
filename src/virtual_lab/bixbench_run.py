@@ -104,6 +104,10 @@ class LabClient:
         """The tools the server has, each with its name and the group the settings put it in."""
         return list(self._call("GET", "/tools")["tools"])
 
+    def data_lake(self) -> dict[str, Any]:
+        """Where the server keeps Biomni's data lake, and how many of its files are there."""
+        return dict(self._call("GET", "/setup/data-lake")["data_lake"])
+
 
 @dataclass
 class QuestionRecord:
