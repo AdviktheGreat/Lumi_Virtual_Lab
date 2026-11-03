@@ -346,11 +346,13 @@ def discover_skills(roots: Sequence[tuple[str, Path]]) -> SkillLibrary:
                 problems.append(SkillProblem(file, str(error)))
                 continue
             if (earlier := skills.get(skill.name.casefold())) is not None:
-                problems.append(
-                    SkillProblem(
-                        file, f"another skill is called {skill.name}, in {earlier.directory}, and is used instead"
+                # A person's skill of a built-in's name is a choice, not a mistake to point out
+                if source != BUILTIN_SOURCE:
+                    problems.append(
+                        SkillProblem(
+                            file, f"another skill is called {skill.name}, in {earlier.directory}, and is used instead"
+                        )
                     )
-                )
             elif len(skills) >= MAX_SKILLS:
                 problems.append(SkillProblem(file, f"only {MAX_SKILLS} skills are used, and there are more"))
             else:

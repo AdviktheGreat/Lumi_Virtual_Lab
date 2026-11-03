@@ -389,7 +389,8 @@ class Skills:
                     shutil.rmtree(target)
             except OSError as error:
                 raise ApiError(500, "files", f"{name} could not be deleted: {error.strerror or error}") from error
-            # One of ~/.agents/skills that this one hid is now in the list, and is as it was turned on or off
+            # One in ~/.agents/skills or that comes with the lab, which this one hid, is now in the list, and is as it
+            # was turned on or off
             if load_skills(self.workspace).named(name) is None:
                 self.workspace.save_disabled_skills(
                     [each for each in self.workspace.load_disabled_skills() if each != name]

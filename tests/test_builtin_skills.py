@@ -25,6 +25,7 @@ from virtual_lab.skills import (
     STANDARD_NAME,
     builtin_skills,
     builtin_skills_directory,
+    discover_skills,
     read_body,
     skills_prompt,
 )
@@ -144,7 +145,15 @@ class TestWhereTheServerFindsThem:
         skill = library.named("sample-ids-and-pca")
         assert skill is not None and (skill.description, skill.source) == ("Mine.", "workspace")
         assert len(library.skills) == len(NAMES)
-        assert [problem.path.parent.name for problem in library.problems] == ["sample-ids-and-pca"]
+        assert library.problems == ()
+
+    def test_a_skill_of_the_same_name_in_two_of_a_persons_folders_is_still_pointed_out(self, tmp_path: Path) -> None:
+        write_skill(tmp_path / "one", name="same", description="One.")
+        write_skill(tmp_path / "two", name="same", description="Two.")
+
+        library = discover_skills([("workspace", tmp_path / "one"), ("user", tmp_path / "two")])
+
+        assert [problem.path.parent.name for problem in library.problems] == ["same"]
 
     def test_an_empty_folder_does_away_with_them(self, workspace: Workspace) -> None:
         assert load_skills(workspace).skills == ()
