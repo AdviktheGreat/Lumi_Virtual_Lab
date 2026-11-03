@@ -28,6 +28,7 @@ from virtual_lab.resources import (
     KnowHow,
     Resource,
     Resources,
+    all_know_how,
     allows_commercial_use,
     available_resources,
     biomni_tools,
@@ -36,6 +37,7 @@ from virtual_lab.resources import (
     environment_descriptions,
     format_item_with_description,
     load_know_how,
+    lumi_know_how_directory,
     parse_retrieval,
     read_literal,
     report_installed,
@@ -175,6 +177,63 @@ class TestKnowHow:
         assert allows_commercial_use({"commercial_use": use}) is allowed
 
 
+LUMI_KNOW_HOW = [
+    "dependency_screen_scores",
+    "enrichment_analysis_conventions",
+    "multiple_testing_small_panels",
+    "quantitative_answer_checklist",
+    "sample_ids_and_pca",
+    "software_versions_and_definitions",
+    "variant_call_statistics",
+]
+
+
+class TestVirtualLabsKnowHow:
+    def test_its_documents_load_in_biomnis_format(self) -> None:
+        documents = load_know_how(lumi_know_how_directory())
+
+        assert [document.id for document in documents] == LUMI_KNOW_HOW
+        for document in documents:
+            assert document.content.startswith("# ") and document.name == document.content.splitlines()[0][2:]
+            assert "## Metadata" not in document.content
+            assert document.description == document.metadata["short_description"]
+            assert document.metadata["license"] == "MIT"
+            assert allows_commercial_use(document.metadata)
+
+    def test_the_readme_is_not_a_document(self) -> None:
+        assert (lumi_know_how_directory() / "README.md").is_file()
+        assert "README" not in [document.id for document in load_know_how(lumi_know_how_directory())]
+
+    def test_descriptions_stay_short_enough_to_choose_from(self) -> None:
+        for document in load_know_how(lumi_know_how_directory()):
+            assert 100 <= len(document.description) <= 450, document.id
+
+    def test_all_know_how_gives_biomnis_documents_first(self) -> None:
+        documents = all_know_how()
+
+        biomnis = ["sgRNA_design_guide", "single_cell_annotation"]
+        assert [document.id for document in documents] == [*biomnis, *LUMI_KNOW_HOW]
+        assert all_know_how(commercial_mode=True) == documents
+
+    def test_commercial_mode_applies_to_its_documents_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        closed = "# Closed\n\n## Metadata\n\n**Commercial Use**: ❌ Not Allowed\n\n---\n\nText.\n"
+        (tmp_path / "closed.md").write_text(closed)
+        monkeypatch.setattr("virtual_lab.resources.lumi_know_how_directory", lambda: tmp_path)
+
+        assert "closed" in [document.id for document in all_know_how()]
+        assert "closed" not in [document.id for document in all_know_how(commercial_mode=True)]
+
+    def test_the_retriever_lists_them_by_name_and_description(self) -> None:
+        resources = Resources(know_how=all_know_how())
+
+        prompt = retrieval_prompt("Correlate expression with gene dependency.", resources)
+
+        for document in load_know_how(lumi_know_how_directory()):
+            assert f"{document.name}: {document.description}" in prompt
+
+
 EVERY_LIBRARY = sorted({*environment_descriptions(False)[1], *environment_descriptions(True)[1]})
 
 
@@ -225,7 +284,7 @@ class TestAvailableResources:
             Resource("mine.csv", "Data lake item: mine.csv"),
         )
         assert resources.data_lake_path == SANDBOX_DATA_LAKE_DIR
-        assert len(resources.know_how) == 2
+        assert resources.know_how == all_know_how()
 
     def test_without_biomnis_tools_only_know_how_and_data(self) -> None:
         resources = available_resources(FakeSession(tools=False, files=("DisGeNET.parquet",)))
@@ -793,7 +852,7 @@ class TestMeetingResources:
 
         record = saved_record(tmp_path)["resources"]
         assert record["mode"] == "retrieve"
-        assert record["available"] == {"tools": 223, "data_lake": 2, "libraries": 113, "know_how": 2}
+        assert record["available"] == {"tools": 223, "data_lake": 2, "libraries": 113, "know_how": len(all_know_how())}
         assert record["not_installed"] == {}
         assert record["selected"]["tools"] == ["biomni.tool.database.query_uniprot"]
         assert record["selected"]["know_how"] == ["single_cell_annotation"]
