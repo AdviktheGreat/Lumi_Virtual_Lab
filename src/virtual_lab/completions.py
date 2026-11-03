@@ -13,6 +13,7 @@ refusal again. The meeting record says which models ran at their default tempera
 transcript produced at 1.0 is not the same experiment as one produced at 0.2.
 """
 
+import json
 import re
 import threading
 from typing import Callable, TypeVar
@@ -78,8 +79,8 @@ def error_text(error: BaseException) -> str:
     body = getattr(error, "body", None)
     metadata = body.get("metadata") if isinstance(body, dict) else None
     raw = metadata.get("raw") if isinstance(metadata, dict) else None
-    if isinstance(raw, str):
-        text = f"{text} {raw}"
+    if raw is not None:
+        text = f"{text} {raw if isinstance(raw, str) else json.dumps(raw, default=str)}"
 
     return text.lower()
 

@@ -819,6 +819,12 @@ class TestRejectsTemperature:
 
         assert rejects_temperature(error)
 
+    def test_what_the_provider_said_is_read_when_the_gateway_passes_it_on_parsed(self) -> None:
+        error = gateway_error("unused", quoted_in_message=False)
+        error.body["metadata"]["raw"] = {"error": {"message": "invalid temperature: only 1 is allowed for this model"}}
+
+        assert rejects_temperature(error)
+
     def test_a_gateways_refusal_of_something_else_is_not_one_of_the_temperature(self) -> None:
         assert not rejects_temperature(gateway_error("max_tokens is too large"))
         assert not rejects_temperature(gateway_error("temperature: must be less than or equal to 2"))
