@@ -98,6 +98,7 @@ from virtual_lab import openrouter  # noqa: E402
 from virtual_lab.memory import Findings  # noqa: E402
 from virtual_lab.papers import PaperFindings  # noqa: E402
 from virtual_lab.planning import NextStep, PlanTask, ResearchPlan, Review  # noqa: E402
+from virtual_lab.prompts import result_check_prompt  # noqa: E402
 from virtual_lab.schemas import TeamRoster  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import benchmarks as benchmark_runs  # noqa: E402
@@ -407,6 +408,16 @@ def asked(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def previous_answer(messages: list[dict[str, Any]]) -> str:
+    """What the lead last wrote before it was asked something, which it gives again when it is asked to check it."""
+    for message in reversed(messages):
+        content = message.get("content")
+        if message["role"] == "assistant" and isinstance(content, str) and content.strip():
+            return content
+
+    return ""
+
+
 def tool_results(messages: list[dict[str, Any]]) -> int:
     """How many of its tool calls the lead has been answered, since the researcher last spoke."""
     answered = 0
@@ -629,6 +640,9 @@ class ScriptedCompletions(FakeCompletions):
         written = function_named(kwargs)
         if written is not None:
             response = text_response(function_code(written))
+        elif question == result_check_prompt() and previous_answer(kwargs["messages"]):
+            # Asked to check the result that code gave, which it does, and gives the answer again in full, as it is asked to
+            response = text_response(previous_answer(kwargs["messages"]))
         elif "pause:" in question or "[ANSWER] and [/ANSWER]" in question:
             if "pause:" in question:
                 time.sleep(BENCHMARK_DELAY)

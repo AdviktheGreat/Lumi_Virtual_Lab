@@ -44,7 +44,7 @@ test.describe("the menu of commands", () => {
 
     await box(page).fill("/");
     // What cannot be chosen is listed last, and where code is off, that is what asks for it
-    await expect.poll(() => listed(page)).toEqual(["/ask", "/plan", "/search", "/lab", "/budget", "/model", "/help", "/code", "/plot"]);
+    await expect.poll(() => listed(page)).toEqual(["/ask", "/plan", "/search", "/lab", "/budget", "/model", "/skills", "/help", "/code", "/plot"]);
     await expect(lit(page)).toHaveAttribute("data-command", "/ask");
     await expect(box(page)).toBeFocused();
 
@@ -100,6 +100,7 @@ test.describe("the menu of commands", () => {
       "/lab",
       "/budget",
       "/model",
+      "/skills",
       "/rename",
       "/export",
       "/files",

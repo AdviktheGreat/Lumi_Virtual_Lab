@@ -198,7 +198,8 @@ test.describe("what else the lead does", () => {
 
     const resources = page.getByTestId("resources");
     await expect(resources.first()).toContainText("Resources it can look up");
-    await expect(resources.first()).toContainText("2 know-how documents");
+    // Every know-how document there is, which is as many as the library has, and not the two that the script chooses below
+    await expect(resources.first()).toContainText(/\d+ know-how documents/);
     await resources.first().locator("summary").click();
     await expect(resources.first()).toContainText("Nothing is named.");
     await expect(calls(page)).toContainText("Looked up resources");

@@ -13,6 +13,7 @@ export type CommandName =
   | DirectiveName
   | "budget"
   | "model"
+  | "skills"
   | "files"
   | "export"
   | "rename"
@@ -63,6 +64,7 @@ export const COMMANDS: Command[] = [
   },
   { name: "budget", summary: "Set what the conversation may spend, and what the lead may ask of the team", places: ["home", "chat"] },
   { name: "model", summary: "Change the model the lead and the team answer with", places: ["home", "chat"] },
+  { name: "skills", summary: "Choose the skills the lead can read, which a conversation keeps from its start", places: ["home", "chat"] },
   { name: "rename", summary: "Give the conversation a new title", places: ["chat"], takes: { kind: "text", hint: "the new title" } },
   {
     name: "export",
