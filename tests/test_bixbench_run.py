@@ -779,6 +779,23 @@ class TestLabClient:
         assert calls[0][2] == {"title": "t"} and calls[1][2] == {"text": "hello"}
         assert all(headers == {"Authorization": "Bearer secret"} for _, _, _, headers in calls)
 
+    def test_it_asks_where_the_servers_data_lake_is(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        lake = {"directory": "/ws/data_lake", "files": 76, "present": 3}
+        monkeypatch.setattr(
+            requests, "request", lambda *args, **kwargs: FakeResponse(200, {"data_lake": lake, "files": []})
+        )
+
+        assert LabClient("http://host:1", "t").data_lake() == lake
+
+    @pytest.mark.parametrize("body", [{}, {"data_lake": None}, {"data_lake": "x"}, None])
+    def test_a_reply_without_the_data_lake_is_an_error_of_the_server(
+        self, monkeypatch: pytest.MonkeyPatch, body: Any
+    ) -> None:
+        monkeypatch.setattr(requests, "request", lambda *args, **kwargs: FakeResponse(200, body))
+
+        with pytest.raises(LabError, match="did not say where its data lake is"):
+            LabClient("http://host:1", "t").data_lake()
+
     def test_a_refusal_says_what_was_asked_and_what_the_server_said(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(requests, "request", lambda *args, **kwargs: FakeResponse(401, {"detail": "bad token"}))
 
@@ -834,6 +851,11 @@ class FakeServer(LabClient):
             {"name": "uniprot_lookup", "group": "Proteins and structures"},
             {"name": "inspect_data_file", "group": "Your files"},
         ]
+
+    lake: dict[str, Any] = {"directory": "/workspace/data_lake", "files": 76, "present": 76}
+
+    def data_lake(self) -> dict[str, Any]:
+        return dict(self.lake)
 
 
 class TestCommandLine:
@@ -958,6 +980,148 @@ class TestCommandLine:
         bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--web")])
 
         assert seen["chat"]["tools"] == ["web_search", "web_fetch", "uniprot_lookup", "inspect_data_file"]
+
+    def test_the_lead_can_be_given_a_data_lake_to_read(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: seen.update(chat=args[4].chat) or {}
+        )
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(bixbench_cli, "format_summary", lambda summary: "")
+        lake = tmp_path / "lake"
+        lake.mkdir()
+        (lake / "table.csv").write_text("a\n")
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--data-lake", str(lake))])
+
+        assert seen["chat"]["code"]["data_lake"] == str(lake.resolve())
+        assert seen["chat"]["code"]["where"] == "docker"
+
+    def test_without_a_data_lake_the_server_is_left_to_choose_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: seen.update(chat=args[4].chat) or {}
+        )
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(bixbench_cli, "format_summary", lambda summary: "")
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t")])
+
+        assert "data_lake" not in seen["chat"]["code"]
+        assert capsys.readouterr().err == ""
+
+    def test_a_run_says_when_the_servers_data_lake_has_none_of_its_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(FakeServer, "lake", {"directory": "/ws/data_lake", "files": 76, "present": 0})
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: summarize(questions, {}))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+
+        code = bixbench_cli.main([*self.run_command(tmp_path, "--token", "t")])
+
+        warning = capsys.readouterr().err
+        assert code == 0
+        assert "/ws/data_lake" in warning and "none of its 76 files" in warning and "--data-lake" in warning
+
+    def test_a_run_says_when_the_data_lake_it_is_given_is_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: summarize(questions, {}))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        lake = tmp_path / "lake"
+        lake.mkdir()
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--data-lake", str(lake))])
+
+        assert f"The data lake {lake} is empty" in capsys.readouterr().err
+
+    def test_hidden_files_do_not_make_a_data_lake_something(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: summarize(questions, {}))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        lake = tmp_path / "lake"
+        lake.mkdir()
+        (lake / ".DS_Store").write_text("")
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--data-lake", str(lake))])
+
+        assert "is empty" in capsys.readouterr().err
+
+    def test_a_data_lake_that_cannot_be_read_stops_the_run_with_an_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        asked: list[bool] = []
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda *args, **kwargs: asked.append(True))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        lake = tmp_path / "lake"
+        lake.mkdir()
+        real = Path.iterdir
+
+        def refuse(path: Path) -> Any:
+            if path == lake:
+                raise PermissionError("denied")
+            return real(path)
+
+        monkeypatch.setattr(Path, "iterdir", refuse)
+
+        code = bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--data-lake", str(lake))])
+
+        assert code == 1 and asked == []
+        assert "cannot be read" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("body", [{}, {"directory": "/x"}])
+    def test_a_server_that_does_not_say_how_many_files_its_data_lake_has_is_not_warned_of(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], body: dict[str, Any]
+    ) -> None:
+        monkeypatch.setattr(FakeServer, "lake", body)
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: summarize(questions, {}))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+
+        code = bixbench_cli.main([*self.run_command(tmp_path, "--token", "t")])
+
+        assert code == 0
+        assert capsys.readouterr().err == ""
+
+    def test_a_server_that_cannot_say_where_its_data_lake_is_does_not_stop_the_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def unknown(self: FakeServer) -> dict[str, Any]:
+            raise LabError("The server did not say where its data lake is")
+
+        monkeypatch.setattr(FakeServer, "data_lake", unknown)
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: summarize(questions, {}))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+
+        code = bixbench_cli.main([*self.run_command(tmp_path, "--token", "t")])
+
+        assert code == 0
+        assert capsys.readouterr().err == ""
+
+    def test_a_data_lake_that_is_not_a_directory_stops_the_run_before_it_asks_anything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        asked: list[bool] = []
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda *args, **kwargs: asked.append(True))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+
+        code = bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--data-lake", str(tmp_path / "gone"))])
+
+        assert code == 1 and asked == []
+        assert "is not a directory" in capsys.readouterr().err
+
+    def test_a_run_given_no_resources_does_not_ask_about_the_data_lake(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(FakeServer, "lake", {"directory": "/ws/data_lake", "files": 76, "present": 0})
+        monkeypatch.setattr(bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: summarize(questions, {}))
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--resources", "none")])
+
+        assert capsys.readouterr().err == ""
 
     def test_the_most_tool_calls_for_a_question_can_be_changed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
