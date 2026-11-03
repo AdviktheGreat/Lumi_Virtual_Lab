@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chooseKeepKeys, describeRemoved, describeSaved, describeSource, keepKeys, keyProblem, keyRows } from "./keys";
+import {
+  chooseKeepKeys,
+  describeRemoved,
+  describeSaved,
+  describeSource,
+  keepKeys,
+  keyProblem,
+  keyRows,
+  webSearchRow,
+} from "./keys";
 import type { Keychain, KeyStatuses } from "./types";
 
 const keychain: Keychain = { available: true, name: "macOS Keychain", problem: null };
@@ -59,6 +68,22 @@ describe("the keys that can be given", () => {
     };
 
     expect(keyRows(given)[0]).toMatchObject({ provider: "OpenAI", set: false });
+  });
+});
+
+describe("the key of the web search", () => {
+  it("is Exa's, and is not set until the server says where it came from", () => {
+    expect(webSearchRow(statuses)).toEqual({ name: "EXA_API_KEY", provider: "Exa", set: false, source: null });
+    expect(webSearchRow({ ...statuses, sources: { EXA_API_KEY: "keychain" } })).toEqual({
+      name: "EXA_API_KEY",
+      provider: "Exa",
+      set: true,
+      source: "keychain",
+    });
+  });
+
+  it("is not one of the keys of the model providers", () => {
+    expect(keyRows({ ...statuses, sources: { EXA_API_KEY: "environment" } }).map((row) => row.name)).not.toContain("EXA_API_KEY");
   });
 });
 

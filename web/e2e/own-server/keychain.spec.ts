@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.afterEach(async ({ page }) => {
-  for (const name of KEYS) expect((await page.request.delete(`/api/keys/${name}`)).ok()).toBe(true);
+  for (const name of [...KEYS, "EXA_API_KEY"]) expect((await page.request.delete(`/api/keys/${name}`)).ok()).toBe(true);
 });
 
 const KEEP = /Keep keys in the Test Keychain/;
@@ -68,6 +68,34 @@ test.describe("keeping the keys in the keychain", () => {
 
     await expect(again.getByText("Removed.", { exact: true })).toBeVisible();
     await expect(again.getByTestId("key-source-OPENAI_API_KEY")).toHaveCount(0);
+    expect((await keysOf(page)).sources).toEqual({});
+  });
+
+  test("the key of the web search is given under its own heading, and is kept the same way", async ({ page }) => {
+    const secret = "exa-test-in-the-keychain";
+    const dialog = await openSettings(page, "Keys");
+    await expect(dialog.getByRole("heading", { name: "Web search" })).toBeVisible();
+    await expect(dialog.getByTestId("key-state-EXA_API_KEY")).toHaveText("Not set");
+    await dialog.getByLabel("Exa key", { exact: true }).fill(secret);
+    const sent = page.waitForRequest((request) => request.method() === "PUT" && request.url().endsWith("/api/keys/EXA_API_KEY"));
+
+    await dialog
+      .locator("form", { has: dialog.getByLabel("Exa key", { exact: true }) })
+      .getByRole("button", { name: "Save", exact: true })
+      .click();
+
+    expect((await sent).postDataJSON()).toEqual({ value: secret });
+    await expect(dialog.getByTestId("key-state-EXA_API_KEY")).toHaveText("Set");
+    await expect(dialog.getByTestId("key-source-EXA_API_KEY")).toHaveText("In the Test Keychain");
+    const shown = await keysOf(page);
+    expect(shown.sources).toEqual({ EXA_API_KEY: "keychain" });
+    expect(JSON.stringify(shown)).not.toContain(secret);
+    // It is a key of the web search and not of a model provider, so the code tab does not offer it to code
+    expect(shown.settable).not.toContain("EXA_API_KEY");
+
+    await dialog.getByRole("button", { name: "Remove the Exa key" }).click();
+
+    await expect(dialog.getByTestId("key-state-EXA_API_KEY")).toHaveText("Not set");
     expect((await keysOf(page)).sources).toEqual({});
   });
 

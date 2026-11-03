@@ -27,6 +27,16 @@ export function keyRows(statuses: KeyStatuses): KeyRow[] {
   });
 }
 
+// The key of the search the lead makes of the web, which is a service's and not a model provider's, so that the server
+// does not list it among the keys of the providers. Without it the search is made with DuckDuckGo.
+export const WEB_SEARCH_KEY = "EXA_API_KEY";
+
+export function webSearchRow(statuses: KeyStatuses): KeyRow {
+  const source = statuses.sources[WEB_SEARCH_KEY];
+
+  return { name: WEB_SEARCH_KEY, provider: "Exa", set: source !== undefined, source: source ?? null };
+}
+
 // What is wrong with a key as it was typed, which the server would refuse: a key is on one line, with nothing else
 // in it. Null if there is nothing wrong.
 export function keyProblem(typed: string): string | null {

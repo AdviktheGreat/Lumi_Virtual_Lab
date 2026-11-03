@@ -18,6 +18,7 @@ import {
   keepKeys,
   keyProblem,
   keyRows,
+  webSearchRow,
   type KeyRow,
 } from "@/lib/keys";
 import type { Keychain, KeyStatuses } from "@/lib/types";
@@ -154,47 +155,59 @@ export function KeysTab({ keys, onChanged }: { keys: Loaded<KeyStatuses>; onChan
   const named = keychain?.name ?? "keychain";
 
   return (
-    <Section title="API keys">
-      <Aside>
-        <KeyRound className="mr-1.5 inline size-3.5 align-text-bottom" aria-hidden />
-        {keychain?.available
-          ? `A key you give here is kept in the ${named}, so that it is there when the server is started again. It is never shown again, and is written nowhere else. A key the server was started with can be taken away here, and is back when the server is started again.`
-          : "A key you give here is kept by the server until it stops. It is not written to disk and is never shown again. A key the server was started with can be taken away here, and is back when the server is started again."}
-      </Aside>
-      {keychain !== null && keychain.problem !== null && (
-        <Aside tone="warning">
-          <span data-testid="keychain-problem">{keychain.problem}</span>
+    <div className="flex flex-col gap-8">
+      <Section title="API keys">
+        <Aside>
+          <KeyRound className="mr-1.5 inline size-3.5 align-text-bottom" aria-hidden />
+          {keychain?.available
+            ? `A key you give here is kept in the ${named}, so that it is there when the server is started again. It is never shown again, and is written nowhere else. A key the server was started with can be taken away here, and is back when the server is started again.`
+            : "A key you give here is kept by the server until it stops. It is not written to disk and is never shown again. A key the server was started with can be taken away here, and is back when the server is started again."}
         </Aside>
-      )}
-      {keychain?.available && (
-        <label className="flex items-start gap-2.5 text-sm">
-          <Checkbox
-            checked={keep}
-            onChange={(event) => {
-              setKeep(event.target.checked);
-              chooseKeepKeys(event.target.checked);
-            }}
-            className="mt-0.5"
-          />
-          <span className="flex flex-col gap-0.5">
-            <span className="font-medium">Keep keys in the {named}</span>
-            <span className="text-xs text-muted-foreground">
-              {keep
-                ? "A key you give is there when the server is started again, here and in the settings of the MCP servers."
-                : "A key you give is kept until the server stops, and one kept before is forgotten."}
+        {keychain !== null && keychain.problem !== null && (
+          <Aside tone="warning">
+            <span data-testid="keychain-problem">{keychain.problem}</span>
+          </Aside>
+        )}
+        {keychain?.available && (
+          <label className="flex items-start gap-2.5 text-sm">
+            <Checkbox
+              checked={keep}
+              onChange={(event) => {
+                setKeep(event.target.checked);
+                chooseKeepKeys(event.target.checked);
+              }}
+              className="mt-0.5"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="font-medium">Keep keys in the {named}</span>
+              <span className="text-xs text-muted-foreground">
+                {keep
+                  ? "A key you give is there when the server is started again, here and in the settings of the MCP servers."
+                  : "A key you give is kept until the server stops, and one kept before is forgotten."}
+              </span>
             </span>
-          </span>
-        </label>
-      )}
-      {keys.kind === "loading" && <p className="text-sm text-muted-foreground">Looking at which keys are set…</p>}
-      {keys.kind === "failed" && <p role="alert" className="text-sm text-destructive">{describeError(keys.error)}</p>}
+          </label>
+        )}
+        {keys.kind === "loading" && <p className="text-sm text-muted-foreground">Looking at which keys are set…</p>}
+        {keys.kind === "failed" && <p role="alert" className="text-sm text-destructive">{describeError(keys.error)}</p>}
+        {keys.kind === "ready" && (
+          <div className="flex flex-col gap-3">
+            {keyRows(keys.value).map((row) => (
+              <KeyForm key={row.name} row={row} keychain={keys.value.keychain} onChanged={onChanged} />
+            ))}
+          </div>
+        )}
+      </Section>
       {keys.kind === "ready" && (
-        <div className="flex flex-col gap-3">
-          {keyRows(keys.value).map((row) => (
-            <KeyForm key={row.name} row={row} keychain={keys.value.keychain} onChanged={onChanged} />
-          ))}
-        </div>
+        <Section title="Web search">
+          <Aside>
+            The lead searches the web with Exa when its key is set here, and with DuckDuckGo when it is not. DuckDuckGo
+            needs no key, but turns away a client that searches often. A key given here is used by every conversation
+            from its next search, and is kept the way the keys above are.
+          </Aside>
+          <KeyForm row={webSearchRow(keys.value)} keychain={keys.value.keychain} onChanged={onChanged} />
+        </Section>
       )}
-    </Section>
+    </div>
   );
 }
