@@ -59,6 +59,7 @@ pip install -e ".[server,mcp,papers,eval]"
 | `vision` | Looking at images and the pages of PDFs (`server` includes it) |
 | `pdf` | Saving meetings and conversations as PDFs (also needs the Pango library) |
 | `eval` | Biomni's benchmarks and BixBench-Verified-50 |
+| `nanobody-design` | What the original nanobody study in [`nanobody_design/`](nanobody_design) needs |
 | `ollama`, `bedrock` | Local models through Ollama, and models on Amazon Bedrock |
 | `dev` | What the tests need |
 

@@ -7,8 +7,17 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parent.parent
-DOC_FILES = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]
-LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
+DOC_FILES = [
+    ROOT / "README.md",
+    *sorted((ROOT / "docs").glob("*.md")),
+    ROOT / "web" / "README.md",
+    ROOT / "nanobody_design" / "README.md",
+]
+LINKS = [
+    re.compile(r"!?\[[^\]]*\]\(<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\)"),
+    re.compile(r"^[ \t]*\[[^\]]+\]:[ \t]*<?(\S+?)>?[ \t]*$", re.MULTILINE),
+    re.compile(r"(?:href|src)=[\"']([^\"']+)[\"']"),
+]
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 FENCE = re.compile(r"^\s*(```|~~~)")
 ADAPTED_NOTICE_LINE = re.compile(r"^\s{3,}(src/virtual_lab/\S+)\s{2,}", re.MULTILINE)
@@ -55,9 +64,10 @@ def header_of(path: Path) -> str:
 
 
 def relative_links(path: Path) -> list[str]:
+    text = "\n".join(prose_lines(path))
     links = []
-    for line in prose_lines(path):
-        links += [target for target in LINK.findall(line) if not re.match(r"[a-z][a-z0-9+.-]*:", target)]
+    for pattern in LINKS:
+        links += [target for target in pattern.findall(text) if not re.match(r"[a-z][a-z0-9+.-]*:", target)]
     return links
 
 
@@ -81,6 +91,18 @@ def test_the_anchor_check_can_fail(tmp_path: Path) -> None:
     page.write_text("# Title\n\n## Two words\n\n## Two words\n\n```\n# not a heading\n```\n", encoding="utf-8")
 
     assert anchors_of(page) == {"title", "two-words", "two-words-1"}
+
+
+def test_every_form_of_relative_link_is_found(tmp_path: Path) -> None:
+    page = tmp_path / "page.md"
+    page.write_text(
+        "[inline](a.md) ![image](b.png) [titled](<c.md> \"title\") [web](https://example.com/x.md)\n"
+        "[split\nacross lines](h.md)\n[ref][r]\n\n[r]: d.md\n\n"
+        "<a href=\"e.md\">e</a> <img src='f.png'>\n\n```\n[code](g.md)\n```\n",
+        encoding="utf-8",
+    )
+
+    assert sorted(relative_links(page)) == ["a.md", "b.png", "c.md", "d.md", "e.md", "f.png", "h.md"]
 
 
 def test_the_readme_names_the_project_it_is() -> None:
