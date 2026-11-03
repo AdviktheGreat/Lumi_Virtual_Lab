@@ -109,8 +109,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--data-lake",
         type=Path,
         metavar="DIRECTORY",
-        help="the directory of Biomni's data lake, which code can read (default: the server's own, which is in its "
-        "workspace unless its settings say where, and is empty in a workspace made for a run)",
+        help="the directory of Biomni's data lake, which code can read, on the machine the server is on (default: "
+        "the server's own, which is in its workspace unless its settings say where, and is empty in a workspace made "
+        "for a run)",
     )
     run.add_argument(
         "--max-cost", type=float, default=3.0, help="most USD one question may cost (default: %(default)s)"
@@ -190,9 +191,10 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
 
 def data_lake_warning(arguments: argparse.Namespace, client: LabClient) -> str | None:
     """What to tell the person starting a run when the lead will have no data lake to read, which is when the
-    directory it is told to use is empty, or when it is left to the server and the server's has none of its files.
+    directory it is told to use has nothing in it, or when it is left to the server and the server's has none of its
+    files. A server that does not say what its data lake holds is not told of, since this is only advice.
 
-    :raises BixBenchError: If the directory it is told to use is not one.
+    :raises BixBenchError: If the directory it is told to use is not one, or cannot be read.
     """
     if arguments.resources == "none":
         return None
@@ -200,14 +202,22 @@ def data_lake_warning(arguments: argparse.Namespace, client: LabClient) -> str |
         directory = arguments.data_lake.expanduser()
         if not directory.is_dir():
             raise BixBenchError(f"--data-lake {directory} is not a directory")
-        if not any(directory.iterdir()):
+        try:
+            empty = not any(not entry.name.startswith(".") for entry in directory.iterdir())
+        except OSError as error:
+            raise BixBenchError(f"--data-lake {directory} cannot be read: {error}") from error
+        if empty:
             return f"The data lake {directory} is empty, so the lead has no data lake to read."
         return None
-    lake = client.data_lake()
-    if lake["present"] == 0:
+    try:
+        lake = client.data_lake()
+    except LabError:
+        return None
+    if lake.get("present") == 0:
         return (
-            f"The server's data lake, {lake['directory']}, has none of its {lake['files']} files, so the lead has no "
-            "data lake to read. Pass --data-lake with the directory of yours."
+            f"The server's data lake, {lake.get('directory', 'which it did not name')}, has none of its "
+            f"{lake.get('files', 'data lake')} files, so the lead has no data lake to read. Pass --data-lake with the "
+            "directory of yours."
         )
 
     return None

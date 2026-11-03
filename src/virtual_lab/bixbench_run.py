@@ -106,7 +106,11 @@ class LabClient:
 
     def data_lake(self) -> dict[str, Any]:
         """Where the server keeps Biomni's data lake, and how many of its files are there."""
-        return dict(self._call("GET", "/setup/data-lake")["data_lake"])
+        lake = (self._call("GET", "/setup/data-lake") or {}).get("data_lake")
+        if not isinstance(lake, dict):
+            raise LabError("The server did not say where its data lake is")
+
+        return lake
 
 
 @dataclass
