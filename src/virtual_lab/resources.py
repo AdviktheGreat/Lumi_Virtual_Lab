@@ -195,6 +195,22 @@ def load_know_how(directory: Path | None = None, commercial_mode: bool = False) 
     return tuple(documents)
 
 
+def lumi_know_how_directory() -> Path:
+    """The directory of know-how documents that ship with virtual_lab, apart from Biomni's."""
+    return Path(__file__).parent / "know_how"
+
+
+def all_know_how(commercial_mode: bool = False) -> tuple[KnowHow, ...]:
+    """The know-how documents agents are offered: Biomni's, then virtual_lab's own.
+
+    :param commercial_mode: Whether to leave out documents that may not be used commercially.
+    :return: Biomni's documents ordered by id, then virtual_lab's ordered by id.
+    """
+    return load_know_how(commercial_mode=commercial_mode) + load_know_how(
+        lumi_know_how_directory(), commercial_mode=commercial_mode
+    )
+
+
 @dataclass(frozen=True)
 class Resources:
     """What a meeting's agents are told they can use in their session.
@@ -398,8 +414,8 @@ def available_resources(session: Any, commercial_mode: bool = False) -> Resource
 
     Tools and software are offered only where code can import Biomni's tools, since both come
     with Biomni's environment, and then only the software that is installed and the tools whose
-    modules import. Data lake files are offered only where the data lake is mounted. Know-how
-    is offered everywhere: it is advice, not something to run.
+    modules import. Data lake files are offered only where the data lake is mounted. Know-how,
+    Biomni's and virtual_lab's own, is offered everywhere: it is advice, not something to run.
 
     :param session: The session, as in DockerSession or LocalSession, which is started to check
         what it has installed.
@@ -440,7 +456,7 @@ def available_resources(session: Any, commercial_mode: bool = False) -> Resource
             Resource(name, data_lake_descriptions.get(name, f"Data lake item: {name}")) for name in files
         ),
         libraries=libraries,
-        know_how=load_know_how(commercial_mode=commercial_mode),
+        know_how=all_know_how(commercial_mode),
         data_lake_path=data_lake_path,
         not_installed=not_installed,
     )
