@@ -10,6 +10,7 @@ from conftest import TEST_MODEL, FakeClient, text_response
 
 from virtual_lab import bixbench
 from virtual_lab.bixbench import (
+    INSUFFICIENT_INFORMATION,
     LENIENT,
     LENIENT_GRADING_PROMPT,
     OFFICIAL,
@@ -19,13 +20,17 @@ from virtual_lab.bixbench import (
     BixQuestion,
     ModelJudge,
     choose_questions,
+    chose_refusal,
+    chosen_letter,
     describe_files,
     download_bixbench,
     final_answer,
     grade_answer,
+    grade_choice,
     grade_lenient,
     grade_official,
     load_questions,
+    multiple_choice,
     normalise_numbers,
     numbers_in,
     parse_range,
@@ -322,6 +327,20 @@ class TestQuestions:
         assert questions[0].archive == "CapsuleFolder-abc.zip"
         assert not hasattr(questions[0], "hypothesis")
 
+    def test_the_distractors_are_read_and_a_question_without_any_has_none(self, tmp_path: Path) -> None:
+        write_dataset(tmp_path, [row("bix-1-q1", distractors=["1", "2", "3"]), row("bix-2-q1")])
+
+        first, second = load_questions(tmp_path)
+
+        assert first.distractors == ("1", "2", "3")
+        assert second.distractors == ()
+
+    def test_distractors_that_are_not_a_list_are_refused(self, tmp_path: Path) -> None:
+        write_dataset(tmp_path, [row(distractors="1, 2, 3")])
+
+        with pytest.raises(BixBenchError, match="Line 1.*distractors is a list"):
+            load_questions(tmp_path)
+
     def test_a_missing_dataset_says_how_to_fetch_it(self, tmp_path: Path) -> None:
         with pytest.raises(BixBenchError, match="virtual-lab-bixbench fetch"):
             load_questions(tmp_path)
@@ -372,6 +391,123 @@ class TestQuestions:
 
         assert len(listing) == bixbench.MAX_LISTED_FILES + 1
         assert listing[-1] == "- and 7 more under uploads/"
+
+
+class TestMultipleChoice:
+    asked = question("3.5%", id="bix-12-q2", distractors=("1.2%", "4.9%", "5.2%"))
+
+    def test_the_options_are_the_ideal_and_its_distractors_and_then_the_refusal(self) -> None:
+        choices = multiple_choice(self.asked)
+
+        assert sorted(choices.options[:4]) == ["1.2%", "3.5%", "4.9%", "5.2%"]
+        assert choices.options[4] == INSUFFICIENT_INFORMATION
+        assert choices.options["ABCD".index(choices.right)] == "3.5%"
+        assert choices.refusal() == "E"
+        assert choices.lettered().splitlines()[4] == f"E) {INSUFFICIENT_INFORMATION}"
+
+    def test_the_refusal_can_be_left_out(self) -> None:
+        choices = multiple_choice(self.asked, refusal_option=False)
+
+        assert len(choices.options) == 4 and INSUFFICIENT_INFORMATION not in choices.options
+        assert choices.refusal() is None
+        assert choices.options["ABCD".index(choices.right)] == "3.5%"
+
+    def test_a_question_has_the_same_options_in_the_same_order_every_time(self) -> None:
+        assert multiple_choice(self.asked) == multiple_choice(self.asked)
+
+    def test_the_ideal_is_not_always_where_it_would_be_without_the_shuffle(self) -> None:
+        letters = {
+            multiple_choice(question("a", id=f"bix-{number}-q1", distractors=("b", "c", "d"))).right
+            for number in range(1, 40)
+        }
+
+        assert letters == {"A", "B", "C", "D"}
+
+    def test_a_question_without_distractors_cannot_be_asked_so(self) -> None:
+        with pytest.raises(BixBenchError, match="bix-1-q1 has no distractors"):
+            multiple_choice(question("42"))
+
+    def test_the_message_has_the_options_and_asks_for_a_letter_and_does_not_give_the_ideal_away(self) -> None:
+        choices = multiple_choice(self.asked)
+        message = question_message(self.asked, ["a.csv"], choices)
+
+        assert choices.lettered() in message
+        assert "- uploads/a.csv" in message
+        assert "Choose E) only if the data cannot answer the question." in message
+        assert "FINAL ANSWER: <the letter of the option alone, such as B>" in message
+        assert "number, a name, or a short phrase" not in message
+        assert message.index("Options:") < message.index("Files:") < message.index("FINAL ANSWER:")
+
+    def test_without_the_refusal_the_message_does_not_mention_one(self) -> None:
+        message = question_message(self.asked, ["a.csv"], multiple_choice(self.asked, refusal_option=False))
+
+        assert "Choose" not in message and "Insufficient" not in message
+
+    def test_a_question_asked_for_an_open_answer_is_asked_as_it_was(self) -> None:
+        message = question_message(self.asked, ["a.csv"])
+
+        assert "Options:" not in message and "the answer alone: a number" in message
+
+    OPTIONS = ("5.2%", "1.2%", "3.5%", "4.9%", INSUFFICIENT_INFORMATION)
+
+    @pytest.mark.parametrize(
+        ("answer", "letter"),
+        [
+            ("C", "C"),
+            ("c", "C"),
+            ("(C)", "C"),
+            ("C)", "C"),
+            ("[C]", "C"),
+            ("C. 3.5%", "C"),
+            ("C: 3.5%", "C"),
+            ("C - 3.5%", "C"),
+            ("C) 3.5%", "C"),
+            ("**C**", "C"),
+            ("**C) 3.5%**", "C"),
+            ("Answer: C", "C"),
+            ("The answer is C)", "C"),
+            ("Option B", "B"),
+            ("choice D", "D"),
+            ("3.5%", "C"),
+            ("3.50 %", None),
+            ("insufficient information", "E"),
+            ("Insufficient information to answer the question.", "E"),
+            ("E", "E"),
+            ("F", None),
+            ("A significant rise", None),
+            ("A rise of 3.5%", None),
+            ("", None),
+            ("none of them", None),
+        ],
+    )
+    def test_the_option_an_answer_chooses(self, answer: str, letter: str | None) -> None:
+        assert chosen_letter(answer, self.OPTIONS) == letter
+
+    def test_a_letter_that_is_not_an_option_is_not_chosen_when_there_are_four(self) -> None:
+        assert chosen_letter("E", self.OPTIONS[:4]) is None
+        assert chosen_letter("insufficient information", self.OPTIONS[:4]) is None
+
+    def test_choosing_the_refusal_is_known(self) -> None:
+        assert chose_refusal("E", self.OPTIONS) and chose_refusal("Insufficient information", self.OPTIONS)
+        assert not chose_refusal("C", self.OPTIONS) and not chose_refusal("", self.OPTIONS)
+
+    def test_the_right_letter_is_right_and_another_is_not(self) -> None:
+        right = grade_choice("C", self.OPTIONS, "C")
+        wrong = grade_choice("B", self.OPTIONS, "C")
+
+        assert (right.correct, right.method) == (True, "choice")
+        assert (wrong.correct, wrong.method, wrong.note) == (False, "choice", "chose B, and C is right")
+
+    def test_the_refusal_is_not_right_and_says_so(self) -> None:
+        grade = grade_choice("E", self.OPTIONS, "C")
+
+        assert not grade.correct and "not enough information" in grade.note
+
+    def test_an_answer_that_chooses_nothing_or_is_missing_is_not_right(self) -> None:
+        assert grade_choice("a rise", self.OPTIONS, "C") == bixbench.Grade(
+            False, "none", "it does not choose one of the options"
+        )
+        assert grade_choice("  ", self.OPTIONS, "C") == bixbench.Grade(False, "none", "no answer")
 
 
 def make_capsule(path: Path, entries: dict[str, bytes | None], links: tuple[str, ...] = ()) -> Path:

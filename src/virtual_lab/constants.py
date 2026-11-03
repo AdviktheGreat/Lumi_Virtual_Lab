@@ -220,6 +220,11 @@ SESSION_MAX_TOOL_ITERATIONS = 20
 # ends its turn.
 MAX_FAKED_CALL_RETRIES = 2
 
+# How many rounds of tool calls the lead has to check its result, when it is asked to (see result_check_prompt). A check
+# is a quick second look, and a lead that is let go on starts to rerun a whole analysis, which can outlast what the
+# sandbox allows one run of code and hold up the conversation for as long.
+CHECK_TOOL_ROUNDS = 6
+
 # Most characters of one tool result given back to a model. Every lookup already budgets its own
 # report, the largest being a full text at 20,000 characters plus its headings and citation, so
 # this is set above all of them and only binds on output that has no budget of its own: the

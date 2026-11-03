@@ -10,6 +10,9 @@
     virtual-lab-bixbench report ~/bixbench --results ~/bixbench/kimi
     virtual-lab-bixbench regrade ~/bixbench --results ~/bixbench/kimi --judge-model <model>
 
+--skills gives every conversation skills (none by default), and --multiple-choice asks each question with options to
+choose from, which is a different and easier test than an open answer, and scores that are not to be counted with it.
+
 Questions are asked of a running server, in a conversation each, so the lead has what a conversation in the interface
 has. Give the server a workspace of its own, or its conversations are mixed with yours. A run saves each question as it
 is graded, so one that stops carries on where it stopped when the same command is run again.
@@ -22,12 +25,21 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from virtual_lab.bixbench import DATASET_REPO, BixBenchError, choose_questions, download_bixbench, load_questions
+from virtual_lab.bixbench import (
+    DATASET_REPO,
+    BixBenchError,
+    BixQuestion,
+    choose_questions,
+    download_bixbench,
+    load_questions,
+    multiple_choice,
+)
 from virtual_lab.bixbench_run import (
     SUMMARY_FILE,
     LabClient,
     LabError,
     RunSettings,
+    choose_skills,
     describe_run,
     format_summary,
     judge_for,
@@ -140,6 +152,28 @@ def build_parser() -> argparse.ArgumentParser:
         "for a run)",
     )
     run.add_argument(
+        "--skills",
+        nargs="+",
+        default=[],
+        metavar="SPEC",
+        help="the skills every conversation is given, as any of: 'none' (the default), 'builtin' (those that come with "
+        "the lab), and folders of skills on this machine, which the server puts in its workspace, where a skill of a "
+        "name it already has is left as it is, so give it a workspace made for the run. A run says which it was given, "
+        "and carrying it on needs the same",
+    )
+    run.add_argument(
+        "--multiple-choice",
+        action="store_true",
+        help="ask each question with options to choose from, its ideal answer among the three distractors the dataset "
+        "has for it and an option that says there is not enough information, and have the lead answer with a letter. "
+        "That is easier than an open answer, and its score is not to be counted with one",
+    )
+    run.add_argument(
+        "--no-refusal-option",
+        action="store_true",
+        help="with --multiple-choice, leave out the option that says there is not enough information",
+    )
+    run.add_argument(
         "--max-cost", type=float, default=3.0, help="most USD one question may cost (default: %(default)s)"
     )
     run.add_argument(
@@ -183,13 +217,17 @@ def allowed(arguments: argparse.Namespace, group: str | None) -> bool:
     return True
 
 
-def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def chat_request(
+    arguments: argparse.Namespace, tools: Sequence[dict[str, Any]], skills: Sequence[str] = ()
+) -> dict[str, Any]:
     """What each question's conversation is made with: the lead's model, its team, and code in Docker with no keys of
     the user's passed in. It is given the server's tools except those that search papers, unless --literature, and those
     that search the web, unless --web, and none of the MCP servers, data, software, or functions the workspace has, so
     that the questions are answered from the data they come with. Everything else is the server's settings.
 
     :param tools: The server's tools, as it describes them.
+    :param skills: The names of the skills to give each conversation, which are all it is given: a conversation made
+        without a list is given every skill the server has turned on, which would be whichever it happens to have.
     """
     code: dict[str, Any] = {
         "where": "docker",
@@ -210,6 +248,7 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
         "data": [],
         "software": [],
         "functions": [],
+        "skills": list(skills),
         "max_cost": arguments.max_cost,
         "max_tool_iterations": arguments.max_tool_calls,
         # Always said, so that results of a server that has the check are not counted with those of one that does not
@@ -269,6 +308,18 @@ def lab_request(arguments: argparse.Namespace) -> dict[str, Any] | None:
     return {"mode": lab.mode, "members": list(lab.members), "rounds": lab.rounds}
 
 
+def choice_settings(arguments: argparse.Namespace, questions: Sequence[BixQuestion]) -> None:
+    """Checks what a run asked as multiple choice can be.
+
+    :raises BixBenchError: If --no-refusal-option is given without --multiple-choice, or a question has no distractors.
+    """
+    if arguments.no_refusal_option and not arguments.multiple_choice:
+        raise BixBenchError("--no-refusal-option is for --multiple-choice")
+    if arguments.multiple_choice:
+        for question in questions:
+            multiple_choice(question, not arguments.no_refusal_option)
+
+
 def data_lake_warning(arguments: argparse.Namespace, client: LabClient) -> str | None:
     """What to tell the person starting a run when the lead will have no data lake to read, which is when the
     directory it is told to use has nothing in it, or when it is left to the server and the server's has none of its
@@ -326,11 +377,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"The server's token is needed: pass --token or set ${TOKEN_VARIABLE}", file=sys.stderr)
             return 2
         lab = lab_request(arguments)
+        choice_settings(arguments, questions)
         client = LabClient(arguments.url, arguments.token)
         if (warning := data_lake_warning(arguments, client)) is not None:
             print(f"Warning: {warning}", file=sys.stderr)
         settings = RunSettings(
-            chat=chat_request(arguments, client.tools()), timeout=arguments.timeout, lab=lab
+            chat=chat_request(arguments, client.tools(), choose_skills(arguments.skills, client)),
+            timeout=arguments.timeout,
+            lab=lab,
+            multiple_choice=arguments.multiple_choice,
+            refusal_option=not arguments.no_refusal_option,
         )
         judge_model = arguments.judge_model or arguments.model
         summary = run_bixbench(

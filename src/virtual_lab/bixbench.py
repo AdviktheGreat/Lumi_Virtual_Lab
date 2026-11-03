@@ -19,11 +19,19 @@ are FutureHouse's, from bixbench/prompts.py, word for word. Every answer is also
 which accepts what a benchmark author's rounding or an R-versus-Python difference in the last digits would otherwise
 fail, as others who report scores on this set have done. The two are kept apart and always reported together, because
 only the first is the benchmark's own.
+
+A question can also be asked as multiple choice, as BixBench's own multiple-choice form and those who report scores on
+this set with it do: the ideal answer and the three distractors the dataset gives, in an order that is fixed for each
+question, and an option that says there is not enough information. The lead answers with a letter, and the answer is
+right if it is the ideal's. That is a different, easier test than an open answer (a wrong answer can be picked out as
+well as a right one found, and an option that stands for the number the analysis came to is a check on it), so its score
+is never to be counted with an open answer's.
 """
 
 import ast
 import json
 import math
+import random
 import re
 import threading
 import zipfile
@@ -55,6 +63,11 @@ MAX_LISTED_FILES = 150
 OFFICIAL = "official"
 LENIENT = "lenient"
 PROFILES = (OFFICIAL, LENIENT)
+
+# The option a multiple-choice question has besides the ideal and its distractors, which is the lead's way of saying
+# that the data does not answer it. It is the last, and is never right.
+INSUFFICIENT_INFORMATION = "Insufficient information to answer the question"
+LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 # FutureHouse's prompts for the model that judges an answer, from bixbench/prompts.py, unchanged
 OPEN_ENDED_GRADING_PROMPT = """You are given a question, target answer and a predicted answer. Your task is to compare the target answer with the predicted and assess if the predicted answer is correct, incorrect or it refused to answer.
@@ -117,6 +130,7 @@ class BixQuestion:
     :param capsule: The id of the capsule of data it is asked with.
     :param archive: The name of the capsule's file in the dataset.
     :param categories: The kinds of analysis it is, as the dataset names them.
+    :param distractors: Wrong answers that look like the ideal, which a multiple-choice question has as options.
     """
 
     id: str
@@ -126,6 +140,7 @@ class BixQuestion:
     capsule: str
     archive: str
     categories: str = ""
+    distractors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -179,6 +194,9 @@ def load_questions(directory: Path) -> list[BixQuestion]:
             continue
         try:
             row = json.loads(line)
+            distractors = row.get("distractors") or []
+            if not isinstance(distractors, list):
+                raise ValueError(f"distractors is a list, not {distractors!r}")
             question = BixQuestion(
                 id=str(row["question_id"]),
                 question=str(row["question"]),
@@ -187,6 +205,7 @@ def load_questions(directory: Path) -> list[BixQuestion]:
                 capsule=str(row.get("capsule_uuid", "")),
                 archive=str(row["data_folder"]),
                 categories=str(row.get("categories") or ""),
+                distractors=tuple(str(each) for each in distractors),
             )
         except (KeyError, TypeError, ValueError) as error:
             raise BixBenchError(f"Line {number} of {path} is not a question: {error!r}") from error
@@ -347,8 +366,62 @@ def describe_files(files: Sequence[str]) -> str:
     return "\n".join(shown)
 
 
-def question_message(question: BixQuestion, files: Sequence[str]) -> str:
-    """What the lead is told to have it answer a question."""
+@dataclass(frozen=True)
+class Choices:
+    """The options a question is asked with.
+
+    :param options: Each option's text, in the order of the letters A, B, C, and so on.
+    :param right: The letter of the ideal.
+    """
+
+    options: tuple[str, ...]
+    right: str
+
+    def lettered(self) -> str:
+        """The options as lines, each with its letter."""
+        return "\n".join(f"{LETTERS[number]}) {option}" for number, option in enumerate(self.options))
+
+    def refusal(self) -> str | None:
+        """The letter of the option that says there is not enough information, if there is one."""
+        return LETTERS[len(self.options) - 1] if self.options[-1:] == (INSUFFICIENT_INFORMATION,) else None
+
+
+def multiple_choice(question: BixQuestion, refusal_option: bool = True) -> Choices:
+    """The options to ask a question with: its ideal and its distractors in an order that is the same every time for
+    the question, and then, unless refusal_option is false, the option that says there is not enough information.
+
+    :raises BixBenchError: If the question has no distractors.
+    """
+    if not question.distractors:
+        raise BixBenchError(f"{question.id} has no distractors, so it cannot be asked as multiple choice")
+    options = [question.ideal, *question.distractors]
+    # A string seeds the generator the same way on every run and every machine, which a hash of it would not
+    random.Random(f"bixbench-choices:{question.id}").shuffle(options)
+    right = LETTERS[options.index(question.ideal)]
+    if refusal_option:
+        options.append(INSUFFICIENT_INFORMATION)
+
+    return Choices(tuple(options), right)
+
+
+def question_message(question: BixQuestion, files: Sequence[str], choices: Choices | None = None) -> str:
+    """What the lead is told to have it answer a question, as multiple choice if it is given choices."""
+    if choices is not None:
+        refusal = choices.refusal()
+        return (
+            f"This is a bioinformatics analysis task. The data for it is in the folder `{UPLOADS_DIRECTORY}/` of your "
+            "working directory. Analyse it with code, work out the answer from the data yourself, and then choose "
+            "the option that matches it.\n\n"
+            "Nobody is available to answer questions or to choose for you. Where the question leaves a detail open, "
+            "choose as an expert analyst would, and say what you chose.\n\n"
+            f"Question: {question.question}\n\n"
+            f"Options:\n{choices.lettered()}\n\n"
+            + (f"Choose {refusal}) only if the data cannot answer the question.\n\n" if refusal else "")
+            + f"Files:\n{describe_files(files)}\n\n"
+            "End your reply with one line, written exactly like this:\n"
+            "FINAL ANSWER: <the letter of the option alone, such as B>"
+        )
+
     return (
         f"This is a bioinformatics analysis task. The data for it is in the folder `{UPLOADS_DIRECTORY}/` of your "
         "working directory. Analyse it with code, then answer the question.\n\n"
@@ -559,6 +632,59 @@ def grade_answer(question: BixQuestion, answer: str, judge: Judge | None) -> dic
     official = grade_official(question, answer, judge)
 
     return {OFFICIAL: official, LENIENT: grade_lenient(question, answer, official, judge)}
+
+
+# What a reply may put before the letter, such as "The answer is", and the ways a letter is written: alone, closed with
+# a bracket, or with a full stop or a colon or a dash after it and then the option
+ANSWER_WORDS = re.compile(r"^(?:the\s+)?(?:answer|option|choice)\s*(?:is\s*)?[:\-]?\s*", re.IGNORECASE)
+LETTER_ALONE = re.compile(r"^([A-Za-z])$")
+LETTER_CLOSED = re.compile(r"^[(\[]?([A-Za-z])[)\]]")
+LETTER_STOPPED = re.compile(r"^([A-Za-z])(?:[.:]|\s+[-–—])(?:\s|$)")
+
+
+def chosen_letter(answer: str, options: Sequence[str]) -> str | None:
+    """The letter of the option an answer chooses, or None if it is not one of them.
+
+    An answer chooses an option by its letter, written alone, as "B)", "(B)", or "B. text", or by its text, which is the
+    option's but for case and punctuation. A word that starts with a letter, as "A significant rise" does, is not a
+    letter.
+    """
+    text = clean_answer(ANSWER_WORDS.sub("", clean_answer(answer)))
+    for pattern in (LETTER_ALONE, LETTER_CLOSED, LETTER_STOPPED):
+        if match := pattern.match(text):
+            number = LETTERS.find(match.group(1).upper())
+            return LETTERS[number] if 0 <= number < len(options) else None
+    wanted = letters_and_digits(text)
+    if not wanted:
+        return None
+    for number, option in enumerate(options):
+        if letters_and_digits(option) == wanted:
+            return LETTERS[number]
+    # The refusal as it is usually shortened
+    if options and options[-1] == INSUFFICIENT_INFORMATION and wanted.startswith("insufficientinformation"):
+        return LETTERS[len(options) - 1]
+
+    return None
+
+
+def chose_refusal(answer: str, options: Sequence[str]) -> bool:
+    """Whether an answer chooses the option that says there is not enough information."""
+    letter = chosen_letter(answer, options)
+
+    return letter is not None and options[LETTERS.index(letter)] == INSUFFICIENT_INFORMATION
+
+
+def grade_choice(answer: str, options: Sequence[str], right: str) -> Grade:
+    """Grades an answer to a multiple-choice question: it is right if it chooses the option that is the ideal."""
+    if not answer.strip():
+        return Grade(False, "none", "no answer")
+    letter = chosen_letter(answer, options)
+    if letter is None:
+        return Grade(False, "none", "it does not choose one of the options")
+    if chose_refusal(answer, options):
+        return Grade(False, "choice", f"chose {letter}, which says there is not enough information; {right} is right")
+
+    return Grade(letter == right, "choice", f"chose {letter}, and {right} is right")
 
 
 class ModelJudge:

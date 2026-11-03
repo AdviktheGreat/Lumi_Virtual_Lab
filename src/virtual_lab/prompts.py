@@ -3,7 +3,7 @@
 from typing import Iterable, Sequence, TYPE_CHECKING
 
 from virtual_lab.agent import Agent
-from virtual_lab.constants import DEFAULT_MODEL
+from virtual_lab.constants import CHECK_TOOL_ROUNDS, DEFAULT_MODEL
 
 if TYPE_CHECKING:
     from virtual_lab.artifacts import CodeFile
@@ -440,10 +440,25 @@ def result_check_prompt() -> str:
         "published value. Treat a result that is empty, zero, or just either side of a threshold as a reason to "
         "look again.\n"
         "Where a second way of getting the number can be run, such as another method or library, or recomputing a "
-        "key step on its own, run it now and do not argue it. If you find a mistake, fix it and run it again. If "
+        "key step on its own, run it now and do not argue it. Keep each check short, run in the foreground and done "
+        "within a minute or two: do not start a background job (nohup, &), and do not run a whole analysis or "
+        "pipeline again, only the step that the number rests on. A check that would take longer is one to leave out, "
+        "and to say that you left out. You have up to "
+        f"{CHECK_TOOL_ROUNDS} rounds of tool calls for the checks. If you find a mistake, fix it and run it again. If "
         "the answer depends on a choice the message does not settle, and the reasonable choices differ, say which "
         "you chose and what the other gives. Then give your answer again in full, in the same form as before, "
         "including any last line the researcher asked for."
+    )
+
+
+def checks_over_prompt() -> str:
+    """Generates the message that tells the lead, on its last request of a check of its result, that no more tools can
+    be called, and that it is to give its answer."""
+    return (
+        "You have used the rounds of tool calls for checking your result, so no tools can be called now, and nothing "
+        "you write as a tool call would be run. Say in a line any check you did not finish. Then give your answer "
+        "again in full, in the same form as before, including any last line the researcher asked for, changed if a "
+        "check you finished showed it to be wrong."
     )
 
 

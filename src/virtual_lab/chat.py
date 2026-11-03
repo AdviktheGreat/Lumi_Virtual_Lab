@@ -46,6 +46,7 @@ from virtual_lab.constants import (
     CHAT_LAB_DIR_NAME,
     CHAT_MESSAGES_FILE_NAME,
     CHAT_UPLOADS_DIR_NAME,
+    CHECK_TOOL_ROUNDS,
     CONSISTENT_TEMPERATURE,
     DEFAULT_MAX_RETRIES,
     HUMAN_SPEAKER,
@@ -77,6 +78,7 @@ from virtual_lab.prompts import (
     chat_note_prompt,
     chat_resources_prompt,
     chat_session_prompt,
+    checks_over_prompt,
     faked_tool_calls_prompt,
     lab_chat_prompt,
     out_of_tool_turns_prompt,
@@ -1622,10 +1624,12 @@ class Chat:
         # Replies that were a tool call written out as text, which are not counted as one of the rounds of tool calls
         faked = 0
         iteration = 0
+        # Where the rounds of tool calls end, which is sooner once the lead is asked to check its result
+        limit = self.max_tool_iterations
 
         while True:
             # The tools are withheld on the final attempt, to force an answer
-            final = iteration >= self.max_tool_iterations
+            final = iteration >= limit
 
             if note := self._gate("lead"):
                 self._append({"role": "user", "content": chat_note_prompt(note)})
@@ -1635,8 +1639,10 @@ class Chat:
                 *self.messages,  # type: ignore[list-item]
             ]
             if final and not withheld:
-                # Said in this request alone, so that it is not in what the lead reads of this conversation later
-                request.append({"role": "user", "content": out_of_tool_turns_prompt(self.max_tool_iterations)})
+                # Said in this request alone, so that it is not in what the lead reads of this conversation later. A
+                # lead that has written its answer is asked for it again, and not for how far it got.
+                ending = checks_over_prompt() if draft is not None else out_of_tool_turns_prompt(limit)
+                request.append({"role": "user", "content": ending})
             try:
                 self._check_fits(request)
                 self._check_budget()
@@ -1680,12 +1686,16 @@ class Chat:
                 and self._ask_to_check(reply)
             ):
                 draft = reply.content
+                limit = min(limit, iteration + CHECK_TOOL_ROUNDS)
                 continue
 
             if final or not reply.tool_calls:
                 answer = reply.content
                 if writes_calls:
-                    answer = without_faked_calls(answer) or (
+                    answer = without_faked_calls(answer)
+                    if not answer.strip() and draft is not None:
+                        return draft
+                    answer = answer or (
                         OUT_OF_TURNS_REPLY.format(limit=self.max_tool_iterations) if final else FAKED_CALL_REPLY
                     )
                 if not answer.strip():
