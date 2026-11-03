@@ -1,10 +1,13 @@
 """Tests for reaching models from any provider through LangChain."""
 
 import contextvars
+import json
 import threading
 import time
 from typing import Any
 
+import httpx
+import openai
 import pytest
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -96,6 +99,19 @@ def provider_error(status: int, message: str) -> Exception:
     error.status_code = status  # type: ignore[attr-defined]
     error.message = message  # type: ignore[attr-defined]
     return error
+
+
+def gateway_error(provider_said: str, *, quoted_in_message: bool = True) -> openai.BadRequestError:
+    """An error shaped as OpenRouter shapes a refusal by the provider behind it: the status as the code."""
+    body = {
+        "message": "Provider returned error",
+        "code": 400,
+        "metadata": {"raw": json.dumps({"error": {"message": provider_said}}), "provider_name": "Moonshot AI"},
+    }
+    message = f"Error code: 400 - {{'error': {body}}}" if quoted_in_message else body["message"]
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+
+    return openai.BadRequestError(message, response=httpx.Response(400, request=request), body=body)
 
 
 class Decision(BaseModel):
@@ -692,6 +708,15 @@ class TestMeetingsWithOtherProviders:
         assert result.record.models_at_default_temperature == [CLAUDE]
         assert CLAUDE in MODELS_WITHOUT_TEMPERATURE
 
+    def test_a_gateways_refusal_of_the_temperature_is_dropped_too(self, tmp_path) -> None:
+        error = gateway_error("invalid temperature: only 1 is allowed for this model")
+        llm = ScriptedChatModel(replies=[error, answer("A."), answer("B."), answer("C.")])
+
+        result = critic_meeting(tmp_path, llm, temperature=0.2)
+
+        assert [setting["temperature"] for setting in llm.settings] == [0.2, None, None, None]
+        assert result.record.models_at_default_temperature == [CLAUDE]
+
     def test_the_completion_limit_reaches_the_provider(self, tmp_path) -> None:
         llm = ScriptedChatModel()
 
@@ -778,6 +803,38 @@ class TestRejectsTemperature:
     def test_other_failures_are_not_refusals(self) -> None:
         assert not rejects_temperature(self.error(500, "temperature not supported"))
         assert not rejects_temperature(self.error(400, "max_tokens not supported"))
+
+    def test_a_model_that_takes_the_one_temperature_refuses_any_other(self) -> None:
+        assert rejects_temperature(self.error(400, "invalid temperature: only 1 is allowed for this model"))
+        assert rejects_temperature(self.error(400, "invalid temperature: only 0.6 is allowed for this model"))
+
+    def test_a_gateways_status_in_the_code_does_not_hide_the_providers_refusal(self) -> None:
+        error = gateway_error("invalid temperature: only 1 is allowed for this model")
+
+        assert error.code == "400" and error.param is None
+        assert rejects_temperature(error)
+
+    def test_what_the_provider_said_is_read_where_the_message_only_names_the_gateway(self) -> None:
+        error = gateway_error("invalid temperature: only 1 is allowed for this model", quoted_in_message=False)
+
+        assert rejects_temperature(error)
+
+    def test_what_the_provider_said_is_read_when_the_gateway_passes_it_on_parsed(self) -> None:
+        error = gateway_error("unused", quoted_in_message=False)
+        error.body["metadata"]["raw"] = {"error": {"message": "invalid temperature: only 1 is allowed for this model"}}
+
+        assert rejects_temperature(error)
+
+    def test_a_gateways_refusal_of_something_else_is_not_one_of_the_temperature(self) -> None:
+        assert not rejects_temperature(gateway_error("max_tokens is too large"))
+        assert not rejects_temperature(gateway_error("temperature: must be less than or equal to 2"))
+
+    def test_an_openai_code_for_something_else_is_not_a_refusal_of_the_temperature(self) -> None:
+        request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+        body = {"message": "Unsupported value: 'max_tokens'", "param": "max_tokens", "code": "unsupported_value"}
+        error = openai.BadRequestError("bad", response=httpx.Response(400, request=request), body=body)
+
+        assert not rejects_temperature(error)
 
 
 class TestRecord:

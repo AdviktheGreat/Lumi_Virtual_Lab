@@ -13,6 +13,8 @@ refusal again. The meeting record says which models ran at their default tempera
 transcript produced at 1.0 is not the same experiment as one produced at 0.2.
 """
 
+import json
+import re
 import threading
 from typing import Callable, TypeVar
 
@@ -58,6 +60,30 @@ REFUSAL_PHRASES = (
     "is deprecated",
 )
 
+# A model that takes the one temperature only, as Moonshot's Kimi does ("only 1 is allowed for
+# this model"), which is a refusal of any other
+ONLY_ONE_VALUE = re.compile(r"\bonly [\d.]+ (?:is|are) allowed")
+
+
+def error_text(error: BaseException) -> str:
+    """What a refused request said, in lower case, with what a gateway quotes of the provider.
+
+    OpenRouter's message for a refusal by the provider behind it is only "Provider returned
+    error". What the provider said is in the metadata of the error.
+
+    :param error: The error the request raised.
+    :return: The message of the error and the provider's words in it, if it has them.
+    """
+    text = str(getattr(error, "message", None) or error)
+
+    body = getattr(error, "body", None)
+    metadata = body.get("metadata") if isinstance(body, dict) else None
+    raw = metadata.get("raw") if isinstance(metadata, dict) else None
+    if raw is not None:
+        text = f"{text} {raw if isinstance(raw, str) else json.dumps(raw, default=str)}"
+
+    return text.lower()
+
 
 def rejects_temperature(error: BaseException) -> bool:
     """Whether a refused request was refused because the model takes no temperature.
@@ -65,23 +91,24 @@ def rejects_temperature(error: BaseException) -> bool:
     OpenAI names the offending parameter and gives a code, which are the parts of its error
     meant to be read by a program. Anthropic and the OpenAI-compatible servers give neither, so
     for them the message is read, and only a 400 that names the temperature as unsupported
-    counts.
+    counts. A gateway such as OpenRouter gives the status as the code, which says nothing of
+    the parameter, so that too is read by its message.
 
     :param error: The error the request raised.
     :return: Whether removing the temperature could make the request succeed.
     """
-    if isinstance(error, openai.BadRequestError) and getattr(error, "code", None) is not None:
-        return (
-            getattr(error, "param", None) == "temperature"
-            and getattr(error, "code", None) in UNSUPPORTED_CODES
-        )
+    code = getattr(error, "code", None)
+    if isinstance(error, openai.BadRequestError) and code is not None and not str(code).isdigit():
+        return getattr(error, "param", None) == "temperature" and code in UNSUPPORTED_CODES
 
     if getattr(error, "status_code", None) != 400:
         return False
 
-    message = str(getattr(error, "message", None) or error).lower()
+    message = error_text(error)
 
-    return "temperature" in message and any(phrase in message for phrase in REFUSAL_PHRASES)
+    return "temperature" in message and (
+        any(phrase in message for phrase in REFUSAL_PHRASES) or ONLY_ONE_VALUE.search(message) is not None
+    )
 
 
 def send_request(
