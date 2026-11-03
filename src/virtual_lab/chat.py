@@ -1589,7 +1589,8 @@ class Chat:
         withheld = self._directive is not None and self._directive.no_tools
         definitions = [] if withheld else [tool.definition for tool in self._turn_tools()]
         reminded = False
-        checked = False
+        # What the lead wrote when it was asked to check, which is the answer if the check cannot be carried out
+        draft: str | None = None
         # Replies that were a tool call written out as text, which are not counted as one of the rounds of tool calls
         faked = 0
         iteration = 0
@@ -1608,8 +1609,14 @@ class Chat:
             if final and not withheld:
                 # Said in this request alone, so that it is not in what the lead reads of this conversation later
                 request.append({"role": "user", "content": out_of_tool_turns_prompt(self.max_tool_iterations)})
-            self._check_fits(request)
-            self._check_budget()
+            try:
+                self._check_fits(request)
+                self._check_budget()
+            except (BudgetExceededError, ContextLengthExceededError):
+                # The researcher is given what it wrote, which was an answer, rather than an error for the check
+                if draft is None:
+                    raise
+                return draft
             reply = self._ask(self.lead, request, definitions if definitions and not final else None)
             self._count(self.lead.model, reply)
             self._checkpoint()
@@ -1635,11 +1642,17 @@ class Chat:
             if not final and not reply.tool_calls and not reminded and self._remind(reply):
                 reminded = True
                 continue
-            # Not on the last round, which has no tools to run the checks with
-            if not final and not reply.tool_calls and not checked and iteration < self.max_tool_iterations:
-                if self._ask_to_check(reply):
-                    checked = True
-                    continue
+            # Only while a round remains after this one, with tools, to run the checks in
+            if (
+                not final
+                and not reply.tool_calls
+                and not writes_calls
+                and draft is None
+                and iteration < self.max_tool_iterations
+                and self._ask_to_check(reply)
+            ):
+                draft = reply.content
+                continue
 
             if final or not reply.tool_calls:
                 answer = reply.content
@@ -1648,6 +1661,8 @@ class Chat:
                         OUT_OF_TURNS_REPLY.format(limit=self.max_tool_iterations) if final else FAKED_CALL_REPLY
                     )
                 if not answer.strip():
+                    if draft is not None:
+                        return draft
                     raise RuntimeError(f"{self.lead.title} sent no answer")
                 if reply.finish_reason == "length":
                     print(f"Warning: {self.lead.title} ran out of tokens and its answer is cut short.")

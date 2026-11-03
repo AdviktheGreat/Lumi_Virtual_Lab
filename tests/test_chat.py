@@ -31,14 +31,14 @@ from virtual_lab.chat import (
     safe_filename,
     title_of,
 )
-from virtual_lab.constants import HUMAN_SPEAKER
+from virtual_lab.constants import HUMAN_SPEAKER, MAX_FAKED_CALL_RETRIES
 from virtual_lab.directives import LabRequest
 from virtual_lab.events import ChatEvent
 from virtual_lab.failures import KEY_REFUSED, SAFETY_FLAGGED, UNWELL
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC, result_check_prompt
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
-from virtual_lab.utils import ContextLengthExceededError, CostUnknownError, compute_token_cost
+from virtual_lab.utils import BudgetExceededError, ContextLengthExceededError, CostUnknownError, compute_token_cost
 from virtual_lab.vision import Picture, view_image_tool
 
 from conftest import TEST_MODEL, FakeClient, make_usage, text_response, tool_call_response
@@ -2782,6 +2782,56 @@ class TestResultCheck:
         reply = chat.send("Print one")
 
         assert reply.text == "It is 1." and len(fake_client.completions.calls) == 2
+
+    def test_the_researcher_is_given_the_answer_that_was_written_if_the_check_cannot_be_afforded(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+        asked = []
+
+        def check_budget() -> None:
+            asked.append(True)
+            if len(asked) == 3:
+                raise BudgetExceededError(spent=1.0, limit=1.0, what="conversation")
+
+        chat._check_budget = check_budget  # type: ignore[method-assign]
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert (reply.status, reply.text) == ("answered", "It is 42.")
+        assert len(fake_client.completions.calls) == 2
+
+    def test_the_researcher_is_given_the_answer_that_was_written_if_the_check_is_answered_with_nothing(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            text_response("It is 42."),
+            text_response(""),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert (reply.status, reply.text) == ("answered", "It is 42.")
+
+    def test_a_reply_that_writes_a_call_out_is_not_checked(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("run_code", {"code": "print(6 * 7)"}),
+            *[text_response(f"It is 42.\n{WRITTEN_OUT}")] * (MAX_FAKED_CALL_RETRIES + 1),
+        ]
+        chat = make_chat(tmp_path, session=session, check_results=True)
+
+        reply = chat.send("What is 6 times 7?")
+
+        assert reply.text == "It is 42."
+        assert not any(message.get("content") == result_check_prompt() for message in chat.messages)
 
     def test_a_command_that_was_not_carried_out_is_asked_first_and_the_result_is_checked_after(
         self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
