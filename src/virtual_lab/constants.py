@@ -533,6 +533,36 @@ MAX_SEQUENCE_RESIDUES_REPORTED = 1_200
 # would be answered, charged for, and then largely ignored.
 MAX_SEARCH_RESULTS = 25
 
+# Results a web search gives when it is not told how many, and the most it may be asked for. A page of results is
+# what an engine itself shows, and a model that wants more is better off with a narrower query.
+WEB_SEARCH_DEFAULT_RESULTS = 8
+WEB_SEARCH_MAX_RESULTS = 20
+
+# The most characters of a search result's snippet to show. Engines write a sentence or two, and a few quote a whole
+# paragraph.
+MAX_WEB_SNIPPET_CHARS = 400
+
+# Most bytes of a web page to read, which is more than the limit for a database record because a PDF of a paper is
+# one, and a paper is often several megabytes.
+MAX_WEB_PAGE_BYTES = 15_000_000
+
+# Seconds in all to read one page, redirects included. WEB_TIMEOUT_SECONDS bounds each wait, which a server that
+# sends a byte at a time never exceeds.
+WEB_PAGE_TOTAL_SECONDS = 60
+
+# The characters of a page's text one call gives, and where the next call carries on. A page is longer than a
+# conversation can hold at once, and a call that cut it short without saying so would lose the rest.
+WEB_PAGE_CHARS = 16_000
+
+# How long the text of a page is kept so that reading on from where a call stopped does not fetch it again, and how
+# many pages are kept. Short, because a page changes and a person asked a question about it now.
+WEB_PAGE_CACHE_SECONDS = 600
+WEB_PAGE_CACHE_ENTRIES = 16
+
+# Most links to list for a page, which is more than a model chooses among, and with the text of a call is within the
+# length a tool's output may be
+MAX_WEB_PAGE_LINKS = 60
+
 # Chains of a structure to describe. A ribosome has dozens, and the first few are enough to tell
 # an agent what the structure contains.
 MAX_CHAINS_REPORTED = 8

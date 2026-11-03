@@ -220,6 +220,9 @@ from virtual_lab.tools import (
     TOOL_REGISTRY,
     UNIPROT_LOOKUP_TOOL,
     UNIPROT_SEARCH_TOOL,
+    WEB_FETCH_TOOL,
+    WEB_SEARCH_TOOL,
+    WEB_TOOLS,
     Tool,
     all_tools,
     data_file_tools,
@@ -237,6 +240,8 @@ from virtual_lab.web import (
     request_json,
     request_text,
 )
+from virtual_lab.webpages import read_page
+from virtual_lab.websearch import search_web
 
 
 __all__ = [
@@ -391,6 +396,9 @@ __all__ = [
     "UnsupportedLanguageError",
     "UploadTooLargeError",
     "ViewError",
+    "WEB_FETCH_TOOL",
+    "WEB_SEARCH_TOOL",
+    "WEB_TOOLS",
     "WebRequestError",
     "accepts_images",
     "all_tools",
@@ -438,6 +446,7 @@ __all__ = [
     "project_html",
     "read_biorxiv_subjects",
     "read_function",
+    "read_page",
     "read_paper",
     "read_papers",
     "request_json",
@@ -464,6 +473,7 @@ __all__ = [
     "search_preprints",
     "search_proteins",
     "search_targets",
+    "search_web",
     "select_resources",
     "serve_mcp",
     "session_executor",

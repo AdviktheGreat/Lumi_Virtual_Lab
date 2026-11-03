@@ -55,6 +55,11 @@ ALLOWED_HOSTS = frozenset(
         # Preprints
         "export.arxiv.org",
         "api.biorxiv.org",
+        # Web search, which is sent whatever a model asks it. DuckDuckGo needs no key; the others are used when
+        # there is one.
+        "html.duckduckgo.com",
+        "api.tavily.com",
+        "api.search.brave.com",
     }
 )
 
@@ -300,6 +305,8 @@ def build_url(template: str, **segments: str) -> str:
 # ignoring it is being blocked rather than being told to slow down.
 HOST_MIN_INTERVALS = {
     "export.arxiv.org": 3.0,
+    # Its HTML page is for people, and answers a client that searches in quick succession with a challenge
+    "html.duckduckgo.com": 1.5,
 }
 
 
@@ -450,7 +457,7 @@ def response_encoding(response: requests.Response) -> str:
     return "utf-8"
 
 
-def read_capped(response: requests.Response, max_bytes: int) -> str:
+def read_bytes_capped(response: requests.Response, max_bytes: int, deadline: float | None = None) -> bytes:
     """Reads a response body, refusing to read more than a meeting can be given.
 
     The body is read in chunks and abandoned once it is too long, rather than read in full and
@@ -458,8 +465,11 @@ def read_capped(response: requests.Response, max_bytes: int) -> str:
 
     :param response: The streaming response to read.
     :param max_bytes: The most bytes to accept.
+    :param deadline: When to give up, as time.monotonic() reads, if a server that sends a byte at a time
+        is not to be waited for indefinitely.
     :raises ResponseTooLargeError: If the body exceeds the limit.
-    :return: The decoded body.
+    :raises WebRequestError: If the deadline passes before the body has been read.
+    :return: The body, as it was sent after any compression was undone.
     """
     declared = response.headers.get("Content-Length")
 
@@ -486,17 +496,39 @@ def read_capped(response: requests.Response, max_bytes: int) -> str:
                 f"{response.url} returned more than the {max_bytes:,} byte limit"
             )
 
+        if deadline is not None and time.monotonic() > deadline:
+            raise WebRequestError(f"{response.url} was too slow to send")
+
         chunks.append(chunk)
 
-    encoding = response_encoding(response)
+    return b"".join(chunks)
 
+
+def decode_body(body: bytes, encoding: str) -> str:
+    """Decodes a response body, which is not a reason to abandon it if it cannot be read as its sender said.
+
+    :param body: The bytes.
+    :param encoding: The name of the codec the sender gave.
+    :return: The text.
+    """
     try:
-        return b"".join(chunks).decode(encoding, errors="replace")
+        return body.decode(encoding, errors="replace")
     except (LookupError, UnicodeError):
         # A service naming a codec Python does not have is not a reason to abandon the body, and
         # letting LookupError escape would bypass every caller's handling of WebRequestError.
         # UnicodeError is for a codec that exists but refuses errors="replace", which idna does
-        return b"".join(chunks).decode("utf-8", errors="replace")
+        return body.decode("utf-8", errors="replace")
+
+
+def read_capped(response: requests.Response, max_bytes: int) -> str:
+    """Reads a response body as text, refusing to read more than a meeting can be given.
+
+    :param response: The streaming response to read.
+    :param max_bytes: The most bytes to accept.
+    :raises ResponseTooLargeError: If the body exceeds the limit.
+    :return: The decoded body.
+    """
+    return decode_body(read_bytes_capped(response, max_bytes), response_encoding(response))
 
 
 def retry_delay(attempt: int, response: requests.Response | None) -> float:

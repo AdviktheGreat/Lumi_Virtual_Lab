@@ -105,6 +105,16 @@ describe("what a call is shown as", () => {
       code: null,
     });
     expect(summarize(call("pubmed_search", { query: "TP53", num_articles: 5 }))).toMatchObject({ title: "Searched PubMed" });
+    expect(summarize(call("web_search", { query: "DepMap\n gene effect" }, "running"))).toEqual({
+      title: "Searching the web",
+      detail: "DepMap gene effect",
+      code: null,
+    });
+    expect(summarize(call("web_fetch", { url: "https://depmap.org/portal/", start: 16000 }))).toEqual({
+      title: "Read a web page",
+      detail: "https://depmap.org/portal/",
+      code: null,
+    });
     expect(summarize(call("uniprot_lookup", { accession: "P04637" }))).toMatchObject({
       title: "Looked up a protein",
       detail: "P04637",

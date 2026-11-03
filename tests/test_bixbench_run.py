@@ -829,6 +829,8 @@ class FakeServer(LabClient):
         return [
             {"name": "pubmed_search", "group": "Literature"},
             {"name": "europepmc_fulltext", "group": "Literature"},
+            {"name": "web_search", "group": "Web"},
+            {"name": "web_fetch", "group": "Web"},
             {"name": "uniprot_lookup", "group": "Proteins and structures"},
             {"name": "inspect_data_file", "group": "Your files"},
         ]
@@ -942,6 +944,20 @@ class TestCommandLine:
 
         assert seen["chat"]["tools"] == ["pubmed_search", "europepmc_fulltext", "uniprot_lookup", "inspect_data_file"]
         assert seen["chat"]["mcp"] == []
+
+    def test_the_lead_can_be_given_the_tools_that_search_the_web_and_not_those_that_search_papers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            bixbench_cli, "run_bixbench", lambda questions, *args, **kwargs: seen.update(chat=args[4].chat) or {}
+        )
+        monkeypatch.setattr(bixbench_cli, "judge_for", lambda model: None)
+        monkeypatch.setattr(bixbench_cli, "format_summary", lambda summary: "")
+
+        bixbench_cli.main([*self.run_command(tmp_path, "--token", "t", "--web")])
+
+        assert seen["chat"]["tools"] == ["web_search", "web_fetch", "uniprot_lookup", "inspect_data_file"]
 
     def test_the_most_tool_calls_for_a_question_can_be_changed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

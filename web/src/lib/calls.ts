@@ -60,6 +60,8 @@ const LOOKUPS: Record<string, Lookup> = {
   europepmc_lookup: lookup("Looking up an article", "Looked up an article", asked("identifier")),
   europepmc_fulltext: lookup("Reading an article", "Read an article", asked("pmcid")),
   arxiv_search: lookup("Searching arXiv", "Searched arXiv", asked("query")),
+  web_search: lookup("Searching the web", "Searched the web", asked("query")),
+  web_fetch: lookup("Reading a web page", "Read a web page", asked("url")),
   uniprot_search: lookup("Searching UniProt", "Searched UniProt", asked("query")),
   uniprot_lookup: lookup("Looking up a protein", "Looked up a protein", asked("accession")),
   pdb_lookup: lookup("Looking up a structure", "Looked up a structure", asked("pdb_id")),
