@@ -28,6 +28,7 @@ from virtual_lab.server.functions import check_function_runs, given_runs
 from virtual_lab.server.library import SETTABLE_KEYS, missing_keys, models, provider_of
 from virtual_lab.server.mcp import check_server_names, servers_on
 from virtual_lab.server.own import check_own_names
+from virtual_lab.server.skills import check_skill_names, load_skills
 from virtual_lab.server.tools import check_tool_names, tool_names
 from virtual_lab.server.workspace import SCIENTIST_FIELDS, Settings, Workspace, read_json
 from virtual_lab.utils import write_atomically
@@ -93,6 +94,8 @@ class ChatConfig:
     :param software: The names of the software the person gave the lab that the agents are told they can use.
     :param functions: The ids of the runs of papers whose functions the lead and the team may call, as tools, where code
         runs. A conversation goes on with those of them that are still there.
+    :param skills: The names of the skills the lead may read, as they were when the conversation was made. A conversation
+        goes on with those of them that are still there.
     :param max_delegations: The most team sessions the lead may start in answering one message, or None for as many as
         the lead is given unless it is told otherwise.
     :param max_rounds: The most rounds of discussion the lead may ask a team session for, or None as above.
@@ -113,6 +116,7 @@ class ChatConfig:
     data: tuple[str, ...] = ()
     software: tuple[str, ...] = ()
     functions: tuple[str, ...] = ()
+    skills: tuple[str, ...] = ()
     max_delegations: int | None = None
     max_rounds: int | None = None
     max_tool_iterations: int | None = None
@@ -146,6 +150,7 @@ class ChatConfig:
             "data": list(self.data),
             "software": list(self.software),
             "functions": list(self.functions),
+            "skills": list(self.skills),
             "max_delegations": self.max_delegations,
             "max_rounds": self.max_rounds,
             "max_tool_iterations": self.max_tool_iterations,
@@ -172,6 +177,8 @@ class ChatConfig:
             software=tuple(dict.fromkeys(str(name) for name in data.get("software", ()))),
             # A conversation begun before the lab could write functions from papers has none, and goes on without
             functions=tuple(dict.fromkeys(str(name) for name in data.get("functions", ()))),
+            # A conversation begun before the lead could be given skills has none, and goes on without
+            skills=tuple(dict.fromkeys(str(name) for name in data.get("skills", ()))),
             # A conversation begun before the limits could be set has the lead's own, and goes on with them
             max_delegations=data.get("max_delegations"),
             max_rounds=data.get("max_rounds"),
@@ -373,7 +380,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         names of the library's tools to give, which are all but those the workspace has turned off, "mcp", the names
         of the MCP servers to give, which are those the workspace has turned on, and "data" and "software", the
         names of what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of
-        papers whose functions to give, which are those the person gave to conversations.
+        papers whose functions to give, which are those the person gave to conversations, and "skills", the names of
+        the skills to give, which are all there are.
     :raises ValueError: If something chosen cannot be used.
     """
     scientists = library(workspace)
@@ -420,6 +428,13 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         else given_runs(workspace)
     )
 
+    found = load_skills(workspace)
+    skills = (
+        check_skill_names(request["skills"], found)
+        if request.get("skills") is not None
+        else [skill.name for skill in found.skills]
+    )
+
     return ChatConfig(
         model=model,
         lead=lead,
@@ -433,6 +448,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         data=tuple(data),
         software=tuple(software),
         functions=tuple(functions),
+        skills=tuple(skills),
         max_delegations=allowed.get("max_delegations"),
         max_rounds=allowed.get("max_rounds"),
         max_tool_iterations=check_tool_iterations(request.get("max_tool_iterations")),

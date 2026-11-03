@@ -295,6 +295,12 @@ class FakeClient:
 
 
 @pytest.fixture(autouse=True)
+def no_skills_of_the_machine(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keeps the skills of whoever runs the tests, in ~/.agents/skills, out of the conversations they make."""
+    monkeypatch.setenv("VIRTUAL_LAB_USER_SKILLS_DIR", str(tmp_path_factory.mktemp("user-skills")))
+
+
+@pytest.fixture(autouse=True)
 def forget_models_without_temperature() -> Any:
     """Keeps one test's temperature refusals from changing the requests another test sees."""
     from virtual_lab.completions import MODELS_WITHOUT_TEMPERATURE

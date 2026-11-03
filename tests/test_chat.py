@@ -44,6 +44,7 @@ from virtual_lab.vision import Picture, view_image_tool
 from conftest import TEST_MODEL, FakeClient, make_usage, text_response, tool_call_response
 from test_events import PlottingSession
 from test_resources import small_resources
+from test_skills import make_skill
 
 LEAD = PRINCIPAL_INVESTIGATOR.with_model(TEST_MODEL)
 CRITIC = SCIENTIFIC_CRITIC.with_model(TEST_MODEL)
@@ -2289,6 +2290,103 @@ class TestResources:
 
         with pytest.raises(ValueError, match="resources must be"):
             make_chat(tmp_path, resources="some")
+
+
+class TestSkills:
+    def test_the_lead_is_told_of_its_skills_and_given_the_tools_to_read_them(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path, skills=[make_skill(tmp_path / "found")])
+
+        chat.send("Hello")
+
+        first = fake_client.completions.calls[0]
+        system = first["messages"][0]["content"]
+        assert "<available_skills>\n- dose-response: Fits a dose-response curve." in system
+        names = [tool["function"]["name"] for tool in first["tools"]]
+        assert names == ["activate_skill", "read_skill_file", "convene_team", "consult"]
+        assert chat.describe()["skills"] == ["dose-response"]
+
+    def test_with_no_skills_it_is_told_of_none_and_has_no_tool_for_them(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path)
+
+        chat.send("Hello")
+
+        first = fake_client.completions.calls[0]
+        assert "skill" not in first["messages"][0]["content"].lower()
+        assert not {"activate_skill", "read_skill_file"} & {tool["function"]["name"] for tool in first["tools"]}
+        assert chat.describe()["skills"] == []
+
+    def test_a_skill_the_lead_activates_is_what_it_reads_next(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("activate_skill", {"name": "dose-response"}),
+            text_response("IC50 is 3 nM."),
+        ]
+        chat = make_chat(tmp_path, skills=[make_skill(tmp_path / "found")])
+
+        reply = chat.send("What is the potency?")
+
+        assert reply.text == "IC50 is 3 nM."
+        read = request_messages(fake_client, 1)[-1]
+        assert read["role"] == "tool" and "Fit a four-parameter logistic." in read["content"]
+        (output,) = of(chat.events_since(), "tool_output")
+        assert output.data["name"] == "activate_skill"
+
+    def test_an_activated_skill_is_put_in_the_session_for_code_to_run(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        skill = make_skill(tmp_path / "found", files={"scripts/fit.py": "print('fitted')"})
+        fake_client.completions.responses = [
+            tool_call_response("activate_skill", {"name": "dose-response"}),
+            text_response("Ready."),
+        ]
+        chat = make_chat(tmp_path, session=session, skills=[skill])
+
+        chat.send("Fit it")
+
+        assert (session.directory / "skills" / "dose-response" / "scripts" / "fit.py").is_file()
+        read = request_messages(fake_client, 1)[-1]["content"]
+        assert f"Skill folder in the session: {session.directory}/skills/dose-response." in read
+
+    def test_the_list_is_cut_to_the_characters_it_may_have(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        many = [make_skill(tmp_path / "found", name=f"skill-{number:02d}") for number in range(30)]
+        chat = make_chat(tmp_path, skills=many, skills_catalog_chars=700)
+
+        chat.send("Hello")
+
+        system = request_messages(fake_client, 0)[0]["content"]
+        listed = system.split("<available_skills>\n")[1].split("\n</available_skills>")[0]
+        assert len(listed) <= 700 and "skill-29" in listed
+
+    def test_the_team_is_not_given_the_tools_so_the_lead_passes_on_what_they_need(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [team_meeting(rounds=0), text_response("Alone."), text_response("Done.")]
+        chat = make_chat(tmp_path, skills=[make_skill(tmp_path / "found")])
+
+        chat.send("Go")
+
+        assert "activate_skill" in [tool["function"]["name"] for tool in fake_client.completions.calls[0]["tools"]]
+        member_tools = fake_client.completions.calls[1].get("tools") or []
+        assert "activate_skill" not in [tool["function"]["name"] for tool in member_tools]
+
+    def test_a_tool_cannot_have_the_name_of_one_that_reads_skills(self, tmp_path: Path) -> None:
+        mine = Tool(name="activate_skill", description="Mine.", parameters={"type": "object"}, function=lambda: "x")
+
+        with pytest.raises(ValueError, match="named activate_skill"):
+            make_chat(tmp_path, tools=(mine,))
+
+    def test_skills_that_cannot_be_told_of_are_refused(self, tmp_path: Path) -> None:
+        skill = make_skill(tmp_path / "found")
+
+        with pytest.raises(ValueError, match="Skill names must be unique"):
+            make_chat(tmp_path, skills=[skill, skill])
+        with pytest.raises(TypeError, match="Skills, not str"):
+            make_chat(tmp_path, skills=["dose-response"])
+        with pytest.raises(ValueError, match="skills_catalog_chars must be at least 1"):
+            make_chat(tmp_path, skills=[skill], skills_catalog_chars=0)
 
 
 class TestKeeping:

@@ -8,6 +8,7 @@ one workspace directory.
         mcp.json                                         the MCP servers the person set up, each as a config gives it
         own.json                                         the data and software the person gave every conversation
         own_data/                                        the files the person uploaded, which own.json describes
+        skills/                                          the skills the person put there, each a folder with a SKILL.md
         chats/2026-10-07_1500_what-is-a-nanobody/        a conversation with the head of a lab, as Chat saves it
         data_lake/                                       Biomni's data lake, unless the settings keep it elsewhere
         papers/                                          the runs that read papers, each in a directory of its own
@@ -49,6 +50,9 @@ MCP_FILE_NAME = "mcp.json"
 # The data and software the person gave the lab to use in every conversation, and where the files they uploaded are kept
 OWN_FILE_NAME = "own.json"
 OWN_DATA_DIR_NAME = "own_data"
+
+# The skills the person put in the workspace, each a folder with a SKILL.md
+SKILLS_DIR_NAME = "skills"
 
 # What the lab was asked to read of papers, a directory for each run
 PAPERS_DIR_NAME = "papers"
@@ -327,6 +331,11 @@ class Workspace:
     def projects_dir(self) -> Path:
         """Where the research projects are kept, each in a directory of its own."""
         return self.root / PROJECTS_DIR_NAME
+
+    @property
+    def skills_dir(self) -> Path:
+        """Where the skills put in the workspace are kept, each in a folder of its own, which may be missing."""
+        return self.root / SKILLS_DIR_NAME
 
     @property
     def own_path(self) -> Path:
