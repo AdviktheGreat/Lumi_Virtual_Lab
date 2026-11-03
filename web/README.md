@@ -1,4 +1,4 @@
-# Virtual Lab web interface
+# Lumi Virtual Lab web interface
 
 The interface for talking to the head of a lab, built with Next.js, React, Tailwind, and shadcn/ui, and exported as
 static pages. The server (`virtual-lab-server`, in `src/virtual_lab/server`) serves those pages itself, along with the
@@ -81,7 +81,7 @@ current page. The Data page (`/data`) is where the lab is given what it works on
   it needs).
 
 What is given is in every conversation made from then on, and not in one that is already going (the page says so). The
-server keeps it (`GET /api/own` and what changes it, in the main README), and every change gives back all of it as it
+server keeps it (`GET /api/own` and what changes it, in `docs/chat-and-server.md`), and every change gives back all of it as it
 now is, which the page shows from then on. `src/lib/own.ts` checks what is written before it is sent, as the server
 does, so that what is wrong is said where it is written.
 
@@ -337,7 +337,7 @@ the figures it drew as their outputs. The server lays it out (`GET /api/chats/{i
 `virtual_lab.export_chat` and `virtual_lab.export_notebook`, as the Python package saves a conversation), and the page fetches it, and then hands it to the
 browser to save under the name the server gave it, from the title (`src/lib/export.ts`). It is fetched, and not a link
 that downloads, so that what the server says when it cannot make the document is shown above the composer, and is not
-saved as a file. A PDF needs WeasyPrint and the Pango library on the machine that runs the server (see the root README);
+saved as a file. A PDF needs WeasyPrint and the Pango library on the machine that runs the server (see `docs/meetings.md`);
 without them the server answers `pdf_unavailable`, and the page says to save the web page and print that. There is
 nothing to save until the conversation has a turn, so the button waits for one. A conversation that is still going is
 saved as far as it has got. Only one document is made at a time, and one that is still being made when the conversation

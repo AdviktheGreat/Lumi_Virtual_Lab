@@ -6,10 +6,12 @@ build-backend = "hatchling.build"
 name = "virtual-lab"
 dynamic = ["version"]
 authors = [
+    # Kyle Swanson wrote the Virtual Lab that this began as a fork of
     { name = "Kyle Swanson", email = "swansonk.14@gmail.com" },
+    { name = "Advik Anand" },
 ]
 maintainers = [
-    { name = "Kyle Swanson", email = "swansonk.14@gmail.com" },
+    { name = "Advik Anand" },
 ]
 description = "A virtual lab of large language model agents for scientific research."
 readme = "README.md"
@@ -115,8 +117,9 @@ pythonpath = ["tests"]
 filterwarnings = ["error::DeprecationWarning"]
 
 [project.urls]
-Homepage = "https://github.com/zou-group/virtual-lab"
-Issues = "https://github.com/zou-group/virtual-lab/issues"
+Homepage = "https://github.com/AdviktheGreat/Lumi_Virtual_Lab"
+Issues = "https://github.com/AdviktheGreat/Lumi_Virtual_Lab/issues"
+"Original Virtual Lab" = "https://github.com/zou-group/virtual-lab"
 
 [tool.ruff]
 # Copied unchanged from Biomni, so held to Biomni's own style rather than this project's
