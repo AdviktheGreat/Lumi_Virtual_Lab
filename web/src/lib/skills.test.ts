@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  choiceButtonText,
+  choiceKept,
+  choiceStart,
   disabledWhen,
+  enabledNames,
   filesLeftOut,
+  givenSkills,
+  howManyChosen,
   howManyOn,
   matching,
   NOTHING_TO_PUT_IN_FROM,
+  pickedWhen,
   putInSaid,
   skillsFrom,
   whereFound,
@@ -121,5 +128,71 @@ describe("where a skill was found", () => {
     expect(whereFound("workspace")).toBe("The lab's skills");
     expect(whereFound("user")).toContain("other tools");
     expect(whereFound("elsewhere")).toBe("elsewhere");
+  });
+});
+
+describe("choosing the skills of a conversation", () => {
+  it("begins with those that are on for new conversations", () => {
+    expect(enabledNames(skills)).toEqual(["dose-response", "Plot-Style"]);
+    expect([...choiceStart(skills, null)]).toEqual(["dose-response", "Plot-Style"]);
+  });
+
+  it("begins with what was chosen, less any skill that is not there any more", () => {
+    expect([...choiceStart(skills, ["rna-seq", "gone"])]).toEqual(["rna-seq"]);
+    expect([...choiceStart(skills, [])]).toEqual([]);
+  });
+
+  it("is kept as nothing where it is what new conversations are given, however it was got to", () => {
+    expect(choiceKept(skills, new Set(["Plot-Style", "dose-response"]))).toBeNull();
+    expect(choiceKept(skills, new Set(["dose-response"]))).toEqual(["dose-response"]);
+    expect(choiceKept(skills, new Set(["dose-response", "rna-seq", "Plot-Style"]))).toEqual([
+      "dose-response",
+      "rna-seq",
+      "Plot-Style",
+    ]);
+    expect(choiceKept(skills, new Set())).toEqual([]);
+  });
+
+  it("is kept as nothing for no skills where none is on, and as the names where one is chosen", () => {
+    const none = [skill("a", "A", false), skill("b", "B", false)];
+
+    expect(choiceKept(none, new Set())).toBeNull();
+    expect(choiceKept(none, new Set(["b"]))).toEqual(["b"]);
+  });
+
+  it("is kept in the order the skills are listed, whatever the order of choosing", () => {
+    expect(choiceKept(skills, new Set(["Plot-Style", "rna-seq"]))).toEqual(["rna-seq", "Plot-Style"]);
+  });
+
+  it("is changed for each name given and for no other, without changing what it was", () => {
+    const was = new Set(["a", "b"]);
+
+    expect([...pickedWhen(was, ["c", "a"], true)].sort()).toEqual(["a", "b", "c"]);
+    expect([...pickedWhen(was, ["a", "z"], false)]).toEqual(["b"]);
+    expect([...was]).toEqual(["a", "b"]);
+  });
+
+  it("says how many are chosen as a person says it", () => {
+    expect(howManyChosen(0, 0)).toBe("No skills");
+    expect(howManyChosen(0, 5)).toBe("No skill chosen, of 5");
+    expect(howManyChosen(1, 1)).toBe("The 1 skill is chosen");
+    expect(howManyChosen(5, 5)).toBe("All 5 skills are chosen");
+    expect(howManyChosen(2, 5)).toBe("2 of 5 skills chosen");
+  });
+
+  it("says nothing of the choice on the button until one is made", () => {
+    expect(choiceButtonText(null)).toBe("Skills");
+    expect(choiceButtonText([])).toBe("Skills · none");
+    expect(choiceButtonText(["a", "b"])).toBe("Skills · 2");
+  });
+});
+
+describe("the skills a conversation was given", () => {
+  it("are each shown with what it is for now, and one that is not there any more with null", () => {
+    expect(givenSkills(skills, ["rna-seq", "gone", "dose-response"])).toEqual([
+      { name: "rna-seq", description: "Differential expression with DESeq2." },
+      { name: "gone", description: null },
+      { name: "dose-response", description: "Fits a dose-response curve to titration data." },
+    ]);
   });
 });

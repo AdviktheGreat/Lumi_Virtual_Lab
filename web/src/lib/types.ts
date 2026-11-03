@@ -56,6 +56,8 @@ export interface ChatConfig {
   // The names of the data and software the person gave the lab that the conversation is given, where there is code
   data: string[];
   software: string[];
+  // The names of the skills the lead may read, as they were when the conversation began
+  skills: string[];
 }
 
 // A conversation as the list of them shows it
@@ -121,6 +123,8 @@ export interface NewChat {
   mcp?: string[];
   data?: string[];
   software?: string[];
+  // The names of the skills the lead may read, in place of those that are on for new conversations
+  skills?: string[];
 }
 
 // What a conversation may be changed to while it goes on: any of these, where null is no spending limit, or what the

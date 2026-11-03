@@ -61,7 +61,7 @@ export function ModelButton({
       disabled={disabled}
       onClick={onClick}
       title={disabled ? "The model can be changed when the lead has finished" : "Change the model"}
-      className="-mx-1 inline-flex max-w-full items-center gap-1 rounded px-1 py-0.5 outline-none transition-colors enabled:hover:bg-accent enabled:hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      className="-mx-1 inline-flex max-w-full min-w-0 items-center gap-1 rounded px-1 py-0.5 outline-none transition-colors enabled:hover:bg-accent enabled:hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
       <span className="truncate">{prefix ? `${prefix} · ${model}` : model}</span>
       {!disabled && <ChevronDown className="size-3 shrink-0" aria-hidden />}

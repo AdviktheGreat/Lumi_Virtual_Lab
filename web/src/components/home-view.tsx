@@ -15,15 +15,33 @@ import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
 import { useSettings } from "@/components/settings-provider";
+import { SkillsDialog } from "@/components/skills-dialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
 import { isDirective, written, type Invocation } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
+import { choiceButtonText } from "@/lib/skills";
 import { DEFAULT_LEAD_TITLE } from "@/lib/team-choice";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
 import type { ChatInfo, LabChoice, LimitsChange } from "@/lib/types";
+
+// What shows what is chosen of the skills, beside the model, and opens the choice
+function SkillsButton({ chosen, disabled, onClick }: { chosen: string[] | null; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-testid="skills-button"
+      disabled={disabled}
+      onClick={onClick}
+      title="Choose the skills the lead can read"
+      className="-mx-1 inline-flex shrink-0 items-center gap-1 rounded px-1 py-0.5 outline-none transition-colors enabled:hover:bg-accent enabled:hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span>{choiceButtonText(chosen)}</span>
+    </button>
+  );
+}
 
 export function HomeView() {
   const router = useRouter();
@@ -39,6 +57,10 @@ export function HomeView() {
   // The limits chosen here for it, which are only those that differ from what the settings say, and whether they are being chosen
   const [limitsChosen, setLimitsChosen] = useState<LimitsChange>({});
   const [limiting, setLimiting] = useState(false);
+  // The skills chosen here for it, which are null while it is to be given those that are on for new conversations, and whether
+  // they are being chosen
+  const [skillsChosen, setSkillsChosen] = useState<string[] | null>(null);
+  const [skilling, setSkilling] = useState(false);
   // What was written after /lab while it is being chosen who works on it, which is null while it is not
   const [labbing, setLabbing] = useState<string | null>(null);
   const [helping, setHelping] = useState(false);
@@ -55,7 +77,11 @@ export function HomeView() {
   async function begin(text: string, directive?: string, lab?: LabChoice) {
     let chat: ChatInfo | null = null;
     try {
-      chat = await api.createChat({ ...(chosen === null ? {} : { model: chosen }), ...limitsChosen });
+      chat = await api.createChat({
+        ...(chosen === null ? {} : { model: chosen }),
+        ...limitsChosen,
+        ...(skillsChosen === null ? {} : { skills: skillsChosen }),
+      });
       const names = await attachments.upload(chat.id);
       await api.send(chat.id, text, names, false, directive, lab);
       void refresh();
@@ -112,6 +138,7 @@ export function HomeView() {
     else if (isDirective(name)) void start(invocation);
     else if (name === "budget") setLimiting(true);
     else if (name === "model") setChoosing(true);
+    else if (name === "skills") setSkilling(true);
     else if (name === "help") setHelping(true);
   }
 
@@ -161,7 +188,14 @@ export function HomeView() {
                 commands={{ place: "home", turns: 0, answered: 0, directives, onRun: run }}
                 autoFocus
                 roomy
-                footer={model ? <ModelButton model={model} disabled={sending} onClick={() => setChoosing(true)} /> : undefined}
+                footer={
+                  model ? (
+                    <span className="flex min-w-0 items-center gap-3">
+                      <ModelButton model={model} disabled={sending} onClick={() => setChoosing(true)} />
+                      <SkillsButton chosen={skillsChosen} disabled={sending} onClick={() => setSkilling(true)} />
+                    </span>
+                  ) : undefined
+                }
                 className="shadow-md"
               />
             </div>
@@ -192,6 +226,17 @@ export function HomeView() {
               begun={false}
               onSave={async (changes) => setLimitsChosen((was) => ({ ...was, ...changes }))}
               onClose={() => setLimiting(false)}
+            />
+          )}
+          {skilling && (
+            <SkillsDialog
+              kind="choose"
+              chosen={skillsChosen}
+              onDone={(next) => {
+                setSkillsChosen(next);
+                setSkilling(false);
+              }}
+              onClose={() => setSkilling(false)}
             />
           )}
           {labbing !== null && ready !== null && (

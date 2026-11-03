@@ -53,12 +53,20 @@ describe("what is typed", () => {
 
 describe("where a command is offered", () => {
   it("has the conversation's commands in it, and a few on the page where one begins", () => {
-    expect(commandsFor("home").map((each) => each.name)).toEqual(["ask", "plan", "search", "code", "plot", "lab", "budget", "model", "help"]);
+    expect(commandsFor("home").map((each) => each.name)).toEqual(["ask", "plan", "search", "code", "plot", "lab", "budget", "model", "skills", "help"]);
     expect(commandsFor("chat").map((each) => each.name)).toEqual(COMMANDS.map((each) => each.name));
   });
 });
 
 describe("whether a command can be run", () => {
+  it("lets the skills be chosen or looked at at any time, since a conversation that is working does not stop that", () => {
+    for (const surroundings of [IDLE, WORKING, HOME, { ...IDLE, state: "paused" as const }]) {
+      expect(unavailableWhy(command("skills"), surroundings)).toBeNull();
+    }
+    expect(rowsFor("/skills", HOME)[0].action).toEqual({ run: { name: "skills", arg: "" } });
+    expect(rowsFor("/skills", WORKING)[0].action).toEqual({ run: { name: "skills", arg: "" } });
+  });
+
   it("lets the budget be changed at any time", () => {
     for (const surroundings of [IDLE, WORKING, HOME, { ...IDLE, state: "paused" as const }]) {
       expect(unavailableWhy(command("budget"), surroundings)).toBeNull();
@@ -101,14 +109,14 @@ describe("the menu", () => {
     const rows = rowsFor("/", WORKING);
     const names = rows.map((row) => row.label);
 
-    const commands = ["/budget", "/rename", "/export", "/files", "/new", "/pause", "/stop", "/help"];
+    const commands = ["/budget", "/skills", "/rename", "/export", "/files", "/new", "/pause", "/stop", "/help"];
     // While the lead works, a command that goes with a message waits for it to finish
     const waiting = ["/ask", "/plan", "/search", "/code", "/plot", "/review", "/lab", "/model", "/resume"];
 
-    expect(names.slice(0, 8)).toEqual(commands);
-    expect(names.slice(8)).toEqual(waiting);
-    expect(rows.slice(0, 8).every((row) => row.reason === null)).toBe(true);
-    expect(rows.slice(8).every((row) => row.reason !== null)).toBe(true);
+    expect(names.slice(0, 9)).toEqual(commands);
+    expect(names.slice(9)).toEqual(waiting);
+    expect(rows.slice(0, 9).every((row) => row.reason === null)).toBe(true);
+    expect(rows.slice(9).every((row) => row.reason !== null)).toBe(true);
   });
 
   it("lists only the page's commands where a conversation is not begun", () => {
@@ -121,6 +129,7 @@ describe("the menu", () => {
       "/lab",
       "/budget",
       "/model",
+      "/skills",
       "/help",
     ]);
   });

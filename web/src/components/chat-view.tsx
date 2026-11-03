@@ -18,6 +18,7 @@ import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { LeadBlock, Notice, ProblemNotice, TurnView } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
 import { useServer } from "@/components/server-provider";
+import { SkillsDialog } from "@/components/skills-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -75,6 +76,7 @@ export function ChatView({ id }: { id: string }) {
   const [filesOpen, setFilesOpen] = useState(false);
   const [choosingModel, setChoosingModel] = useState(false);
   const [limiting, setLimiting] = useState(false);
+  const [skilling, setSkilling] = useState(false);
   // What was written after /lab while it is being chosen who works on it, which is null while it is not
   const [labbing, setLabbing] = useState<string | null>(null);
   const [helping, setHelping] = useState(false);
@@ -234,6 +236,9 @@ export function ChatView({ id }: { id: string }) {
         break;
       case "model":
         setChoosingModel(true);
+        break;
+      case "skills":
+        setSkilling(true);
         break;
       case "files":
         setFilesOpen((was) => !was);
@@ -422,6 +427,9 @@ export function ChatView({ id }: { id: string }) {
               if (left !== null && left.trim() !== "") setDraft(written({ name: "lab", arg: left.trim() }));
             }}
           />
+        )}
+        {skilling && status.kind === "ready" && (
+          <SkillsDialog kind="view" had={status.info.config.skills} onClose={() => setSkilling(false)} />
         )}
         {helping && <CommandsHelp place="chat" onClose={() => setHelping(false)} />}
         {choosingModel && model !== null && (
