@@ -1,4 +1,4 @@
-import { BookOpen, Dna, Download, Eye, FileSpreadsheet, FlaskConical, FolderOpen, MessageSquareText, Search, Terminal, Users, Wrench } from "lucide-react";
+import { BookOpen, Dna, Download, Eye, FileSpreadsheet, FlaskConical, FolderOpen, Globe, MessageSquareText, Search, Terminal, Users, Wrench } from "lucide-react";
 
 // What marks a call to the tool of this name
 export function CallIcon({ name, className }: { name: string; className?: string }) {
@@ -17,6 +17,9 @@ export function CallIcon({ name, className }: { name: string; className?: string
     case "europepmc_fulltext":
     case "arxiv_search":
       return <BookOpen className={className} aria-hidden />;
+    case "web_search":
+    case "web_fetch":
+      return <Globe className={className} aria-hidden />;
     case "uniprot_search":
     case "uniprot_lookup":
     case "pdb_lookup":

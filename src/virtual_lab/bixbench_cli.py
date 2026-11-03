@@ -43,6 +43,9 @@ DEFAULT_URL = "http://127.0.0.1:8765"
 # The group the server's settings put the tools that search papers in. The studies the questions are from are papers,
 # and a lead that can find them is not answering from the data
 LITERATURE_GROUP = "Literature"
+# The group of the tools that search the web and read its pages, which can find a paper, and an analysis done as the
+# dataset's authors did it, as the literature tools can
+WEB_GROUP = "Web"
 TOKEN_VARIABLE = "VIRTUAL_LAB_TOKEN"
 INTERRUPTED = 130
 # A question takes the lead from the data to a number, a step of code at a time, and the conversation's own limit of
@@ -121,6 +124,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="let the lead search papers (by default it cannot, nor use the MCP servers, data, and software the "
         "server's workspace has)",
     )
+    run.add_argument(
+        "--web", action="store_true", help="let the lead search the web and read pages (by default it cannot)"
+    )
 
     commands.add_parser("report", parents=[selection_parser(), results_parser()], help="the score of a run so far")
 
@@ -132,11 +138,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def allowed(arguments: argparse.Namespace, group: str | None) -> bool:
+    """Whether the lead is given a tool of this group, which it is unless it is one of those a run is asked to hold
+    back."""
+    if group == LITERATURE_GROUP:
+        return bool(arguments.literature)
+    if group == WEB_GROUP:
+        return bool(arguments.web)
+
+    return True
+
+
 def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """What each question's conversation is made with: the lead's model, its team, and code in Docker with no keys of
-    the user's passed in. It is given the server's tools except those that search papers, unless --literature, and none
-    of the MCP servers, data, software, or functions the workspace has, so that the questions are answered from the
-    data they come with. Everything else is the server's settings.
+    the user's passed in. It is given the server's tools except those that search papers, unless --literature, and those
+    that search the web, unless --web, and none of the MCP servers, data, software, or functions the workspace has, so
+    that the questions are answered from the data they come with. Everything else is the server's settings.
 
     :param tools: The server's tools, as it describes them.
     """
@@ -150,7 +167,7 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
             "resources": arguments.resources,
             "forward_env": [],
         },
-        "tools": [tool["name"] for tool in tools if arguments.literature or tool.get("group") != LITERATURE_GROUP],
+        "tools": [tool["name"] for tool in tools if allowed(arguments, tool.get("group"))],
         "mcp": [],
         "data": [],
         "software": [],

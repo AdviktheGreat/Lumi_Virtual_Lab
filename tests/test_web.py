@@ -137,6 +137,9 @@ class TestAllowedDestinations:
                 "files.rcsb.org",
                 "export.arxiv.org",
                 "api.biorxiv.org",
+                "html.duckduckgo.com",
+                "api.tavily.com",
+                "api.search.brave.com",
             }
         )
 

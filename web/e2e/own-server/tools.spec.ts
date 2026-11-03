@@ -34,10 +34,10 @@ async function offeredNow(page: Page): Promise<string> {
 test("the tools are listed by what they are for, all of them on to begin with", async ({ page }) => {
   const dialog = await openSettings(page, "Tools");
 
-  for (const group of ["Literature", "Proteins and structures", "Chemistry", "Your files"]) {
+  for (const group of ["Literature", "Web", "Proteins and structures", "Chemistry", "Your files"]) {
     await expect(dialog.getByRole("group", { name: group })).toBeVisible();
   }
-  await expect(dialog.getByTestId("tools-count")).toHaveText("All 18 are on");
+  await expect(dialog.getByTestId("tools-count")).toHaveText("All 20 are on");
   await expect(dialog.getByRole("group", { name: "Literature" }).getByRole("checkbox")).toHaveCount(5);
   await expect(box(dialog, "pubmed_search")).toBeChecked();
   await expect(dialog.getByText("Look inside a CSV, TSV, or Excel file", { exact: false })).toBeVisible();
@@ -53,7 +53,7 @@ test("a tool that is turned off is kept at once, is off when the settings are op
   await box(dialog, "pubmed_search").click();
 
   expect((await sent).postDataJSON()).toEqual({ disabled: ["pubmed_search"] });
-  await expect(dialog.getByTestId("tools-count")).toHaveText("17 of 18 are on");
+  await expect(dialog.getByTestId("tools-count")).toHaveText("19 of 20 are on");
   await expect(box(dialog, "pubmed_search")).not.toBeChecked();
   await expect.poll(() => disabled(page)).toEqual(["pubmed_search"]);
   // Nothing is left to save, so closing asks nothing
@@ -76,14 +76,14 @@ test("every tool is turned off, or on, with one button, and a conversation is of
   await expect(dialog.getByTestId("tools-count")).toHaveText("None are on");
   await expect(dialog.getByRole("checkbox", { checked: true })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Turn all off" })).toHaveAttribute("aria-disabled", "true");
-  await expect.poll(async () => (await disabled(page)).length).toBe(18);
+  await expect.poll(async () => (await disabled(page)).length).toBe(20);
 
   await page.reload();
   expect(await offeredNow(page)).not.toContain("pubmed_search");
 
   const again = await openSettings(page, "Tools");
   await again.getByRole("button", { name: "Turn all on" }).click();
-  await expect(again.getByTestId("tools-count")).toHaveText("All 18 are on");
+  await expect(again.getByTestId("tools-count")).toHaveText("All 20 are on");
   await expect.poll(() => disabled(page)).toEqual([]);
 });
 
@@ -104,13 +104,13 @@ test("a tool shows as it is ticked while the server has yet to answer, and two i
   // Neither has been kept, and both show as chosen
   await expect(box(dialog, "pubmed_search")).not.toBeChecked();
   await expect(box(dialog, "arxiv_search")).not.toBeChecked();
-  await expect(dialog.getByTestId("tools-count")).toHaveText("16 of 18 are on");
+  await expect(dialog.getByTestId("tools-count")).toHaveText("18 of 20 are on");
   expect(await disabled(page)).toEqual([]);
 
   release();
 
   await expect.poll(async () => (await disabled(page)).sort()).toEqual(["arxiv_search", "pubmed_search"]);
-  await expect(dialog.getByTestId("tools-count")).toHaveText("16 of 18 are on");
+  await expect(dialog.getByTestId("tools-count")).toHaveText("18 of 20 are on");
   await expect(box(dialog, "arxiv_search")).toBeFocused();
   await page.unroute("**/api/tools");
 });
@@ -131,10 +131,10 @@ test("say why the server refuses, and leave the tool as it was", async ({ page }
 
   await expect(dialog.getByRole("alert")).toHaveText("That tool is not one the library has");
   await expect(box(dialog, "pubmed_search")).toBeChecked();
-  await expect(dialog.getByTestId("tools-count")).toHaveText("All 18 are on");
+  await expect(dialog.getByTestId("tools-count")).toHaveText("All 20 are on");
 
   await page.unroute("**/api/tools");
   await box(dialog, "pubmed_search").click();
-  await expect(dialog.getByTestId("tools-count")).toHaveText("17 of 18 are on");
+  await expect(dialog.getByTestId("tools-count")).toHaveText("19 of 20 are on");
   await expect(dialog.getByRole("alert")).toHaveCount(0);
 });

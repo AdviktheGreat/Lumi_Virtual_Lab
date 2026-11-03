@@ -1,8 +1,8 @@
 """The tools the lead of a conversation may be given, which the person chooses among in the settings.
 
-These are the library's own: the literature and database lookups that need nothing set up, and the tools that
-read the files in a conversation. Each is a function of the library that the lead calls by name, and what it
-asks and is told is shown in the conversation like any other call.
+These are the library's own: the literature and database lookups that need nothing set up, the search of the web and
+the reading of its pages, and the tools that read the files in a conversation. Each is a function of the library that
+the lead calls by name, and what it asks and is told is shown in the conversation like any other call.
 """
 
 from collections.abc import Sequence
@@ -15,6 +15,7 @@ from virtual_lab.directives import LITERATURE_TOOL_NAMES
 from virtual_lab.tables import list_data_files
 from virtual_lab.tools import (
     DATABASE_TOOLS,
+    WEB_TOOLS,
     Tool,
     data_file_tools,
     inspect_data_file,
@@ -22,10 +23,14 @@ from virtual_lab.tools import (
 )
 from virtual_lab.vision import VIEW_IMAGE_TOOL_NAME, AskAboutImages, Picture, view_image_tool
 
+# The tools that search the web and read what is found, which are the only ones that go beyond a few services
+WEB_TOOL_NAMES = tuple(tool.name for tool in WEB_TOOLS)
+
 # The tools by what they are for, which is how the settings list them and the order of each, so that a tool is
 # listed beside those it is used with
 GROUPS: dict[str, tuple[str, ...]] = {
     "Literature": LITERATURE_TOOL_NAMES,
+    "Web": WEB_TOOL_NAMES,
     "Proteins and structures": (
         "uniprot_search",
         "uniprot_lookup",
@@ -98,7 +103,7 @@ def conversation_tools(
         ask_about_images or no_model_to_ask,
         where_code_runs,
     )
-    made = {tool.name: tool for tool in (*DATABASE_TOOLS, *files, looking)}
+    made = {tool.name: tool for tool in (*DATABASE_TOOLS, *WEB_TOOLS, *files, looking)}
     if session_directory is not None:
         fetching = structure_file_tool(session_directory)
         made[fetching.name] = fetching
