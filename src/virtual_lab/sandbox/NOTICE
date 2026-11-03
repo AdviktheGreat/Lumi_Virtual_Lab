@@ -4,5 +4,8 @@ Copyright the Biomni authors, and are used under the Apache License, Version 2.0
 
     http://www.apache.org/licenses/LICENSE-2.0
 
+The text of the license is in biomni_package/LICENSE, which is Biomni's own, unchanged. The root
+NOTICE lists everything in this project that comes from elsewhere.
+
 The Dockerfile in this directory installs them in the order Biomni's biomni_env/setup.sh
 does. Where it departs from Biomni's scripts, it says so in a comment.

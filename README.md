@@ -1,1118 +1,129 @@
-# Virtual Lab
+# Lumi Virtual Lab
 
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/virtual-lab)](https://badge.fury.io/py/virtual-lab)
-[![PyPI version](https://badge.fury.io/py/virtual-lab.svg)](https://badge.fury.io/py/virtual-lab)
-[![Downloads](https://pepy.tech/badge/virtual-lab)](https://pepy.tech/project/virtual-lab)
-[![license](https://img.shields.io/github/license/zou-group/virtual-lab.svg)](https://github.com/zou-group/virtual-lab/blob/main/LICENSE.txt)
+A chat-first workbench for computational biology. You talk to the head of a lab, a lead agent. It answers directly when it can. When a question needs a computation, it writes and runs code in a sandbox. When it needs a second opinion, it brings in a team of scientist agents.
 
-![Virtual Lab](https://github.com/zou-group/virtual-lab/raw/main/images/virtual_lab_architecture.png)
+Lumi has two parts that work together:
 
-The **Virtual Lab** is an AI-human collaboration for science research. In the Virtual Lab, a human researcher works with a team of large language model (LLM) **agents** to perform scientific research. Interaction between the human researcher and the LLM agents occurs via a series of **team meetings**, where all the LLM agents discuss a scientific agenda posed by the human researcher, and **individual meetings**, where the human researcher interacts with a single LLM agent to solve a particular scientific task.
+- **A chat interface**, served by a local server, for working with the lead: files you attach, figures and files it makes, notes you can leave it while it works, and a spending limit for each conversation.
+- **A Python library**, `virtual_lab`, underneath it, for running meetings and long projects from a script, giving agents tools, and measuring them on benchmarks.
 
-Please see our paper [The Virtual Lab of AI agents designs new SARS-CoV-2 nanobodies](https://www.nature.com/articles/s41586-025-09442-9) for more details on the Virtual Lab and an application to nanobody design for SARS-CoV-2.
+Lumi began as a fork of the [Virtual Lab](https://github.com/zou-group/virtual-lab) by Kyle Swanson and colleagues, and builds on [Biomni](https://github.com/snap-stanford/Biomni) from Stanford SNAP. See [Licenses and acknowledgements](#licenses-and-acknowledgements).
 
-If you use the Virtual Lab, please cite our work as follows:
+## What it does
 
-Swanson, K., Wu, W., Bulaong, N.L. et al. The Virtual Lab of AI agents designs new SARS-CoV-2 nanobodies. *Nature* (2025). https://doi.org/10.1038/s41586-025-09442-9
+- **Talks to a lead agent that can use a team.** The lead can hold a team meeting, or ask one scientist with a Scientific Critic reviewing, and is given what they conclude. Slash commands (`/ask`, `/plan`, `/search`, `/code`, `/plot`, `/review`, `/lab`) say how to answer a message.
+- **Runs code it writes**, in Python, R, and shell, in a Docker container with no access to your files or keys. The container can hold Biomni's bioinformatics software, 223 of Biomni's tool functions, and its 76-file data lake. See [Running code](docs/running-code.md).
+- **Looks things up** in UniProt, the PDB, AlphaFold, PubChem, ChEMBL, Europe PMC, PubMed, and arXiv, and searches and reads the web. It also looks at images and the pages of PDFs. See [Tools, data, skills, and MCP servers](docs/tools-and-skills.md).
+- **Follows skills**: written guidance in the [Agent Skills](https://agentskills.io) format. Seven come with Lumi. You can install more from a git repository or a folder, and choose which a conversation is given.
+- **Connects to MCP servers** for more tools, with approval before a call that costs money or cannot be undone.
+- **Uses any model**: OpenAI, Anthropic, Google, Groq, Azure, OpenRouter, Ollama, and Amazon Bedrock. See [Models and API keys](docs/models-and-keys.md).
+- **Saves a conversation or a meeting** as a Jupyter notebook, a PDF, or a page of HTML.
+- **Measures itself** on Biomni's benchmarks and on BixBench-Verified-50. See [Benchmarks](docs/benchmarks.md).
 
+## Quick start
 
-## Virtual Lab for nanobody design
-
-As a real-world demonstration, we applied the Virtual Lab to design nanobodies for one of the latest variants of SARS-CoV-2 (see [nanobody_design](https://github.com/zou-group/virtual-lab/tree/main/nanobody_design)). The Virtual Lab built a computational pipeline consisting of [ESM](https://www.science.org/doi/10.1126/science.ade2574), [AlphaFold-Multimer](https://www.biorxiv.org/content/10.1101/2021.10.04.463034v2), and [Rosetta](https://rosettacommons.org/software/) and used it to design 92 nanobodies that were experimentally validated.
-
-Please see the notebook [nanobody_design/run_nanobody_design.ipynb](https://github.com/zou-group/virtual-lab/blob/main/nanobody_design/run_nanobody_design.ipynb) for an example of how to use the Virtual Lab to create agents and run team and individual meetings.
-
-
-## Installation
-
-The Virtual Lab requires Python 3.12 or later. It can be installed using pip or by cloning the repo and installing the required packages. Installation should only take a couple of minutes.
-
-Optionally, first create a conda environment.
+You need Python 3.12 or later, Node 22 or later (the first time only, to build the pages), Docker (to run code), and a key for at least one model provider.
 
 ```bash
-conda create -y -n virtual_lab python=3.12
-conda activate virtual_lab
+git clone https://github.com/AdviktheGreat/Lumi_Virtual_Lab.git
+cd Lumi_Virtual_Lab
+python3 start.py
 ```
 
-Python 3.12 is recommended rather than a newer version because reproducing the nanobody design study relies on `nanobody_design/requirements_nanobody_design_frozen.txt`, which pins `torch==2.4.1`. That release has no wheels beyond Python 3.12. If you only need the `virtual_lab` package itself, any version from 3.12 onwards works.
+`start.py` makes a Python environment in `.venv`, installs Lumi in it, builds the pages, and starts the server. Each step is skipped when it is already done, so the first start takes a few minutes and later ones a moment. It prints a link with a token in it, and opens it. The server is at `http://127.0.0.1:8765` unless that port is taken.
 
-The Virtual Lab can be installed via pip.
+Add your keys in Settings. They are kept in your machine's own keychain. A key in the environment, or in a `.env` file in the clone, is used too. The interface also builds the Docker image that code runs in and fetches the data lake, showing what each prints.
 
 ```bash
-pip install virtual-lab
+python3 start.py --workspace ~/lab --port 9000 --no-browser
+python3 start.py --plan         # what it would do, without doing it
+python3 start.py --rebuild      # build the pages again
 ```
 
-To install the latest version of the Virtual Lab locally, clone the repo and then install the package.
+Conversations, settings, and files are kept in a workspace, `~/virtual_lab_workspace` unless `--workspace` says otherwise. The server is for one person on one machine: it answers only requests that carry its token, and it runs code you did not read, so keep it on your own machine. See [Conversations, the server, and the chat interface](docs/chat-and-server.md).
+
+## Using the library
+
+Install from a clone. The `virtual-lab` package on PyPI is the original Virtual Lab, a different project that does not contain this code.
 
 ```bash
-git clone https://github.com/zou-group/virtual_lab.git
-cd virtual_lab
-pip install -e .
+pip install -e .                          # the library
+pip install -e ".[server,mcp,papers,eval]"
 ```
 
-Tools from MCP servers, and serving tools over MCP with `virtual-lab-mcp`, need the MCP SDK, which the `mcp` extra installs: `pip install "virtual-lab[mcp]"`. Saving meetings as PDFs needs the `pdf` extra and the Pango library (see [Saving a meeting, a project, or a conversation as a document](#saving-a-meeting-a-project-or-a-conversation-as-a-document)). The server that the chat interface talks to needs FastAPI and Uvicorn, and keyring, which keeps the keys you give it in your machine's own keychain, all of which the `server` extra installs: `pip install "virtual-lab[server]"` (see [Serving the conversation to a page](#serving-the-conversation-to-a-page)). Reading papers in PDFs needs pypdf, which the `papers` extra installs: `pip install "virtual-lab[papers]"` (see [Growing the toolset from papers](#growing-the-toolset-from-papers)). Looking at images and at the pages of PDFs needs pypdfium2 and Pillow, which the `vision` extra installs, and the `server` extra includes: `pip install "virtual-lab[vision]"` (see [Looking at images and the pages of a PDF](#looking-at-images-and-the-pages-of-a-pdf)).
+| Extra | Adds |
+| --- | --- |
+| `server` | The server and chat interface: FastAPI, Uvicorn, the keychain, and image reading |
+| `mcp` | Tools from MCP servers, and serving Lumi's tools over MCP |
+| `papers` | Reading papers saved as PDFs |
+| `vision` | Looking at images and the pages of PDFs (`server` includes it) |
+| `pdf` | Saving meetings and conversations as PDFs (also needs the Pango library) |
+| `eval` | Biomni's benchmarks and BixBench-Verified-50 |
+| `ollama`, `bedrock` | Local models through Ollama, and models on Amazon Bedrock |
+| `dev` | What the tests need |
 
-
-## Models and API keys
-
-The Virtual Lab uses GPT-5.2 from OpenAI by default, and any agent can use a model from another provider. Each model is reached through LangChain, and its provider is worked out from its name by the rules [Biomni](https://github.com/snap-stanford/Biomni) uses, so an agent created with `model="claude-sonnet-4-5"` is sent to Anthropic and one with `model="gemini-2.5-pro"` to Google. Agents in the same meeting can use different providers.
-
-| Provider | Model names | Key or setting |
-| --- | --- | --- |
-| OpenAI | `gpt-*`, `o1*`, `o3*`, `o4*`, `ft:*` | `OPENAI_API_KEY` |
-| Anthropic | `claude-*` | `ANTHROPIC_API_KEY` |
-| Google Gemini | `gemini-*` | `GEMINI_API_KEY` |
-| Groq | any name containing `groq` | `GROQ_API_KEY` |
-| Azure OpenAI | `azure-<deployment>` | `OPENAI_API_KEY`, `OPENAI_ENDPOINT` |
-| OpenRouter | `openrouter/<author>/<model>`, such as `openrouter/anthropic/claude-sonnet-4.5`, and its routers, such as `openrouter/auto` | `OPENROUTER_API_KEY` |
-| Ollama (local) | `llama*`, `qwen*`, `mistral*`, `gpt-oss*`, and names with a `/` (but not a name that begins `openrouter/`) | `pip install virtual-lab[ollama]` |
-| Amazon Bedrock | `anthropic.claude-*`, `us.*`, and other Bedrock IDs | `AWS_REGION`, `pip install virtual-lab[bedrock]` |
-
-[OpenRouter](https://openrouter.ai) is one key for a few hundred models from many providers, which makes it the easiest way to try another model. A name that begins `openrouter/` is sent there, with the rest of the name as OpenRouter knows the model (`openrouter/anthropic/claude-sonnet-4.5` is `anthropic/claude-sonnet-4.5`), through its OpenAI-compatible API. `fetch_models()` in `virtual_lab.openrouter` lists the models that can call tools, which an agent needs, with their prices, read from OpenRouter's public list with no key. The server keeps that list for a day in the workspace's `openrouter-models.json` and works out what a model costs from its prices, including those of its cache, so a spending limit works with any model in the list; a script does the same with `register_prices(prices_of(models), cache_prices_of(models))` for `models = fetch_models()` (`register_prices` is in `virtual_lab.utils`), since a model whose price is not known cannot be given a limit (`CostUnknownError`). OpenRouter's routers (`openrouter/auto`, `openrouter/free`) choose a model for each request, so their price is not known beforehand: they are listed, and work, but a conversation or project with a spending limit refuses them. The library does not set OpenRouter's own fallback or moderation options, and has not been checked against them.
-
-Set `LLM_SOURCE` to one of those providers to override the rules for every model. A meeting sends a name the rules do not recognise, such as `chatgpt-4o-latest`, to OpenAI as it always has, and while `OPENAI_BASE_URL` points at a server of your own it sends names that look like open models there rather than to Ollama. For anything else, including a self-hosted server with an OpenAI-compatible API, build the model yourself and pass it in:
-
-```python
-from virtual_lab import get_llm, hold_meeting
-
-served = get_llm("biomni-r0", source="Custom", base_url="http://localhost:30000/v1")
-result = hold_meeting(..., chat_models={"biomni-r0": served})
-```
-
-`chat_models` also takes a single LangChain chat model for every agent, or a function from model name to chat model. The record of each meeting names the class that answered for each model and the server it was sent to.
-
-OpenAI's API is told which agent wrote each earlier turn. Other providers have no field for this, so for them the other agents' turns are passed as user messages that begin with the speaker's name, rather than as the reader's own words. A model can copy that format, writing a line such as `[Name called a_tool with {...}]` as though it were calling the tool, which runs nothing and would end its turn there with only that text. A turn like that is not taken as the agent's answer: it is told that nothing ran and asked again, up to `MAX_FAKED_CALL_RETRIES` (2) times, and what it wrote by mistake is not kept in the meeting for the others to read. A name that a reply begins with, which a model also copies, is taken off it.
-
-Keys can be kept in a `.env` file, one `NAME=value` per line. As Biomni does, `import virtual_lab` reads the `.env` file in the directory Python was started in, if there is one, and sets each variable that is not already set, so a key set in the shell outranks the file's. It prints nothing. `load_env("keys.env")` reads another file, `load_env(override=True)` replaces what is set, and each returns the names of the variables it set. Setting `VIRTUAL_LAB_LOAD_ENV=0` stops the file being read on import. What is read reaches this process alone: a session's code gets a variable only when it is forwarded by name (see `forward_env` below).
-
-
-## Holding a meeting and limiting what it spends
-
-`hold_meeting` takes the same arguments as `run_meeting` and returns everything the meeting produced: the summary, the structured output if a schema was given, the usage, the provenance record, and where each was saved. `run_meeting` is kept for existing notebooks and returns only one of these.
-
-```python
-from virtual_lab import BudgetExceededError, hold_meeting
-
-try:
-    result = hold_meeting(
-        meeting_type="individual",
-        agenda="Propose three candidate epitopes.",
-        save_dir=Path("results"),
-        team_member=immunologist,
-        num_rounds=2,
-        max_cost=0.50,
-        max_completion_tokens=4_000,
-    )
-    print(result.summary, result.cost)
-except BudgetExceededError as error:
-    print(f"Stopped at ${error.spent:.2f}; the turns so far are in results/partial/")
-```
-
-- `max_cost` is checked before every request, including each tool call and the structured output, so a meeting stops before the request it has no money left for. It can overrun by at most one request, which `max_completion_tokens` bounds.
-- A limit is refused outright if any model in the meeting has no price in `virtual_lab.constants`, and a response that reports no usage stops a limited meeting with `CostUnknownError`. Either would otherwise count as free. Without a limit, `result.cost` is `None` rather than a wrong number.
-- OpenAI, Anthropic, and Gemini models are priced, as of October 2026. A model with two rates, by how long the prompt is, or with a rise announced for a date, is priced at the higher one, so its cost is an upper bound. `gpt-5.6-sol` is at a promotional price that is to last at least through November 21, 2026.
-- Input tokens that a provider read from its cache are counted at what it charges for them where the price says so, which OpenRouter's does for the models that cache (`pricing.input_cache_read`, and `input_cache_write` for those it wrote). In a long conversation most of the input is read that way, at a tenth of the input price for some models, so counting it as input would stop a conversation at five times what it had cost. For the models in the tables, and any that does not say, cached input is counted as input, an upper bound. `register_prices` takes the cache prices as a second argument, and the record of a meeting's prices has them as `cached_input` and `cache_write` per million tokens.
-- Prices are matched exactly or to a dated snapshot of a listed model (`gpt-4o-2024-08-06`, `claude-sonnet-4-5-20250929`). A name that merely starts with a listed one, such as `gpt-5-codex` or `gpt-5.5-codex`, is unpriced rather than billed at the cheaper model's rate.
-- `on_usage` is called with the running usage after every response, for a caller keeping a total across meetings. An exception it raises stops the meeting like any other failure.
-- `before_request` is called before every request, after `max_cost` is checked. An exception it raises stops the meeting before the request is sent, which is how several meetings sharing one budget are stopped together (see `Project` below).
-- A failed or interrupted meeting, including one stopped by its limit or by Ctrl-C, saves its turns and its record, with the usage up to that point, under `save_dir/partial/`.
-- Several models (GPT-5 and its mini, nano, and pro versions among them) refuse any temperature but their default. When the API refuses the temperature, the request is sent again without it, the model is remembered for the rest of the process, and the record lists it under `models_at_default_temperature`.
-
-### Following a meeting as it happens
-
-Biomni's agent yields each step of its work once the step is done, which is what its web interface shows. A meeting does the same through `on_event`, which is called with a `MeetingEvent` for everything that happens, and with `stream=True` it is also told of each reply as it is written, word by word:
-
-```python
-from virtual_lab import MeetingEvent, hold_meeting
-
-def show(event: MeetingEvent) -> None:
-    if event.kind == "turn":
-        print(f"\n--- {event.speaker}, round {event.round} ---")
-    elif event.kind == "writing":
-        print(event.text, end="\r")
-    elif event.kind == "cell":
-        print(f"Ran {event.data['language']} ({event.data['status']}), figures: {event.data['plot_paths']}")
-    elif event.kind == "usage" and event.data["cost"] is not None:
-        print(f"Spent so far: ${event.data['cost']:.4f}")
-
-hold_meeting(..., on_event=show, stream=True)
-```
-
-| Kind | When | What it holds |
-| --- | --- | --- |
-| `started` | The meeting begins | `data`: the meeting type, agenda, questions, rounds, team, tools, `max_cost`, and session |
-| `resources` | The resources of Biomni's environment are chosen | `data`: what the record says of them |
-| `turn` | An agent's turn begins | `speaker`, `round`, and `data`: its name and model |
-| `writing` | More of a reply is written, with `stream` | `text`: the reply so far, which replaces the last with the same `data["request"]` |
-| `message` | A message is added to the transcript | `speaker`, `text`, and `data`: its kind (`prompt`, `response`, `code_action`, `code_output`, `tool_output`, or `structured_output`) and its index |
-| `tool_calls` | Tools are about to run | `data["calls"]`: each call's id, name, and arguments, in full |
-| `code` | Code from `<execute>` tags is about to run | `data`: the code and its language |
-| `cell` | Code ran in the session, from tags or `run_code` | `data`: the run, as `CellResult.to_dict` gives it, and `plot_paths`, where its figures are |
-| `usage` | A response came back | `data`: the usage so far, with its `cost`, or `None` if unknown |
-| `finished` | The meeting is saved | `text`: the summary, and `data`: where it was saved, the structured output, the usage, and how long it took |
-| `failed` | The meeting stopped with an error | `text`: the error, and `data`: its type, where the partial transcript is, and the usage |
-
-- An exception `on_event` raises stops the meeting the way any other failure does, saving what was done under `save_dir/partial/`, even while a reply is being written. This is how a person can stop a meeting part way through a reply. One it raises when told the meeting finished, which is saved by then, or failed, which would hide the error that ended it, is only warned about.
-- With `stream`, every reply is asked for with its usage, so what it cost is still known. OpenAI-compatible servers that leave the usage of a streamed reply out make the cost unknown, as they would without streaming, and one that refuses to be asked fails the request; a model told not to stream its usage (`stream_usage=False`) is left as told. A model that cannot stream sends its reply whole, as one `writing` event. Structured outputs, and the request that chooses resources, are not streamed.
-- `Project` takes `on_event` and `stream` as options for its meetings, and neither makes a finished meeting a different one, so a project carried on with or without them reads its meetings back. A meeting read back is told of by one `read_back` event, with its summary and where it is saved.
-
-### Steering a meeting as it happens
-
-A person following a meeting can steer it as well as watch it. `steer` is called before every agent's turn with a `NextTurn`, which names the meeting, the round, and the agent about to speak, and returns a note or `None`:
-
-```python
-from virtual_lab import NextTurn, hold_meeting
-
-def steer(turn: NextTurn) -> str | None:
-    if turn.speaker == "Scientific Critic":
-        return "Check the controls in the binding assay before anything else."
-    return None
-
-hold_meeting(..., steer=steer)
-```
-
-- A note is added to the discussion after the agent's prompt, introduced as from the human researcher overseeing the meeting, so the agent about to speak reads it last, and everyone after it reads it too. It is kept in the transcript as from `Human researcher`, with the kind `note` in the record and in the `message` event, and saved documents show it, so no agent may have that title. A note that is empty or only spaces is not added.
-- The meeting waits while `steer` does, which is how it is paused: a function that waits for a person to resume holds the meeting before the turn, with nothing sent. `steer` is asked only between turns, so an agent running code or calling tools finishes its turn first.
-- An exception `steer` raises stops the meeting the way any other failure does, saving what was done under `save_dir/partial/`.
-- `interrupt` is called about every fifth of a second while a request waits for its reply, which is how a meeting is stopped while a provider says nothing: what it raises ends the meeting at once, the way an exception from `steer` does, and the request is left to end as it will, with its reply dropped. A `Chat` gives its meetings its own check for a stop. Like `steer`, it does not make a finished meeting a different one.
-- `Project` takes `steer` as an option for its meetings, which with `run_project` includes the meetings in which the team lead decides each step, so a note can reach the team lead before its next decision. Like `on_event`, it does not make a finished meeting a different one: what was said is in the meeting's transcript, and a project carried on reads it back.
-
-### Saving a meeting, a project, or a conversation as a document
-
-Biomni saves its agent's conversation as a PDF. A meeting can be saved as one too, or as a page of HTML, laid out as a meeting: its agenda, team, and summary first, then the discussion round by round, each agent in a colour of its own, with the code each agent ran, what it printed, and the figures it drew, then what the meeting cost. A project is saved as its report, with every meeting it finished after it if asked for, each from a new page. A conversation with the head of a lab, as the web interface has it, is saved as what was asked and answered, turn by turn.
-
-```python
-from virtual_lab import save_chat_html, save_chat_notebook, save_chat_pdf, save_meeting_html, save_meeting_pdf, save_project_pdf
-
-save_meeting_pdf("results/discussion.json")            # results/discussion.pdf
-save_meeting_html("results/discussion.json")           # results/discussion.html, which needs no extra
-save_project_pdf("project", meetings=True)             # project/report.pdf
-save_chat_pdf("workspace/chats/2025-03-04_0912_nanobodies")   # conversation.pdf in that folder
-save_chat_notebook("workspace/chats/2025-03-04_0912_nanobodies")   # conversation.ipynb, which needs no extra
-```
-
-- A PDF needs WeasyPrint, which `pip install "virtual-lab[pdf]"` installs, and the Pango library it draws text with, which pip cannot: `brew install pango` on macOS, or `apt install libpango-1.0-0 libpangoft2-1.0-0` on Debian and Ubuntu. Without them a PDF is refused with `PDFExportError`, saying what to install, and HTML can still be saved.
-- Everything is read from what was saved, so any meeting can be saved as a document at any time, including one that failed, from `partial/`, and a transcript saved before meetings kept records, which is shown from the transcript alone.
-- The prompts each agent was given are left out, since the agenda stands for them; `include_prompts=True` shows them. Notes a person gave through `steer` are always shown. A tool's or the session's output is cut to `max_output_chars`, 6,000 characters by default, from the middle.
-- What the agents wrote is rendered as Markdown, with any HTML in it shown as text, and the document carries its figures, so neither the HTML nor the PDF fetches anything: an image an agent linked to, on the web or on disk, is shown as a link to it. A figure is read only from the session's own directory.
-- `meeting_html`, `project_html`, and `chat_html` return the document rather than saving it.
-- A conversation is saved as it went. Each turn has what the researcher wrote and attached, then what the lead did, in order: what it said, the code it ran with what it printed and the figures it drew, the files it made, and the tools it called with what they gave back. Each time the lead brought in the team, the call links to the team's session, which is added after the conversation as a meeting is. A conversation that is still going is saved as far as it has got, and saving it changes nothing in what it saved.
-- A conversation can also be saved as a Jupyter notebook, as Biomni's agent works: what the researcher and the lead wrote are Markdown cells, each piece of code the lead ran is a code cell holding what it printed, the value it came to, and the figures it drew as its outputs, and what else the lead called is told in Markdown. R and shell code is a cell that starts with `%%R` (which needs rpy2) or `%%bash`. `chat_notebook` returns the notebook rather than saving it.
-- A conversation is read from its folder under the workspace's `chats/`, so `save_chat_html`, `save_chat_pdf`, and `save_chat_notebook` take that folder and save `conversation.html`, `conversation.pdf`, or `conversation.ipynb` in it unless told where. The figures are read from the session's directory, which is where the conversation says it was; if the folder has been moved, `files_dir` says where it is now.
-
-
-## Running the code that agents write
-
-Agents can write code, and the Virtual Lab can run it. Because that code is written by a model and read by nobody before it runs, it is executed in a container rather than on your machine. Install [Docker](https://docs.docker.com/get-started/get-docker/) and make sure it is running.
+A conversation from Python:
 
 ```python
 from pathlib import Path
-from virtual_lab import DockerExecutor, run_files, save_artifacts
 
-paths = save_artifacts(save_dir=Path("results"), save_name="discussion", artifacts=code)
-results = run_files(
-    directory=paths[0].parent, files=code.files, executor=DockerExecutor()
+from virtual_lab import Agent, Chat, LocalSession
+
+lead = Agent(
+    title="Principal Investigator",
+    expertise="computational biology",
+    goal="answer the researcher's questions about their data",
+    role="lead the lab and run the analyses",
+    model="gpt-5.2",
 )
-```
-
-The container has no network access, no view of your filesystem beyond the meeting's own output directory, a read-only root filesystem, and hard limits on memory, processes, and wall clock time. It is not given your environment, so the code cannot read your API key. Scripts that genuinely need to reach the internet require `DockerExecutor(allow_network=True)`. The one place besides the meeting's directory that code can write is a scratch space at `/tmp`, which is also its home directory. It is emptied when the container stops, so a session that is to keep a library installs it with `--target` under the meeting's directory.
-
-Docker mounts a scratch space of this kind so that nothing in it can run, and this sandbox turns that off, so that a library `pip install` adds for the user, such as one with a compiled part, loads from it. Nothing is lost by that: code can run what it writes to the meeting's directory in any case, and the container has no capabilities and cannot gain any.
-
-The first run pulls the sandbox image, which takes a minute. Files the code writes into its working directory appear on your machine; everything else it does is discarded with the container.
-
-### Biomni's software and data in the sandbox
-
-The default sandbox image is plain Python. For the software Biomni's agent works with, build a sandbox image from Biomni's own environment files, which ship with this package, and fetch Biomni's data lake to mount into it:
-
-```python
-from pathlib import Path
-from virtual_lab import SANDBOX_PLATFORM, DockerExecutor, build_sandbox_image, download_data_lake
-
-image = build_sandbox_image("bio")
-lake = download_data_lake(Path("data/biomni_data/data_lake"))
-executor = DockerExecutor(image=image, data_lake=lake.directory, platform=SANDBOX_PLATFORM)
-```
-
-| Stage | Adds | Size, roughly |
-| --- | --- | --- |
-| `base` | Python 3.11 with Biomni's analysis libraries (pandas, scikit-learn, statsmodels, transformers, and the rest of its `environment.yml`) | 3 GB |
-| `bio` | Biomni's bioinformatics tools and libraries: samtools, BWA, BLAST, Bowtie 2, scanpy, RDKit, pysam, scvi-tools, and the rest of its `bio_env.yml` | 18 GB |
-| `bio-r` | R 4.5 with the packages analyses of published studies most often use (tidyverse, lme4, glmnet, survival, vegan, DESeq2, edgeR, limma, clusterProfiler, fgsea, the human and mouse annotation databases, and others, listed in `bio_r_env.yml`), and the Python packages `bio` lacks: pydeseq2, PhyKIT, mygene, harmonypy, and ete3. This stage is this project's, not Biomni's | about 1.5 GB more than `bio`, built in minutes |
-| `full` | R with Biomni's CRAN and Bioconductor packages, its command-line tools (PLINK 2, IQ-TREE, GCTA, and others), and the software added in Biomni 0.0.8 | tens of GB, hours to build |
-
-Each stage includes the one before, except that `bio-r` and `full` are both built on `bio`, so `full` does not have what `bio-r` adds. `bio-r` puts R in an environment of its own, `r_e1`, after Biomni's on the path, so `python3` is still Biomni's and `Rscript` is that environment's; its packages come built from conda-forge and Bioconda, which is why it takes minutes where `full`, which compiles Biomni's R packages from source, takes hours. An image is built once and reused, and is tagged with the package version and platform, so that an upgrade builds a new one. Biomni publishes its environment for x86-64 Linux only, so the images are built for `linux/amd64` even on an ARM machine, where Docker runs them under emulation (slower, but complete). Pass the same platform to `DockerExecutor`, as above, or Docker warns about the mismatch on every run's stderr. `build_sandbox_image("base", platform=None)` builds for the machine's own architecture instead, under a tag of its own; run it with `DockerExecutor(platform=None)`. The `bio`, `bio-r`, and `full` stages do not build on ARM.
-
-Biomni's installers for R and its command-line tools print a failure and go on, and report success, so the last step of `full` checks that every R package they name, and every program in `cli_tools_config.json`, is there, and a build that is missing one fails. Building the stage for x86-64 found what Biomni's scripts assume a machine has, and the Dockerfile now installs it: `cmake` (for `lme4`), zlib's headers (for BWA), `zip` (for HOMER), and the libraries xz, libxml2, and netcdf for R's `igraph`, `Rhtslib`, `XML`, and `ncdf4`, which `clusterProfiler`, `dada2`, and `xcms` need. Two programs are installed differently. GCTA is version 1.94.1 from its authors' GitHub release, checked against a hash, where Biomni's script asks for 1.94.4 from a server that gives the file only to a browser. HOMER is installed with its installer's own command, since Biomni's script gives it options it no longer takes and so installs nothing.
-
-The data lake is 76 files and about 11 GB. `download_data_lake` takes a list of names to fetch only some of them (see `DATA_LAKE` for what each holds), skips files already present, and never leaves a partial file under a real name, so an interrupted download is resumed by calling it again. The sandbox sees the directory read-only at `/biomni_data/data_lake`, which is also in the `BIOMNI_DATA_LAKE` environment variable. Keep it outside the directory meetings are saved to: a data lake that overlaps the directory code runs in is refused, since the code could write to it there.
-
-If you do not have Docker, `LocalExecutor` runs code directly on your machine instead. It is not a sandbox: code run through it can read and write any file you can. It applies a timeout and withholds your API key, and that is the extent of it.
-
-### A shared session for exploratory analysis
-
-A finished script is run once. An analysis is explored instead: load the data, look at it, decide what to do next. A session keeps one Python interpreter running for the length of a meeting, the way Biomni's agent keeps its REPL, so a table one agent loads is still there for the next agent to use:
-
-```python
-from pathlib import Path
-from virtual_lab import DockerSession, session_executor, session_tool
-
-with DockerSession(Path("results/session"), executor=session_executor("bio")) as session:
-    session.run("import pandas as pd\ndf = pd.read_csv('counts.csv')")
-    print(session.run("df.shape").output)          # the value of a final expression is printed
-    session.run("samtools --version", language="bash")
-    tool = session_tool(session)                   # a run_code tool to give the meeting's agents
-```
-
-Each run returns a `CellResult` holding what the code printed (standard output and standard error together, in order), its status, the figures it drew, and the files it wrote. Code that fails or runs out of time is a result, not an exception. A matplotlib figure left open is saved under `plots/` and closed. R and bash code runs as a fresh `Rscript` or `bash` process in the same directory each time, as it does in Biomni.
-
-By default a session runs in Biomni's `full` image with the network on, since Biomni's agent queries databases as it works. Pass `session_executor("bio")` or `session_executor("base")` for a stage you have built, `allow_network=False` to cut the network, and `data_lake=` to mount the data lake. Everything else about the container matches `DockerExecutor`. The limits are higher (8 GB of memory, 4 CPUs, 2 GB of scratch space) because a session holds a whole analysis in memory at once.
-
-Code is stopped at its time limit (`timeout=`, 300 seconds by default) and the session keeps everything it had defined. Code that ignores the stop, and code that crashes the interpreter or runs out of memory, costs the session: the result's status is `"lost"`, and the next run starts a fresh interpreter, which its `start` number shows. Starting a session in an image Docker emulates takes about half a minute. `LocalSession` runs the same interpreter on your machine, with no isolation, like `LocalExecutor`. Pass `python=` to use an environment already installed there, such as Biomni's `biomni_e1`.
-
-### Running code during a meeting
-
-Give a meeting a session and its agents can run code in it as they talk, checking a claim against the data or computing a number instead of estimating it:
-
-```python
-from virtual_lab import DockerSession, hold_meeting, session_executor
-
-with DockerSession(Path("results/session"), executor=session_executor("bio")) as session:
-    result = hold_meeting(
-        meeting_type="team",
-        agenda="Which genes separate the two clusters in counts.csv?",
-        save_dir=Path("results"),
-        team_lead=principal_investigator,
-        team_members=(bioinformatician, scientific_critic),
-        num_rounds=2,
-        session=session,
-    )
-```
-
-Everyone in the meeting shares the one interpreter, so what one agent loads or computes, the next can use. By default each agent runs code by calling a `run_code` tool. With `code_actions="tags"` it instead writes the code between `<execute>` and `</execute>` in its reply and is answered between `<observation>` and `</observation>`, as Biomni's agent is. That works with any model, including ones served without tool calling. A block starting with `#!R` is R and one starting with `#!BASH` is a shell script.
-
-An agent may run code, or call tools, up to 20 times in a turn with a session (5 without), after which it is asked to answer without them; `max_tool_iterations=` changes that. The session is started before the first request, so one that cannot start costs nothing, and it is left running afterwards, so the next meeting can pick up where this one left off. Every piece of code the meeting ran, with its full output, is saved to `sessions/<save_name>.json`, and each turn in the meeting's record lists the cells it ran and how each ended. The transcript shows the code beside its output.
-
-### Biomni's tools, data, and know-how in a meeting
-
-Biomni's package ships with this one, unchanged, so code in a session can import its tool functions (223 of them, from database queries to CRISPR screen design) the way Biomni's agent does: `from biomni.tool.database import query_uniprot`. The package is mounted read-only into the container. It is not imported on your machine: its descriptions are read as data, and only its know-how loader, which needs nothing beyond the standard library, is run there. Each meeting tells its agents what they can use: Biomni's tools, the data lake files that are mounted, the software in the image, and Biomni's know-how documents, which are given in full.
-
-virtual_lab adds guidance of its own, as skills that come with it, in `virtual_lab/builtin_skills` (see [Skills](#skills)). It is general practice for kinds of analysis where a number is easy to get wrong: reading the sign of dependency scores, enrichment analysis, sample ids and PCA, multiple-testing corrections in small panels, variant call statistics, what a tool's function computes, and a checklist for any question that asks for a number from data. A conversation has them as skills, which its lead is told of in every request. A meeting has no skills, so `all_know_how()` lists them after Biomni's documents (`builtin_know_how()` is the part that is theirs), and a meeting is given the ones its task suits, as it is for Biomni's. A conversation that has one as a skill is not offered it again as know-how. To add one, put a folder with a `SKILL.md` there; see `builtin_skills/README.md`.
-
-Biomni lists all of its software to its agent, whose environment has all of it. A session may run in the `bio` or `base` stage, which has only some, so before a meeting lists anything it checks, in the session, which of Biomni's software is installed and which of its tool modules import. It lists only those, and its record names what was left out and why: in the `bio` stage, for instance, R and its packages, and the genomics and bioimaging tools, whose modules need libraries only the `full` stage has. The check takes a few seconds, is not part of the session's history, and runs the imports in a process of its own, so it leaves the session as it found it. If it cannot be done, everything is listed, with a warning.
-
-Listing everything adds about 40,000 tokens to every request, so by default the agent who closes the meeting is first asked which resources the agenda needs, as Biomni's agent asks before each task, and only those are listed. That costs one request of about 12,000 tokens, which counts towards `max_cost` and the meeting's usage. An answer that cannot be read lists everything, with a warning.
-
-```python
-from virtual_lab import Resources, available_resources
-
-hold_meeting(..., session=session)                     # the lead picks what the agenda needs
-hold_meeting(..., session=session, resources="all")    # list everything
-hold_meeting(..., session=session, resources="none")   # list nothing
-
-everything = available_resources(session)
-chosen = Resources(tools=tuple(t for t in everything.tools if t["module"] == "biomni.tool.database"))
-hold_meeting(..., session=session, resources=chosen)   # list exactly these
-```
-
-Tools and software are listed only when the session can import Biomni's tools (`biomni_tools=False` in `session_executor` or `LocalSession` turns this off), and data lake files only when the data lake is mounted. The meeting's record says which resources were available, which were listed, and, when they were retrieved, what the agent answered and what that request cost.
-
-About forty of Biomni's tools call a model themselves, most of them the database tools that turn a question into a query. They need an API key inside the container, which is otherwise given none. Pass the names of the variables to forward, and set Biomni's own settings with `environment`:
-
-```python
-executor = session_executor(
-    "bio",
-    data_lake=lake.directory,
-    forward_env=("ANTHROPIC_API_KEY",),
-    environment={"BIOMNI_LLM": "claude-sonnet-4-5"},
-)
-```
-
-A forwarded variable is passed to Docker by name, so its value never appears in a command line, and the record lists only its name. It must be set on your machine, or the session refuses to start. Code in the session can read it, and with the network on it can send it anywhere, so forward only a key you are prepared to have used by the code agents write. Values in `environment` are recorded in full, so they are not for secrets.
-
-`commercial_mode=True` leaves out the data lake files and know-how documents that Biomni's commercial mode leaves out because their licenses forbid commercial use, and describes the data lake as that mode does. `download_data_lake(directory, names=commercial_data_lake())` fetches only the files it uses. It does not check the licenses of the tools themselves or of the databases they query; see `license_info.md` in `virtual_lab/sandbox/biomni_package`.
-
-
-## Fixing code that fails
-
-`run_with_repair` writes a meeting's code, runs it, and hands the traceback back to the agent that wrote it, asking for a correction. It stops as soon as the code runs, when the attempts are used up, or when an attempt reproduces the previous error.
-
-```python
-from virtual_lab import DockerExecutor, run_with_repair, save_execution_record
-
-outcome = run_with_repair(
-    artifacts=code,
-    author=machine_learning_specialist,
-    save_dir=Path("results"),
-    save_name="discussion",
-    executor=DockerExecutor(),
-)
-save_execution_record(
-    save_dir=Path("results"),
-    save_name="discussion",
-    outcome=outcome,
-    author=machine_learning_specialist,
-    executor=DockerExecutor(),
-)
-```
-
-The failure goes to the author rather than to the critic because the author knows what the code was meant to do, while the critic's job is scientific judgement rather than debugging. Each attempt past the first costs another round of code generation, so `max_attempts` defaults to 3. The record written to `executions/<save_name>.json` lists every attempt, the code it ran, and what that produced, alongside the total token usage and cost of the repairs, making the multiplier visible rather than buried.
-
-Repairs take the same limits as a meeting: `max_cost` is checked before each repair request, `max_completion_tokens` caps each one, and `on_usage` and `before_request` let a caller keep a running total or stop the loop. If the loop is stopped partway, by its limit, a request that fails, or Ctrl-C, every attempt it ran and what the repairs cost are recorded under `save_dir/partial/executions/<save_name>.json` before the error propagates.
-
-The result can then be reviewed as evidence rather than as a claim, by passing it into the next meeting as context:
-
-```python
-run_meeting(
-    meeting_type="individual",
-    agenda="Review the results of running the analysis.",
-    save_dir=Path("results"),
-    team_member=machine_learning_specialist,
-    contexts=(outcome.report(),),
-)
-```
-
-`outcome.report()` states plainly whether the code worked, whether it had to be corrected first, and whether it was abandoned. A critic that is not told the code failed three times will review the code as though it had worked.
-
-
-## Running a project within one budget, and resuming it
-
-A project is many meetings, with code run and repaired between them. `Project` holds them to one budget and keeps a ledger, `project.json`, of every step: what it was asked to do, what it cost, how it ended, and where it was saved.
-
-```python
-from virtual_lab import CodeArtifacts, DockerExecutor, Project, ProjectBudgetExceededError
-
-project = Project(Path("results/kp3"), goal="Design nanobodies against KP.3.", max_cost=20.0, session=session)
-
-try:
-    plan = project.meeting(
-        "team", "Choose the computational tools.", name="tools",
-        team_lead=principal_investigator, team_members=(immunologist, ml_specialist), num_rounds=2,
-    )
-    code = project.meeting(
-        "individual", "Write the ESM scoring script.", name="esm",
-        team_member=ml_specialist, summaries=(plan.summary,), output_schema=CodeArtifacts,
-    )
-    outcome = project.repair(code.output, ml_specialist, DockerExecutor(), name="esm_run")
-except ProjectBudgetExceededError as error:
-    print(f"Stopped at ${error.spent:.2f} of ${error.limit:.2f}")
-print(project.spent, project.remaining)
-```
-
-- `max_cost` covers every meeting and repair in the project, across every run of it on the same directory. Each step is given what is left as its own limit, and the project's total is checked before every request any step sends, so steps run from several threads at once are stopped together. As for a meeting, the limit can be overrun by the cost of one request per step running at the time.
-- Each step is recorded as soon as it starts, and what it has cost is updated after every response. A step that fails, or is interrupted by Ctrl-C, is recorded with its error and what it cost. One whose process is killed outright is found running when the project is next opened and is marked interrupted, with what it had cost by its last response.
-- A step that finished is never paid for twice. Opening the project again on the same directory and asking for a step under the same name and with the same inputs reads it back from disk, for nothing. A script that stopped partway, for its budget, an error, or Ctrl-C, therefore carries on where it stopped when run again, perhaps with a higher `max_cost`. A failed step is held again.
-- Asking for a finished step under its name with different inputs is refused with `ProjectStateError`, which names the inputs that differ, since replacing it could change what later steps were built on; give the new step a name of its own. Agents, tools, and resources are compared by everything the agents are told of them, so a tool described differently or a know-how document edited is a different input. A meeting's transcript, record, and structured output, and a repair's record and code, are checked against hashes in the ledger before they are read back, so a file changed since is refused too. A directory holding a project with another goal is refused.
-- Steps are named `meeting_001`, `meeting_002`, and so on, and `repair_001` onwards, in the order they are asked for, unless named. Name every step run from a thread, since that order is not fixed. Meetings and repairs are saved under `meetings/` by name, laid out as `hold_meeting` and `run_with_repair` lay them out.
-- Options given to `Project` apply to every meeting, under those given to a meeting. `session`, `chat_models`, and `client` are the project's own, and are used for repairs too. A session does not survive the process, so meetings read back on a later run leave nothing in its interpreter; the files they wrote in its directory remain. Only one process should use a project's directory at a time.
-
-### Letting the principal investigator run the project
-
-`run_project` hands the deciding to the team lead. The team lead chooses a team, unless one is given, the team makes a plan, and then every round the team lead reads what the project has done and decides one next step, restating the plan with each task's status:
-
-- `team_meeting`: a discussion it leads, with the team members and critic it names.
-- `individual_meeting`: one team member, or the team lead, works on an agenda, with the critic critiquing.
-- `write_code`: one of them writes code, which is run with `executor` and repaired if it fails. Offered only with an executor.
-- `change_team`: scientists are brought onto the team, up to `max_team_size`, or let go.
-- `finish`: the team lead gives the project's answer. The critic reviews it against the goal and the work done, and the project ends only if the critic agrees; otherwise its objections are what the next round goes on.
-
-```python
-from virtual_lab import DockerExecutor, Project, run_project
-
-project = Project(Path("results/kp3"), goal="Design nanobodies against KP.3.", max_cost=20.0)
-report = run_project(project, max_rounds=12, executor=DockerExecutor())
-print(report.status, report.reason)
-print(report.answer)
-```
-
-- A run ends `finished` when the critic accepts an answer, `out_of_budget` when the project's `max_cost` runs out, `out_of_rounds` after `max_rounds` rounds, `stalled` after `max_stalled_rounds` rounds in a row without one more of the plan's tasks done, or `stopped` by the approve hook. Running out of budget ends it with a report, not an error.
-- Every meeting is told the goal, the team, and the plan as it stands, and is given what the work so far found, as `memory` says (below). A decision that cannot be carried out, such as one naming someone not on the team, is recorded and the team lead is told why in the next round.
-- `approve` is called with each round's number and decision before it is carried out, and returns the decision to carry out, which it may change, or `None` to stop the project. With none, the project runs on its own. A `steer` given to the `Project` adds a person's notes to its meetings as they go (see [Steering a meeting as it happens](#steering-a-meeting-as-it-happens)).
-- `on_event` is called with a `ProjectEvent` when the team is chosen or changed (`team`), the plan is made (`plan`), each step is decided (`decided`, before `approve` is asked), code is run (`code`), each round ends (`round`), and the project ends (`finished`, with the report), and with every `MeetingEvent` of every meeting it holds, so a project can be followed as it happens. The `Project`'s own `on_event`, if it has one, is called first. An exception it raises stops the project like any other error, except when it is told the project ended, once the report is saved, which is only warned about.
-- `research_log.json` records every round, with the decision as proposed and as carried out, and every change to the team, and is saved after every round. The run ends with `report.json` and `report.md`: the answer, or the last one the critic did not accept and its objections, the team, the plan, every round, and the cost. A run that fails with any other error leaves no report, and the log says what the error was.
-- Every step is a step of the project, so a run that stopped is carried on by running it again on the same directory: the steps it took are read back for nothing. Nothing a step is asked depends on `max_cost`, `max_rounds`, or `max_stalled_rounds`, so they can be raised to carry a project on. For the same reason, the team lead is not told how many rounds or how much money is left. Every decision carried out, whether the approve hook changed it or there was no hook, is kept in the log and not asked about again, however far a later run gets before it stops; one the hook stopped is asked about again.
-
-#### What each step is given of the work before it
-
-Passing every meeting the summary of every meeting before it, as the Virtual Lab does, fills the context as a project grows, with much that the meeting at hand does not need. So `run_project` keeps what the work established in a `LabMemory`, as findings: each meeting restates what it found as `Findings`, one claim and its evidence apiece, in one more request, and after code is run its author says what the run established, in a short meeting of its own. Each finding gets an id, `F1`, `F2`, and so on. What a step is given then depends on `memory`:
-
-- `"pick"`, the default: the team lead is shown every finding by its id and claim, and what each step found, with the latest step in full, and names in each decision the findings the step needs. The step is given those in full and no others; for `finish`, the critic is given the ones the answer rests on. This is how Biomni's agent picks the tools, data, and know-how a task needs, and costs no requests beyond the findings themselves. A decision naming a finding that does not exist is refused.
-- `"bm25"`: each step is given the findings whose claim and evidence best match its agenda and questions, or a proposed answer, by BM25, at most `findings_per_step` of them.
-- `"summaries"`: no findings are kept, and each step is given the summary of every step before it, as before.
-
-The findings are saved in `memory.json` and listed in the report, and the research log records which findings each round was given and which it made. A memory can be used on its own too:
-
-```python
-from virtual_lab import Finding, LabMemory
-
-memory = LabMemory()
-memory.add([Finding(claim="Nb21 binds KP.3 at 2 nM.", evidence="SPR, three replicates.")], source="assay")
-memory.search("KP.3 binding", limit=5)  # by BM25
-memory.get(["F1"])
-memory.save(Path("memory.json"))
-```
-
-
-## Talking to the head of a lab
-
-A meeting or a project is run to a plan. A `Chat` is the other way round: you talk to one agent, the lead, and it answers directly when it can. When the answer needs a computation it runs code in the session, and when a question needs more than one kind of expertise it brings the team in, through two tools it is given:
-
-- `convene_team`: several scientists of the team discuss an agenda with the lead leading, and the lead is given the summary they reached.
-- `consult`: one scientist works on an agenda with the Scientific Critic reviewing, and the lead is given its answer.
-
-```python
-from virtual_lab import Chat, LocalSession
 
 with LocalSession(Path("work")) as session:
-    chat = Chat(
-        Path("chats/nanobody"), lead=principal_investigator,
-        team=(immunologist, ml_specialist, scientific_critic), session=session, max_cost=5.0,
-    )
+    chat = Chat(Path("chats/example"), lead=lead, session=session, max_cost=5.0)
     counts = chat.save_upload("counts.csv", open("counts.csv", "rb"))
     reply = chat.send("Which genes are higher in the treated samples?", attachments=[counts])
     print(reply.status, reply.text)
 ```
 
-- These are meetings, held as a `Project` holds them, in the conversation's directory under `lab/`: they run in the same session, get the same resources and tools, are saved and counted the same way, and count towards the same `max_cost` as the lead's own requests, in every run of the conversation on that directory. The lead may start `max_delegations` of them in answering one message, and asks for at most `max_rounds` rounds of each, so a question cannot run up a bill the researcher did not expect. A model that sends the same request twice in one message, as some do when they call tools in parallel, has it held once: the second is answered with "Not held again" and costs nothing. Without a team, or with `max_delegations=0`, the lead works alone. Without a `session` nobody runs code.
-- A turn ends `answered`, `stopped`, or `failed`, as the `ChatReply` says. A failure is reported there and as an event, not raised, and the conversation goes on from it. When the model provider is the cause (a key it refuses, an account out of credit, a rate limit, a provider that is down or cannot be reached, a conversation too long for the model, a reply with nothing in it, or the provider's own safety check stopping the conversation, which says to use Edit on the last message, since what was flagged stays in the conversation), the text says so in plain words with what to do about it, followed by the provider's own message, shortened, in brackets; any other failure is told as `Type: message`, and the event's `type` is the error's class either way. `send` waits for the answer, and `start` answers in a thread of its own, to be followed through the events.
-- Files are attached with `save_upload`, which keeps one under a name that is safe whatever it was uploaded as, never replaces another, and refuses one larger than `max_upload_bytes`. They are saved in the session's `uploads/`, where its code reads them, and the lead is told what was attached. `resources` is as for a meeting: the lead is told of Biomni's tools, data lake, libraries, and know-how, by default through a `find_resources` tool that asks which of them suit a task, and the team is told of the same.
-- Everything that happens is a `ChatEvent`, numbered in order: the message, each reply as it is written with `stream=True`, each tool call and its output, each run of code with where its figures are, what the team does, notes, and usage, and how the turn ended. `on_event` is called with each, and `events_since(n)` and `wait_for_events(n, timeout)` give what has happened after number `n`, so a page that reconnects catches up from the last one it saw without missing any. The state the conversation is in, and the reply being written, are the latest of each, not what they were as they changed.
-- `on_event` is called in the thread that caused the event, with none of the conversation's locks held, so a slow callback holds up only its own thread. Events from different threads can reach it out of order, and their number is the order they happened in. An exception it raises ends the turn like any other failure, except when it is told how the turn ended or what state the conversation is in, which is only warned about, so a callback for a page that went away cannot leave the conversation running.
+`LocalSession` runs code on your machine with no isolation. Use `DockerSession` to run it in the sandbox.
 
-```python
-thread = chat.start("Design a nanobody against KP.3.")
-last = 0
-while thread.is_alive():
-    for event in chat.wait_for_events(last, timeout=1):
-        last = event.id
-        if event.kind == "lab":
-            print(f"[{event.data['meeting']}] {event.speaker}: {event.text}")
-        elif event.kind == "answer":
-            print(event.text)
-```
+## Documentation
 
-- The researcher steers from any other thread. `add_note` gives the lead, or the team if it is working, a note to read before it goes on. `pause` holds the turn before its next request, or the team's next turn, until `resume`. `stop` ends it at the next point it can be, with what was done kept and every tool call answered, so the next message starts from a valid conversation; code or a tool that is running is not interrupted, but a request that is waiting for a model is given up on at once, so a provider that says nothing cannot hold a conversation (the request is left to end as it will, and its reply is dropped). `close` stops a turn and ends waits on the events.
-- `set_limits(max_cost=..., max_delegations=..., max_rounds=...)` changes what a conversation may spend and what the lead may ask of the team, whether or not a turn is running (leave out what is to stay as it is; `max_cost=None` takes the limit away). The new spending limit holds from the lead's next request, and a `usage` event tells the pages of it. `max_delegations` (at most `CEILING_CHAT_DELEGATIONS`, 20) and `max_rounds` (at most `CEILING_CHAT_DELEGATION_ROUNDS`, 10) are used from the next message, which is when the lead is given its tools again; `max_delegations=0` has it work alone. Changing the spending limit of a conversation whose model has no known price raises `CostUnknownError`, as giving it one does. The limits are kept in `chat.json`.
-- The conversation is saved as it goes in its directory: `chat.json`, `messages.jsonl` (what the lead was sent and said), `events.jsonl`, `uploads/`, and `lab/`. A `Chat` opened on the same directory carries on from there, with the same title, usage, and messages and the same numbering of events. If the process was killed during a turn, that turn is ended as `Interrupted` when the conversation is opened.
-- The lead may call tools, and run code, `max_tool_iterations` times in answering one message (20 with a session, 5 without). On its last request it is given no tools and is told so, to say what it has done, what is left, and what it would do next; the researcher writes "continue" to give it more. With `check_results=True` (a conversation made by the server has it unless its request says `check_results: false`), a lead that ran code for a message and then wrote an answer is asked once, before the researcher is given it, to check the result: that it is the quantity asked for, its sign and direction (a quantity where smaller means stronger, such as a p-value or a rank, is not "higher is more" until it is flipped), the filters, thresholds, and background that went into it, its units and scale, the data that went in (how many rows, repeated or mismatched identifiers, missing values), and whether it is plausible, with a second way of getting the number run where there is one, and to say which choice it made where the message leaves one open. What it wrote first stays in the conversation as something it said, and what it writes after is the answer. It costs one more request, and whatever the checks run, for each message that ran code; it is not asked on the last round, which has no tools, nor when no code ran. The lead is told to keep each check short and in the foreground, with no background job (`nohup`, `&`) and no rerun of the whole analysis, and the checks have `CHECK_TOOL_ROUNDS` (6) rounds of tool calls, never more than the message has left: on the request after the last of them it has no tools and is asked for its answer again, and not for how far it got. If it still writes only calls out as text after being told that nothing ran, the researcher is given the answer it wrote before the check. A model that writes a call out as text instead of making it, which a model does that is shown its own earlier calls as text, has called nothing: it is told that nothing ran and asked again, up to `MAX_FAKED_CALL_RETRIES` times in a message, and that does not use up one of its rounds. If it will not stop, the answer is what it wrote besides the calls, or else a plain message saying so, never the text of a call.
-- A conversation that has outgrown what the lead's model can read says so, in an error that names what to do, rather than being sent to fail. `max_cost` is checked before every request, so it can be overrun by the cost of one, and a model with no known price cannot be given one.
-
-### Serving the conversation to a page
-
-A page talks to a `Chat` through a server, which keeps each conversation under `chats/` in the workspace, runs its code in the session the settings choose, and tells the page of every event as it happens. It needs FastAPI and Uvicorn, which the `server` extra installs.
-
-```bash
-pip install "virtual-lab[server]"
-virtual-lab-server                      # http://127.0.0.1:8765, or the first free port after it
-virtual-lab-server --workspace ~/lab --port 9000 --no-browser
-```
-
-```python
-from virtual_lab.server import serve
-
-serve(workspace="~/lab", port=9000)     # waits until stopped
-```
-
-It prints a link with a token in it. Opening the link keeps the token in a cookie, and takes it out of the address.
-
-- The server is for one person. Anyone who reaches it can spend on your keys and, where code runs, run code on your machine, so it answers only a request that names this machine in its Host header, as a name and a port and nothing else (which turns away a page at another address that was made to point here), wants the token for everything under `/api` but `/api/health` (as the cookie, or as `Authorization: Bearer`), and turns away a request that changes anything and comes from a page of another address. Each page of the interface carries a Content-Security-Policy that lets it run only the scripts in its own files and the few written into the page, which it names by their hashes (worked out from the page when it is served), and lets it load and send nothing to another address, so that nothing a model writes can become a script. Listening beyond this machine with `--host` is refused unless `--allowed-host` names what it is reached by, and it says so when it starts. `--token` or `$VIRTUAL_LAB_SERVER_TOKEN` sets the token; otherwise one is made for each run.
-- The keys you give the page are kept in this machine's own keychain (the macOS Keychain, the Windows Credential Manager, or the Secret Service), through the `keyring` package, under the service `virtual-lab` with the name of the variable as the account, so that they are there when the server is started again. They are written nowhere else, and anyone who can unlock your keychain can read them. A key in the environment the server is started with, such as an `OPENAI_API_KEY` exported in your shell, is used before one kept, and is never stored. `--no-keychain`, or `serve(keychain=False)`, keeps keys only until the server stops. Where there is no keychain, such as a Linux machine without the Secret Service, the page says so and keeps them until the server stops. The keychain has 5 seconds to answer, since a locked one can wait for you to unlock it, and one that does not is said to be locked rather than waited for. The tests never reach the machine's keychain: they are given one that is a dictionary.
-- Every route is under `/api` and answers in JSON, and an error answers `{"error": {"code": ..., "message": ...}}` with a code a page can act on: `missing_keys` (422, naming which keys), `setup_needed` (409, naming what is `missing`: `docker`, `image`), `docker_unavailable`, `already_built`, `busy`, and `closed` (409), `too_large` (413), `not_found`, `invalid` (422), `unavailable` (422, for a conversation whose saved files cannot be used, naming the file and what is wrong with it), and `files` (500, when a file or directory of the workspace cannot be read or written, naming it and why, such as a workspace that is read-only).
-- `GET /api/chats` lists the conversations, `POST /api/chats` starts one (the model, the lead, the team, where code runs, the budget, how many team sessions the lead may start for a message and how many rounds each may have, how many tool calls and runs of code it may make for a message (`max_tool_iterations`, 1 to 200, which is 20 where code runs, and is kept in the conversation's `config`), whether the lead checks its results before answering (`check_results`, true unless it says false, kept in `config` too), and whether to stream, each taken from the settings or the library if left out), and `GET`, `PATCH`, and `DELETE /api/chats/{id}` show, rename, and remove one. `POST /api/chats/{id}/close` closes one that is open, ending its turn if one is running and freeing its session, so its container, while what it saved is kept (204; 404 for one that is not there), which `virtual-lab-bixbench` does after each question, since a container stays up with what it loaded until then. A conversation that was saved is opened again when it is asked for, with its events numbered as they were. One whose model's key is not set can be read, and is asked nothing until the key is set.
-- `POST /api/chats/{id}/messages` answers at once (202), and the answer comes as events. With `"replace_last": true` the message takes the place of the last one, to send it again or changed: that message and all that came of it are taken out of the conversation and its saved files, and a `withdrawn` event tells of it just before the new `user` event, which begins the same turn again. What the turn did to the session and to the lab's files is not undone. `note`, `pause`, `resume`, and `stop` steer the turn that is running, and say whether they could. With `"directive": "ask"` (or `plan`, `search`, `code`, `plot`, `review`, `lab`) the message goes with a command that says how to answer it: `ask` and `plan` answer without tools, `search` reads the literature first and cites it, `code` and `plot` run code, `review` has the Critic go over the last answer (it takes no text of its own, and the others need some), and `lab` has the lead hold a team session that the researcher has set up: `"lab": {"mode": "team" | "individual", "members": [titles from the library], "rounds": 0..max_rounds, "questions": [at most 10]}` says who takes part (one scientist, who the Critic reviews, for `individual`), and the lead is given only the tool for that session, with who and how many rounds fixed, so that it writes the agenda and its answer follows from what the session found. Scientists who are not on the conversation's team are added to it first, once the rest of the request has been checked (a `/lab` that is refused leaves the team as it was), which needs the lead not to be at work (409 `busy` otherwise), and a title that is not in the library is refused (422); `lab` is accepted only with that command, which needs it. A command the conversation cannot carry out is refused before anything is sent (`invalid`, 422, saying why: `code` and `plot` need code to run, `search` needs a literature tool, `review` needs the Critic, team sessions, and an answer to review), and `directives` in a conversation's info says which can be used now and, for those that cannot, why. The command (and `lab`, for `/lab`) is in the `user` event's data, is replayed when the message is sent again, and, for the commands that have something to check, the `answer` event's data says in `directive_met` whether the lead did what was asked (for `lab`, that a team session was held), after one reminder if it had not.
-- `GET /api/chats/{id}/events` is a stream of server-sent events, each with its number as its `id`. It starts after `?after=` or the `Last-Event-ID` a browser sends when it opens the stream again, whichever is later, so a page that was cut off misses nothing. The server keeps nothing for a stream: it reads the conversation, so a slow page is told of the latest of a reply being written, and not of every word.
-- `POST /api/chats/{id}/uploads?name=...` takes a file as the body, and gives back what `save_upload` does, to name in the next message. `GET /api/chats/{id}/files` lists what the conversation made or was given, and `/files/{path}` sends one. A file the agents' code wrote is never run by the page: HTML and scripts are sent as plain text, only types that are safe to show are shown in the page and the rest are saved, all with a CSP that runs no script and fetches nothing from elsewhere, and a path that leaves the conversation's directory is not a file.
-- `GET` and `PATCH /api/settings` show and change what each new conversation starts with, `GET /api/models` lists the models (with a few of OpenRouter's) and whether their keys are set, `GET /api/models/openrouter` lists all the models OpenRouter serves that can call tools, each with its name, context length, and prices per million tokens (`models`, and a `problem` if the list could not be fetched, in which case the last one fetched is given if there was one), and `PUT /api/chats/{id}/limits` with any of `{"max_cost": ..., "max_delegations": ..., "max_rounds": ...}` changes a conversation's limits where it is, even while it works (an empty body is `invalid`, 422, as is a number past the most, which `chat_limits` in `/api/settings` gives with the defaults; a spending limit on a model with no known price is `unavailable`, 422), and `PUT /api/chats/{id}/model` with `{"model": ...}` has a conversation go on with another model from where it is (what was said and its files are kept, and code that was running starts afresh; `busy`, 409, while it is working, `missing_keys` or `unavailable`, 422, when the new model's key is not set or, with a spending limit, its price is not known), and `GET /api/keys` says which providers have theirs, where each key that is set came from (`sources`: `keychain`, `session`, or `environment`), and what keychain the server has (`keychain`: whether it is `available`, its `name`, and a `problem` if there is none to use, or the keys kept in it could not be read when the server started). `PUT /api/keys/{name}` sets a key and keeps it in the keychain, unless the body says `"remember": false`, which keeps it until the server stops and forgets one kept before. A keychain that will not keep it does not fail the request: the key is set until the server stops, and `problem` in the answer says why. `DELETE` takes a key away, from the keychain too, and says in `problem` if the keychain would not forget it. A key is never written to the workspace or sent back. `/api/scientists` keeps the scientists you describe, in `scientists.json` in the workspace.
-- `GET /api/skills` lists the skills found, with whether each is on and whether it can be removed (only a skill in the workspace's own `skills/` folder can, and not one that comes with the lab, which has `source` `builtin`), what was wrong with a `SKILL.md` that could not be used, and the folders searched. `PUT /api/skills` takes `{"disabled": [...]}`, which `skills.json` in the workspace keeps, so that a skill added later is on; a conversation is given the skills that are on when it is made, or the ones `skills` names in `POST /api/chats`. `POST /api/skills/install` takes either `{"git": "https://..."}`, an `https` address of a repository, which is cloned (one level deep, with no credentials asked for, and links not followed, and stopped if it takes more than 5 minutes or 1 GB), or `{"path": "/folder"}`, one on this machine (searched in at most 5,000 folders), and copies each skill found into the workspace's `skills/` folder, leaving a skill whose name is taken as it is and saying so. `GET /api/skills/{name}` gives the instructions and the files of a skill, to read before it is trusted, and `DELETE /api/skills/{name}` removes one from the workspace's folder (never from `~/.agents/skills`). The Data page shows the same, with a search box and a warning to trust only what you would follow. Where a conversation begins, the Skills button beside the model (or `/skills`) chooses the skills that one is given, in place of those that are on, and sends them as `skills`; in a conversation, `/skills` shows the ones it was given, which its `config.skills` names, and which it keeps from its start.
-- `GET /api/tools` lists the library's tools that the lead of a conversation can be given, by what they are for (literature, the web, proteins and structures, chemistry, and the files you attach), and whether each is on; `PUT /api/tools` takes `{"disabled": [...]}`, which `tools.json` in the workspace keeps, so that a tool the library gains later is on. A conversation is given the tools that are on when it is made, or the ones `tools` names in `POST /api/chats` (a name the library does not have is refused), and its `config` says which. Where code runs, `data_files` and `inspect_data_file` look in the session's directory, and the lead is also given `fetch_structure_file`, which downloads a structure there for code to read. Where none does, those two look at the files attached to the conversation, so that the lead can look inside a table or a spreadsheet without running anything, and `fetch_structure_file` is left out. `view_image` (under "Your files") is given to a conversation whose model reads images, as far as is known: an OpenRouter model that OpenRouter lists as taking images in, an OpenAI model from GPT-4o on, or one of Anthropic's or Google's; a switch of model gives it or takes it away.
-- `GET /api/own` lists the data and software you give the lab to use in every conversation. A piece of data is a file or a folder, found by its file name, so no two have the same name (`name_taken`, 409), and each says what it is in words (`description`, which the lead is told, so that it knows when to use it). `POST /api/own/data/files?name=...&description=...` uploads a file as the body, up to the server's upload limit (`max_upload_bytes` in the answer; a larger one is refused with `too_large`, 413, before it is read if it says how big it is), and keeps it in `own_data/` in the workspace. `POST /api/own/data/paths` with `{"path": ..., "description": ...}` points to a file or folder where it is on this machine, by its full path (or one that begins with `~`), and leaves it there: it is not copied, and giving it up never deletes it. A path where conversations are kept, or that holds them or the uploads, is refused, and so is one Docker cannot mount (a comma, a quote, or a line break in it). `PATCH /api/own/data/{name}` says again what it is, `DELETE` gives it up (an uploaded file is deleted), and `GET /api/own/data/{name}/preview` shows the first lines of a text file, that a file is `binary`, or what is in a folder. Each piece in the answer says where it is (`source`: `uploaded` or `path`), whether it is a `file`, a `folder`, or `missing`, and how big and how recently changed. `PUT /api/own/software` with `{"name": ..., "description": ...}` gives some software and what it is for, and `DELETE /api/own/software/{name}` gives it up; a conversation tells the lead of it, and the lead checks that it is installed where the code runs before relying on it. A conversation is given all of it when it is made, or the `data` and `software` names in `POST /api/chats` (a name that was not given is refused), and its `config` says which. Where code runs, each piece of data is read-only: in Docker at `/data/<name>`, and on this machine where it is. A conversation takes what it is given when the server starts it, and again when it is opened after the server was stopped, so data given later is in new conversations and not in those already going, and what has been given up, or has gone, is left out then rather than stopping the conversation from opening. The web interface's Data page (`/data`) is where these are given, with the data lake beside them.
-- `GET /api/mcp` lists the [MCP servers](#tools-from-mcp-servers) a conversation can be given: the presets, whether or not they are set up, and the ones the person added, each with whether it is on, how it is signed in to or given a key, which keys it is missing and which of the library's service keys are set, whether it has tools that wait for approval, and, if it cannot work as it is, why. `PUT /api/mcp/servers/{name}` sets one up in full from an entry as a config gives it (checked as `connect_mcp` reads it, without connecting), `PATCH` turns it on or off or chooses between a key and signing in for a preset, and `DELETE` forgets it; `mcp.json` in the workspace keeps them. A server that is signed in to with an account says whether it is (`signed_in`, which is `null` where there is no sign-in or its address is not known), and `DELETE /api/mcp/servers/{name}/sign-in` forgets the sign-in, with `invalid` (422) for a server that is not signed in to. `POST /api/mcp/servers/{name}/check` connects to a server as a conversation would, whether or not it is on, and answers `{"ok": true, "tools": [...]}` or `{"ok": false, "reason": "..."}`; it never opens a sign-in page, allows a call, or answers a question, and while a check of the same server is going another is refused with `busy` (409). `PUT /api/keys/{name}` also takes the keys of the presets' services (`PAPERCLIP_API_KEY`, `FOUNDRY_API_TOKEN`, `FOUNDRY_TESTING_TOKEN`) and the web search's (`EXA_API_KEY`), kept the same way. A conversation is given the servers that are on when it is made, or the ones `mcp` names in `POST /api/chats`, and connects to them when its first message is sent, telling of each as a `connection` event (`connecting`, `signing_in` with the address of the sign-in page, `ready` with how many tools, or `failed` with why). A server that cannot be connected to fails the turn before anything is spent, and is tried again with the next message. Before a call to a tool that waits for approval, the conversation tells of an `approval` event (`waiting`, then `approved`, `declined`, or `withdrawn` if the turn ended first), which `POST /api/chats/{id}/approvals/{request}` answers with `{"allow": true|false}`; and what a server asks while a tool runs is a `question` event, which `POST /api/chats/{id}/questions/{request}` answers with `{"answer": {...}}` (checked against the form the server asked for, and refused with `invalid` while it does not fit, with the question still waiting) or `{"answer": null}` to decline. What was answered is not kept in the events. A request that nothing waits for is refused with `not_waiting` (409), and stopping the turn, or ending the conversation, withdraws what waits.
-- Settings also say where Biomni's data lake is kept (`data_lake`, a full path, or the workspace's `data_lake/` if empty) and which of the keys the interface can set code is given in Docker (`forward_keys`, which a conversation's `code.forward_env` may replace). A conversation whose code runs in one of Biomni's environments is given the data lake to read, once there is one, and the keys it was told to forward, which are passed by name and never written down.
-- `GET /api/setup` says what code in Docker needs and what is there: whether Docker is installed and running, each stage of the sandbox image (`base`, `bio`, `full`) with whether it is built and about how long it takes, how much of the data lake is there and the space left, the jobs, and a checklist in the order to do it. A conversation whose code runs in Docker is not made while Docker is not running or its image is not built (`setup_needed`), rather than failing when its code first runs; `create_app(check_setup=False)` turns that off.
-- `POST /api/setup/images/{stage}` starts building a stage, and `POST /api/setup/data-lake` fetches the data lake (all of it, or `{"names": [...]}`), each answering at once (202) with a job. `GET /api/setup/data-lake` lists its files and which are there. A job reports what it is doing, its progress (the files and bytes fetched), and what it printed, from `GET /api/setup/jobs/{id}?log_from=` so that a page asks only for what is new; `POST /api/setup/jobs/{id}/stop` stops it, ending the build or leaving no part of a file, and stopping the server stops what is running. One image is built at a time, and one fetch runs at a time.
-- `GET /api/papers` lists the runs that read papers for what tools and data they use (the [paper reading](#growing-the-toolset-from-papers) of the library), and `POST /api/papers/runs` makes one from `{"title": ..., "source": {...}}`, where the source is `{"kind": "files"}` (papers you upload to it), `{"kind": "folder", "path": ..., "recursive": ...}` (a folder on this machine, by its full path, which is read where it is), or `{"kind": "biorxiv", "since": "YYYY-MM-DD", "until": ..., "subject": ..., "limit": ..., "random": ..., "include_unpublished": ...}`. A source that is sent something that is not for its kind is refused. `GET /api/papers/runs/{id}` shows a run: its papers with whether each is `pending`, `read`, `unavailable`, or `failed`, what has been spent, the files uploaded, and the first rows of what was found (`tasks`, `databases`, `software`); `DELETE` removes it unless it is being read. `POST /api/papers/runs/{id}/files?name=...` uploads a paper as the body (a PDF, or a text, Markdown, or LaTeX file, up to the upload limit, at most 500 to a run) and `DELETE /api/papers/runs/{id}/files/{name}` takes one away; neither is allowed while the run is being read.
-- `POST /api/papers/runs/{id}/read` starts reading with `{"max_cost": ..., "max_cost_per_paper": ..., "retry_failed": ...}`, answering at once (202) with a job that is listed with the setup jobs and stopped the same way. How much it may spend is always said, and the model in the settings needs its key and a known price so that the limit can be kept (`missing_keys`, `unavailable`, 422). Papers already read are not read again, so a run that was stopped, or ran out of money, carries on from where it was; a run that was read with another model is not read with this one (`different_model`, 409), and one run is read at a time (`busy`, 409). `GET /api/papers/runs/{id}/tables/{kind}` sends what was found as a CSV file. Runs are kept in `papers/` in the workspace.
-- `POST /api/papers/runs/{id}/functions` writes functions for what a run's papers share, as the library's [function writing](#growing-the-toolset-from-papers) does: one for each task found in at least `min_papers` of them (1 unless said), the most common first, up to `limit` (10 unless said, at most 100). It answers at once (202) with a job, and says what it may spend in `max_cost` (always required, as for reading) and, if it likes, `max_cost_per_function`; `retry_failed` writes again those an earlier writing could not make pass, and `verify` also imports each function in a container of the sandbox, which Docker must be running for, before keeping it (`setup_needed`, 409, where it is not). The papers must have been read first, and a run is only ever being read or written for, not both (`busy`, 409). A function already written is not written again, so a run that stopped, for its limit or a request to stop, carries on from where it was. `GET /api/papers/runs/{id}` lists the functions (`functions`: the task, whether it was `verified`, `unverified`, or `failed`, the modules it needs installed, and what it cost), `GET /api/papers/runs/{id}/functions/{name}` shows one with its code, so that it can be read before it is relied on, and `DELETE` takes one away.
-- A run's functions are code a model wrote, so a conversation is given them only if the person says: `PATCH /api/papers/runs/{id}` with `{"given": true}` gives them to the conversations that are made from then on (`given` in the run, and `function_count` of those that passed), or `POST /api/chats` names runs in `functions` (a run that has none is refused), which its `config` says. Each function is a tool of the conversation, described by its docstring, that runs where its code does, in the sandbox if that is Docker, and is left out where code runs nowhere. A function whose name is a tool's already is left to that tool, and of two runs with a function of one name the first is given. The web interface's Papers page (`/papers`) is where runs are made, read, and given.
-- `GET /api/benchmarks` lists the runs that answer [Biomni's benchmarks](#measuring-an-agent-or-a-team-on-biomnis-benchmarks), and the benchmarks a run can be made of, each with how many questions it has (`biomni_eval1` with its ten tasks, `lab_bench_dbqa` and `lab_bench_seqqa` with their `test`, `sampled`, and `all` files, and `hle`, with how many of its questions refer to an image). The benchmarks' files, about 4 MB, are fetched once, by `POST /api/benchmarks/files`, into `benchmarks/files/` in the workspace, and each is checked against the hash the library pins; until they are there (`files.ready`), a run cannot be made (`files_missing`, 409), and reading them needs `pyarrow` and `numpy`, which the `server` extra installs. `POST /api/benchmarks/runs` makes a run from `{"title": ..., "benchmark": ..., "solver": "single" or "team", "rounds": ..., "limit": ...}`, with `tasks` for Biomni-Eval1, `subset` for LAB-Bench, or `leave_out_images` for Humanity's Last Exam; an option that is not for the benchmark is refused. `single` puts each question to the lead alone, as Biomni's agent answers (with `rounds` of criticism, none unless asked for), and `team` holds a team meeting on it (`rounds` of discussion, one unless said). `limit` asks only the first questions. A run keeps the model, the lead and the team, and where code runs, as they are in the settings when it is made, so that answering it later is answering the same questions in the same way, as the library requires of a run that is carried on. No tools, MCP servers, data, or functions are given to it.
-- `POST /api/benchmarks/runs/{id}/start` answers its questions with `{"max_cost": ..., "max_cost_per_question": ..., "retry_failed": ...}`, answering at once (202) with a job that is listed with the setup jobs and stopped the same way, which takes minutes or hours. How much it may spend is always said, and the model needs its key and a known price so that the limit can be kept (`missing_keys`, `unavailable`, 422); where code runs in Docker, Docker and the sandbox image must be there (`setup_needed`, 409). Each question's result is saved as soon as it is scored, so a run that was stopped, or ran out of money, or failed three questions in a row, carries on where it was, and one run is answered at a time (`busy`, 409). A stop ends the meeting being held at once, and the question it was in is asked again. `GET /api/benchmarks/runs/{id}` shows the run: each question with whether it is `unanswered`, `answered`, or `failed`, its score and cost, the benchmark's own measures over what was answered (`metrics`, with `accuracy` and for Biomni-Eval1 one for each task), and each task's accuracy. `GET /api/benchmarks/runs/{id}/questions/{task}/{number}` shows one question with its prompt, the answer that was read out of what was said, the correct one, what it cost, and the meeting, so that a score can be checked against it. Runs are kept in `benchmarks/runs/` in the workspace, and `DELETE /api/benchmarks/runs/{id}` removes one unless it is being answered. The web interface's Benchmarks page (`/benchmarks`) is where the files are fetched and runs are made, answered, and read.
-- `GET /api/projects` lists the research projects, each with how it stands (`new`, `running`, `finished`, `out_of_budget`, `out_of_rounds`, `stalled`, `stopped`, `failed`, or `interrupted` if the process working on it stopped), its rounds, how many of its plan's tasks are done, and what it has spent, and gives what a page needs to make one: the ways a team can be had, the ways findings are given to a step, and the limits. `POST /api/projects` makes one from `{"goal": ..., "title": ..., "team": "chosen" or "lab", "max_team_size": ..., "meeting_rounds": ..., "memory": "pick", "bm25", or "summaries", "findings_per_step": ...}`, where a title left out is the start of the goal. A project is [run to its goal](#running-a-project-within-one-budget-and-resuming-it): with `chosen` the lead picks a team of at most `max_team_size`, and with `lab` it leads every scientist the lab has, and the critic is on it either way. A project keeps the model, the lead, and where code runs, as they are in the settings when it is made, since the library refuses to carry on steps taken with another lead, team, or memory. No tools, MCP servers, data, or functions are given to it.
-- `POST /api/projects/{id}/start` works on it with `{"max_cost": ..., "max_rounds": ..., "max_stalled_rounds": ...}`, answering at once (202) with a job that is listed with the setup jobs and stopped the same way, which takes minutes or hours. What it may spend in all, over every time it is worked on, is always said, and the model needs its key and a known price (`missing_keys`, `unavailable`, 422); where code runs, the lead may also write code, and in Docker, Docker and the sandbox image must be there (`setup_needed`, 409). Every step is saved as it is taken, so a project that ran out of money or rounds, was stopped, or failed is carried on by starting it again, with the limit that stopped it raised, reading back the steps it took for nothing. A stop is asked about before each round, and ends the project with its report, or leaves a step that is under way, which is then taken again. One project is worked on at a time (`busy`, 409). The job's log says what the lead decided each round. `GET /api/projects/{id}` shows the project: its team, plan, each round's decision and how it went, the findings, the answer the critic accepted (or the one it did not, with its objections), and each step with what it cost. `GET /api/projects/{id}/steps/{name}` shows one step with what it produced and what was said in it, or the code it ran and what that printed, and `GET /api/projects/{id}/report` is the report to save, as Markdown. Projects are kept in `projects/` in the workspace, and `DELETE /api/projects/{id}` removes one unless it is being worked on. The web interface's Projects page (`/projects`) is where projects are made, worked on, and read.
-- Everything is kept in the workspace, `~/virtual_lab_workspace` unless `--workspace` says otherwise: `settings.json`, `scientists.json`, `tools.json`, `skills.json`, `mcp.json`, `own.json` and the files you uploaded in `own_data/`, a directory for each conversation in `chats/`, named for the date and the title, and `data_lake/`. They are plain files, so a change made to one by hand is met rather than trusted: a setting in `settings.json` that is not of the kind it is (a budget that is not an amount of money, a switch that is not true or false) takes its default, a setting that is the right kind but cannot be used, such as a model nothing serves, is said to be wrong when a conversation is begun and does not stop another setting from being changed, and a conversation whose `chat.json`, `events.jsonl`, or `messages.jsonl` holds something a conversation does not save is not opened, with the file named, and can still be deleted. Entries of `scientists.json`, `tools.json`, `skills.json`, `mcp.json`, and `own.json` that are not what they should be are left out.
-- With `--static-dir` (or pages in the install), the server also shows the built pages of an interface, and any address that is not a file or under `/api` shows its first page.
-
-### The chat interface
-
-The pages that talk to this server are in `web/`, written with Next.js, React, Tailwind, and shadcn/ui, and exported as static files: nothing runs but the server. They start a conversation with the lead scientist (the first page says when the model has no key, and opens the keys to add one), show its reply as it is written, list the conversations on the side, choose the model for a new conversation, or change it in one that is going on once it has finished (useful when a provider stops a conversation for its safety rules, or to try another model on the same question), search every model OpenRouter serves, set the model, the keys, where code runs, the scientists, the tools, and the MCP servers, ask before a call that costs money or cannot be undone and put a server's questions as forms, build the Docker image and fetch Biomni's data lake while showing what each prints, and say when the server cannot be reached or no longer accepts the token. They need Node 22 or later to build, and nothing at all to use once built.
-
-From a clone of this repository, one command does all of that, and starts the server:
-
-```bash
-python3 start.py                        # then open the link it prints (it also opens it)
-python3 start.py --workspace ~/lab --port 9000 --no-browser
-python3 start.py --plan                 # what it would do, without doing it
-python3 start.py --rebuild              # build the pages again
-```
-
-It needs Python 3.12 or later to run, and Node 22 or later the first time, to build the pages. It makes a Python environment in `.venv` (or uses the one you are in, if you are in one), installs the lab in it with the `server`, `mcp`, `papers`, and `eval` extras, runs `npm ci` and `npm run package` in `web/`, and starts `virtual-lab-server`, giving it whatever else you wrote. Each of those is looked at first and left alone if it is done, so the first start takes a few minutes and the next ones a moment; the pages are built again when something in `web/src` or the files npm reads has changed since they were built, as after a `git pull`. A step that fails stops it, says which, and is tried again the next time. It starts the server from the clone's directory, so a `.env` file there with your keys in it (`OPENAI_API_KEY=...`) is read, and `.env` is not kept in version control. Without Node, it uses pages that are already built and says so, and otherwise says what to install. The same, by hand:
-
-```bash
-pip install -e ".[server,mcp,papers,eval]"
-cd web
-npm install
-npm run package                         # the pages, into src/virtual_lab/server/static
-virtual-lab-server                      # now shows them at the link it prints (or python -m virtual_lab.server)
-```
-
-`npm run package` is what makes a build of the package carry the pages (they are not kept in the repository). To change the interface, build into `web/out` with `npm run build` and run `virtual-lab-server --static-dir web/out`. `npm run lint`, `npm run typecheck`, and `npm test` check the code, and `npm run test:e2e` drives a browser through the built pages against the real server with a script where the model would be, so it needs no key. See `web/README.md`.
-
-The chat interface is the one page. It does not set up a meeting or a project itself: in a conversation the lead brings in the team for a meeting when a question needs it, and a meeting or a project run from a script, with `hold_meeting` or `Project`, is saved and resumed as described above. An earlier version had a Gradio page for setting up a meeting or a project, started with `virtual-lab-ui`, which has been removed along with the `ui` extra.
-
-## Growing the toolset from papers
-
-Biomni grows its toolset by reading papers for the computational tasks, databases, and software in them. `read_paper` and `extract_paper_findings` do the same reading. A PDF needs pypdf: `pip install "virtual-lab[papers]"`. Plain text, Markdown, and LaTeX files need nothing.
-
-```python
-from virtual_lab import extract_paper_findings, read_paper
-
-reading = extract_paper_findings(read_paper("paper.pdf"), model="gpt-5.2", max_cost=1.0)
-for task in reading.findings.tasks:
-    print(task.task_name, "|", task.inputs, "->", task.outputs)
-print(reading.chunks, reading.cost, reading.failed_chunks)
-```
-
-- The text is cut into chunks of 4,000 characters with 400 repeated between them, as Biomni cuts it, at paragraph breaks where it can, then line breaks, sentences, and words. Each chunk is read with Biomni's guidelines: only tasks that are common across biomedical research, with clear inputs and outputs, implementable with Python or Linux code, and named with their exact methods. Then the findings of every chunk are merged, one to each name, and one more request applies the same filter to the paper as a whole.
-- Every answer is asked for in a schema (`PaperFindings`: tasks, databases, and software, each with the fields Biomni records), and one that does not fit it is not used. Biomni reads each chunk as free text and parses the consolidation's reply as JSON, and when it cannot, returns the raw reply as a single "task" with an `error` field. Here a chunk the model refuses or cannot answer in the schema is recorded in `reading.failed_chunks` with why, and the rest are used; a paper none of whose chunks can be read is refused with `PaperReadingError`.
-- Findings too many for one request, more than `max_consolidation_chars`, are consolidated in batches and then again as a whole, where Biomni joins every chunk's reply into one request, which fails once they outgrow the model's context. If the consolidation fails, `PaperReadingError` holds what the chunks found, merged but not filtered, in its `findings`.
-- A paper is read as far as `max_chars` (200,000, as Biomni reads), cut at the end of a sentence, and `reading.truncated_from` says how long it was. A file over 100 MB, a PDF over 500 pages, a PDF that needs a password to open, and a file that is not a PDF, text, or Markdown are refused. A PDF locked only against copying and printing, as many publishers' are, is read.
-- `max_cost` is checked before every request and stops the reading with `PaperBudgetExceededError`, which holds in `findings` what the chunks read so far showed, unfiltered, so that what was paid for is not lost. To keep one limit across many papers, pass the same `MeetingUsage` as `usage` to each. A model whose price is not known cannot be given a limit.
-- A PDF's text is as pypdf finds it, so the columns of a two-column paper and the labels of its figures can be mixed into the prose, as in what Biomni reads. Read the tasks as suggestions to check, not as facts about the paper.
-
-### Reading many papers, and counting what they share
-
-Biomni reads the bioRxiv preprints of 25 subjects that have been published, and counts how many papers each task, database, and package turns up in, so that the ones in hundreds of papers can become tools. `read_papers` does the reading, and `virtual-lab-papers` runs it from the command line:
-
-```bash
-virtual-lab-papers read papers/ runs/mine --max-cost 5
-virtual-lab-papers biorxiv runs/neuro --since 2024-01-01 --subject neuroscience --limit 20 --max-cost 5
-virtual-lab-papers biorxiv runs/all --since 2024-01-01 --all-subjects --limit 100 --max-cost 50
-virtual-lab-papers summarize runs/mine
-virtual-lab-papers combine runs/neuro runs/mine --output runs/total
-```
-
-```python
-from virtual_lab import biorxiv_papers, papers_in, read_papers, read_biorxiv_subjects
-
-report = read_papers(papers_in("papers"), "runs/mine", model="gpt-5.2", max_cost=5.0)
-report = read_papers(biorxiv_papers("2024-01-01", subject="neuroscience", limit=20), "runs/neuro")
-everything = read_biorxiv_subjects("runs/all", "2024-01-01", papers_per_subject=100, max_cost=50.0)
-```
-
-- **Where the papers come from.** A directory of PDF, text, Markdown, and LaTeX files (`papers_in`, with `--recursive` for the folders within it), or bioRxiv's listing (`biorxiv_papers`), by period and subject, the first ones or a random sample with a fixed seed, as Biomni takes them. Biomni then downloads each PDF from bioRxiv, which now answers a script's request with HTTP 429 however politely it is made, and this does not work around that. The listing is bioRxiv's API, which does answer, and the text is that of each preprint's published version where Europe PMC holds it open access. A preprint that has not been published, or whose published version is not open, is recorded as `unavailable` and not read; in a trial on six January 2024 neuroscience preprints, half were open. That text is the abstract and the sections of the article, without its references, which is not quite what bioRxiv's PDF holds. To read papers from anywhere else, download them and point `read` at the directory.
-- **A run that stops carries on.** Each paper's result is saved under `results/` as soon as it is read, so running the same command again reads only the rest, and nothing is paid for twice. A directory holding a run with another model or other reading options is refused, since its results could not be counted with these. A saved result is used only for the same paper: the same DOIs and, for a file, the same contents (a SHA-256 is kept with it), so the same files moved to another folder carry on, a file that has changed since is read again, and another paper under the same key (the same file names in a different folder, say) is refused before anything is read, rather than counted as the first. A paper that failed or had no text is not read again unless `--retry-failed` is given. A file's key is its path, with a few characters of a hash added when the path has anything but letters, digits, `.`, `_`, and `-`, so it does not change when other files are added. Ctrl-C is safe: the report and the counts are written as it ends.
-- **What it spends.** `--max-cost` is for the run, including every subject, and a paper it stops is left unsaved to be read next time. `--max-cost-per-paper` fails the paper that reaches it and goes on. Three failed papers in a row stop the run, since that is more likely a missing key or no network than three bad papers (`--max-consecutive-failures`, or `--keep-going`); a paper with no text to read does not count. A paper that fails after some chunks were read keeps what they showed in its result, unfiltered and not counted. The command exits 0 when it did everything, 1 when a run stopped early, 2 on an error, and 130 on Ctrl-C.
-- **What it writes.** In the run's directory: `results/<key>.json` for each paper, `report.json`, `run.json` (what it was read with), `tasks_summary.csv`, `databases_summary.csv`, and `software_summary.csv` with a row for each thing found in each paper, and `frequency_summary.json` with how many papers each name was found in, the most common first. Names are compared as `normalize_name` compares them, so `DESeq2` and `deseq2` are one, and one paper counts a name once. `combine` adds the counts of several runs into `combined_summary.json` and `tasks_frequency.csv`, `databases_frequency.csv`, and `software_frequency.csv`; a paper in two of them is counted twice. A cell that a spreadsheet would read as a formula, because a paper's text can make a model write `=...` or `@...`, is written with a leading quote.
-
-### Writing a function for each task
-
-Biomni turns the tasks its papers turn up into code. Its `FunctionGenerator` asks a model, as a senior Python engineer, for the code that does a task, keeps the first code block of the reply in a file named for the first six words of the task, and leaves a person to read it and add it to Biomni's tool modules. `generate_function` asks the same way, and `virtual-lab-functions` does it for every task a run found:
-
-```bash
-virtual-lab-functions generate functions/ --tasks tasks.json --max-cost 5
-virtual-lab-functions generate functions/ --tasks runs/total --min-papers 5 --limit 20 --verify docker
-virtual-lab-functions generate functions/ --task "Align paired-end reads with BWA-MEM"
-virtual-lab-functions list functions/
-```
-
-```python
-from pathlib import Path
-
-from virtual_lab import DockerExecutor, DockerSession, function_tasks, generate_functions, tools_from_saved_functions
-
-tasks = function_tasks("runs/total", min_papers=5, limit=20)
-report = generate_functions(tasks, "functions", model="gpt-5.2", executor=DockerExecutor(), max_cost=5.0)
-
-with DockerSession(Path("results/session")) as session:
-    tools = tools_from_saved_functions("functions", session=session, verified_only=True)
-    hold_meeting(..., tools=tools)    # the agents call the functions as tools, which run in the sandbox
-```
-
-- **The tasks.** Biomni's file, `{"tasks": ["description", ...]}`, or a list; a summary that `virtual-lab-papers` wrote (`frequency_summary.json` or `combined_summary.json`), in the order of its counts, with `--min-papers` and `--limit`; objects with a `task_name` and what it does, takes, and gives; or a directory papers were read into. For a directory, what the papers say of each task (what it does, takes, and gives, how it is implemented, and its standard methods) is added to what the model is told, where Biomni's file of names gives it only the name. Tasks that differ only as `normalize_name` compares names are written once.
-- **What is asked.** Biomni's six requirements, in its words, and two more, because a function is going to be called as a tool by a program that sends JSON: one function named for the task, with a docstring and a type hint on every parameter of a type JSON has (a file is taken as a `str`), returning a value that can be written as JSON; and a file that only defines things when it is imported, with anything that runs the task under `main()`. The name is Biomni's, with a prefix `task_` for one that begins with a digit, a suffix `_task` for one that is a Python keyword or a standard module, and a few characters of a hash for tasks that share their first six words.
-- **What is checked.** The reply is read, and none of it is run: the code must parse, define that function, document it, type every parameter as a tool needs, and run nothing when imported (no bare calls or loops at the top level, and no call in a default, which would be computed once on import), and have no decorator. Everything wrong with it is given back to the model with its code, so that it can correct it, up to `--max-attempts` (3) times, and no more if a correction fails for the same reason as the one before. A reply that ran out of tokens, or was never closed, is asked for again with less. `--verify docker` also imports the file in a sandbox container, which finds a library the code needs and the image does not have, and that failure is given back too. `--verify local` imports it on this machine with no isolation, for code you would run anyway.
-- **What is saved.** `functions/<name>.py` for a function that passed, and `functions/records/<name>.json` for every task: what it was asked, the model, the attempts, what it cost, and its status. `verified` is a function that was imported in an executor, `unverified` one that was only read, and `failed` one that could not be made to pass, which has the last code written for it in its record and no file. Each is saved as soon as it is written, with `report.json` of the run.
-- **A run that stops carries on.** Running the command again writes only what is not saved. A function saved without being run is imported when `--verify` is given later, and written again only if that fails. A task said differently is written again, but never over a file that has been changed by hand, or one that no record speaks of: that is refused, before the model is asked for anything. A function that failed is not tried again unless `--retry-failed` is given, and a failure that is not the task's, such as a wrong key, no network, or a response that did not report its usage so that a limit could not be kept, is not saved at all.
-- **What it spends.** `--max-cost` is for the run, and a function it stops is left unsaved to be written next time. `--max-cost-per-function` fails the function that reaches it and goes on. Three failed functions in a row stop the run (`--max-consecutive-failures`, or `--keep-going`). The command exits 0 when it did everything, 1 when a run stopped early or a function could not be written, 2 on an error, and 130 on Ctrl-C.
-- **As tools.** `tools_from_saved_functions` (and `tool_from_source` for one) makes a `Tool` of each saved function by `tool_from_function`, from its own signature and docstring, which are read from the code's syntax, so making the tool runs nothing of what the model wrote. A call runs the function in the session you give, with the arguments sent as JSON and the result sent back as JSON, so in the sandbox if it is a `DockerSession`. `run_here=True` runs it in this process instead, as you, which is for code you have read. A function that fails raises `FunctionToolError` with its error and the end of what it printed. The file is read as it is now, so a function you corrected by hand is the one used, in a session that is still open as well.
-
-The functions are a model's, written from what a model made of a paper. Read them before you rely on them, as Biomni's own are read before they are added.
-
-## Measuring an agent or a team on Biomni's benchmarks
-
-Biomni is measured on three benchmarks, and so can an agent or a team here, on the same questions and by the same rules. Reading them needs `pip install "virtual-lab[eval]"`. Their files, about 4 MB, are fetched once from where Biomni fetches them, under their own licenses, and are not shipped with this package:
-
-```python
-from pathlib import Path
-from virtual_lab import BiomniEval1Benchmark, HumanitysLastExam, LabBench, download_benchmarks
-
-download_benchmarks(Path("data/benchmarks"))
-eval1 = BiomniEval1Benchmark(Path("data/benchmarks"))        # 433 questions in 10 tasks
-dbqa = LabBench(Path("data/benchmarks"), "DbQA")             # 60 questions; "SeqQA" has 70
-hle = HumanitysLastExam(Path("data/benchmarks"))             # 52 questions
-```
-
-| Benchmark | Questions | Scored by |
-| --- | --- | --- |
-| Biomni-Eval1 | 433, in ten tasks: CRISPR delivery, causal genes from three GWAS sources, variant prioritization, LAB-Bench's DbQA and SeqQA, patient gene detection, rare disease diagnosis, and screen gene retrieval | Each task's own rule, as in Biomni's `BiomniEval1`: a letter, gene, or variant compared as Biomni compares it, a diagnosis by its OMIM ID, and a patient's genes by any overlap. Reported overall and per task. |
-| LAB-Bench | DbQA or SeqQA, from the file Biomni's `lab_bench` reads (`subset="test"`), its sampled file, or all of LAB-Bench (`subset="all"`, 520 and 600) | Accuracy, coverage, the share refused, and precision, as Biomni computes them |
-| Humanity's Last Exam | The 52 multiple choice questions in biology and medicine that Biomni samples | Accuracy |
-
-Each file is checked against a hash pinned in `virtual_lab.constants` whenever it is read, and one that differs is refused, so two scores made here were made on the same questions. LAB-Bench's options are shuffled exactly as Biomni shuffles them, with a refusal option added, so each question has the letters it has in Biomni and in Biomni-Eval1. Five of the Humanity's Last Exam questions refer to an image that Biomni does not show its agent, and neither does this; their `metadata["has_image"]` is true, so they can be left out.
-
-`run_benchmark` asks each question of an agent or a team, reads the answer out of what was said, and scores it:
-
-```python
-from virtual_lab import DockerSession, SingleAgent, TeamMeeting, run_benchmark, session_executor
-
-with DockerSession(Path("results/session"), executor=session_executor("bio")) as session:
-    report = run_benchmark(
-        eval1,
-        SingleAgent(bioinformatician, code_actions="tags"),
-        save_dir=Path("results/eval1"),
-        extractor="gpt-5.2",
-        session=session,
-        max_cost=50.0,
-    )
-print(report.metrics["accuracy"], report.cost)
-
-run_benchmark(hle, TeamMeeting(principal_investigator, (geneticist, scientific_critic), num_rounds=2), ...)
-```
-
-- `SingleAgent` holds an individual meeting on each question, with the question as its agenda, and by default no rounds of criticism, which is how Biomni's agent answers. `TeamMeeting` holds a team meeting, one round by default. Both take anything else `hold_meeting` does, such as `code_actions`, `resources`, or `tools`. Any function of a question and a `SolverContext` that returns a transcript, or an `Attempt`, can be the solver instead.
-- The answer is read as Biomni reads it: in one more request, a model is told it is "evaluateGPT", given the question as the task's output requirement and the whole transcript as the history, and asked for the answer in the benchmark's schema for the question. `extractor` names that model; Biomni uses the agent's own. It runs at temperature 0, which `extractor_temperature` changes.
-- A session is shared by every question, as Biomni's agent keeps one interpreter across its tasks, so a question can find what an earlier one left in it. Pass a function that makes a session, such as `lambda: DockerSession(...)`, for a fresh one per question, closed when the question is done.
-- `max_cost` is what the run may spend, and `max_cost_per_question` what one question may. A question is not started once the run's limit is spent, and one running when it is reached is left unfinished. A question that reaches its own limit fails, and the run goes on. Both count the reading of the answer.
-- Each question's result is saved under `save_dir/results/` as soon as it is scored, with its answer, score, usage, cost, and where its transcript is. Running again on the same directory carries on where the last run stopped and asks nothing already answered. A directory holding a run of a different benchmark, solver, or extractor is refused, so its results are never mixed with another's.
-- A question whose solver fails, or whose answer cannot be read, is saved as a failure and scored 0, and the run goes on. Three failures in a row stop it, since that is more likely a missing key than three hard questions; `max_consecutive_failures` changes that. `retry_failed=True` asks the failed questions again.
-- The report, also saved as `summary.json`, holds the benchmark's measures, how many questions were finished and failed, what the finished ones cost, what this run spent, and why it stopped, if it did.
-
-Code written against Biomni's own classes runs against these: `BiomniEval1` has the methods of Biomni's (`evaluate`, `get_instance`, `list_tasks`, `get_task_stats`, `batch_evaluate`, `get_instances_by_task`), and `LabBench` and `HumanitysLastExam` have `get_example`, `get_iterator`, `evaluate`, and `output_class`.
-
-`tests/test_benchmark_parity.py` checks this against Biomni's own classes, on the real files: the same questions, prompts, answers, tables, and schemas, and the same score for over 7,000 answers to Biomni-Eval1 (the right answer written several ways, and many that are wrong or are not answers), and the same measures for LAB-Bench and Humanity's Last Exam answers. It is skipped unless it is told where the files and a clone of Biomni are, and scikit-learn, which Biomni's scoring uses, is installed:
-
-```bash
-pip install scikit-learn
-git clone https://github.com/snap-stanford/Biomni
-VIRTUAL_LAB_BENCHMARK_DIR=data/benchmarks VIRTUAL_LAB_BIOMNI_DIR=Biomni pytest tests/test_benchmark_parity.py
-```
-
-The one difference found: when a model refuses every LAB-Bench question, Biomni's precision is the mean of nothing, which current scikit-learn raises on, and here it is `None`.
-
-## Measuring the lab on BixBench-Verified-50
-
-[BixBench](https://arxiv.org/abs/2503.00096) (FutureHouse, Apache 2.0) asks questions that need real analysis of real data, each with the files of a published study. [BixBench-Verified-50](https://huggingface.co/datasets/phylobio/BixBench-Verified-50) (Phylo) is 50 of them, over 33 datasets, whose wording and answers experts checked. Unlike Biomni's benchmarks, a question comes with files, and a person would answer it in a conversation with the lab, so `virtual-lab-bixbench` asks each one of a running server, in a conversation of its own, and nothing in it says it is a benchmark. Install it with `pip install "virtual-lab[eval]"`.
-
-The dataset is gated. Accept its terms on its Hugging Face page while logged in, make a token with Read access at <https://huggingface.co/settings/tokens>, and give it to your own terminal with `hf auth login`, so that it is never typed anywhere else:
-
-```bash
-hf auth login
-virtual-lab-bixbench fetch ~/bixbench                  # the questions and 33 datasets, 2.8 GB; --limit 3 or --only bix-12-q2 fetch fewer
-
-virtual-lab-server --workspace ~/bixbench_workspace --token bench      # a workspace of its own, in another terminal
-virtual-lab-bixbench run ~/bixbench --workspace ~/bixbench_workspace --token bench \
-    --model openrouter/moonshotai/kimi-k3.1-pro --only bix-12-q2 --results ~/bixbench/smoke
-virtual-lab-bixbench run ~/bixbench --workspace ~/bixbench_workspace --token bench \
-    --model openrouter/moonshotai/kimi-k3.1-pro --max-total-cost 150 --results ~/bixbench/kimi
-virtual-lab-bixbench report ~/bixbench --results ~/bixbench/kimi
-```
-
-- Each question's data is unpacked into its conversation's `uploads/`, from the dataset's `CapsuleData-*` folder. The `CapsuleNotebook-*` folder, which holds the analysis the answer was taken from, and any `.ipynb` file, are never given to the lead. The message names the files, says nobody is there to answer questions, and asks for a last line of the form `FINAL ANSWER: ...`. The question's ideal answer and the dataset's hypothesis are not in it.
-- The lead has what a conversation has: the model, the sandbox (`--sandbox`, `bio-r` by default, which has R and must be built first: `build_sandbox_image("bio-r")`, a few minutes after `bio`), the data lake and tools of `--resources`, and `--team` if a team is named. It is not given the tools that search papers (the studies the questions come from are papers), nor the tools that search the web and read its pages, nor any MCP server, data, software, or functions of the server's workspace, unless `--literature` is given for the first and `--web` for the second. Give the server a workspace of its own; `--workspace` is required for that reason. The code runs in Docker with network access, and none of your keys passed in. Each conversation may spend `--max-cost` (3 dollars by default), may make `--max-tool-calls` tool calls and runs of code (80, where a conversation's own limit is 20), and may take `--timeout` seconds (2,400) before it is stopped and what it has said is graded.
-- The data lake is the server's own, which is `data_lake/` in its workspace unless its settings say where, and a workspace made for a run has none. `--data-lake DIRECTORY` gives every conversation a directory you already have instead, which the server mounts read-only, so it is a path on the machine the server is on. A run says so on stderr, and goes on, when the lead would have no data lake to read: the directory has nothing in it (hidden files do not count), or none was given and the server's has none of its files (one that has some is not warned of). A directory that is not one, or cannot be read, stops the run. The directory is part of what a run is set up with, so carrying on a run needs the same `--data-lake`.
-- The lead is asked to check its result before it answers a question it ran code for (the conversation's `check_results`, see above), so `--no-result-check` turns that off, which is what to pass to measure a lead as it was before the check existed. A run always says which, so that results with and without the check are not counted together.
-- `--skills` says which skills every conversation is given, which is none unless named: any of `builtin` (the skills that come with the lab), and folders of skills on the machine, such as a clone of a skill library. The server puts a folder's skills in its workspace as copies, leaving any whose name it already has, so give the run a workspace of its own, and the run stops before it asks anything if the server does not end up with a skill it was asked to give (a server of older code does not have the built-in ones). The names are sent as the conversation's own list, so what the server has turned on does not matter, and they are part of what a run is set up with: results with other skills are refused, and a run without `--skills` carries on one made before there were skills.
-- `--multiple-choice` asks each question with options to choose from, as BixBench's own multiple-choice form does and as others who report scores on this set have: the ideal answer among the three distractors the dataset has for it, in an order that is fixed for each question, and an option, always the last, that says there is not enough information (`--no-refusal-option` leaves it out). The lead answers with a letter, and the answer is right if it is the ideal's. Choosing the last option is never right, and is counted in the summary. This is an easier test than an open answer, since a wrong option can be ruled out and a number the analysis came to can be looked for among the options, so the summary calls it multiple choice and its score is never to be counted with an open answer's. A record keeps its options and the right letter, so grading again needs no judge, and a directory that holds a run of the other kind is refused.
-- By default each question is asked plainly, and it is up to the lead whether to call on the scientists `--team` names. `--lab team` gives every question as a researcher would with `/lab`, so the lead has those scientists work on it in a team session it leads, and `--lab individual` has the one scientist `--team` names work on it with the Scientific Critic reviewing (the Critic is put on each conversation's team, and is not counted among the scientists `--team` names); `--lab-rounds` (1 by default, up to 10, and a conversation is allowed more than its usual 3 when it is asked for more) is the rounds of discussion or review. Naming no scientists, or other than one besides the Critic for `individual`, or rounds outside 0 to 10, stops the run before anything is asked. Nothing else of the message changes, and `--lab` is part of what a run is set up with, so its results are not counted with those of a run without it.
-- `--max-total-cost` stops the run from starting more questions once the lead has spent that much. What the questions under way may still spend, up to `--max-cost` each, counts as spent. Three questions in a row that fail stop it too, since that is more likely a bad key than three hard questions. A question that could not be set up, because the server refused or the data was missing, was never asked and is not recorded, so running the command again asks it. A run saves each question under `--results` as soon as it is graded, so running the same command again carries on, `--retry-failed` asks again those that were asked and failed, and a directory that holds a run set up differently (another model, team, sandbox, or judge) is refused, which the limits are not part of, so raising `--max-cost`, `--max-tool-calls`, or `--timeout` to ask again those that ran out is allowed. `--jobs` asks several at once, and each of them has a sandbox that may use as much memory as sandboxes are allowed.
-- Every answer is graded two ways, and both scores are always reported together. **Official** is FutureHouse's grader (`bixbench/graders.py`) with its judge prompts word for word: a `str_verifier` answer is the ideal once everything but letters and digits is dropped and case is ignored, and otherwise a model judges it; a `range_verifier` answer is a number in the ideal's range, and otherwise a model judges it; an `llm_verifier` answer is judged. One deliberate difference: FutureHouse's accepts an answer that is only a piece of the ideal, so "CDK" passes for "CDKN1A", and here that is left to the judge. **Lenient** accepts in addition what rounding or an R-versus-Python difference in the last digits fails: the first number in the answer when it is within half a unit of the ideal's last digit or 1% of it, or is a decimal fraction written as a percentage, any number in the answer that is in the range (numbers that are part of a name, such as the 5 of chr5, are not counted), and a judge that allows 3%. Names and ratios get no leeway. Others who report scores on this set have loosened the grading in similar ways, so say which you mean when you quote one.
-- The judge is `--judge-model`, by default the lead's model, and what it costs is not counted in the lead's. `virtual-lab-bixbench regrade ~/bixbench --results ... --judge-model ...` grades the saved answers again without asking anything.
-- Each record in `questions/<id>.json` holds the lead's whole last message, the answer taken from it, both grades and how they were reached, the time, the cost, the tools called, and the conversation's id, so the conversation can be opened in the interface and read. `summary.json` holds the scores, overall and by kind of question.
-
-The questions, their data, and their answers are the dataset's, under its own license, and are not shipped with this package. The dataset's canary string asks that it be kept out of training data.
-
-## Querying scientific databases
-
-Tools that look something up go through `virtual_lab.web`, which decides where a request may be sent. An agent chooses the arguments to a tool, which means a model's output determines part of every URL, so the destination cannot be left to the tool:
-
-- Requests are allowed only to the scientific databases named in `ALLOWED_HOSTS`, over HTTPS. Membership is exact, so a host that merely ends in an allowed one (`evilrest.uniprot.org`) and a subdomain of one (`x.rest.uniprot.org`) are both refused, as are a plaintext address, a loopback or link-local address, a non-HTTPS scheme, and a URL carrying credentials.
-- The URL is normalised through the HTTP client before it is checked, and the checked URL is the one requested. Validating with one parser and requesting with another is not safe: CPython ends a URL's authority at a slash, question mark, or hash, while urllib3 also ends it at a backslash, so `https://169.254.169.254\@rest.uniprot.org/` reads as an allowed host to the first and as the cloud metadata service to the second.
-- Redirects are followed manually and the destination is checked at every hop. A client left to follow redirects itself checks the address it was given, not the address it ends up talking to, which turns one allowed host into a request to anywhere.
-- Identifiers are percent-encoded into a fixed template by `build_url`, so an identifier containing `/`, `?`, or `#` becomes part of the path rather than reshaping the request. A segment that is `.` or `..` is refused outright, since a dot needs no encoding and the server would resolve it.
-- Responses are capped at `MAX_RESPONSE_BYTES` whether or not the service declares a length, requests to one host are spaced by `MIN_SECONDS_BETWEEN_REQUESTS`, temporary failures are retried with backoff that honours `Retry-After`, and repeated questions are answered from an in-memory cache bounded by both entry count and total size.
-
-```python
-from virtual_lab import request_json
-
-data = request_json("https://rest.uniprot.org/uniprotkb/P01308.json")
-```
-
-Adding a database means adding its host to `ALLOWED_HOSTS`. This is a deliberate edit rather than a parameter, so that widening what agents can reach is a visible change to the library.
-
-The tests for this layer run offline against a faked transport, since redirects, rate limits, and oversized responses cannot be requested from a real service on demand. The handful that do query the real databases are skipped unless `VIRTUAL_LAB_LIVE_TESTS=1` is set.
-
-## Giving agents tools
-
-`all_tools` returns everything an agent can call. Pass a `save_dir` to include the structure download, which needs somewhere to write.
-
-```python
-from virtual_lab import all_tools, run_meeting
-
-run_meeting(
-    meeting_type="team",
-    agenda="Choose a target epitope for a nanobody against the spike protein.",
-    save_dir=Path("results"),
-    save_name="epitope_choice",
-    team_lead=principal_investigator,
-    team_members=(immunologist, computational_biologist),
-    # The same two arguments, so downloads land where this meeting's code will run
-    tools=all_tools(save_dir=Path("results"), save_name="epitope_choice"),
-)
-```
-
-| Tool | What an agent uses it for |
+| Page | What is in it |
 | --- | --- |
-| `uniprot_search` | Find proteins by name, gene, or organism and get their accessions |
-| `uniprot_lookup` | A protein's sequence, function, domains, disulfide bonds, and known structures |
-| `pdb_lookup` | An experimental structure's method, resolution, chains, ligands, and chain sequences |
-| `alphafold_lookup` | A predicted structure and its pLDDT confidence, where no experimental one exists |
-| `fetch_structure_file` | Download coordinates to disk for code to parse |
-| `pubchem_lookup` | A small molecule's formula, weight, SMILES, and computed descriptors |
-| `chembl_search` | Find drugs and compounds by name and get their ChEMBL identifiers |
-| `chembl_lookup` | A drug's clinical status, route, mechanism of action, and drug-likeness |
-| `chembl_target_search` | Find a protein target and get the identifier bioactivity is keyed by |
-| `chembl_activities` | What binds a target, how tightly, and in what assay |
-| `europepmc_search` | Find published articles and biology preprints, with citation counts |
-| `europepmc_lookup` | One article's abstract and details, by PMID, PMCID, or DOI |
-| `europepmc_fulltext` | Read an open access article, minus its references and front matter |
-| `arxiv_search` | Find machine learning and computational preprints, which Europe PMC does not index |
-| `pubmed_search` | Abstracts or full text from PubMed Central |
-| `web_search` | Search the web for documentation, protocols, and what the curated databases do not hold |
-| `web_fetch` | Read a web page or a PDF as text, in parts, from an address a search found |
-| `data_files` | What data files are in the project directory, and how big |
-| `inspect_data_file` | What is in a CSV, TSV, or Excel file, and how it will be read wrongly |
-| `view_image` | What an image, or pages of a PDF, shows, which the lead's own model is asked (in the server's conversations) |
-
-Use `tools_for("uniprot_lookup", "pdb_lookup")` to give a particular agent only part of the set, and `TOOL_REGISTRY` to see what is available. `web_search` and `web_fetch` are in `WEB_TOOLS` and not in the registry, because unlike every other lookup they are not limited to a few named services: give them with `tools=[*DATABASE_TOOLS, *WEB_TOOLS]`. `fetch_structure_file`, `data_files`, and `inspect_data_file` are not in the registry, because none of them can exist until it has been told which directory it may touch; get them from `all_tools(save_dir=...)` or build them with `structure_file_tool(work_dir)` and `data_file_tools(work_dir)`. `view_image` is not in it either, since it needs a model to ask as well: build it with `view_image_tool(work_dir, ask)`, where `ask` is a function that gives a model's answer to a question about pictures (`Chat.ask_about_images` is the one a conversation uses). Each underlying function can also be called directly, which is what tests and analysis scripts do:
-
-```python
-from virtual_lab import get_protein
-
-protein = get_protein("P01308")
-print(protein.length, protein.pdb_ids[:3])
-print(protein.report())
-```
-
-Three things about this are deliberate:
-
-**A record and its report are different things.** `get_protein` returns every field worth keeping, while `report()` returns what is worth paying for in a request. A sequence of 35,000 residues is on the record and not in the report, because it would be most of a context window spent on one field.
-
-**Queries are built from named arguments, not written by a model.** A model asked to compose a query payload writes a plausible one whose mistakes come back as an empty result rather than as an error, which is the hardest kind to notice. The cost is a function signature per database, which is also what makes these testable.
-
-**Coordinates go to disk, not into the conversation.** One moderate structure file is several hundred kilobytes, and code an agent writes runs in a sandbox with no network of its own. So `fetch_structure_file` fetches outside the sandbox and writes into `artifacts/<save_name>/structures`, which is inside the one directory mounted into the container, and reports back the path to use from there. A file written anywhere else is invisible to the code that needs it. Where it writes is bound when the tool is built and is not a parameter a model fills in, which is why `all_tools` takes the same `save_dir` and `save_name` that `run_meeting` does.
-
-### The web
-
-`web_search` and `web_fetch` are the one place a model chooses where a request goes, so they are built differently from the lookups above, which only ever reach the hosts in `ALLOWED_HOSTS`.
-
-- **`web_search`** uses [Exa](https://exa.ai) if `EXA_API_KEY` is set, and otherwise DuckDuckGo's page for browsers without scripts, which needs nothing. It gives titles, addresses, the passages Exa quoted (or the snippet DuckDuckGo did), and the day a page was published when Exa knows it, and says which engine answered. If Exa fails (a refused key, no credit left, or an outage), DuckDuckGo is used and the result says so. DuckDuckGo answers a client that searches often with a challenge instead of results, so searches to it are spaced 1.5 seconds apart, and when it does refuse the failure says to set the key. The key can be in the environment the server is started with, or be given to a running server with `PUT /api/keys/EXA_API_KEY` (kept in the keychain like the model providers' keys).
-- **`web_fetch`** reads HTML (as text, with headings, lists, and tables kept as lines), PDF (with `pip install "virtual-lab[papers]"`), and plain text, in parts of about 16,000 characters, each saying what `start` to give for the next. `links=true` lists the page's links, so that the model can follow one.
-- **What is refused:** a destination is refused unless every address its name leads to is on the public internet, which leaves out this machine, the network it is on, and a cloud's metadata service. That is checked for the address, for every redirect (followed by hand, up to 5), and for the address the socket is actually connected to, so a name that leads somewhere public when checked and somewhere private when connected to is stopped as well. Only http and https on their standard ports are read, with no login in the address and no proxy from the environment, and a page is cut off at 15 MB, or after 60 seconds.
-- **What it says about itself:** both tools tell the model that what the web says was written by whoever runs the site, and is not to be obeyed.
-
-The conversation's tool settings list them as "Web", and they are on until turned off, like the other tools. `virtual-lab-bixbench` does not give them to the lead unless `--web` is passed.
-
-### Your own tools
-
-`tool_from_function` makes a tool of any Python function, the way Biomni's `add_tool` does. Biomni asks a model to read the function's source and write out its parameters. Here the parameters come from the signature and its type hints, and the descriptions from the docstring, so nothing is invented:
-
-```python
-from virtual_lab import tool_from_function
-
-def gc_content(sequence: str, window: int = 100) -> list[float]:
-    """The GC fraction of a DNA sequence, in windows along it.
-
-    :param sequence: The sequence, as A, C, G, and T.
-    :param window: How many bases each window spans.
-    """
-    ...
-
-tool = tool_from_function(gc_content)
-hold_meeting(..., tools=(tool,))     # the agents call it as a tool
-```
-
-A parameter without a default is required, and each is typed by its hint: `str`, `int`, `float`, `bool`, `list[str]`, `dict[str, float]`, `Literal["a", "b"]`, an `Enum`, a `Path`, a `date`, a pydantic model, or anything else pydantic can read from JSON. The arguments a model sends are converted to those types before the function is called, so `"5"` becomes `5` and `{"start": 1, ...}` becomes the model it describes. Arguments that are wrong are not passed on: the model is told what was wrong and can correct the call. The docstring can be in the reST, Google, or NumPy style. `name=` and `description=` override what the function says of itself. A `functools.partial` leaves the arguments it binds out of the tool, and an async function is waited for. A parameter whose type cannot come from JSON, such as a pandas DataFrame, is refused, since no model can pass one; take a path to the file instead.
-
-A function with no docstring needs `description=`, or a model to describe it: `tool_from_function(f, model="gpt-4o")` asks it once, from the function's source, and prints what it wrote. Only the descriptions come from the model; the parameters still come from the signature. A model can describe the same function differently each time, and a project resumed with a tool described differently holds its meetings again, so keep a description you are happy with by adding it to the function as its docstring.
-
-Give the tool to a session instead, and code in the session calls it like any other function, without importing it, as Biomni's agent calls the tools added to it:
-
-```python
-with DockerSession(Path("results/session"), tools=(tool,)) as session:
-    session.run("profile = gc_content(sequence, window=50)")
-    hold_meeting(..., session=session)  # the agents are told of gc_content, and their code calls it
-```
-
-The function runs on your machine, outside the container. When code in the sandbox calls it, the call comes out over the session's own connection as JSON, the function runs here, and what it returns goes back the same way. A tool can therefore use what the sandbox does not have: the network when the session has none, an API key the sandbox is never given, a GPU, a licensed program, or files outside the session's directory. That is also the risk: a tool can do whatever the function does, with your permissions, on arguments that code written by a model chose. Give a session only tools you would let that code call. Arguments and results are JSON. NumPy arrays, sets, and paths are converted, and anything else is refused with advice to convert it or pass a file instead. A failure in the tool raises `HostToolError` in the code. A call counts towards the time limit of the code that made it: code stopped at its limit while a tool runs keeps its session, and the tool is left to finish, its result unused. Each call is recorded with the cell that made it: the tool, its arguments, how it ended, and how long it took. The tools are listed to a meeting's agents ahead of Biomni's resources, as functions added for this work that they should prefer, again as Biomni lists the tools added to its agent. Changing a session's tools changes the inputs of every project step held with it. R and bash code cannot call them, and a tool cannot run code in the session whose code called it.
-
-### Your own data and software
-
-A session can also be given data and software of your own, in the form Biomni's `add_data` and `add_software` take them: a dict of each path, or each name, with what it is.
-
-```python
-with DockerSession(
-    Path("results/session"),
-    data={"inputs/counts.csv": "Read counts per gene and sample, from the 2024 RNA-seq run.",
-          "inputs/images": "Microscopy of the knockout lines, one TIFF per field."},
-    software={"pydeseq2": "Differential expression, a Python port of DESeq2."},
-) as session:
-    hold_meeting(..., session=session)
-```
-
-Biomni lists a file it was given by its name alone, and leaves the agent to find it. Here each file or directory is mounted read-only in the container at `/data/` and its name, `/data/counts.csv` and `/data/images` above, and the agents are told that path. A `LocalSession` reads the data where it is, and tells the agents that path instead. The data must exist when the session is made, no two pieces may share a file name, and in a `DockerSession` none may be in the session's directory, where code could change it, or hold it.
-
-Software is not installed for you: it must be in the image, or in the `python` a `LocalSession` runs. A meeting first looks for each piece in the session, as a Python distribution, a module Python can find, an R package, or a command. Anything it cannot find is warned about and noted in the record as `software_not_found`, and the agents are still told of it, but as not found, since a name can differ from anything the check looks for.
-
-The data and software are listed after the session's own tools, ahead of Biomni's resources, as added for this work and to be preferred, as Biomni lists what is added to its agent. Changing them changes the inputs of every project step held with the session. Data counts by name and description, not by where it is on your machine or what the files hold, so a project resumed with different contents under the same name does not notice the change.
-
-### Skills
-
-A skill is written guidance on a kind of work: a folder with a `SKILL.md`, which has a block of YAML at the top giving its `name` and a `description` of what it is for and when to use it, and then the instructions. Scripts, references, and templates may sit beside it. This is the [Agent Skills](https://agentskills.io) format, which Claude Code, Codex, and other tools read too, so a skill written for one of them works here, and there are libraries of them, such as [K-Dense's scientific skills](https://github.com/K-Dense-AI/scientific-agent-skills).
-
-```python
-from virtual_lab import Chat, discover_skills
-
-library = discover_skills([("mine", Path("~/skills").expanduser())])
-print([problem.message for problem in library.problems])  # a SKILL.md that could not be used, and why
-chat = Chat(Path("results/chat"), lead, session=session, skills=library.skills)
-```
-
-The lead is told the name and purpose of each skill in every request, which is little, and reads the rest when a task calls for it: `activate_skill` gives a skill's instructions and lists the files that come with it, and `read_skill_file` reads one of them, in parts if it is long. When there is a session, an activated skill's folder is copied into the session's directory under `skills/`, so code can run its scripts. A skill never runs by itself, and the files read are those inside its folder: a path that leaves it, or a link that leads out of it (a `SKILL.md` too), is refused, and links are not copied. Each result stays under a tool's 25,000-character limit, with the files listed at most 40 and 3,000 characters long.
-
-A folder is searched five levels down, so a whole repository of skills can be put in it. What is wrong with one skill leaves out that skill and not the others. A description or compatibility longer than the standard allows, or a name that is not lowercase, is noted and used (the compatibility is cut to the 500 characters it allows). Names that differ only in case are one name, since each skill is a folder in the session, so the first found is used. YAML that is not valid, such as a description with an unquoted colon, is read line by line, as other tools read it. A library with too many skills to list whole, such as 170, has each description cut to a share of `skills_catalog_chars` (20,000 by default, about 5,000 tokens in each request), and the lead sees all of a skill when it activates it. The team is not given the tools: the lead passes on what they need.
-
-The server finds skills in the workspace's `skills/` folder, in `~/.agents/skills`, where other tools put theirs, and in `virtual_lab/builtin_skills`, which holds the seven that come with the lab (`builtin_skills()` returns them, for `Chat(skills=builtin_skills())`). Where two have one of a name the first of these is used, so a skill of yours takes the place of one that comes with the lab. Those that come with the lab are read from where they ship and never copied, cannot be deleted, and can be turned off like any other, on the Data page or for one conversation. They add about 600 tokens to each request. A new conversation is given every skill that is on (see `GET /api/skills` above), or the ones named in `"skills"` in the request, and goes on with those of them that are still there when it is opened again. Set `VIRTUAL_LAB_USER_SKILLS_DIR` to look in another folder than `~/.agents/skills`, and `VIRTUAL_LAB_BUILTIN_SKILLS_DIR` to read the skills that come with the lab from another folder (an empty one gives the server none of them). Skills are instructions written by someone else, which the lead follows and whose scripts it may run, so install only those you would trust with that.
-
-### Tools from MCP servers
-
-`connect_mcp` makes tools of the tools of [MCP](https://modelcontextprotocol.io) servers, as Biomni's `add_mcp` does, from the same YAML config, or from the JSON config that Claude Desktop, Claude Code, Cursor, and others write. It needs the MCP SDK: `pip install "virtual-lab[mcp]"`.
-
-```yaml
-mcp_servers:                      # or mcpServers, as Claude Desktop's config has it
-  genes:                          # started here, and spoken to over its stdin and stdout
-    command: ["python", "-m", "gene_server"]
-    env: {GENE_API_KEY: "${GENE_API_KEY}"}
-  search:                         # reached at a URL, over streamable HTTP
-    url: "https://search.example.org/mcp"
-    headers: {Authorization: "Bearer ${SEARCH_TOKEN}"}
-```
-
-```python
-from virtual_lab import connect_mcp
-
-with connect_mcp("mcp_config.yaml") as mcp:
-    hold_meeting(..., tools=mcp.tools)                   # the agents call them as tools
-    with DockerSession(Path("results/session"), tools=mcp.tools) as session:
-        hold_meeting(..., session=session)               # or code in the session calls them
-```
-
-Each tool is named after its server and itself, `genes_lookup` for the tool `lookup` of the server `genes`, so that two servers' tools never share a name, with anything other than letters, digits, and `_` made `_`, so that code can call it. Its description and parameters are the ones the server gives it, and the server checks the arguments. `mcp.servers["genes"]` holds one server's tools.
-
-A command is a list of the program and its arguments, as Biomni's config has it, or a program with its `args`, as Claude's has it. A server started here gets `env` as its environment, with a few variables of this process, such as `PATH` and `HOME`, and not the rest, so an API key reaches only the servers given it; `cwd` is where it starts. A server at a URL gets `headers` with every request, and one whose `type` is `sse`, or whose URL ends in `/sse`, is spoken to over the older SSE transport. `${NAME}` anywhere in these is replaced with the environment variable `NAME`, and `${NAME:-default}` with the default where it is not set. Errors, and what a server wrote to stderr, show `${NAME}` where its value would be, so a key in a URL or a header is not repeated in a traceback; what a tool returns is left as it is. A server with `enabled: false` or `disabled: true` is left out, and `connect_mcp(config, servers=["genes"])` connects to only the servers named. `tools: [lookup, search]` offers only those of a server's tools; an entry in Biomni's form, with `biomni_name` and `description`, gives that tool its description, and the parameters it lists are not used, since the server declares them.
-
-Biomni starts a server again for every call to one of its tools, over stdio only, and returns the first piece of whatever the tool returned, an error included. Here:
-
-- **A server is started once**, and kept running until the tools are closed, so what it loads stays loaded, and calls to it run at the same time. Any left open are closed when Python exits.
-- **What a tool returns is given back whole.** Where the server gives a structured result, that is what code receives, such as a dict, and otherwise its text. An image, a recording, or a file in it is described, since none can be shown as text. A model is shown either as text.
-- **A failure is a failure.** A tool the server says failed raises `MCPToolError` with what the server said, which the agent is told as an error, and can correct its call from. A call that takes longer than `timeout`, 300 seconds unless given, raises `TimeoutError`, and the server is kept.
-- **A server that stops is started again**, or connected to again, at the next call to one of its tools, with a warning, since whatever it held is gone. Only a call that was running when it stopped fails, raising `MCPServerError`.
-- **A config that cannot work fails at once.** A variable that is not set is an error, rather than an empty value, and so is a server that does not start, or a tool asked for that a server does not have. What a server writes to stderr is kept out of the way, and its end is shown when the server fails. Where one server fails, those already started are stopped again.
-
-A server's tools run wherever the server does: one started here runs on your machine, with your permissions, on arguments a model chose, even when the code calling it is in a sandbox, so give a session only the servers you would let that code use. Changing a server's tools, or what it says of them, changes the inputs of every project step held with them.
-
-#### Tools that wait for a person's approval
-
-A tool that spends money, or does what cannot be undone, can be made to wait for a person to approve each call to it. A server's `approval` lists those tools by their names on the server, or by patterns such as `create_*`, or lists under `ask` the tools that wait and under `allow` those of them that do not after all:
-
-```yaml
-mcp_servers:
-  lab:
-    url: "https://lab.example.org/mcp"
-    approval: {ask: ["*"], allow: ["list_*", "get_*"]}   # every tool waits but those that only read
-    instructions: "Estimate an experiment's cost before creating it."
-```
-
-`{ask: ["*"], ...}` also holds for any tool the server adds later, which a list of names would let through. Before each call to a tool that waits, the person at the terminal is shown the tool and its arguments and asked to approve it. Where there is no terminal, as in a script run in the background or one whose stderr goes to a file, every such call is declined. A call made by code in a session that has stopped, such as by running out of time, before the person answers is not made, even if they approve it, since no one would receive its result. `connect_mcp(..., approve=decide)` decides another way: `decide` is called with an `ApprovalRequest`, and the call is made only if it returns `True`. A call that is not approved is not made. It raises `ApprovalDeclined`, which the agent is told of, along with not to make it again unchanged. A name in `ask` that the server has no tool of is warned of, since a call to the tool meant would not wait. The descriptions of the tools that wait say so, so that agents know.
-
-A server can also ask a person something while one of its tools runs, as Proto's server asks before it deploys a tool. Its question is asked at the terminal, a form field by field, or, where it asks the person to go to a web page, by opening the page. `answer=` answers another way: it is called with a `ServerQuestion` and returns the answers by field name, `{}` once the person has gone to the page, or `None` to decline. Where there is no terminal, every question is declined. A question whose tool call has stopped waiting, such as by running out of time, is withdrawn, and the answer is not used.
-
-What a server's `instructions` say, and what the server says itself of how to use its tools, are told to the agents of a meeting given its tools, or a session given them.
-
-#### Paperclip, Adaptyv, and Proto
-
-Three services built for agents doing biology have presets, a server's entry written out already, with what waits for approval and what the agents are told:
-
-| Preset | Service | Needs |
-| --- | --- | --- |
-| `paperclip` | [Paperclip](https://paperclip.gxl.ai): searching and reading the full text of papers, trials, patents, and regulatory documents | An API key in `PAPERCLIP_API_KEY`, from https://paperclip.gxl.ai/keys, or signing in with `auth: oauth` |
-| `adaptyv` | [Adaptyv's Foundry](https://foundry.adaptyvbio.com): proteins made and tested in a lab, which costs money | An API token in `FOUNDRY_API_TOKEN`, from the Foundry portal, or signing in with `auth: oauth` |
-| `adaptyv_testing` | Adaptyv's testing sandbox, where nothing is made or charged for | A token in `FOUNDRY_TESTING_TOKEN`, from https://foundry.testing.adaptyvbio.com, or signing in with `auth: oauth` |
-| `proto` | [Proto](https://github.com/evo-design/proto-tools): over a hundred tools for protein and sequence design, run on your own Modal account | `uv tool install "proto-tools[mcp] @ git+https://github.com/evo-design/proto-tools.git"`, then `modal token new` |
-| `proto_hosted` | Proto's hosted server, at `https://mcp.evodesign.org/mcp`: the same tools, with nothing installed here | Signing in with a Proto account, from https://proto.evodesign.org |
-
-```python
-with connect_mcp(presets=["paperclip", "adaptyv_testing"]) as mcp:
-    hold_meeting(..., tools=mcp.tools)
-
-with connect_mcp(presets={"paperclip": {"auth": "oauth"}, "proto_hosted": {}}) as mcp:
-    hold_meeting(..., tools=mcp.tools)                   # signed in to, with no API keys
-```
-
-Or a config names one with `preset`, and anything else its entry gives is used in place of the preset's, such as `lab: {preset: adaptyv, approval: ["*"]}` for every one of Adaptyv's tools to wait. The keys and tokens can be in the environment or in the `.env` file, and where one is missing, the error says where to get it. Every one of Adaptyv's tools waits for approval but those that list, get, or estimate a cost, so no experiment is created, submitted, or paid for without a person approving it. Proto's tools that search, describe, and run deployed tools do not wait, but `deploy_tool`, which builds a tool on Modal at your expense, does, as does any other tool either server has or adds. `MCP_PRESETS` lists the presets, with what each needs.
-
-#### Signing in to a server
-
-A server at a URL whose entry has `auth: oauth` is signed in to in your browser, the first time it is connected to, rather than sent an API key. Proto's hosted server is always signed in to; Paperclip's and Adaptyv's can be, in place of their keys, which a preset signed in to is then neither sent nor needs set:
-
-```yaml
-mcp_servers:
-  proto: {preset: proto_hosted}
-  papers: {preset: paperclip, auth: oauth}
-  search:
-    url: "https://search.example.org/mcp"
-    auth: oauth
-```
-
-`connect_mcp` finds the server's authorization server, registers with it, and opens its sign-in page, with the MCP SDK's OAuth client, which uses PKCE. Once you have signed in, the browser is sent back to `http://127.0.0.1` on a port of this machine's, where the sign-in is received. The tokens are kept in `~/.virtual_lab/mcp_auth`, or the directory `VIRTUAL_LAB_MCP_AUTH_DIR` names, in a file for each server that only you can read, and are refreshed as they expire, so the next connection needs no sign-in. Anyone who can read the file can use the account, so treat it as you would a password. `sign_out_mcp("proto_hosted")`, or the server's URL, forgets a sign-in, so the next connection signs in again, as another account, say. `connect_mcp(..., may_sign_in=False)` is for a connection that is not to send anyone to a sign-in page, as one that checks a server: a server whose sign-in is not kept, or has run out and cannot be refreshed, fails at once and says so, without opening a browser or waiting.
-
-Where no browser can be opened, as over SSH, the sign-in page's address is shown at the terminal, to be opened anywhere, and the address the browser ends at, which may not load, is pasted back. Where there is neither a browser nor a terminal, as in a script run in the background, the connection fails and says so: connect once where there is one, and the sign-in kept is used from then on. The time you take to sign in, up to 10 minutes, is not counted against `start_timeout` or `timeout`.
-
-#### Proto's tools in code
-
-Code in a session can also call Proto's tools as a Python library, rather than through its server, by running in the interpreter Proto is installed in. Its tools run on your Modal account with `device="modal"`, which finds your Modal token in your home directory, or on Proto's servers with `device="proto"`, which needs an API key in `PROTO_API_KEY`, from https://proto.evodesign.org/settings/workspace/keys:
-
-```python
-with LocalSession(
-    Path("results/session"),
-    python=str(Path.home() / ".local/share/uv/tools/proto-tools/bin/python"),   # where uv tool install puts it
-    forward_env=("PROTO_API_KEY",),
-    software={"proto_tools": "Proto: run_esmfold, run_alphafold2, and over a hundred more run_* functions, "
-                             "each taking an Input and a Config, such as ESMFoldConfig(device='proto')."},
-) as session:
-    hold_meeting(..., session=session)
-```
-
-Code run this way is not asked about first, as a call through a server is, so give a session Proto's library only where you would let its code spend on your accounts.
-
-### Serving tools over MCP
-
-`virtual-lab-mcp` serves tools to any MCP client: Claude Desktop, Claude Code, Cursor, another agent, or `connect_mcp`. It can serve Biomni's tool functions, the `run_code` tool, the database and literature tools above, and tools of your own, in any combination. `python -m virtual_lab.mcp_server` is the same command.
+| [Models and API keys](docs/models-and-keys.md) | Which provider each model name goes to, OpenRouter, keys and `.env` files |
+| [Meetings](docs/meetings.md) | Team and individual meetings, spending limits, following and steering a meeting, saving documents |
+| [Running code](docs/running-code.md) | The Docker sandbox, sessions, Biomni's software, data lake, and tools |
+| [Repairing code and running a project](docs/projects.md) | Fixing code that fails, and many meetings within one budget |
+| [Conversations, the server, and the chat interface](docs/chat-and-server.md) | The lead, its limits, the server's API, and building the pages |
+| [Growing the toolset from papers](docs/papers-and-functions.md) | Reading papers, and writing a function for each task |
+| [Benchmarks](docs/benchmarks.md) | Biomni's benchmarks, and BixBench-Verified-50 |
+| [Tools, data, skills, and MCP servers](docs/tools-and-skills.md) | Databases, the web, your own tools, data, and software, skills, MCP |
+
+The web interface has its own notes for people who change it, in [`web/README.md`](web/README.md).
+
+## Development
 
 ```bash
-virtual-lab-mcp --biomni-tools --code-tool --directory results/served            # over stdio, for a client that starts it
-virtual-lab-mcp --biomni-tools --biomni-module database --data-lake data/biomni_data --directory results/served
-virtual-lab-mcp --database-tools --tool my_tools:TOOLS --transport http             # at http://127.0.0.1:8000/mcp
+pip install -e ".[dev]"
+pytest
 ```
 
-For Claude Desktop, add the server to `claude_desktop_config.json`, giving the full path to the command if Claude does not find it on its own:
+The interface is tested from `web/`: `npm run lint`, `npm run typecheck`, `npm test`, and `npm run test:e2e`, which drives a browser against the real server with a script in place of the model, so it needs no key.
 
-```json
-{
-  "mcpServers": {
-    "virtual-lab": {
-      "command": "virtual-lab-mcp",
-      "args": ["--biomni-tools", "--code-tool", "--directory", "/Users/me/lab/served"]
-    }
-  }
-}
-```
+## Licenses and acknowledgements
 
-Biomni's `create_mcp_server` runs its functions in the server's own process, passes every parameter whose type it does not recognise as a string, and reports a function that fails as if it had returned its error. Here:
+Lumi's own code is released under the [MIT License](LICENSE). It includes and builds on the work of others, each under its own license. [`NOTICE`](NOTICE) lists what, where it is, and under which license. In short:
 
-- **Biomni's functions run in the sandbox.** Each call runs in one session, a `DockerSession` in the `full` image unless `--image-target` says otherwise, with its working directory at `--directory`, where files the functions write are kept. `--session local` runs them on your machine instead, with no isolation, and says so. `--data-lake`, `--no-network`, and `--forward-env` are as for `session_executor`. Only the modules that import in the session are served, and those that do not are named in a warning; `--biomni-module` serves only the modules given.
-- **Parameters are typed.** Biomni's types become JSON schema, so an `int` is an integer, a `List[str]` an array of strings, and a `pd.DataFrame` an array of rows. Arrays are made the numpy arrays, data frames, or tuples the function expects before it is called. A default the schema can hold is given as the default, and a parameter that takes a function, which cannot be sent, is left out.
-- **The session is shared.** With `--code-tool`, `run_code` runs code in the same session, which keeps its variables from one call to the next. Whatever a Biomni function returned last is there as `_`, and a file it wrote can be read.
-- **Arguments are checked.** Each call's arguments are checked against the tool's parameters before it runs, and every problem found is listed for the client, which can correct its call.
-- **What a tool returns is sent back whole.** A dict, or a pydantic model, is sent as the structured result as well as text. A Biomni function that returns nothing gives back what it printed instead.
-- **A failure is a failure.** A tool that raises an error is reported as failed, with the error, and for a Biomni function with the end of what it printed. The server carries on.
-- **Calls run at the same time**, each in a thread of its own, except that calls to one session wait their turn.
+- **Virtual Lab** (MIT; Kyle Swanson, Wu, Bulaong, and colleagues in James Zou's group). Lumi's meetings, agents, and prompts began there, and [`nanobody_design/`](nanobody_design) is the original study, with its own README. If you use the meeting framework, please cite:
 
-`--tool` serves one of the database tools by name (`--tool uniprot_lookup`), or `module:attribute` for a `Tool`, a list of them, what `connect_mcp` returns, or a function, which is made a tool as `tool_from_function` makes it. The module is imported from the working directory. In Python, `serve_mcp(tools)` serves a list of tools, and `create_mcp_server(tools)` returns the server for you to run.
+  Swanson, K., Wu, W., Bulaong, N.L. et al. The Virtual Lab of AI agents designs new SARS-CoV-2 nanobodies. *Nature* (2025). https://doi.org/10.1038/s41586-025-09442-9
 
-Over HTTP the server listens at `127.0.0.1`, which only this machine can reach, and refuses requests that name another host, so a web page cannot reach it by DNS rebinding. To listen anywhere else, such as `--host 0.0.0.0`, set a token of at least 16 characters in `VIRTUAL_LAB_MCP_TOKEN`, in the environment or in the `.env` file. Every request must then carry it as `Authorization: Bearer <token>`, which `connect_mcp` sends from the `headers` of its config. A token can be set on this machine too. `--env-file` reads another `.env` file before the server starts.
+- **Biomni** (Apache License 2.0; Stanford SNAP). The sandbox is built from Biomni's environment files, and Biomni's tool package is mounted in it, both copied without modification. Parts of Lumi follow Biomni's code, prompts, and data tables, and say so in their files. If you use Biomni's tools, data, or environment, please cite:
 
-The server stops when its client does, or at Ctrl-C or `SIGTERM`, and stops its session's container as it goes. A Biomni function runs on arguments a model chose, and with the network on it can reach anything the container can, so serve them in a session you would let any of the server's clients use.
+  Huang, K., Zhang, S., Wang, H. et al. Biomni: A General-Purpose Biomedical AI Agent. *bioRxiv* (2025).
 
-### What these services will tell you that is not true
+- **BixBench** (Apache License 2.0; FutureHouse) and **BixBench-Verified-50** (Apache License 2.0; Phylo). The benchmark runner uses FutureHouse's judge prompts and grading rules, and fetches the dataset with your own Hugging Face credentials. It is not shipped. Cite Mitchener, L. et al. BixBench: a Comprehensive Benchmark for LLM-based Agents in Computational Biology. arXiv:2503.00096 (2025).
 
-Each lookup refuses a particular confident wrong answer, because every one of these arrives as a successful response rather than as an error:
+**Before any commercial use**, read [`license_info.md`](src/virtual_lab/sandbox/biomni_package/license_info.md). Lumi's own license permits commercial use, but the data lake and tools it can fetch are other people's datasets and software. Several are licensed for non-commercial use only (such as DDInter, DisGeNET, McPAS-TCR, miRDB, and miRTarBase), and others need a license for commercial use (such as COSMIC, BindingDB, MSigDB, and OMIM). Lumi does not ship the data lake: `download_data_lake` fetches it from Biomni's release bucket on request. `commercial_mode=True` leaves out what Biomni's own commercial mode leaves out. It does not check the licenses of the databases a tool queries.
 
-- **PubChem renamed its properties in 2025.** A request for `CanonicalSMILES` is answered with a key called `ConnectivitySMILES`, so code that reads back the name it asked for raises `KeyError` on a perfectly good response. `SMILES` is now the one carrying stereochemistry.
-- **PubChem accepts a structure it has never seen**, answering 200 with `CID: 0` rather than an error. Only the identifier says nothing was found.
-- **A SMILES cannot go in the URL path.** It carries `/` and `\` for stereochemistry, and percent-encoded into a path segment PubChem answers 400. Since PubChem keeps 400 for a request it could not parse, treating it as "no such compound" would report a real compound as nonexistent whenever a URL was built wrongly, so only 404 means missing here.
-- **ChEMBL sends its numbers as strings**: `max_phase` arrives as `"4.0"` and molecular weight as `"180.16"`.
-- **`max_phase` is -1 for 2,499 molecules** whose clinical status ChEMBL does not know, which sorts below a compound that was never tested.
-- **Some ChEMBL measurements lost their units in standardisation.** The most potent IC50 against EGFR by raw value reads `5.012E-9 nM`, a hundred million times tighter than any real binding; its original value was 17.3 in units the record no longer names. Those rows are exactly the ones with no pChEMBL value, so `chembl_activities` requires one and orders by it.
-- **Searching a gene symbol ranks the wrong thing first.** `EGFR` returns two protein-protein interactions and mouse EGFR above human EGFR, and restricting the organism alone does not fix it, which is why the target search tool passes `single_proteins_only` on by default. The library function it calls leaves the filter off unless asked, so a caller looking for a complex can still find one.
-
-And the two literature searches read the same query in opposite ways, which is the one to know about:
-
-- **arXiv reads loose words as alternatives.** `protein language model` sent as written returns 1,285,358 results, being everything mentioning any of the three words. Requiring all three returns 893 and the quoted phrase returns 344. The count misleads as much as the results do, so `arxiv_search` joins loose terms with `AND`, says in the report that it did, and passes through any query that already uses a field prefix or an operator.
-- **Europe PMC reads the same words as requirements**, so a long query there finds less rather than more. Opposite defaults, same phrasing from an agent.
-- **Europe PMC does not index arXiv**, which is why there are two searches rather than one. Most computational method work is only on arXiv, and much of it stays there.
-- **A quoted identifier matches nothing.** `PMCID:"PMC3258128"` and `EXT_ID:"21937511"` both return zero hits while the same queries unquoted return the article, but a DOI needs the quotes because it carries slashes. The two that go unquoted are checked against their shape first, which is what makes that safe.
-- **An unknown article is a 500, not a 404.** Asking Europe PMC for the full text of an article it does not hold gets the same status as an outage, so the retry logic spends three attempts and several seconds and then blames the service. `europepmc_fulltext` reads the record first, which says plainly whether the text exists.
-- **`isOpenAccess` is the letter `Y` or the letter `N`**, as are ten other fields on the same record. `"N"` is a non-empty string, so every one of them is true when tested directly.
-- **References are about 28% of an article's body text** and are a list of other people's titles, which reads to a model as though this article had discussed all of them. They are left out, along with funding and author contributions, and the report says which sections were dropped.
-- **ElementTree expands internal entities.** That was checked rather than assumed. Neither service has any reason to send a `DOCTYPE`, so one is refused before parsing rather than the expansion being bounded.
-
-**PubChem needs a particular TLS handshake.** Its edge answers this library's ordinary handshake with 503 and a "server too busy" body, while reporting the service as healthy to `curl` from the same address in the same second. `web.HOST_CIPHERS` offers it a cipher list it accepts. The connection is still TLS 1.3 with certificate verification on; only the list offered in the handshake differs. No other service needs this.
-
-### Reading the project's own data
-
-The tools above fetch what is known. A project also has data of its own: a spreadsheet from a collaborator, a table downloaded by hand, a file written by the last piece of code that ran. An agent that cannot see inside those files writes code against the columns it imagines are in them.
-
-`inspect_data_file` answers the first question about a file, which is always the same question, without a round trip through the sandbox. It reads `.csv`, `.tsv`, `.tab`, `.txt`, `.xlsx`, and `.xlsm`, reports the shape and what each column holds, and shows the first few rows. It does not return data for computing with; the sandbox is still where analysis happens.
-
-Excel files are read without a dependency, straight out of the archive, so there is nothing to install and nothing that runs while a file is being opened.
-
-The filename comes from a model, so it is treated the way a filename a meeting asks to write is: checked for traversal, resolved, and checked again against the directory it must be inside. Resolving first also settles symbolic links, so a link pointing out of the directory is refused rather than followed.
-
-### Looking at images and the pages of a PDF
-
-A figure, a slide, a scanned page, or a screenshot says what the text of its file leaves out, and a model that is only sent text cannot read it. The lead is given `view_image`, which takes a file in the working directory, a question, and for a PDF the pages (`[45, 46, 47]`), and answers with what the question asks about. It does so by asking the lead's own model in a request of its own (`Chat.ask_about_images`): the images are sent in that request alone, so that they are not kept in the conversation, where every later request would carry them again, and what the request costs is counted and held to the conversation's spending limit like any other. What the lead reads is the model's text.
-
-- **Only a model that reads images is given it.** For a model whose source is OpenRouter, that is what OpenRouter's list says it takes in (`architecture.input_modalities`, which the list kept in the workspace records); for the others it is told by the name, and a local or custom model is not assumed to. `accepts_images(model)` says which.
-- **It stays inside the working directory,** as `inspect_data_file` does: the path is resolved, links are followed before it is checked, and what the code prints (`/workspace/uploads/slides.pdf`) is understood. Only PNG, JPEG, GIF, and WebP images and PDFs are opened, and none larger than 200 MB.
-- **Pages are drawn on this machine** by pypdfium2, at a size where a model reads small print (the longest side is 1600 pixels), and every image is brought down to that size, flattened onto white, and sent as a PNG, or a JPEG if that is over 3 MB. An image already that small, of the kind its name says, and with pixels every provider takes is sent as it is. A 16-bit image is scaled to 8 bits rather than cut off, a moving one is sent as a still, and one of more than 80 million pixels is refused before it is decoded. At most six images or pages are sent at a time, and a PDF of more than one page has to be told which. A tool that fails, or a file that cannot be read, says why to the lead, which can correct the call.
-- **Without pypdfium2 and Pillow** a PDF cannot be drawn and a large image cannot be made smaller; the lead is told so, with the line that installs them, and the rest of the conversation goes on.
-
-### What a data file will tell you that is not true
-
-The point of reading the file before the code is written is not the shape. It is that a table misleads quietly, and every one of these is a file that loads without complaint:
-
-- **One `<0.001` makes the whole column text.** A measurement below the assay's detection limit is written as a bound, and a single one of them turns a column of numbers into a column of strings. Every mean taken afterwards is wrong or skipped, and the values dropped are not missing at random: they are the strongest and weakest samples.
-- **A spreadsheet turns gene symbols into dates.** SEPT2 becomes 2-Sep as it is typed, and the symbol cannot be recovered from the file afterwards. A column holding both dates and text is the signature, so that is what is reported.
-- **A date in a spreadsheet is an ordinary number.** `45902` is 2025-09-02 only if you follow the cell's style to its number format, and Excel records no flag saying a format means a date. Without that chase a corrupted gene column reads as a column of five digit integers.
-- **A byte-order mark renames the first column.** Read as `utf-8` rather than `utf-8-sig`, the header is `\ufeffgene` and never matches `gene`.
-- **Two columns with the same name leave one of them gone.** Readers that key rows by name keep the last, without a word.
-- **Identifiers lose their leading zeros.** `00123` read as a number is `123`, and stops matching anything.
-- **A row in a spreadsheet holds only its non-empty cells.** Taken in order rather than by cell reference, every value after a blank moves one column left, which produces a table that is wrong and looks right.
-- **The cell reference is optional.** Writers that stream cells out in order leave it off, and a reader that places cells only by reference reads the whole sheet as empty. A cell without one goes in the column after the one before it, as Excel reads it.
-- **A cell's text can be split into runs.** Asking for the first `<t>` under it returns nothing at all, because the runs are between them.
-- **`float()` accepts more than anyone means by a number.** `float("1_000")` is 1000.0, `float("nan")` and `float("inf")` both succeed, and `float("١٢٣")` is 123.0. A column whose missing values are spelled `nan` is otherwise reported as numeric.
-- **`csv.Sniffer` cannot read a one-column file** and raises rather than saying so, which a list of gene names is.
-- **cp1252 decodes every possible byte**, so it never fails and a wrong guess at the encoding is silent. UTF-8 first is the only ordering that is ever right.
-- **A 204 KB spreadsheet can declare a 200 MB sheet.** That was measured. The size is recorded inside the archive by whoever wrote it, so the cap is on the bytes actually unpacked.
-- **A cell's position costs nothing to write.** A 5.7 KB sheet with one cell in column XFD of each row pads out to 600 MB, which no byte cap sees. Rows are held only as far as their last value, the cap is on the cells held, and a column past XFD is refused as damage.
-
-A note on `uniprot_search`: `reviewed_only` is off by default. Curation covers a small fraction of UniProt, and for some classes of sequence it covers none of it, so a search for a nanobody with it on returns proteins whose reference titles mention one while filtering out every real camelid VHH.
+Lumi is an independent project. It is not affiliated with or endorsed by the authors of the Virtual Lab, Biomni, BixBench, or any model provider or service it connects to, whose names are their owners' trademarks.

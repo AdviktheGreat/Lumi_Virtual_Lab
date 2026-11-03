@@ -1,0 +1,104 @@
+Lumi Virtual Lab
+Copyright (c) 2026 Advik Anand
+
+Lumi's own code is released under the MIT License (see LICENSE). It includes, adapts, or
+fetches the work of others, listed below. Each is used under the license named, and that
+license applies to that material only. Nothing here changes it.
+
+---------------------------------------------------------------------------------------------
+
+1. Virtual Lab
+   https://github.com/zou-group/virtual-lab
+   MIT License, Copyright (c) 2026 Kyle Swanson (the notice in LICENSE)
+
+   Lumi began as a fork of the Virtual Lab and keeps its history. The meeting framework, the
+   agents and their prompts, and the code that saves and reads meetings began there and have
+   been changed since. nanobody_design/ is the Virtual Lab's nanobody design study, kept with
+   small edits to its constants and README. The LICENSE file keeps the Virtual Lab's notice
+   beside Lumi's, as the MIT License asks.
+
+   Swanson, K., Wu, W., Bulaong, N.L. et al. The Virtual Lab of AI agents designs new
+   SARS-CoV-2 nanobodies. Nature (2025). https://doi.org/10.1038/s41586-025-09442-9
+
+2. Biomni
+   https://github.com/snap-stanford/Biomni, commit 400c1f366b96a35ca253e13c9b06c5076af41d65
+   Apache License, Version 2.0, Copyright the Biomni authors.
+   The text of the license is in src/virtual_lab/sandbox/biomni_package/LICENSE.
+   Biomni has no NOTICE file of its own.
+
+   Copied without modification (checked file by file against that commit):
+     src/virtual_lab/sandbox/biomni_package/biomni/   the tool functions, their descriptions,
+                                                      the protocols and database schemas they
+                                                      read, the know-how documents, and the
+                                                      modules they import (175 files)
+     src/virtual_lab/sandbox/biomni_package/license_info.md
+     src/virtual_lab/sandbox/biomni_package/LICENSE
+     src/virtual_lab/sandbox/biomni_env/              the environment files the sandbox image
+                                                      is built from (9 files)
+     src/virtual_lab/biomni_env_desc.py               from biomni/env_desc.py, below its
+                                                      docstring
+
+   Adapted. These files of Lumi reproduce or follow parts of Biomni's code, prompts, or data
+   tables. Each says in its header which parts, from where, and how it departs from Biomni:
+     src/virtual_lab/benchmarks.py          the benchmarks' prompts, option shuffling, scoring
+                                            rules, metrics, and output classes
+     src/virtual_lab/resources.py           the resource retrieval prompt and its parser, and
+                                            the listing of tools, data, and software
+     src/virtual_lab/evaluation.py          the prompt that reads an answer out of a transcript
+     src/virtual_lab/llm.py                 the choice of provider by model name
+     src/virtual_lab/papers.py              the prompts that read a paper for tasks, databases,
+                                            and software
+     src/virtual_lab/paper_batch.py         reading many papers and counting what they share
+     src/virtual_lab/function_generator.py  the prompt that writes a function for a task
+     src/virtual_lab/sandbox/Dockerfile     installs Biomni's environment files in the order
+                                            of Biomni's biomni_env/setup.sh
+
+   Not included. The data lake (76 files, about 11 GB) is fetched from Biomni's release bucket
+   when a person asks (download_data_lake, or the interface). Biomni's benchmark files are
+   fetched from where Biomni fetches them, and are checked against pinned hashes.
+
+   The data lake and the tools are made of other people's datasets and software, under their
+   own licenses. Several permit non-commercial use only, and several need a license for
+   commercial use. src/virtual_lab/sandbox/biomni_package/license_info.md, which is Biomni's,
+   lists them. Check them before any commercial use.
+
+   Huang, K., Zhang, S., Wang, H. et al. Biomni: A General-Purpose Biomedical AI Agent.
+   bioRxiv (2025).
+
+3. BixBench
+   https://github.com/Future-House/BixBench
+   Apache License, Version 2.0, FutureHouse. The text of the license is the one named under 2.
+
+   src/virtual_lab/bixbench.py reproduces the judge prompts of bixbench/prompts.py word for
+   word and follows the grading rules of bixbench/graders.py, and says where it departs.
+
+   Mitchener, L. et al. BixBench: a Comprehensive Benchmark for LLM-based Agents in
+   Computational Biology. arXiv:2503.00096 (2025).
+
+4. BixBench-Verified-50
+   https://huggingface.co/datasets/phylobio/BixBench-Verified-50
+   Apache License 2.0, Phylo. A gated dataset. It is fetched with the person's own Hugging
+   Face login (virtual-lab-bixbench fetch) and is not included. Its questions, data, and
+   answers are the dataset's, and it asks that its canary string be kept out of training data.
+
+5. Fonts in the pages of the interface
+   Inter (Copyright 2016 The Inter Project Authors), JetBrains Mono (Copyright 2020 The
+   JetBrains Mono Project Authors), and Newsreader (Copyright 2020 The Newsreader Project
+   Authors), through Fontsource. Each is under the SIL Open Font License, Version 1.1,
+   https://openfontlicense.org.
+
+6. Software Lumi installs and does not copy
+   The Python and JavaScript packages Lumi depends on are installed from their registries,
+   not copied into this repository, and are under their own licenses. Nearly all are
+   permissive (MIT, BSD, ISC, Apache-2.0). The exceptions are used unmodified as libraries:
+   certifi, orjson, and tqdm are MPL-2.0 (orjson and tqdm with MIT or Apache-2.0 code); pyphen,
+   which WeasyPrint brings in for the optional pdf extra, is licensed under a choice of
+   GPL-2.0-or-later, LGPL-2.0-or-later, or MPL-1.1; and two packages used only while the pages
+   are built, sharp-libvips (LGPL-3.0-or-later) and caniuse-lite (CC-BY-4.0), are not part of
+   what is served. The software in the sandbox image (samtools, BLAST, R and its packages,
+   PLINK, and the rest of Biomni's environment) is installed when a person builds the image on
+   their own machine, under its own licenses. The image is not distributed.
+
+Lumi is an independent project. It is not affiliated with or endorsed by the authors of the
+Virtual Lab, Biomni, BixBench, or any model provider or service it connects to. Their names
+are their owners' trademarks.

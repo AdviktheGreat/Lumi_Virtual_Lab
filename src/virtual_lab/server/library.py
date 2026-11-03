@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from virtual_lab.constants import DEFAULT_MODEL, MODEL_TO_INPUT_PRICE_PER_TOKEN
 from virtual_lab.llm import detect_source
 
-# The environment variables each provider's models are reached with, as the README lists them
+# The environment variables each provider's models are reached with, as docs/models-and-keys.md lists them
 PROVIDER_KEYS: dict[str, tuple[str, ...]] = {
     "OpenAI": ("OPENAI_API_KEY",),
     "Anthropic": ("ANTHROPIC_API_KEY",),
