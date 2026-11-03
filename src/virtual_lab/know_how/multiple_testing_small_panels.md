@@ -46,7 +46,7 @@ In a panel of a few dozen to a few hundred features, the number that pass a corr
 
 ## qPCR and miRNA basics
 
-- A lower Ct means more of the target. Delta Ct = Ct(target) - Ct(reference). Delta-delta Ct = delta Ct(case) - delta Ct(control). Fold change = 2^(-delta-delta Ct).
+- A lower Ct means more of the target. Delta Ct = Ct(target) - Ct(reference). Delta-delta Ct = delta Ct(case) - delta Ct(control). Fold change = 2^(-delta-delta Ct), which assumes about 100% amplification efficiency for target and reference (use the Pfaffl method if the efficiencies differ).
 - Test on the delta Ct values, which are on a log scale, not on the fold changes.
 - The reference (a spike-in, a stable endogenous gene, or the mean of all features) changes the results. Use the one the data or the question names.
 - Decide how undetermined or very high Ct values (such as 40) are handled, and say so.

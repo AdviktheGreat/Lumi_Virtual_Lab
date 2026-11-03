@@ -44,7 +44,7 @@ When the question names a caller or a filter, use it. When it names none, comput
 
 - Read the VCF header (`##source`, the command lines, the reference) and look at the FILTER values, the QUAL distribution, and the read depth.
 - Compare the SNP count with what the genome size and the divergence from the reference would give. A count far lower than expected may be a filtered or partial call set.
-- When alignments (BAM or CRAM) and the reference are supplied beside a VCF, the question may intend for the variants to be called from them. Do a quick standard calling, for example `bcftools mpileup -f ref.fa aln.bam | bcftools call -mv` (with the organism's ploidy), filter on QUAL, and compare the SNP count and Ts/Tv with the supplied VCF. Install bcftools and samtools (conda from bioconda, or pysam from pip) if they are missing.
+- When alignments (BAM or CRAM) and the reference are supplied beside a VCF, the question may intend for the variants to be called from them. Do a quick standard calling, for example `bcftools mpileup -f ref.fa aln.bam | bcftools call -mv` (with the organism's ploidy), filter on QUAL, and compare the SNP count and Ts/Tv with the supplied VCF. Install bcftools and samtools if they are missing (conda from bioconda), or use the wrappers pysam bundles, such as `pysam.bcftools.call`.
 - If the two disagree, report both with the settings used, and say which the question most plausibly means.
 
 ## What to report

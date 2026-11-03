@@ -34,11 +34,11 @@ A function with the same name can compute different quantities in different tool
 
 ## Sequence and alignment statistics
 
-Metrics such as relative composition variability, GC content, the fraction of variable or parsimony-informative sites, and gap fractions differ between tools in two ways: whether gaps and ambiguity codes (`-`, `N`, `X`, `?`) count as characters, and whether proportions are taken over the full alignment length or only the positions that are not gaps. Check which a tool does with a toy alignment that has gaps in it, and compare with the definition in the paper that introduced the metric.
+Composition and site-count metrics (GC content, the fraction of variable or informative sites, gap fractions, and measures of how much composition varies between sequences) differ between tools in two ways: whether gaps and ambiguity codes (`-`, `N`, `X`, `?`) count as characters, and whether proportions are taken over the full alignment length or only the positions that are not gaps. Check which a tool does with a toy alignment that has gaps in it, and compare with the definition in the paper that introduced the metric.
 
 ## Statistical tests
 
-- Check the alternative (two-sided or one-sided), whether the p-value is exact or approximate, any continuity correction, how ties are handled, and whether the samples are treated as paired. `scipy.stats.mannwhitneyu` and R's `wilcox.test` differ in when they use the exact distribution and in how they apply the continuity correction.
+- Check the alternative (two-sided or one-sided), whether the p-value is exact or approximate, any continuity correction, how ties are handled, and whether the samples are treated as paired. `scipy.stats.mannwhitneyu` and R's `wilcox.test` differ in when they use the exact distribution and in how they treat ties, so set the method and continuity-correction arguments yourself and say what you set.
 - Report the test, the statistic, the p-value in scientific notation at full precision, the group sizes, and the software versions.
 - Very small p-values are sensitive to the definition. A small change in what is counted or how the groups are built can move one by many orders of magnitude, so check the inputs as well as the test.
 

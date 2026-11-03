@@ -33,8 +33,8 @@ An enrichment result depends on choices that rarely appear in the final number: 
 
 ## Gene lists and background
 
-- Use the genes the question describes. When it does not separate up and down regulation ("differentially expressed genes"), pool them into one list. Run the two directions separately when the question names a direction or the comparison between them is the point, and say so.
-- When it is unclear, run both and lead with the literal reading of the question.
+- Use the genes the question describes. Pooled and split lists are both common: pool up and down regulated genes when the question speaks of "differentially expressed genes" without a direction, and run the directions separately when it names one or the comparison between them is the point. Say which you did.
+- When the wording does not settle it, run both and lead with the reading it selects.
 - The default background is every gene of the organism that has an annotation in the database, which is what clusterProfiler does. Use a custom background (the genes that were tested or detected) when the question or the data call for it. Check whether the choice changes the count and report it if it does.
 - Leave the default minimum and maximum gene set sizes unless asked, and note them.
 

@@ -53,7 +53,7 @@ Before trusting a result, check known genes in the data you are using:
 
 - Match cell lines by the identifier both files share (ModelID or ACH- ids), not by row position or by name. Report how many lines matched, and how many were in only one file.
 - Use the same release for both files where you can, and say which release it is.
-- Gene effect and expression are skewed. Use the correlation the question names, and say which. If it names none, Spearman is the safer choice.
+- Gene effect and expression are skewed. Use the correlation the question names, and say which. If it names none, report the one you used, and give the other too if the two lead to different counts or rankings.
 - Look at both tails: genes whose expression goes with stronger dependency, and genes where it goes with weaker dependency. Count each on the oriented values, with the threshold applied to the signed value, not to its absolute value, unless the question says absolute.
 - Restrict to a lineage, mutation group, or subtype only when asked. Report the number of lines in the subset.
 - When asked about significance across many genes, correct for multiple testing as the question says. A correlation threshold and a significance threshold are different rules, so apply the ones given.
