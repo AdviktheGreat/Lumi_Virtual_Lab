@@ -12,9 +12,11 @@ was when it was put in, and what is deleted is only what is there.
 
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -29,18 +31,23 @@ from virtual_lab.skills import (
     copy_skill,
     discover_skills,
     files_in,
-    find_skill_files,
     listing,
     parse_skill,
     read_body,
+    search_skill_files,
 )
 
 # Names a folder to look in beside the workspace's, in place of ~/.agents/skills, which a person may keep their skills
 # somewhere else for, and which the tests use so that what is on the machine they run on does not change them
 USER_SKILLS_DIR_VARIABLE = "VIRTUAL_LAB_USER_SKILLS_DIR"
 
-# How long to give Git to fetch a repository of skills, and how much of a skill's instructions and its files to show
-GIT_SECONDS = 180
+# How long to give Git to fetch a repository of skills, how much of the disk it may take while it does, how often that
+# is looked at, how many folders to search for skills in a folder on this machine, which may be a whole disk, and how
+# much of a skill's instructions and its files to show
+GIT_SECONDS = 300
+GIT_BYTES = 1_000_000_000
+GIT_WATCH_SECONDS = 1.0
+MAX_SEARCHED_FOLDERS = 5_000
 PREVIEW_CHARS = 20_000
 PREVIEW_FILES = 200
 PREVIEW_FILE_CHARS = 6_000
@@ -100,10 +107,39 @@ def check_git_address(address: str) -> str:
     return text
 
 
+def size_of(folder: Path) -> int:
+    """The bytes in the files in a folder and below it."""
+    total = 0
+    for directory, _, files in os.walk(folder):
+        for file in files:
+            try:
+                total += os.lstat(os.path.join(directory, file)).st_size
+            except OSError:
+                continue
+
+    return total
+
+
+def stop_git(process: "subprocess.Popen[str]") -> None:
+    """Stops Git and what it started, such as the program that talks https for it, which a kill of Git alone leaves
+    going."""
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except OSError:
+        pass
+    try:
+        process.communicate(timeout=10)
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+
+
 def fetch_repository(address: str, scratch: Path) -> Path:
     """A repository as it is now, without its history, in a folder of the scratch folder.
 
-    :raises ApiError: If Git is not there, or cannot fetch it, or is not done in time.
+    :raises ApiError: If Git is not there, or cannot fetch it, or is not done in time, or it is too big.
     """
     destination = scratch / "repository"
     environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": "https", "GIT_LFS_SKIP_SMUDGE": "1"}
@@ -122,24 +158,46 @@ def fetch_repository(address: str, scratch: Path) -> Path:
         str(destination),
     ]
     try:
-        done = subprocess.run(
+        process = subprocess.Popen(
             command,
-            capture_output=True,
-            text=True,
-            timeout=GIT_SECONDS,
             env=environment,
             stdin=subprocess.DEVNULL,
-            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
         )
     except FileNotFoundError:
         raise ApiError(
             422, "git_missing", "Git is not installed on this machine, and fetching a repository takes it"
         ) from None
-    except subprocess.TimeoutExpired:
-        raise ApiError(504, "timeout", f"Git did not finish fetching {address} in {GIT_SECONDS} seconds") from None
-    if done.returncode != 0:
-        said = " ".join(done.stderr.split())[-300:] or f"it stopped with status {done.returncode}"
-        raise ApiError(422, "fetch_failed", f"Git could not fetch {address}: {said}")
+    deadline = time.monotonic() + GIT_SECONDS
+    try:
+        while True:
+            try:
+                _, said = process.communicate(timeout=max(0.0, min(GIT_WATCH_SECONDS, deadline - time.monotonic())))
+                break
+            except subprocess.TimeoutExpired:
+                if time.monotonic() >= deadline:
+                    stop_git(process)
+                    raise ApiError(
+                        504, "timeout", f"Git did not finish fetching {address} in {GIT_SECONDS} seconds"
+                    ) from None
+                if size_of(destination) > GIT_BYTES:
+                    stop_git(process)
+                    raise ApiError(
+                        422,
+                        "too_big",
+                        f"{address} is more than {GIT_BYTES // 1_000_000:,} MB, which is more than a library of skills "
+                        "needs. Clone it yourself and give the folder the skills are in.",
+                    ) from None
+    except BaseException:
+        if process.poll() is None:
+            stop_git(process)
+        raise
+    if process.returncode != 0:
+        detail = " ".join((said or "").split())[-300:] or f"it stopped with status {process.returncode}"
+        raise ApiError(422, "fetch_failed", f"Git could not fetch {address}: {detail}")
 
     return destination
 
@@ -207,10 +265,10 @@ class Skills:
 
         :raises ValueError: If it is not a list of the names of skills there are.
         """
-        library = load_skills(self.workspace)
-        asked = check_skill_names(names, library)
-        found = {skill.name for skill in library.skills}
         with self._lock:
+            library = load_skills(self.workspace)
+            asked = check_skill_names(names, library)
+            found = {skill.name for skill in library.skills}
             kept = [name for name in self.workspace.load_disabled_skills() if name not in found]
             self.workspace.save_disabled_skills(list(dict.fromkeys([*asked, *kept])))
 
@@ -224,24 +282,39 @@ class Skills:
         """
         if (git is None) == (path is None):
             raise ApiError(422, "invalid", "Give the address of a Git repository or the path of a folder, and not both")
-        with self._lock:
-            if git is not None:
-                address = check_git_address(git)
-                with tempfile.TemporaryDirectory(prefix="lumi-skills-") as scratch:
-                    result = self._put_in(fetch_repository(address, Path(scratch)), address)
-            else:
-                assert path is not None
-                folder = check_folder(path)
-                result = self._put_in(folder, str(folder))
+        if git is not None:
+            address = check_git_address(git)
+            with tempfile.TemporaryDirectory(prefix="lumi-skills-") as scratch:
+                result = self._put_in(fetch_repository(address, Path(scratch)), address)
+        else:
+            assert path is not None
+            folder = check_folder(path)
+            result = self._put_in(folder, str(folder))
 
         return {**self.describe(), **result}
 
     def _put_in(self, root: Path, where: str) -> dict[str, Any]:
-        files = find_skill_files(root)
+        # Searching can take a while, so only the copying is done under the lock
+        files, searched_all = search_skill_files(root, MAX_SEARCHED_FOLDERS)
+        if not searched_all:
+            raise ApiError(
+                422,
+                "too_many_folders",
+                f"There are more than {MAX_SEARCHED_FOLDERS:,} folders in {where}, which is too many to search for "
+                "skills. Give the folder the skills are in.",
+            )
         if not files:
             raise ApiError(422, "no_skills", f"There is no skill in {where}: a skill is a folder with a SKILL.md in it")
+        with self._lock:
+            return self._copy_in(files)
+
+    def _copy_in(self, files: list[Path]) -> dict[str, Any]:
         folder = self.workspace.skills_dir
-        taken = {skill.name.casefold() for skill in load_skills(self.workspace).skills if skill.source == "workspace"}
+        library = load_skills(self.workspace)
+        # What is used counts toward the most there can be wherever a skill is found, and what is taken is a name that a
+        # folder of the workspace's has, or is called
+        used = {skill.name.casefold() for skill in library.skills}
+        taken = {skill.name.casefold() for skill in library.skills if skill.source == "workspace"}
         if folder.is_dir():
             taken |= {entry.name.casefold() for entry in folder.iterdir()}
         installed: list[dict[str, Any]] = []
@@ -252,10 +325,11 @@ class Skills:
             except SkillError as error:
                 skipped.append({"name": file.parent.name, "reason": str(error)})
                 continue
-            if skill.name.casefold() in taken:
+            key = skill.name.casefold()
+            if key in taken:
                 skipped.append({"name": skill.name, "reason": "you already have a skill with that name"})
                 continue
-            if len(taken) >= MAX_SKILLS:
+            if key not in used and len(used) >= MAX_SKILLS:
                 skipped.append({"name": skill.name, "reason": f"only {MAX_SKILLS} skills are used"})
                 continue
             try:
@@ -264,7 +338,8 @@ class Skills:
             except OSError as error:
                 skipped.append({"name": skill.name, "reason": f"it could not be copied: {error.strerror or error}"})
                 continue
-            taken.add(skill.name.casefold())
+            taken.add(key)
+            used.add(key)
             installed.append({"name": skill.name, "left_out": left_out})
 
         return {"installed": installed, "skipped": skipped}
@@ -293,9 +368,11 @@ class Skills:
                     shutil.rmtree(target)
             except OSError as error:
                 raise ApiError(500, "files", f"{name} could not be deleted: {error.strerror or error}") from error
-            self.workspace.save_disabled_skills(
-                [each for each in self.workspace.load_disabled_skills() if each != name]
-            )
+            # One of ~/.agents/skills that this one hid is now in the list, and is as it was turned on or off
+            if load_skills(self.workspace).named(name) is None:
+                self.workspace.save_disabled_skills(
+                    [each for each in self.workspace.load_disabled_skills() if each != name]
+                )
 
         return self.describe()
 

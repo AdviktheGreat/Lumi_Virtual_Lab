@@ -1,8 +1,15 @@
 """Tests of keeping skills from a page: listing them, turning them off for new conversations, putting in those of a Git
 repository or a folder, and deleting them."""
 
+import errno
+import os
+import shlex
+import shutil
+import signal
 import subprocess
-from collections.abc import Iterator
+import threading
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +56,52 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 def names_of(listing: dict[str, Any]) -> list[str]:
     return [skill["name"] for skill in listing["skills"]]
+
+
+def fake_git(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fetch: Callable[[Path], object] | None = None,
+    returncode: int = 0,
+    stderr: str = "",
+    waits: int = 0,
+    missing: bool = False,
+) -> dict[str, Any]:
+    """Stands in for the Git that fetches: it runs `fetch` on the folder the clone is to go in, takes `waits` looks at
+    it before it is done (-1 is for ever), and then ends as it is said to. What it was started with, and how many
+    times it was stopped, are in what is returned."""
+    seen: dict[str, Any] = {"stopped": 0}
+
+    class Process:
+        pid = 0
+
+        def __init__(self, command: list[str], **options: Any) -> None:
+            if missing:
+                raise FileNotFoundError("git")
+            seen.update(command=command, **options)
+            self.returncode: int | None = None
+            self.waited = 0
+            if fetch is not None:
+                fetch(Path(command[-1]))
+
+        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+            if waits < 0 or self.waited < waits:
+                self.waited += 1
+                raise subprocess.TimeoutExpired("git", timeout or 0)
+            self.returncode = returncode
+            return "", stderr
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    def stop(process: Process) -> None:
+        seen["stopped"] += 1
+        process.returncode = -9
+
+    monkeypatch.setattr(server_skills.subprocess, "Popen", Process)
+    monkeypatch.setattr(server_skills, "stop_git", stop)
+
+    return seen
 
 
 class TestListing:
@@ -254,6 +307,115 @@ class TestPuttingInAFolder:
 
         assert body["installed"] == [{"name": "fit", "left_out": 4}]
 
+    def test_a_skill_whose_instructions_are_a_link_to_a_file_in_it_is_copied_with_them(
+        self, client: TestClient, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        source = write_skill(tmp_path / "elsewhere", name="fit", files={"real.md": "kept"})
+        (source / "SKILL.md").rename(source / "text.md")
+        (source / "SKILL.md").symlink_to("text.md")
+
+        body = client.post("/api/skills/install", json={"path": str(source)}).json()
+
+        assert [item["name"] for item in body["installed"]] == ["fit"]
+        copy = workspace.skills_dir / "fit"
+        assert (copy / "SKILL.md").is_file() and not (copy / "SKILL.md").is_symlink()
+        assert "name: fit" in (copy / "SKILL.md").read_text()
+        assert names_of(client.get("/api/skills").json()) == ["fit"]
+
+    def test_the_instructions_are_copied_however_many_files_there_are(
+        self, client: TestClient, workspace: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("virtual_lab.skills.MAX_COPIED_FILES", 1)
+        source = write_skill(tmp_path / "elsewhere", name="fit", files={"AAA.md": "a", "BBB.md": "b"})
+
+        body = client.post("/api/skills/install", json={"path": str(source)}).json()
+
+        assert body["installed"] == [{"name": "fit", "left_out": 2}]
+        assert (workspace.skills_dir / "fit" / "SKILL.md").is_file()
+
+    def test_a_skill_that_cannot_be_copied_is_left_and_the_rest_are_put_in(
+        self, client: TestClient, workspace: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_skill(tmp_path / "elsewhere", name="bad", files={"a.txt": "x"})
+        write_skill(tmp_path / "elsewhere", name="good")
+        copy = shutil.copy2
+
+        def refuse_bad(source: Any, destination: Any, **options: Any) -> Any:
+            if "bad" in Path(source).parts:
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return copy(source, destination, **options)
+
+        monkeypatch.setattr("virtual_lab.skills.shutil.copy2", refuse_bad)
+
+        body = client.post("/api/skills/install", json={"path": str(tmp_path / "elsewhere")}).json()
+
+        assert [item["name"] for item in body["installed"]] == ["good"]
+        assert body["skipped"] == [{"name": "bad", "reason": "it could not be copied: No space left on device"}]
+        assert sorted(path.name for path in workspace.skills_dir.iterdir()) == ["good"], "A half copy was left"
+
+    def test_the_skills_in_the_persons_own_folder_count_toward_the_most_there_can_be(
+        self,
+        client: TestClient,
+        workspace: Workspace,
+        user_skills: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("virtual_lab.skills.MAX_SKILLS", 2)
+        monkeypatch.setattr(server_skills, "MAX_SKILLS", 2)
+        write_skill(user_skills, name="shared")
+        write_skill(tmp_path / "elsewhere", name="first")
+        write_skill(tmp_path / "elsewhere", name="second")
+
+        body = client.post("/api/skills/install", json={"path": str(tmp_path / "elsewhere")}).json()
+
+        assert [item["name"] for item in body["installed"]] == ["first"]
+        assert body["skipped"] == [{"name": "second", "reason": "only 2 skills are used"}]
+        assert sorted(names_of(body)) == ["first", "shared"]
+
+    def test_a_name_a_skill_of_the_persons_own_has_is_put_in_without_being_counted_again(
+        self,
+        client: TestClient,
+        workspace: Workspace,
+        user_skills: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("virtual_lab.skills.MAX_SKILLS", 1)
+        monkeypatch.setattr(server_skills, "MAX_SKILLS", 1)
+        write_skill(user_skills, name="shared", description="Theirs.")
+        write_skill(tmp_path / "elsewhere", name="shared", description="Copied.")
+
+        body = client.post("/api/skills/install", json={"path": str(tmp_path / "elsewhere")}).json()
+
+        assert [item["name"] for item in body["installed"]] == ["shared"]
+        assert {skill["name"]: skill["description"] for skill in body["skills"]} == {"shared": "Copied."}
+
+    def test_a_folder_with_too_many_folders_in_it_is_not_searched_all_the_way(
+        self, client: TestClient, workspace: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(server_skills, "MAX_SEARCHED_FOLDERS", 5)
+        for number in range(10):
+            (tmp_path / "wide" / f"folder-{number:02d}").mkdir(parents=True)
+        write_skill(tmp_path / "wide", name="zzz-last")
+
+        response = client.post("/api/skills/install", json={"path": str(tmp_path / "wide")})
+
+        assert response.status_code == 422 and response.json()["error"]["code"] == "too_many_folders"
+        assert not workspace.skills_dir.exists()
+
+    def test_a_link_back_to_a_folder_does_not_make_the_search_go_on_for_ever(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "loop"
+        (root / "a").mkdir(parents=True)
+        (root / "a" / "back").symlink_to(root, target_is_directory=True)
+        write_skill(root, name="fit")
+
+        body = client.post("/api/skills/install", json={"path": str(root)}).json()
+
+        assert [item["name"] for item in body["installed"]] == ["fit"]
+
     @pytest.mark.parametrize(
         ("body", "message"),
         [
@@ -330,14 +492,7 @@ class TestPuttingInARepository:
     def test_the_repository_is_fetched_without_its_history_and_with_nothing_that_asks_or_runs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        seen: dict[str, Any] = {}
-
-        def fake_run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
-            seen.update(command=command, **options)
-            write_skill(Path(command[-1]), name="fetched")
-            return subprocess.CompletedProcess(command, 0, "", "")
-
-        monkeypatch.setattr(server_skills.subprocess, "run", fake_run)
+        seen = fake_git(monkeypatch, fetch=lambda destination: write_skill(destination, name="fetched"))
 
         destination = fetch_repository("https://example.org/skills.git", tmp_path)
 
@@ -346,58 +501,110 @@ class TestPuttingInARepository:
         assert command[0] == "git" and "--depth" in command and "--" in command
         assert command[command.index("--") + 1] == "https://example.org/skills.git"
         assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0" and seen["env"]["GIT_ALLOW_PROTOCOL"] == "https"
-        assert seen["stdin"] == subprocess.DEVNULL and seen["timeout"] == server_skills.GIT_SECONDS
+        assert seen["stdin"] == subprocess.DEVNULL
+        assert seen["start_new_session"] is True, (
+            "Git is not in a group of its own, so what it starts cannot be stopped"
+        )
+        assert seen["stopped"] == 0
+
+    def test_a_fetch_that_is_slow_but_within_its_time_and_size_is_waited_for(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(server_skills, "GIT_WATCH_SECONDS", 0.01)
+        seen = fake_git(monkeypatch, fetch=lambda destination: write_skill(destination, name="slow"), waits=3)
+
+        destination = fetch_repository("https://example.org/skills.git", tmp_path)
+
+        assert (destination / "slow" / "SKILL.md").is_file() and seen["stopped"] == 0
 
     @pytest.mark.parametrize(
-        ("failure", "status", "code", "message"),
+        ("git", "status", "code", "message"),
         [
-            (FileNotFoundError(), 422, "git_missing", "Git is not installed"),
-            (subprocess.TimeoutExpired("git", 1), 504, "timeout", "did not finish"),
-            (
-                subprocess.CompletedProcess([], 128, "", "fatal: repository not found\n"),
-                422,
-                "fetch_failed",
-                "not found",
-            ),
-            (subprocess.CompletedProcess([], 1, "", ""), 422, "fetch_failed", "status 1"),
+            ({"missing": True}, 422, "git_missing", "Git is not installed"),
+            ({"waits": -1}, 504, "timeout", "did not finish"),
+            ({"returncode": 128, "stderr": "fatal: repository not found\n"}, 422, "fetch_failed", "not found"),
+            ({"returncode": 1}, 422, "fetch_failed", "status 1"),
         ],
     )
     def test_a_repository_that_cannot_be_fetched_is_said_why(
         self,
         client: TestClient,
         monkeypatch: pytest.MonkeyPatch,
-        failure: Any,
+        git: dict[str, Any],
         status: int,
         code: str,
         message: str,
     ) -> None:
-        def fake_run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
-            if isinstance(failure, BaseException):
-                raise failure
-            return failure
-
-        monkeypatch.setattr(server_skills.subprocess, "run", fake_run)
+        monkeypatch.setattr(server_skills, "GIT_SECONDS", 0)
+        seen = fake_git(monkeypatch, **git)
 
         response = client.post("/api/skills/install", json={"git": "https://example.org/skills.git"})
 
         assert response.status_code == status
         assert response.json()["error"]["code"] == code and message in response.json()["error"]["message"]
+        assert seen["stopped"] == (1 if code == "timeout" else 0)
+
+    def test_a_fetch_that_fills_the_disk_is_stopped(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(server_skills, "GIT_BYTES", 10)
+        monkeypatch.setattr(server_skills, "GIT_WATCH_SECONDS", 0.01)
+
+        def fill(destination: Path) -> None:
+            destination.mkdir(parents=True)
+            (destination / "big.bin").write_bytes(b"x" * 100)
+
+        seen = fake_git(monkeypatch, fetch=fill, waits=-1)
+
+        response = client.post("/api/skills/install", json={"git": "https://example.org/skills.git"})
+
+        assert response.status_code == 422 and response.json()["error"]["code"] == "too_big"
+        assert seen["stopped"] == 1
+
+    @pytest.mark.skipif(os.name != "posix", reason="Git is stopped as a group of processes where there are such")
+    def test_stopping_git_stops_what_it_started_too(self, tmp_path: Path) -> None:
+        marker = tmp_path / "child.pid"
+        process = subprocess.Popen(
+            ["sh", "-c", f"sleep 60 & echo $! > {shlex.quote(str(marker))}; wait"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        for _ in range(200):
+            if marker.exists() and marker.read_text().strip():
+                break
+            time.sleep(0.05)
+        child = int(marker.read_text())
+        try:
+            server_skills.stop_git(process)
+            for _ in range(200):
+                try:
+                    os.kill(child, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                pytest.fail("What Git started was left running")
+            assert process.poll() is not None
+        finally:
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     def test_the_skills_of_a_repository_are_put_in_and_what_was_fetched_is_not_kept(
         self, client: TestClient, workspace: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         scratch: list[Path] = []
 
-        def fake_run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
-            destination = Path(command[-1])
+        def fetch(destination: Path) -> None:
             scratch.append(destination.parent)
             write_skill(destination / "skills", name="one")
             write_skill(destination / "skills", name="two")
             (destination / ".git").mkdir()
             (destination / ".git" / "config").write_text("x")
-            return subprocess.CompletedProcess(command, 0, "", "")
 
-        monkeypatch.setattr(server_skills.subprocess, "run", fake_run)
+        fake_git(monkeypatch, fetch=fetch)
 
         body = client.post("/api/skills/install", json={"git": "https://example.org/skills.git"}).json()
 
@@ -405,11 +612,35 @@ class TestPuttingInARepository:
         assert sorted(path.name for path in workspace.skills_dir.iterdir()) == ["one", "two"]
         assert not scratch[0].exists()
 
+    def test_the_skills_are_not_held_up_while_a_repository_is_being_fetched(
+        self, client: TestClient, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_skill(workspace.skills_dir, name="mine")
+        outcome: dict[str, Any] = {}
+
+        def fetch(destination: Path) -> None:
+            write_skill(destination, name="fetched")
+
+            def meanwhile() -> None:
+                outcome["turned_off"] = client.put("/api/skills", json={"disabled": ["mine"]}).status_code
+
+            thread = threading.Thread(target=meanwhile)
+            thread.start()
+            thread.join(timeout=10)
+            outcome["finished"] = not thread.is_alive()
+
+        fake_git(monkeypatch, fetch=fetch)
+
+        body = client.post("/api/skills/install", json={"git": "https://example.org/skills.git"}).json()
+
+        assert outcome == {"turned_off": 200, "finished": True}
+        assert [item["name"] for item in body["installed"]] == ["fetched"]
+
     def test_a_refused_address_runs_nothing(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
         def fail(*args: Any, **options: Any) -> None:
             raise AssertionError("Git was run")
 
-        monkeypatch.setattr(server_skills.subprocess, "run", fail)
+        monkeypatch.setattr(server_skills.subprocess, "Popen", fail)
 
         response = client.post("/api/skills/install", json={"git": "ext::sh -c id"})
 
@@ -436,6 +667,20 @@ class TestDeleting:
         body = client.post("/api/skills/install", json={"path": str(write_skill(tmp_path / "x", name="alpha"))}).json()
 
         assert body["skills"][0]["enabled"] is True
+
+    def test_what_the_one_deleted_hid_is_as_it_was_turned_on_or_off(
+        self, client: TestClient, workspace: Workspace, user_skills: Path
+    ) -> None:
+        write_skill(workspace.skills_dir, name="both", description="In the workspace.")
+        write_skill(user_skills, name="both", description="In the person's own folder.")
+        client.put("/api/skills", json={"disabled": ["both"]})
+
+        body = client.delete("/api/skills/both").json()
+
+        assert [(skill["description"], skill["enabled"]) for skill in body["skills"]] == [
+            ("In the person's own folder.", False)
+        ]
+        assert workspace.load_disabled_skills() == ["both"]
 
     def test_a_skill_in_the_persons_own_folder_is_not_deleted_from_here(
         self, client: TestClient, user_skills: Path
