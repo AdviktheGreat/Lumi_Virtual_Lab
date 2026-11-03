@@ -751,6 +751,15 @@ class TestChooseSkills:
         with pytest.raises(BixBenchError, match="no skill in"):
             choose_skills([str(tmp_path / "empty")], FakeSkillsServer([]))
 
+    def test_nothing_is_put_in_the_server_when_a_later_folder_is_not_one(self, tmp_path: Path) -> None:
+        folder = write_skills(tmp_path / "skills", "fit-curve")
+        server = FakeSkillsServer([], {str(folder.resolve()): ["fit-curve"]})
+
+        with pytest.raises(BixBenchError, match="is not a folder"):
+            choose_skills([str(folder), str(tmp_path / "missing")], server)
+
+        assert server.asked == [] and server.has == []
+
     def test_a_skill_the_server_does_not_end_up_with_is_refused_and_named(self, tmp_path: Path) -> None:
         folder = write_skills(tmp_path / "skills", "fit-curve")
 

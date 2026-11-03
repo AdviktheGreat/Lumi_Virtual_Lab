@@ -392,9 +392,10 @@ def multiple_choice(question: BixQuestion, refusal_option: bool = True) -> Choic
 
     :raises BixBenchError: If the question has no distractors.
     """
-    if not question.distractors:
+    if not any(each != question.ideal for each in question.distractors):
         raise BixBenchError(f"{question.id} has no distractors, so it cannot be asked as multiple choice")
-    options = [question.ideal, *question.distractors]
+    # A distractor that is the ideal would make two options right
+    options = [question.ideal, *(each for each in question.distractors if each != question.ideal)]
     # A string seeds the generator the same way on every run and every machine, which a hash of it would not
     random.Random(f"bixbench-choices:{question.id}").shuffle(options)
     right = LETTERS[options.index(question.ideal)]

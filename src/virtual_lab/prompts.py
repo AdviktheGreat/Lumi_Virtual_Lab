@@ -455,7 +455,7 @@ def checks_over_prompt() -> str:
     """Generates the message that tells the lead, on its last request of a check of its result, that no more tools can
     be called, and that it is to give its answer."""
     return (
-        "You have used the rounds of tool calls for checking your result, so no tools can be called now, and nothing "
+        "You have no rounds of tool calls left for checking your result, so no tools can be called now, and nothing "
         "you write as a tool call would be run. Say in a line any check you did not finish. Then give your answer "
         "again in full, in the same form as before, including any last line the researcher asked for, changed if a "
         "check you finished showed it to be wrong."

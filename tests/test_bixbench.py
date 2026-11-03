@@ -426,6 +426,14 @@ class TestMultipleChoice:
     def test_a_question_without_distractors_cannot_be_asked_so(self) -> None:
         with pytest.raises(BixBenchError, match="bix-1-q1 has no distractors"):
             multiple_choice(question("42"))
+        with pytest.raises(BixBenchError, match="bix-1-q1 has no distractors"):
+            multiple_choice(question("42", distractors=("42",)))
+
+    def test_a_distractor_that_is_the_ideal_is_not_an_option_of_its_own(self) -> None:
+        choices = multiple_choice(question("42", distractors=("42", "7", "8")), refusal_option=False)
+
+        assert sorted(choices.options) == ["42", "7", "8"]
+        assert choices.options["ABC".index(choices.right)] == "42"
 
     def test_the_message_has_the_options_and_asks_for_a_letter_and_does_not_give_the_ideal_away(self) -> None:
         choices = multiple_choice(self.asked)

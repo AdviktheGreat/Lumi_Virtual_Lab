@@ -489,7 +489,10 @@ def choose_skills(specs: Sequence[str], client: LabClient, log: Callable[[str], 
     if NO_SKILLS in specs:
         raise BixBenchError(f"--skills {NO_SKILLS} is for no skills, and cannot be given with others")
 
+    # Every spec is checked before the server is asked to put anything in, so that a mistake in a later one does not
+    # leave the skills of an earlier one in its workspace
     wanted: list[str] = []
+    folders: list[Path] = []
     for spec in specs:
         if spec == BUILTIN_SKILLS:
             wanted += [skill.name for skill in builtin_skills()]
@@ -500,16 +503,18 @@ def choose_skills(specs: Sequence[str], client: LabClient, log: Callable[[str], 
         found = discover_skills([("folder", folder)])
         if not found.skills:
             raise BixBenchError(f"There is no skill in {folder}: a skill is a folder with a SKILL.md in it")
+        folders.append(folder)
+        wanted += [skill.name for skill in found.skills]
+    if len(set(wanted)) > MAX_SKILLS:
+        raise BixBenchError(f"A conversation can be given {MAX_SKILLS} skills, and {len(set(wanted))} were asked for")
+    for folder in folders:
         result = client.install_skills(str(folder))
         log(
             f"{folder}: {len(result.get('installed', ()))} skills put in the server's workspace, "
             f"{len(result.get('skipped', ()))} left as they were or not put in"
         )
-        wanted += [skill.name for skill in found.skills]
 
     names = list(dict.fromkeys(wanted))
-    if len(names) > MAX_SKILLS:
-        raise BixBenchError(f"A conversation can be given {MAX_SKILLS} skills, and {len(names)} were asked for")
     has = {skill["name"] for skill in client.skills()}
     if missing := [name for name in names if name not in has]:
         shown = ", ".join(missing[:8]) + (f", and {len(missing) - 8} more" if len(missing) > 8 else "")
