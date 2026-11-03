@@ -18,6 +18,7 @@ from typing import Any
 from virtual_lab.mcp_auth import has_sign_in, sign_out_mcp
 from virtual_lab.mcp_presets import MCP_PRESETS, preset_entry
 from virtual_lab.mcp_tools import SERVER_KEYS, VARIABLE, MCPServerConfig, MCPTools, connect_mcp, parse_server
+from virtual_lab.websearch import EXA_KEY
 
 # What a server's name may be, which its tools' names start with, so that it is one of letters, digits, and "_"
 SERVER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
@@ -53,16 +54,17 @@ def variables_in(value: Any) -> list[str]:
 
 
 def service_keys() -> tuple[str, ...]:
-    """The variables that hold the keys of the presets' services, which the interface may be given for the rest of the
-    process, as it may the keys of the model providers. Only these: a server of a person's own asks for what it
-    wants from the environment the server was started in."""
-    return tuple(
-        dict.fromkeys(
+    """The variables that hold the keys of the presets' services, and of the web search's, which the interface may be
+    given for the rest of the process, as it may the keys of the model providers. Only these: a server of a person's
+    own asks for what it wants from the environment the server was started in."""
+    return (
+        *dict.fromkeys(
             name
             for preset in MCP_PRESETS.values()
             if preset.credential is not None
             for name in variables_in(preset.entry.get("headers", {}))
-        )
+        ),
+        EXA_KEY,
     )
 
 

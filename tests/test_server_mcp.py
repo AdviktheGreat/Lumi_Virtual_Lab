@@ -347,8 +347,8 @@ class TestWhatTheSettingsShow:
         with pytest.raises(ValueError, match="There is no server 3"):
             check_server_names([3], stored)
 
-    def test_the_keys_that_can_be_given_are_those_of_the_presets_services_and_no_more(self) -> None:
-        assert service_keys() == SERVICE_KEYS
+    def test_the_keys_that_can_be_given_are_those_of_the_presets_services_and_the_web_search_and_no_more(self) -> None:
+        assert service_keys() == (*SERVICE_KEYS, "EXA_API_KEY")
 
 
 class TestChangingAnEntry:

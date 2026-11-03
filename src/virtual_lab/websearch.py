@@ -1,10 +1,9 @@
 """Searching the web, for a model.
 
-A search is sent to one of three engines. Tavily and Brave Search are used when a key for one is in the
-environment, as TAVILY_API_KEY or BRAVE_API_KEY, since they are made to be searched by programs and answer
-reliably. Without one it is sent to DuckDuckGo's page for browsers that do not run scripts, which needs nothing
-and which answers a client that searches quickly with a challenge instead of results, so the rate is held down and
-the failure says what to do about it.
+A search is sent to one of two engines. Exa is used when a key for it is in the environment, as EXA_API_KEY,
+since it is made to be searched by programs and answers reliably. Without one it is sent to DuckDuckGo's page for
+browsers that do not run scripts, which needs nothing and which answers a client that searches quickly with a
+challenge instead of results, so the rate is held down and the failure says what to do about it.
 
 The results are titles, addresses, and snippets. A snippet is what an engine chose to quote and is not the page, so
 what a search finds is read with the tool that reads a page.
@@ -21,16 +20,14 @@ from html.parser import HTMLParser
 
 from virtual_lab.constants import MAX_WEB_SNIPPET_CHARS, WEB_SEARCH_DEFAULT_RESULTS, WEB_SEARCH_MAX_RESULTS
 from virtual_lab.records import truncate_text
-from virtual_lab.web import WebRequestError, post_json, request_json, request_text
+from virtual_lab.web import WebRequestError, post_json, request_text
 
-TAVILY_KEY = "TAVILY_API_KEY"
-BRAVE_KEY = "BRAVE_API_KEY"
+EXA_KEY = "EXA_API_KEY"
 
 # The longest query that is sent, which is far more than a search is helped by
 MAX_QUERY_CHARS = 400
 
-TAVILY_URL = "https://api.tavily.com/search"
-BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
+EXA_URL = "https://api.exa.ai/search"
 DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
 
 
@@ -41,11 +38,13 @@ class SearchHit:
     :param title: The title of the page.
     :param url: Its address.
     :param snippet: What the engine quoted of it, which may be empty.
+    :param published: The day it was published, as the engine gave it, if it did.
     """
 
     title: str
     url: str
     snippet: str
+    published: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,7 +72,7 @@ class WebSearch:
         for number, hit in enumerate(self.hits, 1):
             lines.append("")
             lines.append(f"{number}. {hit.title or hit.url}")
-            lines.append(f"   {hit.url}")
+            lines.append(f"   {hit.url}" + (f" (published {hit.published})" if hit.published else ""))
             if hit.snippet:
                 lines.append(f"   {hit.snippet}")
         if self.hits:
@@ -93,44 +92,33 @@ def is_web_address(url: str) -> bool:
     return url.startswith(("http://", "https://"))
 
 
-def search_tavily(query: str, limit: int, key: str) -> tuple[SearchHit, ...]:
-    """Searches with Tavily.
+def search_exa(query: str, limit: int, key: str) -> tuple[SearchHit, ...]:
+    """Searches with Exa, which quotes the passages of each page that answer the query.
 
     :raises WebRequestError: If it cannot be reached or refuses the search.
     """
     found = post_json(
-        TAVILY_URL,
-        {"query": query, "max_results": limit, "search_depth": "basic"},
-        headers={"Authorization": f"Bearer {key}"},
+        EXA_URL,
+        {"query": query, "type": "auto", "numResults": limit, "contents": {"highlights": True}},
+        headers={"x-api-key": key},
     )
     results = found.get("results") if isinstance(found, dict) else None
+    hits = []
+    for item in results or ():
+        if not isinstance(item, dict) or not is_web_address(str(item.get("url", ""))):
+            continue
+        passages = item.get("highlights")
+        quoted = " ... ".join(str(passage) for passage in passages) if isinstance(passages, list) else ""
+        hits.append(
+            SearchHit(
+                plain(item.get("title")),
+                str(item["url"]),
+                plain(quoted or item.get("text") or item.get("summary")),
+                str(item.get("publishedDate") or "")[:10],
+            )
+        )
 
-    return tuple(
-        SearchHit(plain(item.get("title")), str(item["url"]), plain(item.get("content")))
-        for item in results or ()
-        if isinstance(item, dict) and is_web_address(str(item.get("url", "")))
-    )[:limit]
-
-
-def search_brave(query: str, limit: int, key: str) -> tuple[SearchHit, ...]:
-    """Searches with Brave Search.
-
-    :raises WebRequestError: If it cannot be reached or refuses the search.
-    """
-    found = request_json(
-        BRAVE_URL,
-        params={"q": query, "count": limit},
-        headers={"X-Subscription-Token": key},
-        use_cache=False,
-    )
-    web = found.get("web") if isinstance(found, dict) else None
-    results = web.get("results") if isinstance(web, dict) else None
-
-    return tuple(
-        SearchHit(plain(item.get("title")), str(item["url"]), plain(item.get("description")))
-        for item in results or ()
-        if isinstance(item, dict) and is_web_address(str(item.get("url", "")))
-    )[:limit]
+    return tuple(hits[:limit])
 
 
 class DuckDuckGoResults(HTMLParser):
@@ -210,7 +198,7 @@ def search_duckduckgo(query: str, limit: int) -> tuple[SearchHit, ...]:
     if not hits and "anomaly" in page:
         raise WebRequestError(
             "DuckDuckGo asked for proof that this is not a program, which happens when it is searched often. Wait a "
-            f"minute, or set {TAVILY_KEY} or {BRAVE_KEY} to search with an engine that is made for programs"
+            f"minute, or set {EXA_KEY} to search with an engine that is made for programs"
         )
 
     return hits[:limit]
@@ -239,10 +227,8 @@ def search_web(query: str, limit: int = WEB_SEARCH_DEFAULT_RESULTS) -> WebSearch
         raise ValueError(f"limit is how many results to give, from 1 to {WEB_SEARCH_MAX_RESULTS}, not {limit!r}")
 
     engines: list[tuple[str, Callable[[], tuple[SearchHit, ...]]]] = []
-    if tavily := configured_key(TAVILY_KEY):
-        engines.append(("Tavily", partial(search_tavily, query, limit, tavily)))
-    if brave := configured_key(BRAVE_KEY):
-        engines.append(("Brave Search", partial(search_brave, query, limit, brave)))
+    if exa := configured_key(EXA_KEY):
+        engines.append(("Exa", partial(search_exa, query, limit, exa)))
     engines.append(("DuckDuckGo", partial(search_duckduckgo, query, limit)))
 
     failures: list[str] = []
@@ -262,8 +248,7 @@ def search_web(query: str, limit: int = WEB_SEARCH_DEFAULT_RESULTS) -> WebSearch
 
 def redact(message: str) -> str:
     """A failure's message without any key in it, which an engine may be said to have refused."""
-    for name in (TAVILY_KEY, BRAVE_KEY):
-        if key := configured_key(name):
-            message = message.replace(key, "***")
+    if key := configured_key(EXA_KEY):
+        message = message.replace(key, "***")
 
     return message
