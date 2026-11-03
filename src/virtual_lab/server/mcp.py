@@ -57,14 +57,18 @@ def service_keys() -> tuple[str, ...]:
     """The variables that hold the keys of the presets' services, and of the web search's, which the interface may be
     given for the rest of the process, as it may the keys of the model providers. Only these: a server of a person's
     own asks for what it wants from the environment the server was started in."""
-    return (
-        *dict.fromkeys(
-            name
-            for preset in MCP_PRESETS.values()
-            if preset.credential is not None
-            for name in variables_in(preset.entry.get("headers", {}))
-        ),
-        EXA_KEY,
+    return tuple(
+        dict.fromkeys(
+            [
+                *(
+                    name
+                    for preset in MCP_PRESETS.values()
+                    if preset.credential is not None
+                    for name in variables_in(preset.entry.get("headers", {}))
+                ),
+                EXA_KEY,
+            ]
+        )
     )
 
 
