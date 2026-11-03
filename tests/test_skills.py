@@ -1,6 +1,7 @@
 """Tests of skills: reading a SKILL.md, finding skills in folders, telling the lead of them, and the tools that read
 them."""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import pytest
 
 from virtual_lab import skills as skills_module
+from virtual_lab.constants import MAX_TOOL_OUTPUT_CHARS
 from virtual_lab.session import LocalSession
 from virtual_lab.skills import (
     ACTIVATE_SKILL_TOOL_NAME,
@@ -20,6 +22,7 @@ from virtual_lab.skills import (
     discover_skills,
     find_skill_files,
     lenient_fields,
+    names_that_fit,
     parse_skill,
     shorten,
     skill_tools,
@@ -173,6 +176,31 @@ class TestReadingASkill:
         assert len(skill.description) > 1024
         assert any("1,024" in note for note in skill.notes)
 
+    def test_what_it_needs_is_cut_to_what_the_standard_allows(self, tmp_path: Path) -> None:
+        skill = make_skill(tmp_path, extra=f"compatibility: {'needs a lot ' * 5000}\n")
+
+        assert skill.compatibility is not None and len(skill.compatibility) <= 500
+        assert any("compatibility is longer" in note for note in skill.notes)
+
+    def test_a_skill_file_that_is_a_link_to_a_file_outside_the_folder_is_refused(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside.md"
+        outside.write_text("---\nname: leak\ndescription: Not in the folder.\n---\nsecret instructions")
+        directory = tmp_path / "skills" / "leak"
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").symlink_to(outside)
+
+        with pytest.raises(SkillError, match="link to a file outside its folder"):
+            parse_skill(directory / "SKILL.md", "test")
+        library = discover_skills([("a", tmp_path / "skills")])
+        assert library.skills == () and "outside its folder" in library.problems[0].message
+
+    def test_a_skill_file_that_is_a_link_to_a_file_in_the_folder_is_used(self, tmp_path: Path) -> None:
+        directory = write_skill(tmp_path / "skills", name="linked", files={"real.md": "x"})
+        (directory / "SKILL.md").rename(directory / "REAL_SKILL.md")
+        (directory / "SKILL.md").symlink_to("REAL_SKILL.md")
+
+        assert parse_skill(directory / "SKILL.md", "test").name == "linked"
+
     def test_a_skill_describes_itself_in_json_types(self, tmp_path: Path) -> None:
         skill = make_skill(tmp_path, extra="license: MIT\n")
 
@@ -247,6 +275,17 @@ class TestFindingSkills:
         (problem,) = library.problems
         assert problem.path == tmp_path / "theirs" / "shared" / "SKILL.md"
         assert f"in {mine}" in problem.message
+
+    def test_names_that_differ_only_in_case_are_one_name_since_they_are_one_folder_in_a_session(
+        self, tmp_path: Path
+    ) -> None:
+        write_skill(tmp_path / "mine", name="Fit", description="Mine.")
+        write_skill(tmp_path / "theirs", name="fit", description="Theirs.")
+
+        library = discover_skills([("a", tmp_path / "mine"), ("b", tmp_path / "theirs")])
+
+        assert [(skill.name, skill.description) for skill in library.skills] == [("Fit", "Mine.")]
+        assert "another skill is called fit" in library.problems[0].message
 
     def test_a_skill_that_cannot_be_used_is_reported_and_the_others_are_kept(self, tmp_path: Path) -> None:
         write_skill(tmp_path, name="good")
@@ -337,6 +376,26 @@ class TestTellingTheLead:
         assert "Also available, by name only: skill-" in listed and "skill-039" in listed
         assert "- skill-000: Fits" in listed
 
+    def test_names_that_do_not_all_fit_are_cut_and_the_number_left_out_is_said(self) -> None:
+        names = [f"skill-{number:03d}" for number in range(100)]
+
+        line = names_that_fit(names, 300)
+
+        assert len(line) <= 300
+        assert line.startswith("Also available, by name only: skill-000, skill-001")
+        shown = line.split(": ")[1].split(" and ")[0].count("skill-")
+        assert line.endswith(f" and {100 - shown} more not listed")
+        assert names_that_fit(names[:3], 300) == "Also available, by name only: skill-000, skill-001, skill-002"
+        assert len(names_that_fit(names, 10)) <= 10
+
+    def test_a_budget_too_small_for_the_names_loses_no_skill_without_saying_so(self, tmp_path: Path) -> None:
+        library = [make_skill(tmp_path, name=f"skill-{number:03d}") for number in range(40)]
+
+        prompt = skills_prompt(library, budget=200)
+
+        listed = prompt.split("<available_skills>\n")[1].split("\n</available_skills>")[0]
+        assert len(listed) <= 200 and "more not listed" in listed
+
     @pytest.mark.parametrize(
         ("text", "limit", "expected"),
         [
@@ -419,6 +478,21 @@ class TestActivating:
         assert listing.count("references/r") == 8
         assert listing.startswith('<skill_folder name="dose-response" path="references">')
 
+    def test_what_it_gives_stays_under_what_a_tool_may_give_however_long_its_fields_and_file_names(
+        self, tmp_path: Path
+    ) -> None:
+        body = "".join(f"line {number}\n" for number in range(10_000))
+        files = {f"references/{'long-name-' * 20}{number}.md": "x" for number in range(100)}
+        skill = make_skill(tmp_path, body=body, extra=f"compatibility: {'needs a lot ' * 5000}\n", files=files)
+        tools = tools_of(skill)
+
+        output = tools[ACTIVATE_SKILL_TOOL_NAME]("dose-response")
+        folder = tools[READ_SKILL_FILE_TOOL_NAME]("dose-response", "references")
+
+        assert len(output) < MAX_TOOL_OUTPUT_CHARS and output.endswith("</skill_content>")
+        assert "Read the rest with read_skill_file" in output and "more. Give read_skill_file" in output
+        assert len(folder) < MAX_TOOL_OUTPUT_CHARS and folder.endswith("</skill_folder>") and "more\n" in folder
+
     def test_the_skills_folder_is_copied_into_the_session_for_code_to_run_its_scripts(self, tmp_path: Path) -> None:
         skill = make_skill(tmp_path, files={"scripts/fit.py": "print('fit')", "references/guide.md": "Guide"})
         session = LocalSession(tmp_path / "work", warn=False)
@@ -451,6 +525,57 @@ class TestActivating:
         activate("dose-response")
 
         assert copied.read_text() == "changed by the lead"
+
+    def test_the_files_left_out_of_the_copy_are_said_each_time_it_is_activated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(skills_module, "MAX_COPIED_FILES", 3)
+        skill = make_skill(tmp_path, files={f"data/d{number}.csv": "1" for number in range(6)})
+        session = SimpleNamespace(directory=tmp_path / "work", where_code_runs=lambda: "/workspace")
+        activate = tools_of(skill, session=session)[ACTIVATE_SKILL_TOOL_NAME]
+
+        activate("dose-response")
+
+        assert "4 of its files were too many or too large to copy there." in activate("dose-response")
+
+    def test_skills_activated_at_once_are_each_copied_whole_once(self, tmp_path: Path) -> None:
+        skill = make_skill(tmp_path, files={f"data/d{number}.csv": "1" * 1000 for number in range(50)})
+        session = SimpleNamespace(directory=tmp_path / "work", where_code_runs=lambda: "/workspace")
+        activate = tools_of(skill, session=session)[ACTIVATE_SKILL_TOOL_NAME]
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            outputs = list(pool.map(activate, ["dose-response"] * 8))
+
+        assert all("could not be copied" not in output for output in outputs)
+        skills_folder = tmp_path / "work" / "skills"
+        assert [path.name for path in skills_folder.iterdir()] == ["dose-response"]
+        assert len(list((skills_folder / "dose-response" / "data").iterdir())) == 50
+
+    def test_a_copy_that_lost_a_race_to_another_is_not_an_error(self, tmp_path: Path) -> None:
+        skill = make_skill(tmp_path, files={"data/d.csv": "1"})
+        target = tmp_path / "work" / "skills" / "dose-response"
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text("the other copy")
+
+        skills_module.copy_skill(skill.directory, target)
+
+        assert (target / "SKILL.md").read_text() == "the other copy"
+        assert [path.name for path in target.parent.iterdir()] == ["dose-response"]
+
+    def test_a_copy_that_fails_leaves_nothing_behind(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        skill = make_skill(tmp_path, files={"data/d.csv": "1"})
+        target = tmp_path / "work" / "skills" / "dose-response"
+        target.parent.mkdir(parents=True)
+
+        def fail(*args: Any, **kwargs: Any) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(skills_module.shutil, "copy2", fail)
+
+        with pytest.raises(OSError, match="disk full"):
+            skills_module.copy_skill(skill.directory, target)
+
+        assert list(target.parent.iterdir()) == []
 
     def test_links_and_a_repositorys_own_folders_are_not_copied(self, tmp_path: Path) -> None:
         secret = tmp_path / "secret.txt"
@@ -533,6 +658,18 @@ class TestReadingFiles:
         assert 0 < offset <= PAGE_CHARS and "[More follows." in first
         assert second.startswith(f'<skill_file name="dose-response" path="data/rows.txt" characters="{offset}-')
         assert second.split("\n", 1)[1].startswith(text[offset : offset + 20])
+
+    def test_a_file_too_long_to_be_read_whole_says_where_what_is_given_stops(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(skills_module, "MAX_READ_BYTES", 100)
+        skill = make_skill(tmp_path, files={"data/big.txt": "0123456789" * 30})
+
+        output = tools_of(skill)[READ_SKILL_FILE_TOOL_NAME]("dose-response", "data/big.txt")
+
+        assert 'characters="0-100 of 100"' in output
+        assert "[That is as much of the file as can be read here, its first 100 bytes.]" in output
+        assert "[That is the end of the file.]" not in output
 
     def test_a_binary_file_is_said_to_be_one(self, tmp_path: Path) -> None:
         skill = make_skill(tmp_path, files={"assets/logo.png": b"\x89PNG\0\0\0"})

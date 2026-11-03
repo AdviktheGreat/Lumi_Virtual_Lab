@@ -5,6 +5,7 @@ import io
 import json
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -2383,6 +2384,8 @@ class TestSkills:
 
         with pytest.raises(ValueError, match="Skill names must be unique"):
             make_chat(tmp_path, skills=[skill, skill])
+        with pytest.raises(ValueError, match="Skill names must be unique"):
+            make_chat(tmp_path, skills=[skill, replace(skill, name=skill.name.upper())])
         with pytest.raises(TypeError, match="Skills, not str"):
             make_chat(tmp_path, skills=["dose-response"])
         with pytest.raises(ValueError, match="skills_catalog_chars must be at least 1"):

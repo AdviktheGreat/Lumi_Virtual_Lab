@@ -496,8 +496,8 @@ class Chat:
             raise ValueError(f"skills_catalog_chars must be at least 1, not {skills_catalog_chars}")
         if not_skills := [type(skill).__name__ for skill in skills if not isinstance(skill, Skill)]:
             raise TypeError(f"A conversation's skills are Skills, not {', '.join(not_skills)}")
-        if len({skill.name for skill in skills}) != len(skills):
-            raise ValueError("Skill names must be unique")
+        if len({skill.name.casefold() for skill in skills}) != len(skills):
+            raise ValueError("Skill names must be unique, whatever their case")
         if max_delegations < 0:
             raise ValueError(f"max_delegations must be zero or more, not {max_delegations}")
         if max_rounds < 0:

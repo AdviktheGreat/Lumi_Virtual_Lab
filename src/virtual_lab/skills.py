@@ -17,6 +17,8 @@ import difflib
 import os
 import re
 import shutil
+import threading
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,9 +62,13 @@ NAMES_ONLY = "Also available, by name only:"
 PAGE_CHARS = 18_000
 MAX_READ_BYTES = 4_000_000
 
-# The files an activated skill lists, and the most that a folder's listing shows
+# The files an activated skill lists, and the most that a folder's listing shows, each also limited in characters so
+# that what a tool gives, with the instructions or a page of a file, stays under its 25,000
 MAX_LISTED_FILES = 40
 MAX_FOLDER_LISTING = 200
+MAX_LISTING_CHARS = 3_000
+MAX_FOLDER_LISTING_CHARS = 6_000
+MAX_COMPATIBILITY_CHARS = 500
 
 # The most files, and bytes of them, copied into a session for a skill, so that one that came with a dataset is not
 # copied whole
@@ -207,6 +213,8 @@ def parse_skill(file: Path, source: str) -> Skill:
     :param source: Where it was found.
     :raises SkillError: If it cannot be read, or has no description, or its name cannot be used.
     """
+    if not is_inside(file, file.parent):
+        raise SkillError("its SKILL.md is a link to a file outside its folder")
     try:
         size = file.stat().st_size
         if size > MAX_SKILL_FILE_BYTES:
@@ -238,6 +246,11 @@ def parse_skill(file: Path, source: str) -> Skill:
     if len(description) > 1024:
         notes.append("its description is longer than the 1,024 characters the standard allows")
 
+    compatibility = one_line(fields.get("compatibility")) or None
+    if compatibility and len(compatibility) > MAX_COMPATIBILITY_CHARS:
+        notes.append(f"its compatibility is longer than the {MAX_COMPATIBILITY_CHARS} characters the standard allows")
+        compatibility = shorten(compatibility, MAX_COMPATIBILITY_CHARS)
+
     metadata = fields.get("metadata")
 
     return Skill(
@@ -246,7 +259,7 @@ def parse_skill(file: Path, source: str) -> Skill:
         directory=directory,
         source=source,
         license=one_line(fields.get("license")) or None,
-        compatibility=one_line(fields.get("compatibility")) or None,
+        compatibility=compatibility,
         metadata={one_line(key): one_line(value) for key, value in metadata.items()}
         if isinstance(metadata, dict)
         else {},
@@ -309,7 +322,7 @@ def discover_skills(roots: Sequence[tuple[str, Path]]) -> SkillLibrary:
             except SkillError as error:
                 problems.append(SkillProblem(file, str(error)))
                 continue
-            if (earlier := skills.get(skill.name)) is not None:
+            if (earlier := skills.get(skill.name.casefold())) is not None:
                 problems.append(
                     SkillProblem(
                         file, f"another skill is called {skill.name}, in {earlier.directory}, and is used instead"
@@ -318,7 +331,7 @@ def discover_skills(roots: Sequence[tuple[str, Path]]) -> SkillLibrary:
             elif len(skills) >= MAX_SKILLS:
                 problems.append(SkillProblem(file, f"only {MAX_SKILLS} skills are used, and there are more"))
             else:
-                skills[skill.name] = skill
+                skills[skill.name.casefold()] = skill
 
     ordered = sorted(skills.values(), key=lambda skill: (skill.name.casefold(), skill.name))
 
@@ -365,8 +378,21 @@ def catalog_lines(skills: Sequence[Skill], budget: int) -> list[str]:
             break
         count -= 1
         used -= len(lines[count]) + 1
+    if len(names) > budget:
+        names = names_that_fit([skill.name for skill in skills[count:]], budget)
 
-    return [*lines[:count], names if len(names) <= budget else names[: budget - 1] + "…"]
+    return [*lines[:count], names]
+
+
+def names_that_fit(names: Sequence[str], budget: int) -> str:
+    """As many of the names as fit in a budget, with how many there is no room for said."""
+    for shown in range(len(names), -1, -1):
+        left = len(names) - shown
+        line = f"{NAMES_ONLY} " + ", ".join(names[:shown]) + (f" and {left} more not listed" if left else "")
+        if len(line) <= budget or shown == 0:
+            return line if len(line) <= budget else line[: max(budget - 1, 0)] + "…"
+
+    return NAMES_ONLY
 
 
 def skills_prompt(skills: Sequence[Skill], budget: int = CATALOG_CHARS) -> str:
@@ -424,6 +450,20 @@ def is_inside(path: Path, folder: Path) -> bool:
         return False
 
 
+def listing(paths: Sequence[str], most: int, characters: int) -> tuple[list[str], int]:
+    """The first of some paths that are at most a number, and at most a number of characters together, and how many are
+    left out."""
+    shown: list[str] = []
+    used = 0
+    for path in paths[:most]:
+        if used + len(path) + 1 > characters:
+            break
+        shown.append(path)
+        used += len(path) + 1
+
+    return shown, len(paths) - len(shown)
+
+
 def files_in(folder: Path, root: Path) -> list[str]:
     """The files in a folder and below it, as paths from a root, sorted, leaving out links, since they may lead out of
     the skill, SKILL.md at the root, and what a repository's folders hold that is not the skill's."""
@@ -451,9 +491,7 @@ def copy_skill(source: Path, target: Path) -> int:
     :raises OSError: If it cannot be copied.
     :return: The number of files that were left out for being too many or too big.
     """
-    staging = target.with_name(f"{target.name}.part")
-    if staging.exists():
-        shutil.rmtree(staging)
+    staging = target.with_name(f"{target.name}.{uuid.uuid4().hex[:8]}.part")
     copied = 0
     size = 0
     left_out = 0
@@ -478,7 +516,8 @@ def copy_skill(source: Path, target: Path) -> int:
         staging.rename(target)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
-        raise
+        if not target.is_dir():
+            raise
 
     return left_out
 
@@ -492,6 +531,8 @@ def skill_tools(skills: Sequence[Skill], session: Session | None = None) -> tupl
         code can run the skill's scripts and read its files.
     """
     by_name = {skill.name: skill for skill in skills}
+    placing = threading.Lock()
+    left_out_of: dict[str, int] = {}
 
     def find(name: Any) -> Skill:
         asked = str(name).strip()
@@ -511,13 +552,16 @@ def skill_tools(skills: Sequence[Skill], session: Session | None = None) -> tupl
             return None, 0
         target = session.directory / SESSION_SKILLS_DIR_NAME / skill.name
         shown = f"{session.where_code_runs().rstrip('/')}/{SESSION_SKILLS_DIR_NAME}/{skill.name}"
-        if target.exists():
-            return shown, 0
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            return shown, copy_skill(skill.directory, target)
-        except OSError:
-            return None, 0
+        with placing:
+            if target.exists():
+                return shown, left_out_of.get(skill.name, 0)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                left_out_of[skill.name] = copy_skill(skill.directory, target)
+            except OSError:
+                return None, 0
+
+            return shown, left_out_of[skill.name]
 
     def activate(name: str) -> str:
         skill = find(name)
@@ -555,12 +599,12 @@ def skill_tools(skills: Sequence[Skill], session: Session | None = None) -> tupl
         if left_out:
             lines.append(f"{left_out} of its files were too many or too large to copy there.")
         if files:
+            listed, unlisted = listing(files, MAX_LISTED_FILES, MAX_LISTING_CHARS)
             lines.append(f"Files that come with it, which {READ_SKILL_FILE_TOOL_NAME} reads:")
-            lines.extend(f"<file>{path}</file>" for path in files[:MAX_LISTED_FILES])
-            if len(files) > MAX_LISTED_FILES:
+            lines.extend(f"<file>{path}</file>" for path in listed)
+            if unlisted:
                 lines.append(
-                    f"... and {len(files) - MAX_LISTED_FILES} more. Give {READ_SKILL_FILE_TOOL_NAME} a folder's path "
-                    "to list what is in it."
+                    f"... and {unlisted} more. Give {READ_SKILL_FILE_TOOL_NAME} a folder's path to list what is in it."
                 )
         lines.append("</skill_content>")
 
@@ -581,15 +625,15 @@ def skill_tools(skills: Sequence[Skill], session: Session | None = None) -> tupl
         if not is_inside(target, skill.directory):
             raise ValueError("A path is relative to the skill's folder, and stays inside it")
 
+        cut_off = False
         if relative == SKILL_FILE_NAME:
             try:
                 text = read_body(skill)
             except SkillError as error:
                 raise ValueError(str(error)) from error
         elif target.is_dir():
-            files = files_in(target, skill.directory)
-            shown = files[:MAX_FOLDER_LISTING]
-            more = f"\n... and {len(files) - len(shown)} more" if len(files) > len(shown) else ""
+            shown, unlisted = listing(files_in(target, skill.directory), MAX_FOLDER_LISTING, MAX_FOLDER_LISTING_CHARS)
+            more = f"\n... and {unlisted} more" if unlisted else ""
 
             return (
                 f'<skill_folder name="{skill.name}" path="{relative}">\n'
@@ -605,6 +649,7 @@ def skill_tools(skills: Sequence[Skill], session: Session | None = None) -> tupl
                 with target.open("rb") as handle:
                     data = handle.read(MAX_READ_BYTES)
                 size = target.stat().st_size
+                cut_off = size > MAX_READ_BYTES
             except OSError as error:
                 raise ValueError(f"{relative} cannot be read: {error}") from error
             if b"\0" in data[:8192]:
@@ -623,11 +668,12 @@ def skill_tools(skills: Sequence[Skill], session: Session | None = None) -> tupl
         part, more_at = page_of(text, offset)
         end = offset + len(part)
         header = f'<skill_file name="{skill.name}" path="{relative}" characters="{offset}-{end} of {len(text)}">'
-        footer = (
-            f"[More follows. Read it with offset {more_at}.]"
-            if more_at is not None
-            else "[That is the end of the file.]"
-        )
+        if more_at is not None:
+            footer = f"[More follows. Read it with offset {more_at}.]"
+        elif cut_off:
+            footer = f"[That is as much of the file as can be read here, its first {MAX_READ_BYTES:,} bytes.]"
+        else:
+            footer = "[That is the end of the file.]"
 
         return f"{header}\n{part}\n{footer}\n</skill_file>"
 
