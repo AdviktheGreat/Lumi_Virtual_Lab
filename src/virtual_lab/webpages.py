@@ -54,6 +54,9 @@ STANDARD_PORTS = {"http": 80, "https": 443}
 
 # The part of the network that is the NAT64 translation prefix, in which an IPv4 address is the last four bytes
 NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+SIIT_PREFIX = ipaddress.ip_network("::ffff:0:0:0/96")
+# The long-deprecated IPv4-compatible form, which no public host has and some stacks may read as the IPv4 address
+IPV4_COMPATIBLE_PREFIX = ipaddress.ip_network("::/96")
 
 # What is said of the client, which sites that refuse an unnamed one let through, and which says who is asking
 PAGE_HEADERS = {
@@ -123,8 +126,10 @@ def is_public_address(address: str) -> bool:
         return False
     if isinstance(found, ipaddress.IPv6Address):
         # An IPv6 address that carries an IPv4 one leads to it, so it is as public as that is
+        if found in IPV4_COMPATIBLE_PREFIX:
+            return False
         embedded = found.ipv4_mapped or found.sixtofour
-        if embedded is None and found in NAT64_PREFIX:
+        if embedded is None and (found in NAT64_PREFIX or found in SIIT_PREFIX):
             embedded = ipaddress.IPv4Address(int(found) & 0xFFFFFFFF)
         if embedded is not None:
             return is_public_address(str(embedded))
@@ -558,9 +563,16 @@ def fetch_page(url: str) -> Page:
     try:
         for _ in range(WEB_MAX_REDIRECTS + 1):
             RATE_LIMITER.wait(urllib.parse.urlsplit(current).hostname or "")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise WebRequestError(f"{current} was too slow to send")
             try:
                 with session.get(
-                    current, headers=PAGE_HEADERS, timeout=WEB_TIMEOUT_SECONDS, stream=True, allow_redirects=False
+                    current,
+                    headers=PAGE_HEADERS,
+                    timeout=min(WEB_TIMEOUT_SECONDS, remaining),
+                    stream=True,
+                    allow_redirects=False,
                 ) as response:
                     if 300 <= response.status_code < 400:
                         location = response.headers.get("Location")

@@ -16,7 +16,7 @@ from conftest import FakeResponse
 
 import virtual_lab.papers
 import virtual_lab.webpages as webpages
-from virtual_lab.constants import WEB_MAX_REDIRECTS, WEB_PAGE_CHARS
+from virtual_lab.constants import WEB_MAX_REDIRECTS, WEB_PAGE_CHARS, WEB_PAGE_TOTAL_SECONDS, WEB_TIMEOUT_SECONDS
 from virtual_lab.web import DisallowedHostError, ResponseTooLargeError, WebRequestError
 from virtual_lab.webpages import (
     PAGE_CACHE,
@@ -165,12 +165,20 @@ class TestWhichAddressesArePublic:
             "2002:a9fe:a9fe::1",
             "64:ff9b::7f00:1",
             "64:ff9b::a00:1",
+            "::ffff:0:7f00:1",
+            "::ffff:0:a9fe:a9fe",
         ],
     )
     def test_an_ipv6_address_that_leads_to_a_private_ipv4_one_is_not(self, address: str) -> None:
         assert not is_public_address(address)
 
-    @pytest.mark.parametrize("address", ["::ffff:8.8.8.8", "2002:808:808::1", "64:ff9b::808:808"])
+    @pytest.mark.parametrize("address", ["::127.0.0.1", "::7f00:1", "::a9fe:a9fe", "::8.8.8.8"])
+    def test_an_ipv4_compatible_ipv6_address_is_not_taken_for_a_public_one_whatever_it_carries(
+        self, address: str
+    ) -> None:
+        assert not is_public_address(address)
+
+    @pytest.mark.parametrize("address", ["::ffff:8.8.8.8", "2002:808:808::1", "64:ff9b::808:808", "::ffff:0:808:808"])
     def test_an_ipv6_address_that_leads_to_a_public_ipv4_one_is(self, address: str) -> None:
         assert is_public_address(address)
 
@@ -434,13 +442,63 @@ class TestReadingAPage:
     def test_a_server_that_is_too_slow_to_send_is_given_up_on(
         self, session: FakeSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        clock = iter([0.0, 0.0, 0.0, 0.0, 1000.0, 1000.0, 1000.0])
-        monkeypatch.setattr(webpages.time, "monotonic", lambda: next(clock))
-        monkeypatch.setattr("virtual_lab.web.time.monotonic", lambda: next(clock))
+        now = [0.0]
+        monkeypatch.setattr(webpages.time, "monotonic", lambda: now[0])
         session.responses.append(html("<p>" + "x" * 50_000 + "</p>"))
+        slow = session.get
+
+        def get(url: str, **kwargs: Any) -> FakeResponse:
+            # The headers came in time, and the time is up by the time the body is being read
+            response = slow(url, **kwargs)
+            now[0] += 1000.0
+            return response
+
+        session.get = get  # type: ignore[method-assign]
 
         with pytest.raises(WebRequestError, match="too slow"):
             fetch_page("https://example.org/")
+
+    def test_a_redirect_that_comes_after_the_time_is_up_is_not_followed(
+        self, session: FakeSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = [0.0]
+        monkeypatch.setattr(webpages.time, "monotonic", lambda: now[0])
+        session.responses.append(redirect("https://example.org/b"))
+        session.responses.append(html("<p>never asked for</p>"))
+        slow = session.get
+
+        def get(url: str, **kwargs: Any) -> FakeResponse:
+            now[0] += 1000.0
+            return slow(url, **kwargs)
+
+        session.get = get  # type: ignore[method-assign]
+
+        with pytest.raises(WebRequestError, match="too slow"):
+            fetch_page("https://example.org/a")
+
+        assert session.urls == ["https://example.org/a"]
+
+    def test_a_request_is_not_given_longer_to_answer_than_there_is_time_left(
+        self, session: FakeSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = [0.0]
+        monkeypatch.setattr(webpages.time, "monotonic", lambda: now[0])
+        session.responses.append(redirect("https://example.org/b"))
+        session.responses.append(html("<p>x</p>"))
+        slow = session.get
+
+        def get(url: str, **kwargs: Any) -> FakeResponse:
+            response = slow(url, **kwargs)
+            now[0] = 50.0
+            return response
+
+        session.get = get  # type: ignore[method-assign]
+
+        fetch_page("https://example.org/a")
+
+        first, second = (request["timeout"] for request in session.requests)
+        assert first == WEB_TIMEOUT_SECONDS
+        assert second == pytest.approx(WEB_PAGE_TOTAL_SECONDS - 50.0)
 
 
 class TestWhatKindOfThingItIs:
