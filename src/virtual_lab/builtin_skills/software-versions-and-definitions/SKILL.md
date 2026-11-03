@@ -1,24 +1,14 @@
+---
+name: software-versions-and-definitions
+description: "Use before trusting a number from a library or tool (alignment, phylogenetic, or sequence metrics, statistical tests): record its version, read how it treats gaps, missing values, ties, and defaults, check the definition."
+license: MIT
+metadata:
+  author: virtual_lab contributors
+  version: "1.0"
+  source: "Written for virtual_lab from the documentation of scipy and R's stats package, and general practice."
+---
+
 # Checking What an Analysis Function Computes
-
----
-
-## Metadata
-
-**Short Description**: Before trusting a number from a library or command-line tool (alignment statistics, phylogenetic or sequence metrics, statistical tests), record its version, read how it treats gaps, missing values, ties, and defaults, and check it against the textbook definition on a small example.
-
-**Authors**: virtual_lab contributors
-
-**Version**: 1.0
-
-**Last Updated**: November 2026
-
-**License**: MIT
-
-**Commercial Use**: ✅ Allowed
-
-**Source**: Written for virtual_lab from the documentation of scipy and R's stats package, and general practice.
-
----
 
 ## Overview
 

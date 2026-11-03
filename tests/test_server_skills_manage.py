@@ -131,6 +131,7 @@ class TestListing:
         assert listing["folders"] == [
             {"source": "workspace", "path": str(workspace.skills_dir), "exists": True},
             {"source": "user", "path": str(user_skills), "exists": True},
+            {"source": "builtin", "path": str(server_skills.builtin_skills_dir()), "exists": True},
         ]
 
     def test_there_are_none_to_list_before_any_is_put_in(
@@ -139,7 +140,8 @@ class TestListing:
         listing = client.get("/api/skills").json()
 
         assert listing["skills"] == [] and listing["problems"] == []
-        assert [folder["exists"] for folder in listing["folders"]] == [False, False]
+        # The folder of the skills that come with the lab is there, and is empty in these tests
+        assert [folder["exists"] for folder in listing["folders"]] == [False, False, True]
 
     def test_a_skill_that_cannot_be_used_is_listed_as_a_problem(self, client: TestClient, workspace: Workspace) -> None:
         write_skill(workspace.skills_dir, name="good")

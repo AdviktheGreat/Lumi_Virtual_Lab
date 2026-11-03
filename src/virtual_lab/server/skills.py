@@ -1,6 +1,7 @@
-"""The skills a conversation can be given (see virtual_lab.skills): those in the workspace's skills/ folder, and those
-in the person's own ~/.agents/skills, which Claude Code, Codex, and other tools that read skills look in too, so that a
-skill installed for one of them is here as well. Where both have a skill of one name, the workspace's is used.
+"""The skills a conversation can be given (see virtual_lab.skills): those in the workspace's skills/ folder, those in
+the person's own ~/.agents/skills, which Claude Code, Codex, and other tools that read skills look in too, so that a
+skill installed for one of them is here as well, and those that come with the lab. Where two have a skill of one name,
+the first of these is used, so that a person's own skill takes the place of one that came with the lab.
 
 A conversation is given the skills that were there when it was made, by name, and goes on with those of them that are
 still there.
@@ -24,10 +25,12 @@ from urllib.parse import urlsplit
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.workspace import Workspace
 from virtual_lab.skills import (
+    BUILTIN_SOURCE,
     MAX_SKILLS,
     Skill,
     SkillError,
     SkillLibrary,
+    builtin_skills_directory,
     copy_skill,
     discover_skills,
     files_in,
@@ -40,6 +43,10 @@ from virtual_lab.skills import (
 # Names a folder to look in beside the workspace's, in place of ~/.agents/skills, which a person may keep their skills
 # somewhere else for, and which the tests use so that what is on the machine they run on does not change them
 USER_SKILLS_DIR_VARIABLE = "VIRTUAL_LAB_USER_SKILLS_DIR"
+
+# Names a folder to read the skills that come with the lab from, in place of the ones shipped with it, which an empty
+# folder does away with, and which the tests use so that what ships does not change what they count
+BUILTIN_SKILLS_DIR_VARIABLE = "VIRTUAL_LAB_BUILTIN_SKILLS_DIR"
 
 # How long to give Git to fetch a repository of skills, how much of the disk it may take while it does, how often that
 # is looked at, how many folders to search for skills in a folder on this machine, which may be a whole disk, and how
@@ -60,10 +67,17 @@ def user_skills_dir() -> Path:
     return Path(named).expanduser() if named else Path.home() / ".agents" / "skills"
 
 
+def builtin_skills_dir() -> Path:
+    """The folder of the skills that come with the lab."""
+    named = os.environ.get(BUILTIN_SKILLS_DIR_VARIABLE)
+
+    return Path(named).expanduser() if named else builtin_skills_directory()
+
+
 def skill_roots(workspace: Workspace) -> list[tuple[str, Path]]:
     """The folders skills are looked for in, the most important first, each with what its skills are said to come
     from."""
-    return [("workspace", workspace.skills_dir), ("user", user_skills_dir())]
+    return [("workspace", workspace.skills_dir), ("user", user_skills_dir()), (BUILTIN_SOURCE, builtin_skills_dir())]
 
 
 def load_skills(workspace: Workspace) -> SkillLibrary:
@@ -354,6 +368,13 @@ class Skills:
             if skill is None:
                 raise not_found(f"skill called {name!r}")
             target = self.deletion_of(skill)
+            if target is None and skill.source == BUILTIN_SOURCE:
+                raise ApiError(
+                    409,
+                    "not_yours",
+                    f"{name} comes with the lab, so it cannot be deleted. Turn it off here to leave it out of new "
+                    "conversations, or put in a skill of the same name, which is used in its place.",
+                )
             if target is None:
                 raise ApiError(
                     409,

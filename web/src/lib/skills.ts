@@ -68,6 +68,7 @@ export function filesLeftOut({ installed }: Pick<SkillsPutIn, "installed">): { n
 export function whereFound(source: string): string {
   if (source === "workspace") return "The lab's skills";
   if (source === "user") return "Your skills, which other tools read too";
+  if (source === "builtin") return "The skills that come with the lab";
 
   return source;
 }

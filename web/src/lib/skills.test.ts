@@ -128,6 +128,7 @@ describe("where a skill was found", () => {
   it("is said in words", () => {
     expect(whereFound("workspace")).toBe("The lab's skills");
     expect(whereFound("user")).toContain("other tools");
+    expect(whereFound("builtin")).toBe("The skills that come with the lab");
     expect(whereFound("elsewhere")).toBe("elsewhere");
   });
 });

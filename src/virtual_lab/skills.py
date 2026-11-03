@@ -10,7 +10,8 @@ session, so that code can run them.
 
 Skills are found in folders the person keeps them in, as discover_skills reads them, and a folder may hold a whole
 repository of them, which is searched a few levels down. What is wrong with one skill leaves out that skill and not the
-others, and is reported as a problem rather than raised.
+others, and is reported as a problem rather than raised. Some skills come with the lab, in builtin_skills/ beside this
+file (see builtin_skills).
 """
 
 import difflib
@@ -38,6 +39,11 @@ SKILL_TOOL_NAMES = frozenset({ACTIVATE_SKILL_TOOL_NAME, READ_SKILL_FILE_TOOL_NAM
 
 # Where in a session's directory a skill that is activated is put, a folder for each by its name
 SESSION_SKILLS_DIR_NAME = "skills"
+
+# The folder, beside this file, of the skills that come with the lab, and what they are said to be found in. They are
+# read from there and never copied, so that they are the same in every workspace and a new release's are the ones used.
+BUILTIN_SKILLS_DIR_NAME = "builtin_skills"
+BUILTIN_SOURCE = "builtin"
 
 # How many levels below a folder to look for skills, so that a repository of them can be put there whole, and the most
 # skills to use, which is far more than anyone has, so that a folder of something else cannot fill a prompt
@@ -353,6 +359,17 @@ def discover_skills(roots: Sequence[tuple[str, Path]]) -> SkillLibrary:
     ordered = sorted(skills.values(), key=lambda skill: (skill.name.casefold(), skill.name))
 
     return SkillLibrary(tuple(ordered), tuple(problems))
+
+
+def builtin_skills_directory() -> Path:
+    """The folder of the skills that come with the lab."""
+    return Path(__file__).parent / BUILTIN_SKILLS_DIR_NAME
+
+
+def builtin_skills() -> tuple[Skill, ...]:
+    """The skills that come with the lab, which are general practice for kinds of analysis where a number is easy to get
+    wrong. A conversation is given them as it is given any skill: `Chat(skills=builtin_skills())`."""
+    return discover_skills([(BUILTIN_SOURCE, builtin_skills_directory())]).skills
 
 
 def shorten(text: str, limit: int) -> str:

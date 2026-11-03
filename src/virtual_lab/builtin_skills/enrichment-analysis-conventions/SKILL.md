@@ -1,24 +1,14 @@
+---
+name: enrichment-analysis-conventions
+description: "Use for pathway or gene-set enrichment (KEGG, GO, Reactome; clusterProfiler, gseapy, g:Profiler, Enrichr): matching gene ids and organism, the background, up and down genes, thresholds, and what to report."
+license: MIT
+metadata:
+  author: virtual_lab contributors
+  version: "1.0"
+  source: "Written for virtual_lab from the documentation of clusterProfiler, KEGG, and gseapy, and general practice."
+---
+
 # Over-Representation and Pathway Enrichment Analysis Conventions
-
----
-
-## Metadata
-
-**Short Description**: Conventions and checks for pathway and gene set enrichment (over-representation) analysis with KEGG, GO, and Reactome using clusterProfiler, gseapy, g:Profiler, or Enrichr: matching gene identifiers and organism, the background, pooling or splitting up and down genes, significance thresholds, sensitivity, and what to report.
-
-**Authors**: virtual_lab contributors
-
-**Version**: 1.0
-
-**Last Updated**: November 2026
-
-**License**: MIT
-
-**Commercial Use**: ✅ Allowed
-
-**Source**: Written for virtual_lab from the documentation of clusterProfiler, KEGG, and gseapy, and general practice.
-
----
 
 ## Overview
 

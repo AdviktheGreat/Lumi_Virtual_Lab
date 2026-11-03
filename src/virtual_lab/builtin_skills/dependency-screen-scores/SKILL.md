@@ -1,24 +1,14 @@
+---
+name: dependency-screen-scores
+description: "Use when reading DepMap-style CRISPR or RNAi dependency scores (gene effect, Chronos, CERES, dependency probability): orient the sign before calling genes essential, and correlate scores with expression or other features."
+license: MIT
+metadata:
+  author: virtual_lab contributors
+  version: "1.0"
+  source: "Written for virtual_lab from the published descriptions of DepMap's gene effect scores (Chronos, CERES) and general practice."
+---
+
 # Reading Gene Dependency Scores From CRISPR and RNAi Screens
-
----
-
-## Metadata
-
-**Short Description**: How to read and orient gene dependency scores from DepMap-style CRISPR and RNAi screens (gene effect, Chronos, CERES, dependency probability), correlate them with expression or other features, and check the sign before calling genes essential, dependent, or correlated with essentiality.
-
-**Authors**: virtual_lab contributors
-
-**Version**: 1.0
-
-**Last Updated**: November 2026
-
-**License**: MIT
-
-**Commercial Use**: ✅ Allowed
-
-**Source**: Written for virtual_lab from the published descriptions of DepMap's gene effect scores (Chronos, CERES) and general practice.
-
----
 
 ## Overview
 

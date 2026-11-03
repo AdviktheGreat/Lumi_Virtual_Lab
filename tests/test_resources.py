@@ -4,6 +4,7 @@ import inspect
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -32,12 +33,12 @@ from virtual_lab.resources import (
     allows_commercial_use,
     available_resources,
     biomni_tools,
+    builtin_know_how,
     check_installed,
     commercial_data_lake,
     environment_descriptions,
     format_item_with_description,
     load_know_how,
-    lumi_know_how_directory,
     parse_retrieval,
     read_literal,
     report_installed,
@@ -48,6 +49,7 @@ from virtual_lab.resources import (
 )
 from virtual_lab.run_meeting import hold_meeting
 from virtual_lab.session import CellResult, DockerSession, LocalSession, list_data_lake, session_executor
+from virtual_lab.skills import SkillError, builtin_skills, read_body
 from virtual_lab.utils import BudgetExceededError
 
 from conftest import FakeClient, text_response
@@ -177,61 +179,55 @@ class TestKnowHow:
         assert allows_commercial_use({"commercial_use": use}) is allowed
 
 
-LUMI_KNOW_HOW = [
-    "dependency_screen_scores",
-    "enrichment_analysis_conventions",
-    "multiple_testing_small_panels",
-    "quantitative_answer_checklist",
-    "sample_ids_and_pca",
-    "software_versions_and_definitions",
-    "variant_call_statistics",
+BUILTIN_SKILL_NAMES = [
+    "dependency-screen-scores",
+    "enrichment-analysis-conventions",
+    "multiple-testing-small-panels",
+    "quantitative-answer-checklist",
+    "sample-ids-and-pca",
+    "software-versions-and-definitions",
+    "variant-call-statistics",
 ]
 
 
-class TestVirtualLabsKnowHow:
-    def test_its_documents_load_in_biomnis_format(self) -> None:
-        documents = load_know_how(lumi_know_how_directory())
+class TestBuiltInSkillsAsKnowHow:
+    def test_each_skill_that_comes_with_the_lab_is_a_document_with_the_skills_name_and_words(self) -> None:
+        documents = builtin_know_how()
 
-        assert [document.id for document in documents] == LUMI_KNOW_HOW
+        assert [document.id for document in documents] == BUILTIN_SKILL_NAMES
+        skills = {skill.name: skill for skill in builtin_skills()}
         for document in documents:
+            skill = skills[document.id]
+            assert document.description == skill.description
+            assert document.content == read_body(skill)
             assert document.content.startswith("# ") and document.name == document.content.splitlines()[0][2:]
-            assert "## Metadata" not in document.content
-            assert document.description == document.metadata["short_description"]
+            assert "name:" not in document.content.splitlines()[0]
+            assert document.metadata["short_description"] == skill.description
             assert document.metadata["license"] == "MIT"
             assert allows_commercial_use(document.metadata)
-
-    def test_the_readme_is_not_a_document(self) -> None:
-        assert (lumi_know_how_directory() / "README.md").is_file()
-        assert "README" not in [document.id for document in load_know_how(lumi_know_how_directory())]
-
-    def test_descriptions_stay_short_enough_to_choose_from(self) -> None:
-        for document in load_know_how(lumi_know_how_directory()):
-            assert 100 <= len(document.description) <= 450, document.id
 
     def test_all_know_how_gives_biomnis_documents_first(self) -> None:
         documents = all_know_how()
 
         biomnis = ["sgRNA_design_guide", "single_cell_annotation"]
-        assert [document.id for document in documents] == [*biomnis, *LUMI_KNOW_HOW]
+        assert [document.id for document in documents] == [*biomnis, *BUILTIN_SKILL_NAMES]
         assert all_know_how(commercial_mode=True) == documents
-
-    def test_commercial_mode_applies_to_its_documents_too(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        closed = "# Closed\n\n## Metadata\n\n**Commercial Use**: ❌ Not Allowed\n\n---\n\nText.\n"
-        (tmp_path / "closed.md").write_text(closed)
-        monkeypatch.setattr("virtual_lab.resources.lumi_know_how_directory", lambda: tmp_path)
-
-        assert "closed" in [document.id for document in all_know_how()]
-        assert "closed" not in [document.id for document in all_know_how(commercial_mode=True)]
 
     def test_the_retriever_lists_them_by_name_and_description(self) -> None:
         resources = Resources(know_how=all_know_how())
 
         prompt = retrieval_prompt("Correlate expression with gene dependency.", resources)
 
-        for document in load_know_how(lumi_know_how_directory()):
+        for document in builtin_know_how():
             assert f"{document.name}: {document.description}" in prompt
+
+    def test_a_skill_that_cannot_be_read_is_left_out_and_not_raised(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def unreadable(skill: Any) -> str:
+            raise SkillError("gone")
+
+        monkeypatch.setattr("virtual_lab.skills.read_body", unreadable)
+
+        assert builtin_know_how() == ()
 
 
 EVERY_LIBRARY = sorted({*environment_descriptions(False)[1], *environment_descriptions(True)[1]})

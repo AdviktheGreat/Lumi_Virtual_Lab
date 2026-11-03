@@ -37,6 +37,7 @@ from virtual_lab.directives import LabRequest
 from virtual_lab.events import ChatEvent
 from virtual_lab.failures import KEY_REFUSED, SAFETY_FLAGGED, UNWELL
 from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC, result_check_prompt
+from virtual_lab.resources import KnowHow
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
 from virtual_lab.utils import BudgetExceededError, ContextLengthExceededError, CostUnknownError, compute_token_cost
@@ -2244,6 +2245,26 @@ class TestResources:
         assert "Method: find_gene" in output.text and "samtools: Alignments." in output.text
         assert "blast" not in output.text and "scanpy" not in output.text
         assert chat.usage.num_calls == 3
+
+    def test_a_document_the_lead_has_as_a_skill_is_not_offered_to_it_a_second_time(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        small = small_resources()
+        both = replace(small, know_how=(*small.know_how, KnowHow("dose-response", "Dose", "Fits.", "# Dose\n\nFit.")))
+        monkeypatch.setattr(chat_module, "available_resources", lambda session, commercial_mode: both)
+        with_skill = make_chat(
+            tmp_path / "with", session=session, resources="retrieve", skills=[make_skill(tmp_path / "found")]
+        )
+        without = make_chat(tmp_path / "without", session=session, resources="retrieve")
+
+        with_skill.send("Hello")
+        without.send("Hello")
+
+        counts = "3 tool functions, 2 data lake files, 2 software libraries, {} know-how documents"
+        assert counts.format(1) in fake_client.completions.calls[0]["messages"][0]["content"]
+        assert counts.format(2) in fake_client.completions.calls[1]["messages"][0]["content"]
+        assert of(with_skill.events_since(), "resources")[0].data["available"]["know_how"] == 1
+        assert of(without.events_since(), "resources")[0].data["available"]["know_how"] == 2
 
     def test_an_answer_that_names_nothing_is_not_a_choice(
         self, fake_client: FakeClient, session: LocalSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -1535,6 +1535,10 @@ class Chat:
                     catalog = replace(catalog, data_lake_path=session.data_lake_path())
             elif self.resources != "none":
                 catalog = available_resources(session, commercial_mode=self.commercial_mode)
+                # A document the lead has as a skill, such as the lab's built-in ones, is not offered a second time
+                has = {skill.name for skill in self.skills}
+                if has & {document.id for document in catalog.know_how}:
+                    catalog = replace(catalog, know_how=tuple(d for d in catalog.know_how if d.id not in has))
 
         self._add_late_tools()
         tools: list[Tool] = list(self.tools)

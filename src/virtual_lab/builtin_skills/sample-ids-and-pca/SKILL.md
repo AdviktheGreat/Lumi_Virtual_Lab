@@ -1,24 +1,14 @@
+---
+name: sample-ids-and-pca
+description: "Use before PCA, clustering, or differential expression on an expression matrix: duplicated or silently renamed sample ids, matching columns to metadata, replicates, orientation, transformation, scaling, variance explained."
+license: MIT
+metadata:
+  author: virtual_lab contributors
+  version: "1.0"
+  source: "Written for virtual_lab from the documentation of scikit-learn, R's prcomp, pandas, and general practice."
+---
+
 # Sample Identity Checks and PCA on Expression Matrices
-
----
-
-## Metadata
-
-**Short Description**: Checks to make before PCA, clustering, or differential expression on an expression matrix: duplicated or silently renamed sample ids, matching columns to metadata, replicates, matrix orientation, transformation, centering and scaling, and how to report variance explained.
-
-**Authors**: virtual_lab contributors
-
-**Version**: 1.0
-
-**Last Updated**: November 2026
-
-**License**: MIT
-
-**Commercial Use**: ✅ Allowed
-
-**Source**: Written for virtual_lab from the documentation of scikit-learn, R's prcomp, pandas, and general practice.
-
----
 
 ## Overview
 

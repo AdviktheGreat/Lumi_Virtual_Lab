@@ -28,6 +28,7 @@ const UNAVAILABLE = "aria-disabled:pointer-events-none aria-disabled:opacity-50"
 function Folders({ skills }: { skills: Skills }) {
   const lab = skills.folders.find((folder) => folder.source === "workspace");
   const own = skills.folders.find((folder) => folder.source === "user");
+  const comes = skills.skills.filter((skill) => skill.source === "builtin").length;
 
   return (
     <p className="text-xs text-muted-foreground">
@@ -40,7 +41,14 @@ function Folders({ skills }: { skills: Skills }) {
         <>
           The lab also reads <code className="break-all">{own.path}</code>
           {own.exists ? "" : ", which is not there yet"}, where other tools that use skills keep theirs. A skill in both is
-          read from the lab&apos;s own folder.
+          read from the lab&apos;s own folder.{" "}
+        </>
+      )}
+      {comes > 0 && (
+        <>
+          The lab comes with {comes} skill{comes === 1 ? "" : "s"} of its own. {comes === 1 ? "It" : "They"} cannot be
+          deleted, but {comes === 1 ? "it" : "they"} can be turned off, and a skill of yours with the same name is read in
+          place of one.
         </>
       )}
     </p>
