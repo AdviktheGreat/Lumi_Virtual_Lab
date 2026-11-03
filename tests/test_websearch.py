@@ -14,9 +14,8 @@ from conftest import FakeResponse, FakeTransport
 from virtual_lab.constants import MAX_WEB_SNIPPET_CHARS, WEB_SEARCH_MAX_RESULTS
 from virtual_lab.web import WebRequestError
 from virtual_lab.websearch import (
-    BRAVE_KEY,
+    EXA_KEY,
     MAX_QUERY_CHARS,
-    TAVILY_KEY,
     DuckDuckGoResults,
     SearchHit,
     WebSearch,
@@ -86,8 +85,7 @@ NO_RESULTS_PAGE = '<html><body><div class="no-results">No results.</div></body><
 @pytest.fixture(autouse=True)
 def no_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Searches the way a person with no key does, unless a test says otherwise."""
-    monkeypatch.delenv(TAVILY_KEY, raising=False)
-    monkeypatch.delenv(BRAVE_KEY, raising=False)
+    monkeypatch.delenv(EXA_KEY, raising=False)
 
 
 def duckduckgo(transport: FakeTransport, page: str = DUCKDUCKGO_PAGE, status: int = 200) -> None:
@@ -201,7 +199,7 @@ class TestSearchingWithoutAKey:
     def test_a_challenge_in_place_of_results_says_what_to_do_about_it(self, web_transport: FakeTransport) -> None:
         duckduckgo(web_transport, CHALLENGE_PAGE, status=202)
 
-        with pytest.raises(WebRequestError, match=f"asked for proof.*{TAVILY_KEY} or {BRAVE_KEY}"):
+        with pytest.raises(WebRequestError, match=f"asked for proof.*{EXA_KEY}"):
             search_web("depmap")
 
     def test_a_service_that_is_down_is_a_failed_search(self, web_transport: FakeTransport) -> None:
@@ -212,78 +210,77 @@ class TestSearchingWithoutAKey:
 
 
 class TestSearchingWithAKey:
-    TAVILY = {
+    EXA = {
+        "requestId": "r1",
         "results": [
             {
-                "title": "Tavily <b>one</b>",
+                "title": "Exa <b>one</b>",
                 "url": "https://one.example/a",
-                "content": "First   snippet\nhere.",
-                "score": 0.9,
+                "publishedDate": "2023-11-07T05:31:56.000Z",
+                "highlights": ["First   passage\nhere.", "A second &amp; longer one."],
+                "highlightScores": [0.9, 0.5],
             },
-            {"title": "Two", "url": "https://two.example/b", "content": "", "score": 0.5},
-            {"title": "Not a page", "url": "javascript:alert(1)", "content": "x"},
-            {"title": "No address", "content": "x"},
+            {
+                "title": "Two",
+                "url": "https://two.example/b",
+                "text": "Only the <i>text</i> came.",
+                "publishedDate": None,
+            },
+            {"title": "Three", "url": "https://three.example/c", "summary": "Only a summary."},
+            {"title": "Four", "url": "https://four.example/d", "highlights": []},
+            {"title": "Not a page", "url": "javascript:alert(1)", "highlights": ["x"]},
+            {"title": "No address", "highlights": ["x"]},
             "not a result",
-        ]
-    }
-    BRAVE = {
-        "web": {
-            "results": [
-                {
-                    "title": "Brave <strong>one</strong>",
-                    "url": "https://one.example/a",
-                    "description": "A <strong>bold</strong> &amp; true claim.",
-                },
-                {"title": "Two", "url": "https://two.example/b"},
-            ]
-        }
+        ],
     }
 
-    def test_tavily_is_used_when_there_is_a_key_and_the_key_is_sent_as_a_credential(
+    def test_exa_is_used_when_there_is_a_key_and_the_key_is_sent_as_a_credential(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(TAVILY_KEY, "tvly-secret")
-        web_transport.post_responses.append(FakeResponse(json_body=self.TAVILY))
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
+        web_transport.post_responses.append(FakeResponse(json_body=self.EXA))
 
         found = search_web("depmap", limit=5)
 
-        assert found.engine == "Tavily"
+        assert found.engine == "Exa"
+        assert found.note is None
         assert web_transport.requests == []
         sent = web_transport.post_requests[0]
-        assert sent["url"] == "https://api.tavily.com/search"
-        assert sent["json"] == {"query": "depmap", "max_results": 5, "search_depth": "basic"}
-        assert sent["headers"]["Authorization"] == "Bearer tvly-secret"
-        assert found.hits == (
-            SearchHit("Tavily one", "https://one.example/a", "First snippet here."),
-            SearchHit("Two", "https://two.example/b", ""),
-        )
+        assert sent["url"] == "https://api.exa.ai/search"
+        assert sent["json"] == {"query": "depmap", "type": "auto", "numResults": 5, "contents": {"highlights": True}}
+        assert sent["headers"]["x-api-key"] == "exa-secret"
 
-    def test_brave_is_used_when_there_is_a_key_and_no_tavily_one(
+    def test_what_exa_quotes_is_the_snippet_and_the_day_is_kept(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(BRAVE_KEY, "brave-secret")
-        web_transport.responses.append(FakeResponse(json_body=self.BRAVE))
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
+        web_transport.post_responses.append(FakeResponse(json_body=self.EXA))
 
-        found = search_web("depmap", limit=7)
+        found = search_web("depmap")
 
-        assert found.engine == "Brave Search"
-        request = web_transport.requests[0]
-        assert urlsplit(request["url"]).netloc == "api.search.brave.com"
-        assert request["params"] == {"q": "depmap", "count": 7}
-        assert request["headers"]["X-Subscription-Token"] == "brave-secret"
-        assert found.hits[0] == SearchHit("Brave one", "https://one.example/a", "A bold & true claim.")
+        assert found.hits == (
+            SearchHit(
+                "Exa one", "https://one.example/a", "First passage here. ... A second & longer one.", "2023-11-07"
+            ),
+            SearchHit("Two", "https://two.example/b", "Only the text came."),
+            SearchHit("Three", "https://three.example/c", "Only a summary."),
+            SearchHit("Four", "https://four.example/d", ""),
+        )
+        assert "   https://one.example/a (published 2023-11-07)\n" in found.report()
+        assert "   https://two.example/b\n" in found.report()
 
-    def test_tavily_is_preferred_to_brave(self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv(TAVILY_KEY, "tvly-secret")
-        monkeypatch.setenv(BRAVE_KEY, "brave-secret")
-        web_transport.post_responses.append(FakeResponse(json_body=self.TAVILY))
+    def test_no_more_results_than_were_asked_for_are_given(
+        self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
+        web_transport.post_responses.append(FakeResponse(json_body=self.EXA))
 
-        assert search_web("depmap").engine == "Tavily"
+        assert len(search_web("depmap", limit=2).hits) == 2
 
     def test_a_key_of_only_spaces_is_no_key(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(TAVILY_KEY, "   ")
+        monkeypatch.setenv(EXA_KEY, "   ")
         duckduckgo(web_transport)
 
         assert search_web("depmap").engine == "DuckDuckGo"
@@ -291,7 +288,7 @@ class TestSearchingWithAKey:
     def test_an_engine_that_refuses_the_key_is_said_to_have_and_the_next_is_used(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(TAVILY_KEY, "tvly-secret")
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
         web_transport.post_responses.append(FakeResponse(status_code=401))
         duckduckgo(web_transport)
 
@@ -299,26 +296,38 @@ class TestSearchingWithAKey:
 
         assert found.engine == "DuckDuckGo"
         assert found.note is not None
-        assert "Tavily failed (its key was refused)" in found.note
+        assert "Exa failed (its key was refused)" in found.note
         assert "So the search was made with DuckDuckGo." in found.note
         assert found.note in found.report()
 
-    def test_an_engine_that_is_down_is_said_to_be_and_the_next_is_used(
+    def test_an_account_that_is_out_of_credit_is_a_failed_search_that_falls_through(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(BRAVE_KEY, "brave-secret")
-        web_transport.responses += [FakeResponse(status_code=500)] * 3
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
+        web_transport.post_responses.append(FakeResponse(status_code=402))
         duckduckgo(web_transport)
 
         found = search_web("depmap")
 
         assert found.engine == "DuckDuckGo"
-        assert found.note is not None and "Brave Search failed:" in found.note
+        assert found.note is not None and "Exa failed" in found.note
+
+    def test_an_engine_that_is_down_is_said_to_be_and_the_next_is_used(
+        self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
+        web_transport.post_responses += [FakeResponse(status_code=500)] * 3
+        duckduckgo(web_transport)
+
+        found = search_web("depmap")
+
+        assert found.engine == "DuckDuckGo"
+        assert found.note is not None and "Exa failed:" in found.note
 
     def test_when_every_engine_fails_each_is_named_and_no_key_is_given_away(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(TAVILY_KEY, "tvly-secret")
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
         web_transport.post_responses.append(FakeResponse(status_code=403))
         duckduckgo(web_transport, CHALLENGE_PAGE, status=202)
 
@@ -326,38 +335,38 @@ class TestSearchingWithAKey:
             search_web("depmap")
 
         message = str(failed.value)
-        assert "Tavily failed (its key was refused)" in message
+        assert "Exa failed (its key was refused)" in message
         assert "DuckDuckGo failed" in message
-        assert "tvly-secret" not in message
+        assert "exa-secret" not in message
 
     def test_a_key_that_an_error_repeats_is_taken_out_of_it(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(BRAVE_KEY, "brave-secret")
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
 
-        def echo(url: str, **kwargs: object) -> FakeResponse:
-            raise WebRequestError(f"{url} refused brave-secret")
+        def echo(url: str, payload: object, **kwargs: object) -> FakeResponse:
+            raise WebRequestError(f"{url} refused exa-secret")
 
-        monkeypatch.setattr("virtual_lab.websearch.request_json", echo)
+        monkeypatch.setattr("virtual_lab.websearch.post_json", echo)
         duckduckgo(web_transport)
 
         found = search_web("depmap")
 
         assert found.note is not None
-        assert "brave-secret" not in found.note and "***" in found.note
+        assert "exa-secret" not in found.note and "***" in found.note
 
     def test_a_key_is_not_in_what_the_model_is_told(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(TAVILY_KEY, "tvly-secret")
-        web_transport.post_responses.append(FakeResponse(json_body=self.TAVILY))
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
+        web_transport.post_responses.append(FakeResponse(json_body=self.EXA))
 
-        assert "tvly-secret" not in search_web("depmap").report()
+        assert "exa-secret" not in search_web("depmap").report()
 
     def test_a_reply_of_the_wrong_shape_is_no_results_and_not_a_crash(
         self, web_transport: FakeTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(TAVILY_KEY, "tvly-secret")
+        monkeypatch.setenv(EXA_KEY, "exa-secret")
         web_transport.post_responses.append(FakeResponse(json_body=["unexpected"]))
 
         assert search_web("depmap").hits == ()
@@ -389,11 +398,11 @@ class TestWhatTheModelIsTold:
         self,
     ) -> None:
         said = WebSearch(
-            "q", "Brave Search", (SearchHit("One", "https://a.org/", "About one."), SearchHit("", "https://b.org/", ""))
+            "q", "Exa", (SearchHit("One", "https://a.org/", "About one."), SearchHit("", "https://b.org/", ""))
         ).report()
 
         assert said == (
-            'Web search for "q", by Brave Search: 2 results\n'
+            'Web search for "q", by Exa: 2 results\n'
             "\n1. One\n   https://a.org/\n   About one.\n"
             "\n2. https://b.org/\n   https://b.org/\n"
             "\nA snippet is only what the engine quoted. Read a page with web_fetch to see what it says."

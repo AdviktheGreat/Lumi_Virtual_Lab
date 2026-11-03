@@ -55,11 +55,9 @@ ALLOWED_HOSTS = frozenset(
         # Preprints
         "export.arxiv.org",
         "api.biorxiv.org",
-        # Web search, which is sent whatever a model asks it. DuckDuckGo needs no key; the others are used when
-        # there is one.
+        # Web search, which is sent whatever a model asks it. DuckDuckGo needs no key; Exa is used when there is one.
         "html.duckduckgo.com",
-        "api.tavily.com",
-        "api.search.brave.com",
+        "api.exa.ai",
     }
 )
 

@@ -138,8 +138,7 @@ class TestAllowedDestinations:
                 "export.arxiv.org",
                 "api.biorxiv.org",
                 "html.duckduckgo.com",
-                "api.tavily.com",
-                "api.search.brave.com",
+                "api.exa.ai",
             }
         )
 

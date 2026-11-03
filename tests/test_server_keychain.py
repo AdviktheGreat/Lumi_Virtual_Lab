@@ -605,6 +605,21 @@ class TestGivingAKey:
 
         assert backend.stored() == {name: SECRET}
 
+    def test_the_key_of_the_web_search_is_given_the_same_way_and_is_what_the_search_reads(
+        self, client: TestClient, backend: FakeBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+
+        response = client.put("/api/keys/EXA_API_KEY", json={"value": SECRET})
+
+        assert response.status_code == 200
+        assert response.json()["sources"]["EXA_API_KEY"] == "keychain"
+        assert backend.stored() == {"EXA_API_KEY": SECRET}
+        assert os.environ["EXA_API_KEY"] == SECRET
+        assert client.delete("/api/keys/EXA_API_KEY").status_code == 200
+        assert "EXA_API_KEY" not in os.environ
+        assert backend.stored() == {}
+
     def test_a_key_that_is_refused_is_not_kept_or_asked_of_the_keychain(
         self, client: TestClient, backend: FakeBackend
     ) -> None:
