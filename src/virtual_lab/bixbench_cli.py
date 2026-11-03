@@ -36,7 +36,11 @@ from virtual_lab.bixbench_run import (
     run_bixbench,
     summarize,
 )
+from virtual_lab.constants import CEILING_CHAT_DELEGATION_ROUNDS, MAX_CHAT_DELEGATION_ROUNDS
+from virtual_lab.directives import LabRequest
 from virtual_lab.environment import SANDBOX_TARGETS
+from virtual_lab.prompts import SCIENTIFIC_CRITIC
+from virtual_lab.schemas import normalize_title
 
 PROGRAM = "virtual-lab-bixbench"
 DEFAULT_URL = "http://127.0.0.1:8765"
@@ -51,6 +55,8 @@ INTERRUPTED = 130
 # A question takes the lead from the data to a number, a step of code at a time, and the conversation's own limit of
 # 20 is too few for that. What it may spend is held by --max-cost.
 DEFAULT_MAX_TOOL_CALLS = 80
+DEFAULT_LAB_ROUNDS = 1
+CRITIC = normalize_title(SCIENTIFIC_CRITIC.title)
 
 
 def selection_parser() -> argparse.ArgumentParser:
@@ -103,6 +109,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--sandbox", default="bio-r", choices=("python", *SANDBOX_TARGETS), help="must be built (default: bio-r)"
+    )
+    run.add_argument(
+        "--lab",
+        choices=("team", "individual"),
+        help="give every question with /lab, so that the lead has the scientists --team names work on it: as a team "
+        "session it leads (team), or one scientist with the Scientific Critic reviewing (individual, which needs "
+        "exactly one besides the Critic, who is added to the team). By default the lead decides whether to call on "
+        "them",
+    )
+    run.add_argument(
+        "--lab-rounds",
+        type=int,
+        default=DEFAULT_LAB_ROUNDS,
+        help="rounds of discussion, or of review, for --lab (default: %(default)s)",
     )
     run.add_argument("--resources", default="retrieve", choices=("retrieve", "all", "none"))
     run.add_argument(
@@ -175,9 +195,9 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
     if arguments.data_lake is not None:
         code["data_lake"] = str(arguments.data_lake.expanduser().resolve())
 
-    return {
+    request: dict[str, Any] = {
         "model": arguments.model,
-        "team": list(arguments.team),
+        "team": team_titles(arguments),
         "code": code,
         "tools": [tool["name"] for tool in tools if allowed(arguments, tool.get("group"))],
         "mcp": [],
@@ -187,6 +207,58 @@ def chat_request(arguments: argparse.Namespace, tools: Sequence[dict[str, Any]])
         "max_cost": arguments.max_cost,
         "max_tool_iterations": arguments.max_tool_calls,
     }
+    # A conversation allows a session a few rounds unless it is told it may have more
+    if arguments.lab is not None and arguments.lab_rounds > MAX_CHAT_DELEGATION_ROUNDS:
+        request["max_rounds"] = arguments.lab_rounds
+
+    return request
+
+
+def team_titles(arguments: argparse.Namespace) -> list[str]:
+    """The scientists each conversation's team is made of: those --team names, and with --lab individual the Scientific
+    Critic too, who reviews and who the server requires to be on the team for that."""
+    team = list(arguments.team)
+    if arguments.lab == "individual" and not any(normalize_title(title) == CRITIC for title in team):
+        team.append(SCIENTIFIC_CRITIC.title)
+
+    return team
+
+
+def lab_request(arguments: argparse.Namespace) -> dict[str, Any] | None:
+    """Who works on each question with /lab, and how, or None if the questions are not given with it.
+
+    :raises BixBenchError: If it is one the server would refuse, which it would for every question once the run had
+        begun: no scientists named with --team, --lab individual without exactly one besides the Scientific Critic, who
+        reviews, or rounds outside what a conversation can be asked for.
+    """
+    if arguments.lab is None:
+        return None
+    named = list(arguments.team)
+    if arguments.lab == "individual":
+        named = [title for title in named if normalize_title(title) != CRITIC]
+    # The server takes a title written two ways as one, and one named twice as one scientist
+    titles: dict[str, str] = {}
+    for title in named:
+        if title.strip():
+            titles.setdefault(normalize_title(title), " ".join(title.split()))
+    if not titles:
+        besides = " besides the Scientific Critic" if arguments.lab == "individual" else ""
+        raise BixBenchError(f"--lab needs the scientists to work on each question{besides}, named with --team")
+    if arguments.lab == "individual" and len(titles) != 1:
+        raise BixBenchError(
+            f"--lab individual is one scientist besides the Scientific Critic, who reviews, but --team names "
+            f"{len(titles)}"
+        )
+    if not 0 <= arguments.lab_rounds <= CEILING_CHAT_DELEGATION_ROUNDS:
+        raise BixBenchError(f"--lab-rounds is a whole number from 0 to {CEILING_CHAT_DELEGATION_ROUNDS}")
+    try:
+        lab = LabRequest.from_data(
+            {"mode": arguments.lab, "members": list(titles.values()), "rounds": arguments.lab_rounds}
+        )
+    except ValueError as error:
+        raise BixBenchError(f"--lab cannot be given: {error}") from error
+
+    return {"mode": lab.mode, "members": list(lab.members), "rounds": lab.rounds}
 
 
 def data_lake_warning(arguments: argparse.Namespace, client: LabClient) -> str | None:
@@ -245,10 +317,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not arguments.token:
             print(f"The server's token is needed: pass --token or set ${TOKEN_VARIABLE}", file=sys.stderr)
             return 2
+        lab = lab_request(arguments)
         client = LabClient(arguments.url, arguments.token)
         if (warning := data_lake_warning(arguments, client)) is not None:
             print(f"Warning: {warning}", file=sys.stderr)
-        settings = RunSettings(chat=chat_request(arguments, client.tools()), timeout=arguments.timeout)
+        settings = RunSettings(
+            chat=chat_request(arguments, client.tools()), timeout=arguments.timeout, lab=lab
+        )
         judge_model = arguments.judge_model or arguments.model
         summary = run_bixbench(
             questions,

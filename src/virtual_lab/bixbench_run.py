@@ -87,8 +87,14 @@ class LabClient:
     def create_chat(self, body: Mapping[str, Any]) -> dict[str, Any]:
         return self._call("POST", "/chats", body)
 
-    def send_message(self, chat_id: str, text: str) -> dict[str, Any]:
-        return self._call("POST", f"/chats/{chat_id}/messages", {"text": text})
+    def send_message(self, chat_id: str, text: str, lab: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Sends a message, given with /lab if the lead is to have scientists work on it, which lab names: its mode,
+        members, and rounds."""
+        body: dict[str, Any] = {"text": text}
+        if lab is not None:
+            body.update(directive="lab", lab=dict(lab))
+
+        return self._call("POST", f"/chats/{chat_id}/messages", body)
 
     def chat(self, chat_id: str) -> dict[str, Any]:
         return self._call("GET", f"/chats/{chat_id}")
@@ -242,11 +248,15 @@ class RunSettings:
         the code, and the most it may spend. Its title is the question's.
     :param timeout: The most seconds a question may take before it is stopped.
     :param poll: Seconds between looks at a conversation.
+    :param lab: With each question given as the researcher would give it with /lab, who works on it and how, as the
+        server takes it: a mode, the members' titles, and the rounds. None for the question to be asked plainly, which
+        leaves it to the lead whether to call on its team.
     """
 
     chat: dict[str, Any]
     timeout: float = 2400.0
     poll: float = POLL_SECONDS
+    lab: dict[str, Any] | None = None
 
 
 def answer_question(
@@ -273,7 +283,7 @@ def answer_question(
         chat_directory = Path(workspace) / CHATS_DIRECTORY / chat_id
         staged = stage_capsule(archive, chat_directory / WORK_DIRECTORY / UPLOADS_DIRECTORY)
         record.files = len(staged.files)
-        client.send_message(chat_id, question_message(question, staged.files))
+        client.send_message(chat_id, question_message(question, staged.files), settings.lab)
         record.status = FAILED
 
         timed_out = False
@@ -399,7 +409,12 @@ def describe_run(settings: RunSettings, judge_model: str, repo: str) -> dict[str
     left_out = ("max_cost", "max_tool_iterations", "title")
     chat = {key: value for key, value in settings.chat.items() if key not in left_out}
 
-    return json.loads(json.dumps({"dataset": repo, "chat": chat, "judge": judge_model}, sort_keys=True))
+    description: dict[str, Any] = {"dataset": repo, "chat": chat, "judge": judge_model}
+    # Left out when there is none, so that a run made before there was a way to give one still matches a run without it
+    if settings.lab is not None:
+        description["lab"] = settings.lab
+
+    return json.loads(json.dumps(description, sort_keys=True))
 
 
 def run_bixbench(
