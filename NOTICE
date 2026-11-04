@@ -13,12 +13,16 @@ license applies to that material only. Nothing here changes it.
 
    Lumi began as a fork of the Virtual Lab and keeps its history. The meeting framework, the
    agents and their prompts, and the code that saves and reads meetings began there and have
-   been changed since. nanobody_design/ is the Virtual Lab's nanobody design study, kept with
-   small edits to its constants and README. The LICENSE file keeps the Virtual Lab's notice
-   beside Lumi's, as the MIT License asks.
+   been changed since. The LICENSE file keeps the Virtual Lab's notice beside Lumi's, as the
+   MIT License asks.
 
-   Swanson, K., Wu, W., Bulaong, N.L. et al. The Virtual Lab of AI agents designs new
-   SARS-CoV-2 nanobodies. Nature (2025). https://doi.org/10.1038/s41586-025-09442-9
+   Swanson, K., Wu, W., Bulaong, N.L., Pak, J.E. & Zou, J. The Virtual Lab of AI agents designs
+   new SARS-CoV-2 nanobodies. Nature 646, 716-723 (2025).
+   https://doi.org/10.1038/s41586-025-09442-9
+
+   The Virtual Lab's nanobody design study was kept here, with small edits to its constants and
+   README, until it was moved with its history to
+   https://github.com/AdviktheGreat/virtual-lab-nanobody-design
 
 2. Biomni
    https://github.com/snap-stanford/Biomni, commit 400c1f366b96a35ca253e13c9b06c5076af41d65

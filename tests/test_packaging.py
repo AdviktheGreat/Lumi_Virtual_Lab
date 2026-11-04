@@ -26,14 +26,5 @@ def test_no_classifiers_below_the_python_floor() -> None:
     assert "Programming Language :: Python :: 3.12" in classifiers
 
 
-def test_nanobody_design_extra_covers_its_imports() -> None:
-    extras = load_pyproject()["project"]["optional-dependencies"]["nanobody-design"]
-    names = {requirement.split("==")[0].split(">=")[0].strip() for requirement in extras}
-
-    # scipy is imported by nanobody_design/scripts and was missing from this extra
-    for required in {"scipy", "torch", "biopython", "pandas", "seaborn", "transformers"}:
-        assert required in names, f"{required} missing from the nanobody-design extra"
-
-
 def test_running_on_a_supported_interpreter() -> None:
     assert sys.version_info >= (3, 12)

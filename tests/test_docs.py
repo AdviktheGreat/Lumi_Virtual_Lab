@@ -11,7 +11,6 @@ DOC_FILES = [
     ROOT / "README.md",
     *sorted((ROOT / "docs").glob("*.md")),
     ROOT / "web" / "README.md",
-    ROOT / "nanobody_design" / "README.md",
 ]
 LINKS = [
     re.compile(r"!?\[[^\]]*\]\(<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\)"),
@@ -130,6 +129,7 @@ def test_notice_credits_what_lumi_builds_on() -> None:
         "Future-House/BixBench",
         "BixBench-Verified-50",
         "SIL Open Font License",
+        "AdviktheGreat/virtual-lab-nanobody-design",
     ]:
         assert credit in text, f"NOTICE does not mention {credit}"
 

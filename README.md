@@ -59,7 +59,6 @@ pip install -e ".[server,mcp,papers,eval]"
 | `vision` | Looking at images and the pages of PDFs (`server` includes it) |
 | `pdf` | Saving meetings and conversations as PDFs (also needs the Pango library) |
 | `eval` | Biomni's benchmarks and BixBench-Verified-50 |
-| `nanobody-design` | What the original nanobody study in [`nanobody_design/`](nanobody_design) needs |
 | `ollama`, `bedrock` | Local models through Ollama, and models on Amazon Bedrock |
 | `dev` | What the tests need |
 
@@ -115,9 +114,9 @@ The interface is tested from `web/`: `npm run lint`, `npm run typecheck`, `npm t
 
 Lumi's own code is released under the [MIT License](LICENSE). It includes and builds on the work of others, each under its own license. [`NOTICE`](NOTICE) lists what, where it is, and under which license. In short:
 
-- **Virtual Lab** (MIT; Kyle Swanson, Wu, Bulaong, and colleagues in James Zou's group). Lumi's meetings, agents, and prompts began there, and [`nanobody_design/`](nanobody_design) is the original study, with its own README. If you use the meeting framework, please cite:
+- **Virtual Lab** (MIT; Kyle Swanson, Wu, Bulaong, and colleagues in James Zou's group). Lumi's meetings, agents, and prompts began there. The authors' nanobody design study, which Lumi once kept, is now in [virtual-lab-nanobody-design](https://github.com/AdviktheGreat/virtual-lab-nanobody-design), with its history. If you use the meeting framework, please cite:
 
-  Swanson, K., Wu, W., Bulaong, N.L. et al. The Virtual Lab of AI agents designs new SARS-CoV-2 nanobodies. *Nature* (2025). https://doi.org/10.1038/s41586-025-09442-9
+  Swanson, K., Wu, W., Bulaong, N.L., Pak, J.E. & Zou, J. The Virtual Lab of AI agents designs new SARS-CoV-2 nanobodies. *Nature* **646**, 716–723 (2025). https://doi.org/10.1038/s41586-025-09442-9
 
 - **Biomni** (Apache License 2.0; Stanford SNAP). The sandbox is built from Biomni's environment files, and Biomni's tool package is mounted in it, both copied without modification. Parts of Lumi follow Biomni's code, prompts, and data tables, and say so in their files. If you use Biomni's tools, data, or environment, please cite:
 

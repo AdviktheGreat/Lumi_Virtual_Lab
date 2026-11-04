@@ -79,14 +79,6 @@ vision = ["pypdfium2>=4", "Pillow>=10"]
 # machine's own keychain, and pyarrow and numpy read Biomni's benchmarks for the runs it answers them in. It includes
 # what view_image needs, which a conversation has when its model reads images
 server = ["fastapi>=0.115", "uvicorn>=0.30", "keyring>=25", "numpy", "pyarrow", "pypdfium2>=4", "Pillow>=10"]
-nanobody-design = [
-    "biopython",
-    "pandas",
-    "scipy",
-    "seaborn",
-    "torch",
-    "transformers",
-]
 dev = [
     "pytest",
     # What the server's tests send requests with, and read the server's streams with
