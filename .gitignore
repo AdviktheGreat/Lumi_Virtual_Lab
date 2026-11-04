@@ -169,6 +169,3 @@ src/virtual_lab/server/static/
 
 # Python's lib/ above would take the interface's own
 !web/src/lib/
-
-# Papers
-nanobody_design/discussions/finetuning/papers
