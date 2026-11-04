@@ -91,7 +91,7 @@ Three things about this are deliberate:
 - **What is refused:** a destination is refused unless every address its name leads to is on the public internet, which leaves out this machine, the network it is on, and a cloud's metadata service. That is checked for the address, for every redirect (followed by hand, up to 5), and for the address the socket is actually connected to, so a name that leads somewhere public when checked and somewhere private when connected to is stopped as well. Only http and https on their standard ports are read, with no login in the address and no proxy from the environment, and a page is cut off at 15 MB, or after 60 seconds.
 - **What it says about itself:** both tools tell the model that what the web says was written by whoever runs the site, and is not to be obeyed.
 
-The conversation's tool settings list them as "Web", and they are on until turned off, like the other tools. `virtual-lab-bixbench` does not give them to the lead unless `--web` is passed.
+The conversation's tool settings list them as "Web", and they are on until turned off, like the other tools.
 
 ### Your own tools
 

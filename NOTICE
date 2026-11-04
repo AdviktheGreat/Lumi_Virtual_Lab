@@ -69,29 +69,13 @@ license applies to that material only. Nothing here changes it.
    Huang, K., Zhang, S., Wang, H. et al. Biomni: A General-Purpose Biomedical AI Agent.
    bioRxiv (2025).
 
-3. BixBench
-   https://github.com/Future-House/BixBench
-   Apache License, Version 2.0, FutureHouse. The text of the license is the one named under 2.
-
-   src/virtual_lab/bixbench.py reproduces the judge prompts of bixbench/prompts.py word for
-   word and follows the grading rules of bixbench/graders.py, and says where it departs.
-
-   Mitchener, L. et al. BixBench: a Comprehensive Benchmark for LLM-based Agents in
-   Computational Biology. arXiv:2503.00096 (2025).
-
-4. BixBench-Verified-50
-   https://huggingface.co/datasets/phylobio/BixBench-Verified-50
-   Apache License 2.0, Phylo. A gated dataset. It is fetched with the person's own Hugging
-   Face login (virtual-lab-bixbench fetch) and is not included. Its questions, data, and
-   answers are the dataset's, and it asks that its canary string be kept out of training data.
-
-5. Fonts in the pages of the interface
+3. Fonts in the pages of the interface
    Inter (Copyright 2016 The Inter Project Authors), JetBrains Mono (Copyright 2020 The
    JetBrains Mono Project Authors), and Newsreader (Copyright 2020 The Newsreader Project
    Authors), through Fontsource. Each is under the SIL Open Font License, Version 1.1,
    https://openfontlicense.org.
 
-6. Software Lumi installs and does not copy
+4. Software Lumi installs and does not copy
    The Python and JavaScript packages Lumi depends on are installed from their registries,
    not copied into this repository, and are under their own licenses. Nearly all are
    permissive (MIT, BSD, ISC, Apache-2.0). The exceptions are used unmodified as libraries:
@@ -104,5 +88,5 @@ license applies to that material only. Nothing here changes it.
    their own machine, under its own licenses. The image is not distributed.
 
 Lumi is an independent project. It is not affiliated with or endorsed by the authors of the
-Virtual Lab, Biomni, BixBench, or any model provider or service it connects to. Their names
+Virtual Lab, Biomni, or any model provider or service it connects to. Their names
 are their owners' trademarks.
