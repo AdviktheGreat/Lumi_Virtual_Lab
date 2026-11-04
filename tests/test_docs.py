@@ -126,8 +126,6 @@ def test_notice_credits_what_lumi_builds_on() -> None:
         "github.com/zou-group/virtual-lab",
         "snap-stanford/Biomni",
         "Apache License, Version 2.0",
-        "Future-House/BixBench",
-        "BixBench-Verified-50",
         "SIL Open Font License",
         "AdviktheGreat/virtual-lab-nanobody-design",
     ]:

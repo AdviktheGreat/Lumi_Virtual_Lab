@@ -18,7 +18,7 @@ Lumi began as a fork of the [Virtual Lab](https://github.com/zou-group/virtual-l
 - **Connects to MCP servers** for more tools, with approval before a call that costs money or cannot be undone.
 - **Uses any model**: OpenAI, Anthropic, Google, Groq, Azure, OpenRouter, Ollama, and Amazon Bedrock. See [Models and API keys](docs/models-and-keys.md).
 - **Saves a conversation or a meeting** as a Jupyter notebook, a PDF, or a page of HTML.
-- **Measures itself** on Biomni's benchmarks and on BixBench-Verified-50. See [Benchmarks](docs/benchmarks.md).
+- **Measures itself** on Biomni's benchmarks. See [Benchmarks](docs/benchmarks.md).
 
 ## Quick start
 
@@ -58,7 +58,7 @@ pip install -e ".[server,mcp,papers,eval]"
 | `papers` | Reading papers saved as PDFs |
 | `vision` | Looking at images and the pages of PDFs (`server` includes it) |
 | `pdf` | Saving meetings and conversations as PDFs (also needs the Pango library) |
-| `eval` | Biomni's benchmarks and BixBench-Verified-50 |
+| `eval` | Biomni's benchmarks |
 | `ollama`, `bedrock` | Local models through Ollama, and models on Amazon Bedrock |
 | `dev` | What the tests need |
 
@@ -96,7 +96,7 @@ with LocalSession(Path("work")) as session:
 | [Repairing code and running a project](docs/projects.md) | Fixing code that fails, and many meetings within one budget |
 | [Conversations, the server, and the chat interface](docs/chat-and-server.md) | The lead, its limits, the server's API, and building the pages |
 | [Growing the toolset from papers](docs/papers-and-functions.md) | Reading papers, and writing a function for each task |
-| [Benchmarks](docs/benchmarks.md) | Biomni's benchmarks, and BixBench-Verified-50 |
+| [Benchmarks](docs/benchmarks.md) | Measuring an agent or a team on Biomni's benchmarks |
 | [Tools, data, skills, and MCP servers](docs/tools-and-skills.md) | Databases, the web, your own tools, data, and software, skills, MCP |
 
 The web interface has its own notes for people who change it, in [`web/README.md`](web/README.md).
@@ -122,8 +122,6 @@ Lumi's own code is released under the [MIT License](LICENSE). It includes and bu
 
   Huang, K., Zhang, S., Wang, H. et al. Biomni: A General-Purpose Biomedical AI Agent. *bioRxiv* (2025).
 
-- **BixBench** (Apache License 2.0; FutureHouse) and **BixBench-Verified-50** (Apache License 2.0; Phylo). The benchmark runner uses FutureHouse's judge prompts and grading rules, and fetches the dataset with your own Hugging Face credentials. It is not shipped. Cite Mitchener, L. et al. BixBench: a Comprehensive Benchmark for LLM-based Agents in Computational Biology. arXiv:2503.00096 (2025).
-
 **Before any commercial use**, read [`license_info.md`](src/virtual_lab/sandbox/biomni_package/license_info.md). Lumi's own license permits commercial use, but the data lake and tools it can fetch are other people's datasets and software. Several are licensed for non-commercial use only (such as DDInter, DisGeNET, McPAS-TCR, miRDB, and miRTarBase), and others need a license for commercial use (such as COSMIC, BindingDB, MSigDB, and OMIM). Lumi does not ship the data lake: `download_data_lake` fetches it from Biomni's release bucket on request. `commercial_mode=True` leaves out what Biomni's own commercial mode leaves out. It does not check the licenses of the databases a tool queries.
 
-Lumi is an independent project. It is not affiliated with or endorsed by the authors of the Virtual Lab, Biomni, BixBench, or any model provider or service it connects to, whose names are their owners' trademarks.
+Lumi is an independent project. It is not affiliated with or endorsed by the authors of the Virtual Lab, Biomni, or any model provider or service it connects to, whose names are their owners' trademarks.
