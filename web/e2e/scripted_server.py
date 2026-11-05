@@ -104,7 +104,11 @@ from virtual_lab.server import app as server_app  # noqa: E402
 from virtual_lab.server import benchmarks as benchmark_runs  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
 from virtual_lab.server.keychain import Keychain  # noqa: E402
-from virtual_lab.server.skills import BUILTIN_SKILLS_DIR_VARIABLE, USER_SKILLS_DIR_VARIABLE  # noqa: E402
+from virtual_lab.server.skills import (  # noqa: E402
+    BUILTIN_SKILLS_DIR_VARIABLE,
+    SKILL_LIBRARY_DIR_VARIABLE,
+    USER_SKILLS_DIR_VARIABLE,
+)
 from virtual_lab.server.workspace import Workspace  # noqa: E402
 
 TOKEN = "e2e-token"
@@ -867,6 +871,47 @@ def stand_in_openrouter_models(*arguments: Any, **keywords: Any) -> list[openrou
     )
 
 
+# The skills the tests find in the library, each with the category and the license it says, and, so that a page has to show
+# a few at a time, as many more of the same as there is room for
+LIBRARY_SKILLS = [
+    ("dose-curves", "Statistics", "MIT", "Fits dose-response curves to titration data and reports the IC50.", None),
+    ("rna-counts", "Genomics", "Apache-2.0", "Counts reads per gene from aligned RNA-seq files.", "scripts/count.py"),
+    ("cell-types", "Genomics", None, "Labels the cell types of a single-cell dataset.", None),
+    ("pathway-flux", "Systems biology", "GPL-3.0-or-later", "Estimates the flux through a metabolic pathway.", None),
+    ("spatial-guess", "Imaging", "PolyForm-Noncommercial-1.0.0", "Predicts spatial expression from a tissue image.", None),
+]
+LIBRARY_FILLERS = 45
+
+
+def write_skill_library(folder: Path) -> None:
+    """A library of skills of the shape that ships with the lab, with an index of what is in it."""
+    entries = [*LIBRARY_SKILLS]
+    entries += [(f"filler-{number:02d}", "Fillers", "MIT", f"Does filler job {number:02d}.", None) for number in range(LIBRARY_FILLERS)]
+    index: dict[str, Any] = {
+        "source": {
+            "name": "Test Skills",
+            "author": "The Tests",
+            "url": "https://example.com/test-skills",
+            "license": "MIT",
+            "version": "1.2.3",
+            "ref": "0" * 40,
+        },
+        "skills": {},
+    }
+    for name, category, license, description, script in entries:
+        directory = folder / "skills" / name
+        directory.mkdir(parents=True)
+        fields = f"name: {name}\ndescription: {description}\n" + (f"license: {license}\n" if license else "")
+        (directory / "SKILL.md").write_text(f"---\n{fields}---\n\n# {name}\n\nFollow the {name} steps.\n")
+        files = 1
+        if script:
+            (directory / script).parent.mkdir(parents=True, exist_ok=True)
+            (directory / script).write_text("print('count')\n")
+            files += 1
+        index["skills"][name] = {"group": "Groups of the tests", "category": category, "files": files, "bytes": 100}
+    (folder / "index.json").write_text(json.dumps(index))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="The server the interface's end-to-end tests run against.")
     parser.add_argument("--port", type=int, default=8799)
@@ -898,6 +943,11 @@ def main() -> None:
     builtin_skills = workspace.parent / f"{workspace.name}-builtin-skills"
     builtin_skills.mkdir()
     os.environ[BUILTIN_SKILLS_DIR_VARIABLE] = str(builtin_skills)
+    # Nor is the library of skills that can be put in, which has a few in it for the tests to choose from, and more than a
+    # page shows at once. The tests that are about it read it from the same place
+    skill_library = workspace.parent / f"{workspace.name}-skill-library"
+    write_skill_library(skill_library)
+    os.environ[SKILL_LIBRARY_DIR_VARIABLE] = str(skill_library)
     webbrowser.open = lambda *arguments, **keywords: False  # type: ignore[assignment]
     setup = None
     stand_ins: dict[str, Any] = {}
@@ -922,6 +972,7 @@ def main() -> None:
         shutil.rmtree(workspace, ignore_errors=True)
         shutil.rmtree(sign_ins, ignore_errors=True)
         shutil.rmtree(own_skills, ignore_errors=True)
+        shutil.rmtree(skill_library, ignore_errors=True)
         if setup is not None:
             shutil.rmtree(setup.docker.directory, ignore_errors=True)
             setup.bucket.close()

@@ -914,5 +914,5 @@ test.describe("the page as a whole", () => {
 test("is headed in the order it is read, with a heading for each part", async ({ page }) => {
   const headings = await page.getByRole("main").getByRole("heading").allTextContents();
 
-  expect(headings).toEqual(["Data", "Your data", "Add data", "Your software", "Add software", "Skills", "Biomni's data lake"]);
+  expect(headings).toEqual(["Data", "Your data", "Add data", "Your software", "Add software", "Biomni's data lake"]);
 });

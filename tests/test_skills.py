@@ -19,6 +19,7 @@ from virtual_lab.skills import (
     Skill,
     SkillError,
     SkillLibrary,
+    catalog_use,
     discover_skills,
     find_skill_files,
     lenient_fields,
@@ -395,6 +396,37 @@ class TestTellingTheLead:
 
         listed = prompt.split("<available_skills>\n")[1].split("\n</available_skills>")[0]
         assert len(listed) <= 200 and "more not listed" in listed
+
+    def test_what_listing_skills_takes_is_counted_for_a_page_that_says_so(self, tmp_path: Path) -> None:
+        few = [
+            make_skill(tmp_path, name="alpha", description="Does alpha things."),
+            make_skill(tmp_path, name="beta", description="Does beta things."),
+        ]
+        long = [
+            make_skill(tmp_path, name=f"skill-{number:03d}", description="Word " * 100 + "end.")
+            for number in range(100)
+        ]
+        many = [make_skill(tmp_path, name=f"name-{number:03d}") for number in range(40)]
+
+        assert catalog_use([]) == {
+            "skills": 0,
+            "chars": 0,
+            "budget": CATALOG_CHARS,
+            "description_chars": 250,
+            "without_description": 0,
+        }
+        assert catalog_use(few) == {
+            "skills": 2,
+            "chars": len("- alpha: Does alpha things.\n- beta: Does beta things.\n"),
+            "budget": CATALOG_CHARS,
+            "description_chars": 250,
+            "without_description": 0,
+        }
+        cut = catalog_use(long)
+        assert cut["skills"] == 100 and cut["chars"] <= CATALOG_CHARS and cut["without_description"] == 0
+        assert 60 <= cut["description_chars"] < 250
+        by_name = catalog_use(many, budget=1000)
+        assert by_name["chars"] <= 1000 and 0 < by_name["without_description"] < 40
 
     @pytest.mark.parametrize(
         ("text", "limit", "expected"),

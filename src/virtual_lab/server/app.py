@@ -26,6 +26,9 @@ and everything else is a request and an answer.
     GET    /api/skills, PUT             the skills there are, and which a new conversation is not given
     POST   /api/skills/install          put in the skills of a Git repository, or of a folder on this machine
     GET    /api/skills/{name}           what a skill tells the lead, and its files; DELETE deletes one the lab was given
+    GET    /api/skill-library           the skills that come with the lab to be put in, by category, and which are in
+    POST   /api/skill-library/install   put in some of them, by name
+    GET    /api/skill-library/{name}    what one of them tells the lead, and its files
     GET    /api/papers                  the runs that read papers, and what a page needs to make one
     POST   /api/papers/runs             a run, whose papers are uploaded, in a folder on this machine, or from bioRxiv
     GET    /api/papers/runs/{id}        one run, with each paper and what they share; DELETE deletes it
@@ -243,6 +246,12 @@ class SkillInstallBody(RequestModel):
 
     git: str | None = Field(None, max_length=MAX_PATH_CHARS)
     path: str | None = Field(None, max_length=MAX_PATH_CHARS)
+
+
+class SkillLibraryInstallBody(RequestModel):
+    """The skills of the library that comes with the lab to put in, by name."""
+
+    names: list[str] = Field(max_length=MAX_SKILLS)
 
 
 class OwnPathBody(RequestModel):
@@ -892,6 +901,21 @@ def create_app(
     @api.post("/skills/install")
     def install_skills(body: SkillInstallBody) -> dict[str, Any]:
         return skills.install(body.git, body.path)
+
+    @api.get("/skill-library")
+    def get_skill_library() -> dict[str, Any]:
+        return skills.library()
+
+    @api.post("/skill-library/install")
+    def install_skill_library(body: SkillLibraryInstallBody) -> dict[str, Any]:
+        try:
+            return skills.install_from_library(body.names)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+
+    @api.get("/skill-library/{name}")
+    def preview_library_skill(name: str) -> dict[str, Any]:
+        return skills.preview_library(name)
 
     @api.get("/skills/{name}")
     def preview_skill(name: str) -> dict[str, Any]:

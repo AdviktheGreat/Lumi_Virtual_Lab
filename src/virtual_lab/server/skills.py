@@ -6,9 +6,10 @@ the first of these is used, so that a person's own skill takes the place of one 
 A conversation is given the skills that were there when it was made, by name, and goes on with those of them that are
 still there.
 
-The person's skills are kept from the Data page: listed, turned off for new conversations, put in from a Git repository
-or a folder on this machine, and deleted. A skill is put in as a copy in the workspace's skills/, so that it stays as it
-was when it was put in, and what is deleted is only what is there.
+The person's skills are kept from the Skills page: listed, turned off for new conversations, put in from a Git
+repository, a folder on this machine, or the library that comes with the lab (see virtual_lab.skill_library), and
+deleted. A skill is put in as a copy in the workspace's skills/, so that it stays as it was when it was put in, and what
+is deleted is only what is there.
 """
 
 import os
@@ -24,6 +25,7 @@ from urllib.parse import urlsplit
 
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.workspace import Workspace
+from virtual_lab.skill_library import check_library_names, files_of, library_directory, read_library
 from virtual_lab.skills import (
     BUILTIN_SOURCE,
     MAX_SKILLS,
@@ -31,6 +33,7 @@ from virtual_lab.skills import (
     SkillError,
     SkillLibrary,
     builtin_skills_directory,
+    catalog_use,
     copy_skill,
     discover_skills,
     files_in,
@@ -47,6 +50,10 @@ USER_SKILLS_DIR_VARIABLE = "VIRTUAL_LAB_USER_SKILLS_DIR"
 # Names a folder to read the skills that come with the lab from, in place of the ones shipped with it, which an empty
 # folder does away with, and which the tests use so that what ships does not change what they count
 BUILTIN_SKILLS_DIR_VARIABLE = "VIRTUAL_LAB_BUILTIN_SKILLS_DIR"
+
+# Names a folder to read the library of skills that can be put in from, in place of the one shipped with the lab, which
+# the tests use so that they work with a few skills and not the hundred and more that ship
+SKILL_LIBRARY_DIR_VARIABLE = "VIRTUAL_LAB_SKILL_LIBRARY_DIR"
 
 # How long to give Git to fetch a repository of skills, how much of the disk it may take while it does, how often that
 # is looked at, how many folders to search for skills in a folder on this machine, which may be a whole disk, and how
@@ -72,6 +79,13 @@ def builtin_skills_dir() -> Path:
     named = os.environ.get(BUILTIN_SKILLS_DIR_VARIABLE)
 
     return Path(named).expanduser() if named else builtin_skills_directory()
+
+
+def skill_library_dir() -> Path:
+    """The folder of the library of skills that can be put in."""
+    named = os.environ.get(SKILL_LIBRARY_DIR_VARIABLE)
+
+    return Path(named).expanduser() if named else library_directory()
 
 
 def skill_roots(workspace: Workspace) -> list[tuple[str, Path]]:
@@ -232,7 +246,7 @@ def check_folder(path: str) -> Path:
 
 
 class Skills:
-    """The skills the person keeps from the Data page."""
+    """The skills the person keeps from the Skills page."""
 
     def __init__(self, workspace: Workspace) -> None:
         self.workspace = workspace
@@ -240,7 +254,8 @@ class Skills:
 
     def describe(self) -> dict[str, Any]:
         """The skills there are, each with whether a new conversation is given it and whether it can be deleted from
-        here, what was wrong with the SKILL.md files that could not be used, and the folders skills are looked in."""
+        here, what was wrong with the SKILL.md files that could not be used, the folders skills are looked in, and what
+        listing the skills that are on takes of every conversation."""
         library = load_skills(self.workspace)
         turned_off = set(self.workspace.load_disabled_skills())
 
@@ -258,7 +273,48 @@ class Skills:
                 {"source": source, "path": str(path), "exists": path.is_dir()}
                 for source, path in skill_roots(self.workspace)
             ],
+            "catalog": catalog_use([skill for skill in library.skills if skill.name not in turned_off]),
         }
+
+    def taken_names(self, library: SkillLibrary) -> set[str]:
+        """The names, in lower case, that a skill put in cannot have, which are those of a skill in the workspace's
+        skills/ and of any folder there."""
+        taken = {skill.name.casefold() for skill in library.skills if skill.source == "workspace"}
+        if self.workspace.skills_dir.is_dir():
+            taken |= {entry.name.casefold() for entry in self.workspace.skills_dir.iterdir()}
+
+        return taken
+
+    def library(self) -> dict[str, Any]:
+        """The skills that come with the lab to be put in, each with whether it has been, the categories they are in,
+        and where they came from."""
+        offered = read_library(skill_library_dir())
+        taken = self.taken_names(load_skills(self.workspace))
+
+        return {
+            "source": offered.source,
+            "skills": [
+                {**entry.describe(), "installed": entry.skill.name.casefold() in taken} for entry in offered.skills
+            ],
+            "categories": offered.categories(),
+            "problems": list(offered.problems),
+        }
+
+    def install_from_library(self, names: Any) -> dict[str, Any]:
+        """Puts in copies of skills of the library that comes with the lab, leaving those whose names are taken, and
+        says which it did and which it left.
+
+        :raises ValueError: If it is not a list of the names of skills the library has.
+        :raises ApiError: If the list is empty.
+        """
+        offered = read_library(skill_library_dir())
+        asked = check_library_names(names, offered)
+        if not asked:
+            raise ApiError(422, "invalid", "Choose at least one skill to put in")
+        with self._lock:
+            result = self._copy_in(files_of(offered, asked))
+
+        return {**self.describe(), **result}
 
     def deletion_of(self, skill: Skill) -> Path | None:
         """What deleting a skill removes, which is its folder in the workspace's skills/, or None for one that is
@@ -328,9 +384,7 @@ class Skills:
         # What is used counts toward the most there can be wherever a skill is found, and what is taken is a name that a
         # folder of the workspace's has, or is called
         used = {skill.name.casefold() for skill in library.skills}
-        taken = {skill.name.casefold() for skill in library.skills if skill.source == "workspace"}
-        if folder.is_dir():
-            taken |= {entry.name.casefold() for entry in folder.iterdir()}
+        taken = self.taken_names(library)
         installed: list[dict[str, Any]] = []
         skipped: list[dict[str, str]] = []
         for file in files:
@@ -403,6 +457,19 @@ class Skills:
         skill = load_skills(self.workspace).named(name)
         if skill is None:
             raise not_found(f"skill called {name!r}")
+
+        return self.preview_of(skill)
+
+    def preview_library(self, name: str) -> dict[str, Any]:
+        """What a skill of the library tells the lead and its files, to read before it is put in."""
+        entry = read_library(skill_library_dir()).named(name)
+        if entry is None:
+            raise not_found(f"skill called {name!r} in the library")
+
+        return self.preview_of(entry.skill)
+
+    @staticmethod
+    def preview_of(skill: Skill) -> dict[str, Any]:
         try:
             instructions = read_body(skill)
         except SkillError as error:

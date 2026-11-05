@@ -498,7 +498,7 @@ export interface Own {
   max_upload_bytes: number;
 }
 
-// A skill: written guidance on a kind of work, as the Data page lists it
+// A skill: written guidance on a kind of work, as the Skills page lists it
 export interface SkillInfo {
   name: string;
   // What it is for and when to use it, which the lead is told
@@ -529,10 +529,54 @@ export interface SkillFolder {
   exists: boolean;
 }
 
+// What listing the skills that are on takes of every conversation, since the lead is told what each is for before it begins:
+// the characters there are, the most there can be, how long each description may be, and how many skills have none
+export interface SkillsCatalog {
+  skills: number;
+  chars: number;
+  budget: number;
+  description_chars: number;
+  without_description: number;
+}
+
 export interface Skills {
   skills: SkillInfo[];
   problems: SkillProblem[];
   folders: SkillFolder[];
+  catalog: SkillsCatalog;
+}
+
+// What a skill's license means for a person: only noncommercial use is allowed (noncommercial), it is a GPL license
+// (copyleft), it says none (none), or it is some other, which is shown as it is written (other)
+export type LicenseKind = "noncommercial" | "copyleft" | "none" | "other";
+
+// A skill of the library that comes with the lab, which is not used until it is put in
+export interface LibrarySkill {
+  name: string;
+  description: string;
+  group: string;
+  category: string;
+  license: string | null;
+  license_kind: LicenseKind;
+  compatibility: string | null;
+  files: number;
+  bytes: number;
+  // Whether a skill of this name is already in the lab's own skills
+  installed: boolean;
+}
+
+export interface LibraryCategory {
+  name: string;
+  group: string;
+  count: number;
+}
+
+// The library that comes with the lab: where it came from, its skills in the order of its catalog, and the categories
+export interface SkillLibrary {
+  source: { name?: string; author?: string; url?: string; license?: string; version?: string; ref?: string };
+  skills: LibrarySkill[];
+  categories: LibraryCategory[];
+  problems: string[];
 }
 
 // Where skills are put in from: the address of a Git repository, or the full path of a folder on the server's machine

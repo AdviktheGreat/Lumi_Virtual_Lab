@@ -16,8 +16,8 @@ let scratch = "";
 test.beforeEach(async ({ page }) => {
   await resetSkills(page);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), "vl-e2e-skills-"));
-  await page.goto("/data");
-  await expect(page.getByRole("heading", { name: "Skills", level: 2 })).toBeVisible();
+  await page.goto("/skills?tab=yours");
+  await expect(page.getByRole("heading", { name: "Your skills", level: 2, exact: true })).toBeVisible();
 });
 
 test.afterEach(async ({ page }) => {

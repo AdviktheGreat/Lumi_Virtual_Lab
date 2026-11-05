@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { SkillInstall } from "@/components/skill-install";
 import { SkillRow } from "@/components/skill-row";
+import { SkillsMeter } from "@/components/skills-meter";
 import { useServer } from "@/components/server-provider";
 import {
   AlertDialog,
@@ -155,6 +156,7 @@ export function SkillsSection({ skills, onChanged }: { skills: Skills; onChanged
         <p className="text-sm text-muted-foreground">There are no skills yet. Put some in above.</p>
       ) : (
         <div className="flex flex-col gap-3">
+          <SkillsMeter catalog={skills.catalog} />
           <div className="flex flex-wrap items-center gap-2">
             <p role="status" className="text-sm text-muted-foreground" data-testid="skills-count">
               {howManyOn(all)}

@@ -69,8 +69,8 @@ function NoSkills() {
   return (
     <p role="status" className="text-sm text-muted-foreground">
       There are no skills yet. They are put in, and turned on and off for every new conversation, on the{" "}
-      <Link href="/data" className="underline underline-offset-2">
-        Data page
+      <Link href="/skills" className="underline underline-offset-2">
+        Skills page
       </Link>
       .
     </p>
