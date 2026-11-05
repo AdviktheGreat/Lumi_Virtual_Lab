@@ -229,7 +229,7 @@ export function catalogSaid(catalog: SkillsCatalog): { text: string; tight: bool
   if (catalog.skills === 0) return { text: "No skill is on, so no conversation begins with a list of skills.", tight: false };
   const takes = catalog.skills === 1 ? "The skill that is on takes" : `The ${catalog.skills.toLocaleString("en-US")} skills that are on take`;
   const text = `${takes} ${tokensSaid(catalog.chars)} of the start of every conversation.`;
-  const tight = catalog.without_description > 0 || catalog.description_chars < 250;
+  const tight = catalog.without_description > 0 || catalog.description_chars < DESCRIPTION_LISTED;
   if (!tight) return { text, tight };
   const without =
     catalog.without_description > 0
@@ -247,8 +247,11 @@ export function catalogFilled(catalog: SkillsCatalog): number {
   return catalog.budget === 0 ? 0 : Math.min(1, catalog.chars / catalog.budget);
 }
 
+// The most of a description the lead is given where there is room: CATALOG_DESCRIPTION_CHARS in virtual_lab/skills.py
+const DESCRIPTION_LISTED = 250;
+
 // About how many characters putting in these skills adds to the list the lead is given, each with its name and the first of
 // its description, which is as much as is listed of one where there is room
 export function catalogAdded(skills: Pick<LibrarySkill, "name" | "description">[]): number {
-  return skills.reduce((total, skill) => total + skill.name.length + 5 + Math.min(skill.description.length, 250), 0);
+  return skills.reduce((total, skill) => total + skill.name.length + 5 + Math.min(skill.description.length, DESCRIPTION_LISTED), 0);
 }
