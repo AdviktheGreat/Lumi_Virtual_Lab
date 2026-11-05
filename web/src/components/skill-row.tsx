@@ -12,14 +12,21 @@ import { whereFound } from "@/lib/skills";
 import type { SkillInfo, SkillPreview } from "@/lib/types";
 import type { Loaded } from "@/lib/use-settings-data";
 
-// What a skill tells the lead, and the files that come with it, which are read before a skill is trusted
-function Instructions({ name }: { name: string }) {
+// What a skill tells the lead, and the files that come with it, which are read before a skill is trusted. `load` must be
+// the same function on every render.
+export function Instructions({
+  name,
+  load,
+}: {
+  name: string;
+  load: (name: string, signal?: AbortSignal) => Promise<SkillPreview>;
+}) {
   const { report } = useServer();
   const [preview, setPreview] = useState<Loaded<SkillPreview>>({ kind: "loading" });
 
   useEffect(() => {
     const abort = new AbortController();
-    api.previewSkill(name, abort.signal).then(
+    load(name, abort.signal).then(
       (value) => setPreview({ kind: "ready", value }),
       (error: unknown) => {
         if (abort.signal.aborted) return;
@@ -29,7 +36,7 @@ function Instructions({ name }: { name: string }) {
     );
 
     return () => abort.abort();
-  }, [name, report]);
+  }, [name, load, report]);
 
   if (preview.kind === "loading") {
     return (
@@ -162,7 +169,7 @@ export function SkillRow({
       {open && (
         <div id={detailsId} className="flex flex-col gap-3 pl-[1.625rem]">
           <Facts skill={skill} />
-          <Instructions name={skill.name} />
+          <Instructions name={skill.name} load={api.previewSkill} />
         </div>
       )}
     </li>

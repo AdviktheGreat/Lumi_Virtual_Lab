@@ -113,5 +113,6 @@ Issues = "https://github.com/AdviktheGreat/Lumi_Virtual_Lab/issues"
 "Original Virtual Lab" = "https://github.com/zou-group/virtual-lab"
 
 [tool.ruff]
-# Copied unchanged from Biomni, so held to Biomni's own style rather than this project's
-extend-exclude = ["src/virtual_lab/sandbox/biomni_package"]
+# Copied unchanged from Biomni, and from K-Dense's Scientific Agent Skills, so held to their own style rather than this
+# project's
+extend-exclude = ["src/virtual_lab/sandbox/biomni_package", "src/virtual_lab/scientific_skills"]

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  catalogAdded,
+  catalogFilled,
+  catalogSaid,
   choiceButtonText,
   choiceKept,
   choiceStart,
@@ -9,14 +12,21 @@ import {
   givenSkills,
   howManyChosen,
   howManyOn,
+  licenseLabel,
+  licenseNote,
+  licenseWarnings,
   matching,
+  matchingLibrary,
   NOTHING_TO_PUT_IN_FROM,
   pickedWhen,
   putInSaid,
+  sizeSaid,
   skillsFrom,
+  tokensSaid,
   vanished,
   whereFound,
 } from "./skills";
+import type { LibrarySkill, LicenseKind, SkillsCatalog } from "./types";
 import type { SkillInfo } from "./types";
 
 const skill = (name: string, description = `${name} does something`, enabled = true): SkillInfo => ({
@@ -203,5 +213,169 @@ describe("the skills a conversation was given", () => {
       { name: "gone", description: null },
       { name: "dose-response", description: "Fits a dose-response curve to titration data." },
     ]);
+  });
+});
+
+const librarySkill = (
+  name: string,
+  category: string,
+  description = `${name} does something`,
+  license_kind: LicenseKind = "other",
+  license: string | null = "MIT",
+): LibrarySkill => ({
+  name,
+  description,
+  group: "Packages",
+  category,
+  license,
+  license_kind,
+  compatibility: null,
+  files: 2,
+  bytes: 1500,
+  installed: false,
+});
+
+const library = [
+  librarySkill("scanpy", "Bioinformatics & Genomics", "Single-cell analysis with Scanpy."),
+  librarySkill("rdkit", "Cheminformatics & Drug Discovery", "Molecules and fingerprints."),
+  librarySkill("pydeseq2", "Bioinformatics & Genomics", "Differential expression."),
+];
+
+describe("finding a skill of the library", () => {
+  it("is by every word written, in its name, description, or category, whatever the case", () => {
+    expect(matchingLibrary(library, "single CELL", "").map((each) => each.name)).toEqual(["scanpy"]);
+    expect(matchingLibrary(library, "drug", "").map((each) => each.name)).toEqual(["rdkit"]);
+    expect(matchingLibrary(library, "bioinformatics expression", "").map((each) => each.name)).toEqual(["pydeseq2"]);
+  });
+
+  it("is within the category chosen, which is all of them where none is", () => {
+    expect(matchingLibrary(library, "", "Bioinformatics & Genomics").map((each) => each.name)).toEqual(["scanpy", "pydeseq2"]);
+    expect(matchingLibrary(library, "differential", "Bioinformatics & Genomics").map((each) => each.name)).toEqual(["pydeseq2"]);
+    expect(matchingLibrary(library, "differential", "Cheminformatics & Drug Discovery")).toEqual([]);
+    expect(matchingLibrary(library, "  ", "")).toHaveLength(3);
+  });
+});
+
+describe("what a license is said to be", () => {
+  it("has a note where a person ought to know something before using the skill, and none where not", () => {
+    expect(licenseNote("noncommercial")).toMatch(/noncommercial use only/);
+    expect(licenseNote("copyleft")).toMatch(/GPL/);
+    expect(licenseNote("none")).toMatch(/MIT license/);
+    expect(licenseNote("other")).toBeNull();
+  });
+
+  it("is a label as written, without the word license, cut where it is long, and says so where there is none", () => {
+    expect(licenseLabel(librarySkill("a", "c", "d", "other", "MIT license"))).toBe("MIT");
+    expect(licenseLabel(librarySkill("a", "c", "d", "other", "Apache-2.0"))).toBe("Apache-2.0");
+    expect(licenseLabel(librarySkill("a", "c", "d", "none", "Unknown"))).toBe("No license stated");
+    expect(licenseLabel(librarySkill("a", "c", "d", "none", null))).toBe("No license stated");
+    expect(licenseLabel(librarySkill("a", "c", "d", "other", "https://github.com/sympy/sympy/blob/master/LICENSE"))).toBe("License at a link");
+    const long = licenseLabel(librarySkill("a", "c", "d", "other", "This skill is provided under the MIT License. IDC data has its own."));
+    expect(long.length).toBeLessThanOrEqual(28);
+    expect(long.endsWith("…")).toBe(true);
+  });
+
+  it("is warned of in a sentence for each kind that has something to say, naming the skills", () => {
+    const chosen = [
+      librarySkill("deepspot-m", "c", "d", "noncommercial"),
+      librarySkill("what-if-oracle", "c", "d", "noncommercial"),
+      librarySkill("cobrapy", "c", "d", "copyleft"),
+      librarySkill("primekg", "c", "d", "none"),
+      librarySkill("pyhealth", "c", "d", "none"),
+      librarySkill("scanpy", "c"),
+    ];
+
+    expect(licenseWarnings(chosen)).toEqual([
+      "deepspot-m and what-if-oracle allow noncommercial use only.",
+      "cobrapy is under a GPL license, which sets conditions on sharing it.",
+      "primekg and pyhealth state no license, so only the library's MIT license covers them.",
+    ]);
+    expect(licenseWarnings([librarySkill("scanpy", "c")])).toEqual([]);
+    expect(licenseWarnings([librarySkill("solo", "c", "d", "noncommercial")])).toEqual(["solo allows noncommercial use only."]);
+    expect(licenseWarnings([librarySkill("solo", "c", "d", "none")])).toEqual(["solo states no license, so only the library's MIT license covers it."]);
+  });
+
+  it("names three skills and counts the rest", () => {
+    const many = ["a", "b", "c", "d", "e"].map((name) => librarySkill(name, "c", "d", "copyleft"));
+
+    expect(licenseWarnings(many)).toEqual(["a, b, c and 2 more are under GPL licenses, which set conditions on sharing them."]);
+  });
+});
+
+describe("how big things are said to be", () => {
+  it("is in bytes, kilobytes, or megabytes, as a person reads it", () => {
+    expect(sizeSaid(0)).toBe("0 bytes");
+    expect(sizeSaid(999)).toBe("999 bytes");
+    expect(sizeSaid(1500)).toBe("2 KB");
+    expect(sizeSaid(406_610)).toBe("407 KB");
+    expect(sizeSaid(1_134_736)).toBe("1.1 MB");
+  });
+
+  it("says about how many tokens a number of characters is, rounded where there are many", () => {
+    expect(tokensSaid(80)).toBe("about 20 tokens");
+    expect(tokensSaid(3999)).toBe("about 1,000 tokens");
+    expect(tokensSaid(20_000)).toBe("about 5,000 tokens");
+    expect(tokensSaid(21_700)).toBe("about 5,400 tokens");
+  });
+});
+
+describe("what the skills that are on take of every conversation", () => {
+  const catalog = (changes: Partial<SkillsCatalog>): SkillsCatalog => ({
+    skills: 7,
+    chars: 2400,
+    budget: 20_000,
+    description_chars: 250,
+    without_description: 0,
+    ...changes,
+  });
+
+  it("is said where there is room, without advice", () => {
+    expect(catalogSaid(catalog({}))).toEqual({
+      text: "The 7 skills that are on take about 600 tokens of the start of every conversation.",
+      tight: false,
+    });
+    expect(catalogSaid(catalog({ skills: 1, chars: 120 })).text).toBe(
+      "The skill that is on takes about 30 tokens of the start of every conversation.",
+    );
+  });
+
+  it("says that none is on", () => {
+    expect(catalogSaid(catalog({ skills: 0, chars: 0 }))).toEqual({
+      text: "No skill is on, so no conversation begins with a list of skills.",
+      tight: false,
+    });
+  });
+
+  it("says where there is not room, that descriptions are cut, and to turn some off", () => {
+    const said = catalogSaid(catalog({ skills: 184, chars: 19_900, description_chars: 95 }));
+
+    expect(said.tight).toBe(true);
+    expect(said.text).toContain("The 184 skills that are on take about 5,000 tokens");
+    expect(said.text).toContain("The list has room for 20,000 characters, so descriptions are cut to 95 characters.");
+    expect(said.text).toContain("Turn some off to give the rest more room.");
+  });
+
+  it("says how many are listed by name only", () => {
+    expect(catalogSaid(catalog({ skills: 500, description_chars: 60, without_description: 1 })).text).toContain(
+      "cut to 60 characters, and 1 skill is listed by name only.",
+    );
+    expect(catalogSaid(catalog({ skills: 500, description_chars: 60, without_description: 31 })).text).toContain(
+      "and 31 skills are listed by name only.",
+    );
+  });
+
+  it("is how full the list is, never more than full", () => {
+    expect(catalogFilled(catalog({ chars: 5000 }))).toBe(0.25);
+    expect(catalogFilled(catalog({ chars: 30_000 }))).toBe(1);
+    expect(catalogFilled(catalog({ budget: 0 }))).toBe(0);
+  });
+
+  it("is added to by skills put in, each with its name and as much of its description as is listed", () => {
+    const short = librarySkill("abc", "c", "Does a thing.");
+    const long = librarySkill("abcd", "c", "x".repeat(400));
+
+    expect(catalogAdded([short])).toBe(3 + 5 + 13);
+    expect(catalogAdded([short, long])).toBe(3 + 5 + 13 + 4 + 5 + 250);
+    expect(catalogAdded([])).toBe(0);
   });
 });

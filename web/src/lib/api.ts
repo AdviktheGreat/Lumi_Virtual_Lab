@@ -28,6 +28,7 @@ import type {
   OpenRouterList,
   Own,
   OwnPreview,
+  SkillLibrary,
   SkillPreview,
   Skills,
   SkillsFrom,
@@ -377,6 +378,11 @@ export const api = {
   putInSkills: (from: SkillsFrom) => request<SkillsPutIn>("POST", "/skills/install", from),
   previewSkill: (name: string, signal?: AbortSignal) =>
     request<SkillPreview>("GET", `/skills/${encodeURIComponent(name)}`, undefined, signal),
+  // The library of skills that comes with the lab, which are not used until they are put in
+  skillLibrary: (signal?: AbortSignal) => request<SkillLibrary>("GET", "/skill-library", undefined, signal),
+  putInLibrarySkills: (names: string[]) => request<SkillsPutIn>("POST", "/skill-library/install", { names }),
+  previewLibrarySkill: (name: string, signal?: AbortSignal) =>
+    request<SkillPreview>("GET", `/skill-library/${encodeURIComponent(name)}`, undefined, signal),
   // Only a skill in the lab's own folder is deleted
   removeSkill: (name: string) => request<Skills>("DELETE", `/skills/${encodeURIComponent(name)}`),
   // The runs that read papers, and what a new one is asked for

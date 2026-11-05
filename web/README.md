@@ -85,6 +85,27 @@ server keeps it (`GET /api/own` and what changes it, in `docs/chat-and-server.md
 now is, which the page shows from then on. `src/lib/own.ts` checks what is written before it is sent, as the server
 does, so that what is wrong is said where it is written.
 
+## Skills Nexus
+
+The Skills page (`/skills`) has the skills the lab can follow, in two tabs; `/skills?tab=yours` opens the second.
+
+- **Discover** is the library that comes with the lab, K-Dense's scientific skills (`GET /api/skill-library`). It says
+  where they are from (author, repository, version, license), has a search box and a category to narrow them (the
+  categories are under the group each is in), and a box for each skill, which is replaced by "In your skills" once it is
+  put in. Each shows its license, in red when it is for noncommercial use only, and opens to its facts and its
+  instructions, which are read from the server only when asked for. "Put in" copies what is ticked (or all that match,
+  or all) into the workspace and turns it on, after asking, since the dialog says how much of every request they add
+  (`catalogAdded` in `src/lib/skills.ts`) and warns of a license that is not free. Forty are shown at first, with a button
+  for more.
+- **Your skills** is the skills the lab has found, as the server lists them (`GET /api/skills`): those that come with
+  the lab, those in the workspace, and those in `~/.agents/skills`, each to be turned on or off, read, or deleted (a
+  skill that is the lab's or another tool's is not deleted from here), and the place to install from a git repository or a
+  folder.
+
+Above both is a meter of how much of the skills catalog the skills that are on fill (`SkillsMeter`), which is the
+`catalog` of `GET /api/skills`. What is changed is in every conversation made from then on, and not in one that is
+already going.
+
 ## Papers
 
 The Papers page (`/papers`) is where the lab reads papers, and writes functions from what they share. It lists the runs,
@@ -377,6 +398,8 @@ the port after (8802, `--setup-control-port`; `e2e/setup/state.ts` is the client
 `e2e/scripted_server.py` lists what it can be told), for instance to hold a download so that its progress and stopping can
 be seen. These run in a project of their own (`--project=setup`), one test at a time, and put the stand-ins back as they
 were before each test. They include the data lake as the Data page shows it (`e2e/setup/data-page.spec.ts`).
+The tests of the Skills page (`e2e/own-server/skills*.spec.ts`) run against the first scripted server, given a library of
+50 skills of its own (`write_skill_library` in `e2e/scripted_server.py`) through `VIRTUAL_LAB_SKILL_LIBRARY_DIR`.
 
 The tests of the MCP servers (`e2e/mcp`) set servers up, and every conversation made without being told which to have is
 given them, so they have a fourth scripted server, on the port after the setup's control port (8803), and run in a project of

@@ -1,0 +1,1074 @@
+{
+  "source": {
+    "name": "Scientific Agent Skills",
+    "author": "K-Dense Inc.",
+    "url": "https://github.com/K-Dense-AI/scientific-agent-skills",
+    "license": "MIT",
+    "version": "2.72.0",
+    "ref": "526ebce143bc326f44471554e33d66a19c840360"
+  },
+  "skills": {
+    "database-lookup": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 83,
+      "bytes": 406610
+    },
+    "depmap": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 3,
+      "bytes": 33289
+    },
+    "folklore-variant-evidence": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 2,
+      "bytes": 24582
+    },
+    "imaging-data-commons": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 15,
+      "bytes": 244587
+    },
+    "primekg": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 3,
+      "bytes": 27128
+    },
+    "ncats-arax": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 4,
+      "bytes": 111067
+    },
+    "usfiscaldata": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 9,
+      "bytes": 69967
+    },
+    "ontology-term-resolution": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 12,
+      "bytes": 110682
+    },
+    "pathogen-variant-surveillance": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 9,
+      "bytes": 105953
+    },
+    "hugging-science": {
+      "group": "Scientific Databases & Data Access",
+      "category": "Databases & Data Access",
+      "files": 8,
+      "bytes": 60031
+    },
+    "benchling-integration": {
+      "group": "Scientific Integrations",
+      "category": "Laboratory Information Management Systems (LIMS) & R&D Platforms",
+      "files": 6,
+      "bytes": 56441
+    },
+    "dnanexus-integration": {
+      "group": "Scientific Integrations",
+      "category": "Cloud Platforms for Genomics & Biomedical Data",
+      "files": 12,
+      "bytes": 158002
+    },
+    "opentrons-integration": {
+      "group": "Scientific Integrations",
+      "category": "Laboratory Automation",
+      "files": 16,
+      "bytes": 111042
+    },
+    "ginkgo-cloud-lab": {
+      "group": "Scientific Integrations",
+      "category": "Laboratory Automation",
+      "files": 19,
+      "bytes": 58019
+    },
+    "labarchive-integration": {
+      "group": "Scientific Integrations",
+      "category": "Electronic Lab Notebooks (ELN)",
+      "files": 8,
+      "bytes": 90122
+    },
+    "open-notebook": {
+      "group": "Scientific Integrations",
+      "category": "Electronic Lab Notebooks (ELN)",
+      "files": 9,
+      "bytes": 67551
+    },
+    "latchbio-integration": {
+      "group": "Scientific Integrations",
+      "category": "Workflow Platforms & Cloud Execution",
+      "files": 11,
+      "bytes": 92305
+    },
+    "nextflow": {
+      "group": "Scientific Integrations",
+      "category": "Workflow Platforms & Cloud Execution",
+      "files": 8,
+      "bytes": 93348
+    },
+    "pacsomatic": {
+      "group": "Scientific Integrations",
+      "category": "Workflow Platforms & Cloud Execution",
+      "files": 7,
+      "bytes": 58702
+    },
+    "omero-integration": {
+      "group": "Scientific Integrations",
+      "category": "Microscopy & Bio-image Data",
+      "files": 15,
+      "bytes": 154851
+    },
+    "protocolsio-integration": {
+      "group": "Scientific Integrations",
+      "category": "Protocol Management & Sharing",
+      "files": 15,
+      "bytes": 154680
+    },
+    "primer-design": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 15,
+      "bytes": 126038
+    },
+    "mageck": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 4,
+      "bytes": 29192
+    },
+    "qiime2-amplicon": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 3,
+      "bytes": 37901
+    },
+    "alphagenome": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 8,
+      "bytes": 120387
+    },
+    "anndata": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 6,
+      "bytes": 83814
+    },
+    "arboreto": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 5,
+      "bytes": 30388
+    },
+    "biopython": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 9,
+      "bytes": 114317
+    },
+    "bioservices": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 8,
+      "bytes": 91395
+    },
+    "bulk-rnaseq": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 8,
+      "bytes": 72269
+    },
+    "cellxgene-census": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 5,
+      "bytes": 55568
+    },
+    "deeptools": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 10,
+      "bytes": 107881
+    },
+    "flowio": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 7,
+      "bytes": 81385
+    },
+    "flowkit": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 4,
+      "bytes": 28909
+    },
+    "gget": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 9,
+      "bytes": 110513
+    },
+    "genomic-coordinates": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 10,
+      "bytes": 121634
+    },
+    "genomic-intelligence": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 6,
+      "bytes": 62615
+    },
+    "geniml": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 14,
+      "bytes": 172382
+    },
+    "gtars": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 15,
+      "bytes": 149877
+    },
+    "onekgpd": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 6,
+      "bytes": 1134736
+    },
+    "waypoint-bio": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 8,
+      "bytes": 90984
+    },
+    "polars-bio": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 7,
+      "bytes": 53019
+    },
+    "pysam": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 14,
+      "bytes": 154972
+    },
+    "pydeseq2": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 6,
+      "bytes": 55266
+    },
+    "pathway-enrichment": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 6,
+      "bytes": 64988
+    },
+    "scanpy": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 26,
+      "bytes": 151962
+    },
+    "scvelo": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 3,
+      "bytes": 35131
+    },
+    "scvi-tools": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 9,
+      "bytes": 69612
+    },
+    "scikit-bio": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 3,
+      "bytes": 56008
+    },
+    "tiledbvcf": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 2,
+      "bytes": 20019
+    },
+    "zarr-python": {
+      "group": "Scientific Packages",
+      "category": "Bioinformatics & Genomics",
+      "files": 8,
+      "bytes": 43680
+    },
+    "datalad": {
+      "group": "Scientific Packages",
+      "category": "Data Management & Infrastructure",
+      "files": 4,
+      "bytes": 52406
+    },
+    "lamindb": {
+      "group": "Scientific Packages",
+      "category": "Data Management & Infrastructure",
+      "files": 8,
+      "bytes": 46982
+    },
+    "modal": {
+      "group": "Scientific Packages",
+      "category": "Data Management & Infrastructure",
+      "files": 13,
+      "bytes": 98196
+    },
+    "optimize-for-gpu": {
+      "group": "Scientific Packages",
+      "category": "Data Management & Infrastructure",
+      "files": 16,
+      "bytes": 301348
+    },
+    "nmrglue": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 4,
+      "bytes": 25756
+    },
+    "datamol": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 10,
+      "bytes": 56170
+    },
+    "deepchem": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 10,
+      "bytes": 70968
+    },
+    "diffdock": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 9,
+      "bytes": 60834
+    },
+    "medchem": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 4,
+      "bytes": 55058
+    },
+    "molfeat": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 5,
+      "bytes": 32426
+    },
+    "pytdc": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 11,
+      "bytes": 121961
+    },
+    "rdkit": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 11,
+      "bytes": 113823
+    },
+    "rowan": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 6,
+      "bytes": 52677
+    },
+    "torchdrug": {
+      "group": "Scientific Packages",
+      "category": "Cheminformatics & Drug Discovery",
+      "files": 10,
+      "bytes": 77570
+    },
+    "pkpd-modeling": {
+      "group": "Scientific Packages",
+      "category": "Pharmacology & Pharmacometrics",
+      "files": 28,
+      "bytes": 282426
+    },
+    "relsa-severity-assessment": {
+      "group": "Scientific Packages",
+      "category": "Preclinical Research & Animal Welfare",
+      "files": 9,
+      "bytes": 126327
+    },
+    "matchms": {
+      "group": "Scientific Packages",
+      "category": "Proteomics & Mass Spectrometry",
+      "files": 8,
+      "bytes": 103715
+    },
+    "pyopenms": {
+      "group": "Scientific Packages",
+      "category": "Proteomics & Mass Spectrometry",
+      "files": 24,
+      "bytes": 114613
+    },
+    "cellprofiler": {
+      "group": "Scientific Packages",
+      "category": "Microscopy, Medical Imaging & Digital Pathology",
+      "files": 4,
+      "bytes": 32356
+    },
+    "deepspot-m": {
+      "group": "Scientific Packages",
+      "category": "Microscopy, Medical Imaging & Digital Pathology",
+      "files": 3,
+      "bytes": 28196
+    },
+    "histolab": {
+      "group": "Scientific Packages",
+      "category": "Microscopy, Medical Imaging & Digital Pathology",
+      "files": 8,
+      "bytes": 49308
+    },
+    "pathml": {
+      "group": "Scientific Packages",
+      "category": "Microscopy, Medical Imaging & Digital Pathology",
+      "files": 13,
+      "bytes": 166391
+    },
+    "pydicom": {
+      "group": "Scientific Packages",
+      "category": "Microscopy, Medical Imaging & Digital Pathology",
+      "files": 13,
+      "bytes": 186430
+    },
+    "pyhealth": {
+      "group": "Scientific Packages",
+      "category": "Healthcare AI & Clinical Machine Learning",
+      "files": 8,
+      "bytes": 45206
+    },
+    "clinical-decision-support": {
+      "group": "Scientific Packages",
+      "category": "Clinical Documentation & Decision Support",
+      "files": 28,
+      "bytes": 205799
+    },
+    "clinical-reports": {
+      "group": "Scientific Packages",
+      "category": "Clinical Documentation & Decision Support",
+      "files": 36,
+      "bytes": 202579
+    },
+    "treatment-plans": {
+      "group": "Scientific Packages",
+      "category": "Clinical Documentation & Decision Support",
+      "files": 23,
+      "bytes": 164596
+    },
+    "nwb-conversion": {
+      "group": "Scientific Packages",
+      "category": "Neuroscience & Electrophysiology",
+      "files": 5,
+      "bytes": 33884
+    },
+    "bids": {
+      "group": "Scientific Packages",
+      "category": "Neuroscience & Electrophysiology",
+      "files": 8,
+      "bytes": 931777
+    },
+    "neurokit2": {
+      "group": "Scientific Packages",
+      "category": "Neuroscience & Electrophysiology",
+      "files": 20,
+      "bytes": 191345
+    },
+    "neuropixels-analysis": {
+      "group": "Scientific Packages",
+      "category": "Neuroscience & Electrophysiology",
+      "files": 19,
+      "bytes": 143495
+    },
+    "relion": {
+      "group": "Scientific Packages",
+      "category": "Protein Engineering & Design",
+      "files": 4,
+      "bytes": 38421
+    },
+    "adaptyv": {
+      "group": "Scientific Packages",
+      "category": "Protein Engineering & Design",
+      "files": 2,
+      "bytes": 34027
+    },
+    "esm": {
+      "group": "Scientific Packages",
+      "category": "Protein Engineering & Design",
+      "files": 8,
+      "bytes": 54551
+    },
+    "glycoengineering": {
+      "group": "Scientific Packages",
+      "category": "Protein Engineering & Design",
+      "files": 5,
+      "bytes": 34428
+    },
+    "molecular-dynamics": {
+      "group": "Scientific Packages",
+      "category": "Protein Engineering & Design",
+      "files": 3,
+      "bytes": 33253
+    },
+    "tamarind": {
+      "group": "Scientific Packages",
+      "category": "Protein Engineering & Design",
+      "files": 5,
+      "bytes": 47276
+    },
+    "13c-metabolic-flux": {
+      "group": "Scientific Packages",
+      "category": "Systems Biology & Kinetic Modeling",
+      "files": 16,
+      "bytes": 82505
+    },
+    "tellurium": {
+      "group": "Scientific Packages",
+      "category": "Systems Biology & Kinetic Modeling",
+      "files": 5,
+      "bytes": 28719
+    },
+    "aeon": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 12,
+      "bytes": 85048
+    },
+    "cirq": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 8,
+      "bytes": 74659
+    },
+    "pufferlib": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 16,
+      "bytes": 145895
+    },
+    "pymc": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 10,
+      "bytes": 85435
+    },
+    "pymoo": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 14,
+      "bytes": 82908
+    },
+    "pytorch-lightning": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 11,
+      "bytes": 81105
+    },
+    "pennylane": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 8,
+      "bytes": 54449
+    },
+    "qiskit": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 15,
+      "bytes": 156351
+    },
+    "qutip": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 13,
+      "bytes": 152832
+    },
+    "scikit-learn": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 11,
+      "bytes": 139099
+    },
+    "scikit-survival": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 13,
+      "bytes": 160109
+    },
+    "shap": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 10,
+      "bytes": 140153
+    },
+    "stable-baselines3": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 8,
+      "bytes": 87607
+    },
+    "statsmodels": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 10,
+      "bytes": 131444
+    },
+    "timesfm-forecasting": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 21,
+      "bytes": 143252
+    },
+    "torch-geometric": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 8,
+      "bytes": 85756
+    },
+    "transformers": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 7,
+      "bytes": 80649
+    },
+    "umap-learn": {
+      "group": "Scientific Packages",
+      "category": "Machine Learning & Deep Learning",
+      "files": 2,
+      "bytes": 50078
+    },
+    "marine-carbonate-chemistry": {
+      "group": "Scientific Packages",
+      "category": "Chemical Oceanography",
+      "files": 4,
+      "bytes": 33085
+    },
+    "pycalphad": {
+      "group": "Scientific Packages",
+      "category": "Materials Science & Chemistry",
+      "files": 5,
+      "bytes": 30499
+    },
+    "astropy": {
+      "group": "Scientific Packages",
+      "category": "Materials Science & Chemistry",
+      "files": 9,
+      "bytes": 91096
+    },
+    "cobrapy": {
+      "group": "Scientific Packages",
+      "category": "Materials Science & Chemistry",
+      "files": 3,
+      "bytes": 44129
+    },
+    "pymatgen": {
+      "group": "Scientific Packages",
+      "category": "Materials Science & Chemistry",
+      "files": 15,
+      "bytes": 177214
+    },
+    "cantera": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 4,
+      "bytes": 23034
+    },
+    "pybamm": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 4,
+      "bytes": 29197
+    },
+    "lab-hardware-cad": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 13,
+      "bytes": 188115
+    },
+    "fictiv": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 10,
+      "bytes": 129714
+    },
+    "matlab": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 20,
+      "bytes": 170833
+    },
+    "fluidsim": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 17,
+      "bytes": 206988
+    },
+    "openpiv": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 6,
+      "bytes": 53735
+    },
+    "simpy": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 16,
+      "bytes": 159115
+    },
+    "sympy": {
+      "group": "Scientific Packages",
+      "category": "Engineering & Simulation",
+      "files": 8,
+      "bytes": 89107
+    },
+    "dask": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 8,
+      "bytes": 96885
+    },
+    "geomaster": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 18,
+      "bytes": 150904
+    },
+    "geopandas": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 14,
+      "bytes": 151576
+    },
+    "matplotlib": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 7,
+      "bytes": 101459
+    },
+    "networkx": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 7,
+      "bytes": 84183
+    },
+    "polars": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 8,
+      "bytes": 101491
+    },
+    "seaborn": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 8,
+      "bytes": 94024
+    },
+    "uncertainty-and-units": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 15,
+      "bytes": 234572
+    },
+    "vaex": {
+      "group": "Scientific Packages",
+      "category": "Data Analysis & Visualization",
+      "files": 8,
+      "bytes": 52379
+    },
+    "etetoolkit": {
+      "group": "Scientific Packages",
+      "category": "Phylogenetics & Evolutionary Biology",
+      "files": 9,
+      "bytes": 119379
+    },
+    "phylogenetics": {
+      "group": "Scientific Packages",
+      "category": "Phylogenetics & Evolutionary Biology",
+      "files": 3,
+      "bytes": 29694
+    },
+    "pi-agent": {
+      "group": "Scientific Packages",
+      "category": "Agent Frameworks",
+      "files": 36,
+      "bytes": 276513
+    },
+    "arbor": {
+      "group": "Scientific Packages",
+      "category": "Autonomous Research & Optimization Frameworks",
+      "files": 6,
+      "bytes": 63493
+    },
+    "bgpt-paper-search": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 1,
+      "bytes": 7903
+    },
+    "pyzotero": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 15,
+      "bytes": 64997
+    },
+    "citation-management": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 22,
+      "bytes": 299964
+    },
+    "generate-image": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 3,
+      "bytes": 65494
+    },
+    "infographics": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 8,
+      "bytes": 157730
+    },
+    "latex-posters": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 17,
+      "bytes": 212304
+    },
+    "market-research-reports": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 26,
+      "bytes": 193238
+    },
+    "pptx-posters": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 21,
+      "bytes": 253131
+    },
+    "scientific-schematics": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 6,
+      "bytes": 103108
+    },
+    "scientific-slides": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 24,
+      "bytes": 390383
+    },
+    "venue-templates": {
+      "group": "Scientific Packages",
+      "category": "Scientific Communication & Publishing",
+      "files": 32,
+      "bytes": 321106
+    },
+    "markitdown": {
+      "group": "Scientific Packages",
+      "category": "Document Processing & Conversion",
+      "files": 11,
+      "bytes": 112681
+    },
+    "liteparse": {
+      "group": "Scientific Packages",
+      "category": "Document Processing & Conversion",
+      "files": 7,
+      "bytes": 44582
+    },
+    "markdown-mermaid-writing": {
+      "group": "Scientific Packages",
+      "category": "Document Processing & Conversion",
+      "files": 38,
+      "bytes": 294658
+    },
+    "pylabrobot": {
+      "group": "Scientific Packages",
+      "category": "Laboratory Automation & Equipment Control",
+      "files": 16,
+      "bytes": 119337
+    },
+    "autoskill": {
+      "group": "Scientific Packages",
+      "category": "Tool Discovery & Computational Resources",
+      "files": 16,
+      "bytes": 60787
+    },
+    "get-available-resources": {
+      "group": "Scientific Packages",
+      "category": "Tool Discovery & Computational Resources",
+      "files": 9,
+      "bytes": 144282
+    },
+    "paperclip": {
+      "group": "Scientific Packages",
+      "category": "Research Methodology & Proposal Writing",
+      "files": 7,
+      "bytes": 71225
+    },
+    "paperzilla": {
+      "group": "Scientific Packages",
+      "category": "Research Methodology & Proposal Writing",
+      "files": 2,
+      "bytes": 16641
+    },
+    "paper-lookup": {
+      "group": "Scientific Packages",
+      "category": "Research Methodology & Proposal Writing",
+      "files": 24,
+      "bytes": 181405
+    },
+    "research-grants": {
+      "group": "Scientific Packages",
+      "category": "Research Methodology & Proposal Writing",
+      "files": 16,
+      "bytes": 148658
+    },
+    "research-lookup": {
+      "group": "Scientific Packages",
+      "category": "Research Methodology & Proposal Writing",
+      "files": 5,
+      "bytes": 104475
+    },
+    "scholar-evaluation": {
+      "group": "Scientific Packages",
+      "category": "Research Methodology & Proposal Writing",
+      "files": 19,
+      "bytes": 168672
+    },
+    "iso-standards-readiness": {
+      "group": "Scientific Packages",
+      "category": "Regulatory & Standards Evidence Preparation",
+      "files": 32,
+      "bytes": 273643
+    },
+    "analytical-method-validation": {
+      "group": "Scientific Packages",
+      "category": "Regulatory & Standards Evidence Preparation",
+      "files": 17,
+      "bytes": 223925
+    },
+    "experimental-design": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 7,
+      "bytes": 66897
+    },
+    "exploratory-data-analysis": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 21,
+      "bytes": 210866
+    },
+    "hypothesis-generation": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 27,
+      "bytes": 265933
+    },
+    "hypogenic": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 18,
+      "bytes": 153176
+    },
+    "literature-review": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 12,
+      "bytes": 131520
+    },
+    "peer-review": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 24,
+      "bytes": 200981
+    },
+    "scientific-brainstorming": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 10,
+      "bytes": 136460
+    },
+    "scientific-critical-thinking": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 9,
+      "bytes": 133159
+    },
+    "scientific-visualization": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 18,
+      "bytes": 204161
+    },
+    "scientific-writing": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 31,
+      "bytes": 179722
+    },
+    "statistical-analysis": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 7,
+      "bytes": 120509
+    },
+    "statistical-power": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Analysis & Methodology",
+      "files": 6,
+      "bytes": 78425
+    },
+    "consciousness-council": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Decision & Scenario Analysis",
+      "files": 2,
+      "bytes": 20543
+    },
+    "dhdna-profiler": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Decision & Scenario Analysis",
+      "files": 2,
+      "bytes": 15786
+    },
+    "what-if-oracle": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Decision & Scenario Analysis",
+      "files": 2,
+      "bytes": 20055
+    },
+    "exa-search": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Web Search & Information Retrieval",
+      "files": 5,
+      "bytes": 27558
+    },
+    "parallel-web": {
+      "group": "Scientific Thinking & Analysis",
+      "category": "Web Search & Information Retrieval",
+      "files": 8,
+      "bytes": 40221
+    }
+  }
+}

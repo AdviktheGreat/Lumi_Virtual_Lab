@@ -390,13 +390,21 @@ def shorten(text: str, limit: int) -> str:
     return cut.rstrip(" ,;:.") + "…"
 
 
-def catalog_lines(skills: Sequence[Skill], budget: int) -> list[str]:
-    """A line for each skill that fits in a budget: its name and what it is for, with each description cut to the same
-    length when the whole does not fit, and the names of those that still do not left for the end of one line."""
+def description_cap(skills: Sequence[Skill], budget: int) -> int:
+    """How long each description is let be in the catalog: the most there is, unless that does not fit in the budget,
+    when each is cut to the same length."""
     overhead = sum(len(skill.name) + 5 for skill in skills)
     cap = CATALOG_DESCRIPTION_CHARS
     if overhead + sum(min(len(skill.description), cap) for skill in skills) > budget:
         cap = max(CATALOG_MIN_DESCRIPTION_CHARS, (budget - overhead) // max(len(skills), 1))
+
+    return cap
+
+
+def catalog_lines(skills: Sequence[Skill], budget: int) -> list[str]:
+    """A line for each skill that fits in a budget: its name and what it is for, with each description cut to the same
+    length when the whole does not fit, and the names of those that still do not left for the end of one line."""
+    cap = description_cap(skills, budget)
     lines = [f"- {skill.name}: {shorten(skill.description, cap)}" for skill in skills]
 
     count = 0
@@ -429,6 +437,22 @@ def names_that_fit(names: Sequence[str], budget: int) -> str:
             return line if len(line) <= budget else line[: max(budget - 1, 0)] + "…"
 
     return NAMES_ONLY
+
+
+def catalog_use(skills: Sequence[Skill], budget: int = CATALOG_CHARS) -> dict[str, int]:
+    """What listing skills for the lead takes of every conversation, which is what a person who turns on a library of
+    them wants to know: how many characters there are, how many there can be, how long each description may be, and
+    how many skills have none because there is no room."""
+    lines = catalog_lines(skills, budget)
+    names_only = bool(lines) and lines[-1].startswith(NAMES_ONLY)
+
+    return {
+        "skills": len(skills),
+        "chars": sum(len(line) + 1 for line in lines),
+        "budget": budget,
+        "description_chars": description_cap(skills, budget) if skills else CATALOG_DESCRIPTION_CHARS,
+        "without_description": len(skills) - (len(lines) - 1) if names_only else 0,
+    }
 
 
 def skills_prompt(skills: Sequence[Skill], budget: int = CATALOG_CHARS) -> str:

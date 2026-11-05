@@ -185,7 +185,7 @@ test.describe("choosing the skills of a conversation on the page where it begins
     await button(page).click();
 
     await expect(dialog(page).getByText("There are no skills yet.")).toBeVisible();
-    await expect(dialog(page).getByRole("link", { name: "Data page" })).toHaveAttribute("href", "/data");
+    await expect(dialog(page).getByRole("link", { name: "Skills page" })).toHaveAttribute("href", "/skills");
     await expect(dialog(page).getByRole("button", { name: "Use these" })).toBeDisabled();
   });
 

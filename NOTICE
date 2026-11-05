@@ -69,13 +69,48 @@ license applies to that material only. Nothing here changes it.
    Huang, K., Zhang, S., Wang, H. et al. Biomni: A General-Purpose Biomedical AI Agent.
    bioRxiv (2025).
 
-3. Fonts in the pages of the interface
+3. Scientific Agent Skills
+   https://github.com/K-Dense-AI/scientific-agent-skills, version 2.72.0,
+   commit 526ebce143bc326f44471554e33d66a19c840360
+   MIT License, Copyright (c) 2025 K-Dense Inc.
+   The text of the license is in src/virtual_lab/scientific_skills/LICENSE.md.
+
+   Copied without modification: the 177 skills of that release, in
+   src/virtual_lab/scientific_skills/skills/, each with its own files and notices. Nothing reads
+   them until a person puts some in from the Skills page, which copies them into the lab's own
+   skills folder. src/virtual_lab/scientific_skills/index.json is Lumi's: it says which category of
+   the release's docs/skills.md each skill is in, and how big it is. scripts/update_scientific_skills.py
+   copies a release in.
+
+   Each skill says in its SKILL.md what license it is under, and that license is the one that
+   applies to that skill. Most say MIT, BSD, or Apache-2.0. These say something else:
+     deepspot-m         PolyForm-Noncommercial-1.0.0, which allows noncommercial use only
+     what-if-oracle     CC BY-NC-SA 4.0, which allows noncommercial use only, shared alike
+     bioservices        GPLv3
+     cobrapy            GPL-2.0
+     etetoolkit         GPL-3.0-or-later
+     bids, depmap       CC-BY-4.0
+     biopython          the Biopython License Agreement
+     rowan              "Proprietary (API key required)"
+     imaging-data-commons   MIT, with a note that the data it reads has licenses of its own,
+                            some of them noncommercial
+     glycoengineering, hugging-science, infographics, latex-posters, phylogenetics, primekg, pyhealth
+                        say no license, or "Unknown", so only the MIT License of the release as a
+                        whole covers them
+   A skill under a GPL license, or for noncommercial use only, is a separate work in a folder of
+   its own, and Lumi's code is not a part of it. The Skills page shows each skill's license
+   beside it. Check them before any commercial use, and before sharing a skill.
+
+   The skills tell the lead how to use other people's software, data, and services, which have
+   licenses of their own, and some need an account or a key.
+
+4. Fonts in the pages of the interface
    Inter (Copyright 2016 The Inter Project Authors), JetBrains Mono (Copyright 2020 The
    JetBrains Mono Project Authors), and Newsreader (Copyright 2020 The Newsreader Project
    Authors), through Fontsource. Each is under the SIL Open Font License, Version 1.1,
    https://openfontlicense.org.
 
-4. Software Lumi installs and does not copy
+5. Software Lumi installs and does not copy
    The Python and JavaScript packages Lumi depends on are installed from their registries,
    not copied into this repository, and are under their own licenses. Nearly all are
    permissive (MIT, BSD, ISC, Apache-2.0). The exceptions are used unmodified as libraries:
