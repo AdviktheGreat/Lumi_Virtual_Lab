@@ -11,7 +11,7 @@ export const ChatFilesProvider = ChatId.Provider;
 
 export function useChatId(): string {
   const id = useContext(ChatId);
-  if (id === null) throw new Error("This is of a conversation, so it needs a ChatFilesProvider");
+  if (id === null) throw new Error("This is of a program, so it needs a ChatFilesProvider");
 
   return id;
 }

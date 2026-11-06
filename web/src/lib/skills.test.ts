@@ -383,17 +383,17 @@ describe("what the skills that are on take of every conversation", () => {
 
   it("is said where there is room, without advice", () => {
     expect(catalogSaid(catalog({}))).toEqual({
-      text: "The 7 skills that are on take about 600 tokens of the start of every conversation.",
+      text: "The 7 skills that are on take about 600 tokens of the start of every program.",
       tight: false,
     });
     expect(catalogSaid(catalog({ skills: 1, chars: 120 })).text).toBe(
-      "The skill that is on takes about 30 tokens of the start of every conversation.",
+      "The skill that is on takes about 30 tokens of the start of every program.",
     );
   });
 
   it("says that none is on", () => {
     expect(catalogSaid(catalog({ skills: 0, chars: 0 }))).toEqual({
-      text: "No skill is on, so no conversation begins with a list of skills.",
+      text: "No skill is on, so no program begins with a list of skills.",
       tight: false,
     });
   });

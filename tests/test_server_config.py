@@ -110,6 +110,53 @@ class TestResolving:
         old = {key: value for key, value in config.to_dict().items() if key != "check_results"}
         assert ChatConfig.from_dict(old).check_results is True
 
+    def test_a_program_is_a_quick_task_unless_it_is_made_a_custom_one_with_instructions(
+        self, workspace: Workspace
+    ) -> None:
+        def given(**request: Any) -> tuple[str, str]:
+            config = resolve_config({"team": [], **request}, settings(), workspace)
+
+            return config.kind, config.instructions
+
+        assert given() == ("quick_task", "")
+        assert given(kind=None, instructions=None) == ("quick_task", "")
+        assert given(kind="quick_task") == ("quick_task", "")
+        assert given(kind="custom", instructions="  Answer in verse.\n") == ("custom", "Answer in verse.")
+
+    @pytest.mark.parametrize(
+        ("request_", "message"),
+        [
+            ({"kind": "campaign"}, "begun as one of quick_task, custom, not 'campaign'"),
+            ({"kind": "custom"}, "A custom program needs instructions"),
+            ({"kind": "custom", "instructions": "  \n"}, "A custom program needs instructions"),
+            ({"kind": "custom", "instructions": 5}, "instructions of a program are text"),
+            ({"kind": "custom", "instructions": "x" * 8_001}, "at most 8,000 characters, and these are 8,001"),
+            ({"instructions": "Be brief."}, "Only a custom program has instructions"),
+            ({"kind": "quick_task", "instructions": "Be brief."}, "Only a custom program has instructions"),
+        ],
+    )
+    def test_a_program_that_is_not_one_of_the_kinds_there_are_is_refused(
+        self, workspace: Workspace, request_: dict[str, Any], message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            resolve_config({"team": [], **request_}, settings(), workspace)
+
+    def test_the_kind_and_instructions_are_kept_and_a_conversation_begun_before_them_is_a_quick_task(
+        self, workspace: Workspace, tmp_path: Path
+    ) -> None:
+        directory = tmp_path / "chat"
+        directory.mkdir()
+        config = resolve_config({"team": [], "kind": "custom", "instructions": "Be brief."}, settings(), workspace)
+
+        save_config(directory, config)
+
+        loaded = load_config(directory)
+        assert loaded is not None and (loaded.kind, loaded.instructions) == ("custom", "Be brief.")
+        old = {key: value for key, value in config.to_dict().items() if key not in ("kind", "instructions")}
+        assert (ChatConfig.from_dict(old).kind, ChatConfig.from_dict(old).instructions) == ("quick_task", "")
+        unknown = {**config.to_dict(), "kind": "something later"}
+        assert ChatConfig.from_dict(unknown).kind == "quick_task"
+
     @pytest.mark.parametrize("value", [0, -1, CEILING_CHAT_TOOL_ITERATIONS + 1, 1.5, "20", True, [20]])
     def test_a_most_tool_calls_that_is_not_a_whole_number_from_one_to_the_ceiling_is_refused(
         self, workspace: Workspace, value: Any
@@ -615,7 +662,7 @@ class TestCheckingTheDataLake:
             workspace.root,
             workspace.root.parent,
         ):
-            with pytest.raises(ValueError, match="cannot be where conversations are kept"):
+            with pytest.raises(ValueError, match="cannot be where programs are kept"):
                 check_data_lake(str(where), workspace)
 
     def test_beside_the_conversations_is_where_the_data_lake_is_kept_by_default(self, workspace: Workspace) -> None:
@@ -687,5 +734,5 @@ class TestChangingWhatCodeHas:
             update_settings(Settings(), changes, workspace)
 
     def test_the_data_lake_is_looked_for_where_conversations_are_kept(self, workspace: Workspace) -> None:
-        with pytest.raises(ValueError, match="cannot be where conversations are kept"):
+        with pytest.raises(ValueError, match="cannot be where programs are kept"):
             update_settings(Settings(), {"data_lake": str(workspace.root)}, workspace)

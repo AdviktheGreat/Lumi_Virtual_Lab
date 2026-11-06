@@ -256,7 +256,7 @@ class Own:
         self.workspace.update_own(keep)
 
     def check_apart(self, source: Path) -> None:
-        """Refuses what is where conversations are kept, or holds them, since code that was given it could change what
+        """Refuses what is where programs are kept, or holds them, since code that was given it could change what
         it is to be kept apart from, or what the conversation is run in, and what was uploaded, which is kept
         as uploads.
 
@@ -265,7 +265,7 @@ class Own:
         chats = self.workspace.chats_dir
         uploads = self.workspace.own_data_dir.resolve()
         if overlaps(source, chats):
-            raise ApiError(422, "invalid", f"{source} is where conversations are kept, or holds them")
+            raise ApiError(422, "invalid", f"{source} is where programs are kept, or holds them")
         if overlaps(source, uploads):
             raise ApiError(422, "invalid", f"{source} is where uploaded files are kept, or holds them")
 

@@ -15,7 +15,8 @@ from a script: no key is needed, and every run says the same. What it says depen
   first, as the word says, and answer once the code has run. "tool:unknown" makes it call a tool it does not have, and
   "tool:resources" makes it look for resources, and choose the know-how documents there are. "tool:files" makes it
   look at the files attached to the conversation, with the library's own tools for that, and "tool:offered" makes it
-  answer with the names of the tools the model was offered. "lab:team" makes it bring
+  answer with the names of the tools the model was offered, and "instructions:" has it answer with the instructions of
+  a program of its own that it was given, or say that it was given none. "lab:team" makes it bring
   in the team for a round of discussion, and "lab:consult" ask one scientist, whose replies the script writes too.
   "lab:code" brings in one scientist who runs code in the session, if the conversation has one, before they reply.
   "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
@@ -436,6 +437,18 @@ def offered(kwargs: dict[str, Any]) -> list[str]:
     return sorted(tool["function"]["name"] for tool in kwargs.get("tools") or [])
 
 
+def instructions_given(kwargs: dict[str, Any]) -> str:
+    """The instructions of a program of its own that a request gives the model, or what says there are none."""
+    system = "\n\n".join(
+        str(message["content"]) for message in kwargs["messages"] if message["role"] == "system"
+    )
+    marker = "what the researcher asks in a message is done within them:\n\n"
+    if marker not in system:
+        return "Given no instructions"
+
+    return "Given instructions: " + system.split(marker, 1)[1].split("\n\n")[0]
+
+
 def runs_code(title: str, kwargs: dict[str, Any]) -> bool:
     """Whether a scientist is to run code before they reply: when the agenda says so, and they have a tool to."""
     tools = {tool["function"]["name"] for tool in kwargs.get("tools") or []}
@@ -598,6 +611,8 @@ class ScriptedCompletions(FakeCompletions):
             response = text_response(WIDE_REPLY)
         elif "tool:offered" in question:
             response = text_response("Offered: " + " ".join(offered(kwargs)))
+        elif "instructions:" in question:
+            response = text_response(instructions_given(kwargs))
         else:
             response = text_response(reply_to(question))
         if kwargs.get("stream"):

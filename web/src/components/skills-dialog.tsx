@@ -68,7 +68,7 @@ function Searching({
 function NoSkills() {
   return (
     <p role="status" className="text-sm text-muted-foreground">
-      There are no skills yet. They are put in, and turned on and off for every new conversation, on the{" "}
+      There are no skills yet. They are put in, and turned on and off for every new program, on the{" "}
       <Link href="/skills" className="underline underline-offset-2">
         Skills page
       </Link>
@@ -110,7 +110,7 @@ function Choosing({
         <DialogTitle>Choose the skills</DialogTitle>
         <DialogDescription>
           The lead is told what each skill is for in every message, which costs a little, and reads a skill when the work calls
-          for it. A conversation keeps the skills it begins with.
+          for it. A program keeps the skills it begins with.
         </DialogDescription>
       </DialogHeader>
       {skills.length === 0 ? (
@@ -209,15 +209,15 @@ function Viewing({ library, had, onClose }: { library: Skills; had: string[]; on
   return (
     <>
       <DialogHeader>
-        <DialogTitle>The skills of this conversation</DialogTitle>
+        <DialogTitle>The skills of this program</DialogTitle>
         <DialogDescription>
-          A conversation keeps the skills it was begun with, and goes on with those that are still there. Begin another to
+          A program keeps the skills it was begun with, and goes on with those that are still there. Begin another to
           choose different ones.
         </DialogDescription>
       </DialogHeader>
       {had.length === 0 ? (
         <p role="status" className="text-sm text-muted-foreground">
-          This conversation was given no skills.
+          This program was given no skills.
         </p>
       ) : (
         <div className="flex min-h-0 flex-col gap-3">
@@ -239,7 +239,7 @@ function Viewing({ library, had, onClose }: { library: Skills; had: string[]; on
               No skill has all of those words.
             </p>
           ) : (
-            <ul aria-label="Skills of this conversation" className="-mx-1 flex max-h-72 flex-col gap-1.5 overflow-y-auto px-1">
+            <ul aria-label="Skills of this program" className="-mx-1 flex max-h-72 flex-col gap-1.5 overflow-y-auto px-1">
               {listed.map((skill) => (
                 <li key={skill.name} data-testid="skill-given" className="flex flex-col rounded-md px-2 py-1">
                   <code className="break-all text-sm font-medium">{skill.name}</code>
@@ -285,7 +285,7 @@ export function SkillsDialog(props: Props) {
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>{props.kind === "choose" ? "Choose the skills" : "The skills of this conversation"}</DialogTitle>
+              <DialogTitle>{props.kind === "choose" ? "Choose the skills" : "The skills of this program"}</DialogTitle>
               <DialogDescription>
                 {skills.kind === "loading" ? "Reading the skills…" : "The skills could not be read."}
               </DialogDescription>

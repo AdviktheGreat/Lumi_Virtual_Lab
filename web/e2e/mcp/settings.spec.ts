@@ -173,7 +173,7 @@ test.describe("a server of one's own", () => {
 
     await add(dialog, MINE, JSON.stringify(program()));
 
-    await expect(dialog.getByText(`Saved ${MINE}. It is on, so conversations begun from now on are given its tools.`)).toBeVisible();
+    await expect(dialog.getByText(`Saved ${MINE}. It is on, so programs begun from now on are given its tools.`)).toBeVisible();
     await expect(box(dialog, MINE, MINE)).toBeChecked();
     await expect(row(dialog, MINE)).toContainText("Runs a program on this computer");
     await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("");
@@ -287,7 +287,7 @@ test.describe("a server of one's own", () => {
 
     await dialog.getByRole("button", { name: `Remove ${MINE}` }).click();
     const question = page.getByRole("alertdialog", { name: `Remove ${MINE}?` });
-    await expect(question).toContainText("Conversations that have begun keep the tools they were given.");
+    await expect(question).toContainText("Programs that have begun keep the tools they were given.");
     await question.getByRole("button", { name: "Keep" }).click();
 
     await expect(row(dialog, MINE)).toBeVisible();

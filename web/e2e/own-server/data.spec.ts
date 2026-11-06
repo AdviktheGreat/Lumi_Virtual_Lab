@@ -98,7 +98,7 @@ test.describe("the page", () => {
     await expect(page).toHaveTitle("Data · Lumi Virtual Lab");
     await expect(link).toHaveAttribute("aria-current", "page");
 
-    await sidebar.getByRole("link", { name: "New chat", exact: true }).first().click();
+    await sidebar.getByRole("link", { name: "New program", exact: true }).first().click();
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
     await expect(link).not.toHaveAttribute("aria-current", "page");
   });
@@ -126,7 +126,7 @@ test.describe("the page", () => {
   test("is opened from the drawer on a narrow screen, which it closes", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 800 });
     await page.goto("/");
-    await page.getByRole("button", { name: "Show the conversations" }).click();
+    await page.getByRole("button", { name: "Show the programs" }).click();
     const sidebar = page.getByRole("complementary", { name: "Sidebar" });
 
     await sidebar.getByRole("link", { name: "Data" }).click();
@@ -350,7 +350,7 @@ test.describe("data that is pointed to", () => {
     await expect(row).toContainText("On this machine · Not there");
     // What is shown of it is not left, since it is no longer what is there
     await expect(row.getByRole("region")).toHaveCount(0);
-    await expect(row).toContainText("It is not there any more, so conversations are not given it.");
+    await expect(row).toContainText("It is not there any more, so programs are not given it.");
     await expect(row.getByRole("button", { name: "Show the start of gone.csv" })).toBeDisabled();
     await expect(row.getByRole("button", { name: "Delete gone.csv" })).toBeEnabled();
 

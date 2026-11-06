@@ -327,7 +327,7 @@ class TestSettings:
             response = client.patch("/api/settings", json={"data_lake": str(where)})
 
             assert response.status_code == 422, where
-            assert "conversations are kept" in error_of(response)["message"]
+            assert "programs are kept" in error_of(response)["message"]
         assert workspace.load_settings().data_lake == ""
 
     def test_a_data_lake_path_that_is_too_long_is_refused_for_its_length(self, client: TestClient) -> None:
@@ -1147,6 +1147,50 @@ class TestChats:
 
         assert (left_out["max_cost"], left_out["config"]["stream"]) == (2.0, False)
         assert unlimited["max_cost"] is None
+
+    def test_a_custom_program_is_made_with_a_name_and_instructions_and_is_listed_as_one(
+        self, client: TestClient
+    ) -> None:
+        made = client.post(
+            "/api/chats",
+            json={
+                "team": [],
+                "title": "Poetry",
+                "kind": "custom",
+                "instructions": "Always answer in verse.",
+                "max_cost": 3,
+            },
+        )
+
+        assert made.status_code == 201
+        assert made.json()["title"] == "Poetry"
+        assert made.json()["config"]["kind"] == "custom"
+        assert made.json()["config"]["instructions"] == "Always answer in verse."
+        assert made.json()["max_cost"] == 3
+        quick = client.post("/api/chats", json={"team": []}).json()
+        listed = {item["id"]: item["kind"] for item in client.get("/api/chats").json()["chats"]}
+        assert listed == {made.json()["id"]: "custom", quick["id"]: "quick_task"}
+        assert quick["config"]["kind"] == "quick_task" and quick["config"]["instructions"] == ""
+
+    @pytest.mark.parametrize(
+        ("body", "message"),
+        [
+            ({"kind": "custom", "instructions": "Be brief."}, "needs a name"),
+            ({"kind": "custom", "title": "Terse"}, "needs instructions"),
+            ({"kind": "custom", "title": "Terse", "instructions": "x" * 8_001}, "at most 8,000 characters"),
+            ({"title": "Quick", "instructions": "Be brief."}, "Only a custom program has instructions"),
+            ({"kind": "custom", "title": "Terse", "instructions": "x" * 16_001}, ""),
+            ({"kind": "campaign", "title": "Big"}, ""),
+        ],
+    )
+    def test_a_program_that_is_not_made_right_is_refused_and_not_made(
+        self, client: TestClient, body: dict[str, Any], message: str
+    ) -> None:
+        response = client.post("/api/chats", json={"team": [], **body})
+
+        assert response.status_code == 422
+        assert message in error_of(response)["message"] or message == ""
+        assert client.get("/api/chats").json() == {"chats": []}
 
     def test_a_conversation_made_with_nothing_has_the_leader_and_the_default_team(self, client: TestClient) -> None:
         made = client.post("/api/chats", json={}).json()

@@ -327,6 +327,33 @@ class TestAnswering:
         assert title_of("", [Attachment("counts.csv", "uploads/counts.csv", 3)]) == "counts.csv"
 
 
+class TestInstructions:
+    def test_the_instructions_of_a_program_are_told_to_the_lead_after_what_the_lab_is(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("In verse."), text_response("Again.")]
+        chat = make_chat(tmp_path, instructions="  Always answer in verse.\n")
+
+        chat.send("What is a nanobody?")
+        chat.send("And a nanotube?")
+
+        for call in (0, 1):
+            system = request_messages(fake_client, call)[0]["content"]
+            # After what the lab is and what the lead can do, with what was written kept as it was, but for its ends
+            assert system.index("convene_team") < system.index("program of its own")
+            assert system.endswith("is done within them:\n\nAlways answer in verse.")
+        assert "program of its own" in request_messages(fake_client, 0)[0]["content"]
+
+    def test_a_conversation_without_instructions_is_told_none(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [text_response("Hi."), text_response("Hi.")]
+
+        make_chat(tmp_path / "a").send("Hello")
+        make_chat(tmp_path / "b", instructions="  \n").send("Hello")
+
+        for call in (0, 1):
+            assert "program of its own" not in request_messages(fake_client, call)[0]["content"]
+
+
 class TestCode:
     def test_the_lead_runs_code_and_the_figure_is_told_of(
         self, fake_client: FakeClient, session: LocalSession, tmp_path: Path

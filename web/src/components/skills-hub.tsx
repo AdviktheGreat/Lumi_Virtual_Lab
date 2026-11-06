@@ -343,9 +343,9 @@ export function SkillsHub({
             </AlertDialogTitle>
             <AlertDialogDescription>
               A skill is instructions that the lead follows, and it may come with scripts that code can run in a
-              conversation. {addedLibrary.length === 1 ? "It is" : "These are"} copied into your skills, where{" "}
+              program. {addedLibrary.length === 1 ? "It is" : "These are"} copied into your skills, where{" "}
               {addedLibrary.length === 1 ? "it is" : "they are"} on like any other. {addedLibrary.length === 1 ? "It adds" : "Together they add"}{" "}
-              {tokensSaid(catalogAdded(addedLibrary))} to the start of every conversation, and you can turn{" "}
+              {tokensSaid(catalogAdded(addedLibrary))} to the start of every program, and you can turn{" "}
               {addedLibrary.length === 1 ? "it" : "them"} off, or delete {addedLibrary.length === 1 ? "it" : "them"}, here.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -369,7 +369,7 @@ export function SkillsHub({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {removing?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Its folder and everything in it are deleted from the lab&apos;s skills. A conversation that was given it
+              Its folder and everything in it are deleted from the lab&apos;s skills. A program that was given it
               goes on without it.
             </AlertDialogDescription>
           </AlertDialogHeader>

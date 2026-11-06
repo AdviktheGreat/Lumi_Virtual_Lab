@@ -416,7 +416,7 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
     setDone(null);
     try {
       onChanged(await api.signOutMcpServer(server.name));
-      setDone(`Signed out of ${server.title}. A conversation that has it on asks you to sign in again.`);
+      setDone(`Signed out of ${server.title}. A program that has it on asks you to sign in again.`);
     } catch (error) {
       report(error);
       setProblem(describeError(error));
@@ -441,8 +441,8 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
     <Section title="MCP servers">
       <Aside>
         <Plug className="mr-1.5 inline size-3.5 align-text-bottom" aria-hidden />
-        An MCP server gives the lead more tools, such as other databases and services. A conversation is given the servers that
-        are on when it begins, connects to them when you send its first message, and asks you in the conversation before a call
+        An MCP server gives the lead more tools, such as other databases and services. A program is given the servers that
+        are on when it begins, connects to them when you send its first message, and asks you in the program before a call
         that costs money or cannot be undone.
       </Aside>
       {servers.kind === "loading" && <p className="text-sm text-muted-foreground">Looking at the servers…</p>}
@@ -488,7 +488,7 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
             onSaved={(kept, name) => {
               onChanged(kept);
               setProblem(null);
-              setDone(`Saved ${name}. It is on, so conversations begun from now on are given its tools.`);
+              setDone(`Saved ${name}. It is on, so programs begun from now on are given its tools.`);
             }}
           />
           <AlertDialog open={asking} onOpenChange={setAsking}>
@@ -503,7 +503,7 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
               <AlertDialogHeader>
                 <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This forgets how to reach it. Conversations that have begun keep the tools they were given. Add it again to use
+                  This forgets how to reach it. Programs that have begun keep the tools they were given. Add it again to use
                   it afterwards.
                 </AlertDialogDescription>
               </AlertDialogHeader>

@@ -272,7 +272,7 @@ export function ScientistsTab({
   return (
     <Section>
       <p className="text-sm text-muted-foreground">
-        The lead scientist can bring any of these into a conversation. Change one, or add your own: yours are kept with
+        The lead scientist can bring any of these into a program. Change one, or add your own: yours are kept with
         the workspace.
       </p>
       <div>

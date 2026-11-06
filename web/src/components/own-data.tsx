@@ -258,7 +258,7 @@ function DataRow({
       </div>
       {missing && (
         <Aside tone="warning">
-          It is not there any more, so conversations are not given it. Put it back where it was, or delete it here.
+          It is not there any more, so programs are not given it. Put it back where it was, or delete it here.
         </Aside>
       )}
       {open && <PreviewPanel id={previewId} name={data.name} />}
@@ -506,7 +506,7 @@ export function OwnDataSection({ own, onChanged }: { own: Own; onChanged: Change
             <AlertDialogTitle>Delete {removing?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               {removing?.source === "uploaded"
-                ? "This deletes the copy of it that the lab keeps. Conversations you start from now on are not given it."
+                ? "This deletes the copy of it that the lab keeps. Programs you start from now on are not given it."
                 : `The lab stops being given it. What is at ${removing?.path ?? "its path"} is left where it is.`}
             </AlertDialogDescription>
           </AlertDialogHeader>

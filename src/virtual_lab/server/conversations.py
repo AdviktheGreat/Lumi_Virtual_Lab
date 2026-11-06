@@ -256,10 +256,10 @@ class Conversations:
         with self._lock:
             deleting = chat_id in self._deleting
         if deleting or not CHAT_ID_PATTERN.fullmatch(chat_id):
-            raise not_found("conversation with that id")
+            raise not_found("program with that id")
         directory = self.workspace.chats_dir / chat_id
         if directory.resolve().parent != self.workspace.chats_dir or not (directory / CHAT_FILE_NAME).is_file():
-            raise not_found("conversation with that id")
+            raise not_found("program with that id")
 
         return directory
 
@@ -289,6 +289,7 @@ class Conversations:
                     "spent": number_or_none(info.get("spent")),
                     "max_cost": number_or_none(info.get("max_cost")),
                     "model": config.model if config is not None else None,
+                    "kind": config.kind if config is not None else "quick_task",
                 }
             )
 
@@ -298,15 +299,17 @@ class Conversations:
         """Makes a conversation and opens it.
 
         :param request: What it is set up with, as resolve_config takes it.
-        :param title: What to call it; by default its first message.
-        :raises ApiError: If something chosen cannot be used, a key is not set, or code is to run in Docker and
-            Docker or the image is not there.
+        :param title: What to call it; by default its first message, but a custom program is named by the researcher.
+        :raises ApiError: If something chosen cannot be used, a custom program has no name, a key is not set, or code
+            is to run in Docker and Docker or the image is not there.
         """
         title = " ".join((title or "").split())[:MAX_CHAT_TITLE_CHARS] or None
         try:
             config = resolve_config(request, self.workspace.load_settings(), self.workspace)
         except (ValueError, TypeError) as error:
             raise ApiError(422, "invalid", str(error)) from error
+        if config.kind == "custom" and title is None:
+            raise ApiError(422, "invalid", "A custom program needs a name")
         self.require_keys(config)
         self.require_setup(config)
 
@@ -335,7 +338,7 @@ class Conversations:
             directory = self.directory(chat_id)
             config = load_config(directory)
             if config is None:
-                raise ApiError(409, "unreadable", "This conversation's setup cannot be read, so it cannot be opened")
+                raise ApiError(409, "unreadable", "This program's setup cannot be read, so it cannot be opened")
             reopened = self._start(directory, config, None, keyless=bool(self.missing_keys(config)))
             self._open[chat_id] = reopened
 
@@ -377,7 +380,7 @@ class Conversations:
             handle = self.get(chat_id)
             if handle.chat.state != "idle":
                 raise ApiError(
-                    409, "busy", "The conversation is working. Change its model once it has finished, or stop it first."
+                    409, "busy", "The program is working. Change its model once it has finished, or stop it first."
                 )
             config = handle.config
             if model == config.model:
@@ -391,8 +394,8 @@ class Conversations:
                     raise ApiError(
                         422,
                         "unavailable",
-                        f"{error}, so this conversation's spending limit cannot be enforced with it. Choose a model "
-                        f"that is priced, or start a conversation with no limit.",
+                        f"{error}, so this program's spending limit cannot be enforced with it. Choose a model "
+                        f"that is priced, or start a program with no limit.",
                     ) from error
             return self._reopened_with(chat_id, handle, changed)
 
@@ -434,7 +437,7 @@ class Conversations:
                 raise ApiError(
                     409,
                     "busy",
-                    "The conversation is working. Choose scientists who are on its team, or wait until it has "
+                    "The program is working. Choose scientists who are on its team, or wait until it has "
                     "finished, or stop it first.",
                 )
 
@@ -647,6 +650,7 @@ class Conversations:
                 tools=(*chosen, *written),
                 late_tools=handle.connections.tools if handle.connections is not None else None,
                 skills=skills,
+                instructions=config.instructions,
                 max_cost=config.max_cost,
                 max_delegations=MAX_CHAT_DELEGATIONS if config.max_delegations is None else config.max_delegations,
                 max_rounds=MAX_CHAT_DELEGATION_ROUNDS if config.max_rounds is None else config.max_rounds,

@@ -210,7 +210,7 @@ test.describe("the skills of a conversation that has begun", () => {
     await box(page).fill("/skills");
     await box(page).press("Enter");
 
-    await expect(dialog(page).getByRole("heading", { name: "The skills of this conversation" })).toBeVisible();
+    await expect(dialog(page).getByRole("heading", { name: "The skills of this program" })).toBeVisible();
     await expect(dialog(page).getByTestId("skills-given")).toHaveText("2 skills");
     await expect(dialog(page).getByTestId("skill-given").locator("code")).toHaveText(["alpha-skill", "gamma-skill"]);
     await expect(dialog(page).getByText("Fits curves to titration data.")).toBeVisible();
@@ -240,7 +240,7 @@ test.describe("the skills of a conversation that has begun", () => {
     await box(page).fill("/skills");
     await box(page).press("Enter");
 
-    await expect(dialog(page).getByText("This conversation was given no skills.")).toBeVisible();
+    await expect(dialog(page).getByText("This program was given no skills.")).toBeVisible();
     expect(await accessibilityProblems(page)).toEqual([]);
   });
 });

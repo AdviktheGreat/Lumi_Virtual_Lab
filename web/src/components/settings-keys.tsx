@@ -202,7 +202,7 @@ export function KeysTab({ keys, onChanged }: { keys: Loaded<KeyStatuses>; onChan
         <Section title="Web search">
           <Aside>
             The lead searches the web with Exa when its key is set here, and with DuckDuckGo when it is not. DuckDuckGo
-            needs no key, but turns away a client that searches often. A key given here is used by every conversation
+            needs no key, but turns away a client that searches often. A key given here is used by every program
             from its next search, and is kept the way the keys above are.
           </Aside>
           <KeyForm row={webSearchRow(keys.value)} keychain={keys.value.keychain} onChanged={onChanged} />

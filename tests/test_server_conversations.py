@@ -244,6 +244,80 @@ class TestCreating:
         kept.close()
 
 
+class TestPrograms:
+    def test_a_custom_program_is_named_and_the_lead_is_given_its_instructions_in_every_message(
+        self, conversations: Conversations, fake_client: FakeClient
+    ) -> None:
+        handle = conversations.create(
+            {"team": [], "kind": "custom", "instructions": "  Always answer in verse.  "}, "Poetry"
+        )
+        fake_client.completions.responses = [text_response("Roses."), text_response("Violets.")]
+
+        say(handle, "First")
+        say(handle, "Second")
+
+        assert handle.chat.title == "Poetry"
+        assert handle.chat.instructions == "Always answer in verse."
+        assert (handle.config.kind, handle.config.instructions) == ("custom", "Always answer in verse.")
+        for call in fake_client.completions.calls:
+            assert "program of its own" in call["messages"][0]["content"]
+            assert "is done within them:\n\nAlways answer in verse." in call["messages"][0]["content"]
+        saved = json.loads((handle.directory / CONFIG_FILE_NAME).read_text())
+        assert (saved["kind"], saved["instructions"]) == ("custom", "Always answer in verse.")
+        assert handle.info()["config"]["kind"] == "custom"
+
+    def test_a_custom_program_opened_again_is_still_given_its_instructions(
+        self, workspace: Workspace, conversations: Conversations
+    ) -> None:
+        handle = conversations.create({"team": [], "kind": "custom", "instructions": "Be brief."}, "Terse")
+        conversations.close()
+
+        with_a_new_server = Conversations(workspace, check_keys=False)
+        try:
+            reopened = with_a_new_server.get(handle.id)
+
+            assert reopened.chat.instructions == "Be brief."
+            assert reopened.chat.title == "Terse"
+        finally:
+            with_a_new_server.close()
+
+    def test_a_custom_program_needs_a_name_and_instructions_and_is_not_made_without_them(
+        self, conversations: Conversations, workspace: Workspace
+    ) -> None:
+        for request, title, message in [
+            ({"kind": "custom", "instructions": "Be brief."}, None, "needs a name"),
+            ({"kind": "custom", "instructions": "Be brief."}, "   ", "needs a name"),
+            ({"kind": "custom"}, "Terse", "needs instructions"),
+        ]:
+            with pytest.raises(ApiError, match=message) as refused:
+                conversations.create({"team": [], **request}, title)
+            assert (refused.value.status, refused.value.code) == (422, "invalid")
+
+        assert directories(workspace) == []
+
+    def test_only_a_custom_program_has_instructions(self, conversations: Conversations, workspace: Workspace) -> None:
+        with pytest.raises(ApiError, match="Only a custom program has instructions"):
+            conversations.create({"team": [], "instructions": "Be brief."}, "Quick")
+        with pytest.raises(ApiError, match="begun as one of"):
+            conversations.create({"team": [], "kind": "campaign"}, "Quick")
+
+        assert directories(workspace) == []
+
+    def test_a_list_says_what_each_program_was_begun_as(self, conversations: Conversations) -> None:
+        quick = conversations.create({"team": []}, "Quick")
+        custom = conversations.create({"team": [], "kind": "custom", "instructions": "Be brief."}, "Terse")
+        old = conversations.create({"team": []}, "Old")
+        saved = json.loads((old.directory / CONFIG_FILE_NAME).read_text())
+        del saved["kind"], saved["instructions"]
+        (old.directory / CONFIG_FILE_NAME).write_text(json.dumps(saved))
+        lost = conversations.create({"team": []}, "Lost")
+        (lost.directory / CONFIG_FILE_NAME).unlink()
+
+        kinds = {item["id"]: item["kind"] for item in conversations.summaries()}
+
+        assert kinds == {quick.id: "quick_task", custom.id: "custom", old.id: "quick_task", lost.id: "quick_task"}
+
+
 class TestOpening:
     def test_a_conversation_that_is_open_is_the_same_every_time(self, conversations: Conversations) -> None:
         handle = conversations.create({"team": []})

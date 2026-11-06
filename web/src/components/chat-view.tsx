@@ -17,6 +17,7 @@ import { LimitsDialog } from "@/components/limits-dialog";
 import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { LeadBlock, Notice, ProblemNotice, TurnView } from "@/components/messages";
 import { PageHeader } from "@/components/page-header";
+import { InstructionsButton, InstructionsDialog } from "@/components/program-instructions";
 import { useServer } from "@/components/server-provider";
 import { SkillsDialog } from "@/components/skills-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -53,8 +54,8 @@ export function ChatNotFound() {
     <>
       <PageHeader />
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-        <h1 className="text-lg font-semibold">This conversation is not here</h1>
-        <p className="max-w-sm text-sm text-muted-foreground">It may have been deleted, or the address is not one of a conversation.</p>
+        <h1 className="text-lg font-semibold">This program is not here</h1>
+        <p className="max-w-sm text-sm text-muted-foreground">It may have been deleted, or the address is not one of a program.</p>
         <Button asChild variant="outline">
           <Link href="/">Start a new one</Link>
         </Button>
@@ -80,6 +81,7 @@ export function ChatView({ id }: { id: string }) {
   // What was written after /lab while it is being chosen who works on it, which is null while it is not
   const [labbing, setLabbing] = useState<string | null>(null);
   const [helping, setHelping] = useState(false);
+  const [instructing, setInstructing] = useState(false);
   const exporter = useExport(id, setProblem);
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
   const { scroller, atBottom, jump, onScroll } = useStickToBottom<HTMLDivElement>(transcript.lastId);
@@ -297,8 +299,11 @@ export function ChatView({ id }: { id: string }) {
       <CaughtUpProvider value={caughtUp}>
         <PageHeader>
           <h1 className="min-w-0 flex-1 truncate font-serif text-lg font-medium tracking-tight" data-testid="chat-title">
-            {title || (status.kind === "ready" ? status.info.title : "") || <span className="sr-only">Conversation</span>}
+            {title || (status.kind === "ready" ? status.info.title : "") || <span className="sr-only">Program</span>}
           </h1>
+          {status.kind === "ready" && status.info.config.kind === "custom" && (
+            <InstructionsButton onClick={() => setInstructing(true)} />
+          )}
           {label && (
             <Badge variant="secondary" className="gap-1.5 border-primary/35 bg-highlight text-highlight-foreground" data-testid="chat-state">
               <span className="size-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" aria-hidden />
@@ -306,7 +311,7 @@ export function ChatView({ id }: { id: string }) {
             </Badge>
           )}
           {cost && (
-            <span className="font-mono text-xs tabular-nums text-muted-foreground" title="Spent in this conversation">
+            <span className="font-mono text-xs tabular-nums text-muted-foreground" title="Spent in this program">
               {cost}
               {transcript.maxCost !== null && ` of ${formatCost(transcript.maxCost)}`}
             </span>
@@ -319,7 +324,7 @@ export function ChatView({ id }: { id: string }) {
           <div className="flex min-w-0 flex-1 flex-col">
             {connection === "closed" && (
               <div className="px-4 pt-3">
-                <Notice tone="error">The live connection to this conversation was lost. Reload the page to follow it again.</Notice>
+                <Notice tone="error">The live connection to this program was lost. Reload the page to follow it again.</Notice>
               </div>
             )}
 
@@ -327,7 +332,7 @@ export function ChatView({ id }: { id: string }) {
               <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto" data-testid="transcript">
                 <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6">
                   {status.kind === "loading" && transcript.turns.length === 0 && (
-                    <div className="flex flex-col gap-3" role="status" aria-busy="true" aria-label="Loading the conversation">
+                    <div className="flex flex-col gap-3" role="status" aria-busy="true" aria-label="Loading the program">
                       <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />
                       <Skeleton className="h-4 w-4/5" />
                       <Skeleton className="h-4 w-3/5" />
@@ -352,7 +357,7 @@ export function ChatView({ id }: { id: string }) {
                   ))}
                   {status.kind === "ready" && transcript.turns.length === 0 && connection !== "connecting" && (
                     <LeadBlock speaker={lead}>
-                      <p className="text-[15px] leading-7">This conversation has nothing in it yet. Ask something below.</p>
+                      <p className="text-[15px] leading-7">This program has nothing in it yet. Ask something below.</p>
                     </LeadBlock>
                   )}
                 </div>
@@ -432,6 +437,9 @@ export function ChatView({ id }: { id: string }) {
           <SkillsDialog kind="view" had={status.info.config.skills} onClose={() => setSkilling(false)} />
         )}
         {helping && <CommandsHelp place="chat" onClose={() => setHelping(false)} />}
+        {instructing && status.kind === "ready" && (
+          <InstructionsDialog name={title || status.info.title} instructions={status.info.config.instructions} onClose={() => setInstructing(false)} />
+        )}
         {choosingModel && model !== null && (
           <ModelDialog
             title="Change the model"

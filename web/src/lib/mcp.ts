@@ -90,6 +90,6 @@ export function describeSignIn(server: McpServer): string | null {
   if (server.signed_in === null) return null;
 
   return server.signed_in
-    ? "Signed in. Conversations use it without asking you."
-    : "Not signed in yet. A conversation that has it on asks you to sign in when you send its first message.";
+    ? "Signed in. Programs use it without asking you."
+    : "Not signed in yet. A program that has it on asks you to sign in when you send its first message.";
 }

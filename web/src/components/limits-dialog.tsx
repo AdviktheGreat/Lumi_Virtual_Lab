@@ -69,7 +69,7 @@ export function LimitsDialog({
           <DialogDescription>
             {begun
               ? "The spending limit holds from the lead's next request, even while it works. How much of the team's time the lead may ask for holds from the next message."
-              : "These hold for the conversation you begin. They can be changed from it, as it goes on."}
+              : "These hold for the program you begin. They can be changed from it, as it goes on."}
           </DialogDescription>
         </DialogHeader>
 
@@ -87,7 +87,7 @@ export function LimitsDialog({
             hint={
               spent !== null
                 ? `Spent so far: ${formatCost(spent)}. Leave it empty for no limit.`
-                : "The most the conversation may spend, the lead's requests and the team's. Leave it empty for no limit."
+                : "The most the program may spend, the lead's requests and the team's. Leave it empty for no limit."
             }
           >
             <div className="flex flex-wrap items-center gap-2">

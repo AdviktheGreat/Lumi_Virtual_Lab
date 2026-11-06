@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 const WORKING = new Set(["running", "pausing", "paused", "stopping"]);
 
 // What the focus goes to when the conversation it was on is deleted, which is the list, to be gone down from the top
-export const LIST_ID = "conversations";
+export const LIST_ID = "programs";
 
 function ChatLink({ chat, active }: { chat: ChatSummary; active: boolean }) {
   const working = WORKING.has(chat.state);
@@ -56,7 +56,14 @@ function ChatLink({ chat, active }: { chat: ChatSummary; active: boolean }) {
           <span role="img" aria-label="Cut off" className="size-2 shrink-0 rounded-full bg-warning" />
         )}
       </span>
-      <span className="truncate text-xs text-muted-foreground">{timeAgo(chat.updated_at ?? chat.created_at)}</span>
+      <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+        {chat.kind === "custom" && (
+          <span data-testid="program-kind" className="shrink-0 rounded-full bg-highlight px-1.5 text-[10px] font-medium leading-4 text-highlight-foreground">
+            Custom
+          </span>
+        )}
+        <span className="truncate">{timeAgo(chat.updated_at ?? chat.created_at)}</span>
+      </span>
     </Link>
   );
 }
@@ -119,7 +126,7 @@ function RenameForm({ chat, onDone }: { chat: ChatSummary; onDone: (focusBack: b
         }}
         // Not disabled, which would take the focus from it, and with it the Enter that tries again
         readOnly={saving}
-        aria-label="Conversation title"
+        aria-label="Program title"
         aria-invalid={problem !== null}
         autoComplete="off"
       />
@@ -190,7 +197,7 @@ function DeleteDialog({
         }}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete this conversation?</AlertDialogTitle>
+          <AlertDialogTitle>Delete this program?</AlertDialogTitle>
           <AlertDialogDescription>
             “{chat.title || UNTITLED}” is removed with its messages, its files, and what it ran. This cannot be undone.
             {WORKING.has(chat.state) && " It is at work now, and that is stopped."}
@@ -255,7 +262,7 @@ export function ChatRow({ chat, active }: { chat: ChatSummary; active: boolean }
             ref={trigger}
             variant="ghost"
             size="icon-xs"
-            aria-label="Conversation options"
+            aria-label="Program options"
             className={cn(
               "absolute right-1.5 top-2 opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100",
               // Kept where it is while the menu closes, because a menu whose button moves under it is left, which takes the

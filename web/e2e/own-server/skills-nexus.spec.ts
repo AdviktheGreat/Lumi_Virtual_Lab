@@ -32,7 +32,7 @@ const dialog = (page: Page) => page.getByRole("alertdialog");
 const detail = (page: Page, name: string) => page.getByRole("dialog", { name });
 const read = (page: Page, name: string) => card(page, name).locator("button[aria-haspopup='dialog']").click();
 const addButton = (page: Page, name: string) => card(page, name).getByRole("button", { name: `Add ${name}` });
-const switchOf = (page: Page, name: string) => card(page, name).getByRole("switch", { name: `Give new conversations ${name}` });
+const switchOf = (page: Page, name: string) => card(page, name).getByRole("switch", { name: `Give new programs ${name}` });
 
 async function kept(page: Page) {
   return (await page.request.get("/api/skills")).json();
@@ -124,7 +124,7 @@ test.describe("the Skills Nexus", () => {
     await addButton(page, "spatial-guess").click();
 
     await expect(dialog(page).getByRole("heading", { name: "Add spatial-guess?" })).toBeVisible();
-    await expect(dialog(page).getByText(/It adds about \d+ tokens to the start of every conversation/)).toBeVisible();
+    await expect(dialog(page).getByText(/It adds about \d+ tokens to the start of every program/)).toBeVisible();
     await expect(dialog(page).getByRole("list", { name: "About their licenses" }).getByRole("listitem")).toHaveText([
       "spatial-guess allows noncommercial use only.",
     ]);
@@ -161,7 +161,7 @@ test.describe("the Skills Nexus", () => {
     await category(page).selectOption({ label: "Genomics (2)" });
     await page.getByRole("button", { name: "Add these 2" }).click();
     await expect(dialog(page).getByRole("heading", { name: "Add 2 skills?" })).toBeVisible();
-    await expect(dialog(page).getByText(/Together they add about \d+ tokens to the start of every conversation/)).toBeVisible();
+    await expect(dialog(page).getByText(/Together they add about \d+ tokens to the start of every program/)).toBeVisible();
     await expect(dialog(page).getByRole("list", { name: "About their licenses" }).getByRole("listitem")).toHaveText([
       "cell-types states no license, so only the library's MIT license covers it.",
     ]);
@@ -192,7 +192,7 @@ test.describe("the Skills Nexus", () => {
     await dialog(page).getByRole("button", { name: "Add", exact: true }).click();
 
     await expect(page.getByTestId("skills-put-in")).toHaveText("Put in 1 skill.");
-    await expect(detail(page, "rna-counts").getByRole("switch", { name: "Give new conversations rna-counts" })).toHaveAttribute("aria-checked", "true");
+    await expect(detail(page, "rna-counts").getByRole("switch", { name: "Give new programs rna-counts" })).toHaveAttribute("aria-checked", "true");
     await expect(detail(page, "rna-counts").getByRole("button", { name: "Delete rna-counts" })).toBeVisible();
     expect((await kept(page)).skills.map((skill: { name: string }) => skill.name)).toEqual(["rna-counts"]);
   });

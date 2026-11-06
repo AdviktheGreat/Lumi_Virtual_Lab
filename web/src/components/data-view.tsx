@@ -25,7 +25,7 @@ export function DataView() {
   return (
     <PageFrame
       title="Data"
-      intro="What the lab can read when it runs code. What you give it here is in every conversation you start from then on, and not in one that is already going."
+      intro="What the lab can read when it runs code. What you give it here is in every program you start from then on, and not in one that is already going."
     >
       <PageSection
         title="Your data"
@@ -43,7 +43,7 @@ export function DataView() {
 
       <PageSection
         title="Your software"
-        intro="Software you have that the code may use. The lab does not install it: it has to be where the code runs, which a conversation checks when its code first runs, and tells the lead if it is not."
+        intro="Software you have that the code may use. The lab does not install it: it has to be where the code runs, which a program checks when its code first runs, and tells the lead if it is not."
       >
         <Given given={own} label="Looking at your software" failure={GIVEN_FAILED} onRetry={reload}>
           {(value) => <OwnSoftwareSection own={value} onChanged={set} />}

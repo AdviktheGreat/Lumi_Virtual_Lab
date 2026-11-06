@@ -16,7 +16,7 @@ export function SkillSwitch({ skill, onTurn }: { skill: HubSkill; onTurn: (enabl
       type="button"
       role="switch"
       aria-checked={on}
-      aria-label={`Give new conversations ${skill.name}`}
+      aria-label={`Give new programs ${skill.name}`}
       variant={on ? "secondary" : "outline"}
       size="sm"
       className={cn("rounded-full px-3", on ? "text-foreground" : "text-muted-foreground")}

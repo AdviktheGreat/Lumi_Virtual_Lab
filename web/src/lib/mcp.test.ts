@@ -158,8 +158,8 @@ describe("what a check of a server found", () => {
 
 describe("a server's sign-in", () => {
   it("is said for a server that is signed in to, whether or not it has been", () => {
-    expect(describeSignIn(server("a", { signed_in: true }))).toBe("Signed in. Conversations use it without asking you.");
-    expect(describeSignIn(server("a", { signed_in: false }))).toMatch(/^Not signed in yet\. A conversation .* when you send its first message\.$/);
+    expect(describeSignIn(server("a", { signed_in: true }))).toBe("Signed in. Programs use it without asking you.");
+    expect(describeSignIn(server("a", { signed_in: false }))).toMatch(/^Not signed in yet\. A program .* when you send its first message\.$/);
   });
 
   it("is not said for a server that is not signed in to", () => {

@@ -80,7 +80,7 @@ export function SettingsDialog({
       setSaved(kept);
       setDraft(draftOf(kept));
       setSettings(kept);
-      setNotice("Saved. New conversations use these settings.");
+      setNotice("Saved. New programs use these settings.");
     } catch (error) {
       report(error);
       setProblem(describeError(error));
@@ -119,7 +119,7 @@ export function SettingsDialog({
             </Button>
           </div>
           <DialogDescription>
-            What the model, the spending, and the code are for conversations you start from now on. Ones already begun keep
+            What the model, the spending, and the code are for programs you start from now on. Ones already begun keep
             what they began with.
           </DialogDescription>
         </DialogHeader>

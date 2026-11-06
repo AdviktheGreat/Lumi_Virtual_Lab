@@ -23,7 +23,7 @@ test.describe("a conversation with the lead", () => {
     const id = await ask(page, question);
     await answered(page, "This answer is from a script");
 
-    const link = page.getByRole("navigation", { name: "Conversations" }).getByRole("link", { name: question });
+    const link = page.getByRole("navigation", { name: "Programs" }).getByRole("link", { name: question });
     await expect(link).toHaveAttribute("href", `/chat?id=${id}`);
     await expect(link).toHaveAttribute("aria-current", "page");
     // The list is told as soon as the turn is over, and does not wait to be looked at again
@@ -194,7 +194,7 @@ test.describe("a conversation with the lead", () => {
   test("a conversation that is not there says so", async ({ page }) => {
     await page.goto("/chat?id=2026-01-01_0000_nothing-here");
 
-    await expect(page.getByRole("heading", { name: "This conversation is not here" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "This program is not here" })).toBeVisible();
     await page.getByRole("link", { name: "Start a new one" }).click();
     await expect(page.getByRole("heading", { name: "What would you like to investigate?" })).toBeVisible();
   });
@@ -207,7 +207,7 @@ test.describe("a conversation with the lead", () => {
 
     await page.goto("/chat");
 
-    await expect(page.getByRole("heading", { name: "This conversation is not here" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "This program is not here" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Start a new one" })).toBeVisible();
     expect(asked).toEqual([]);
   });
@@ -221,7 +221,7 @@ test.describe("a conversation with the lead", () => {
 
     const id = await ask(page, "slow: a reply the list must catch the end of");
     const working = page
-      .getByRole("navigation", { name: "Conversations" })
+      .getByRole("navigation", { name: "Programs" })
       .locator(`a[href="/chat?id=${id}"]`)
       .getByRole("img", { name: "Working" });
     await expect(working).toBeVisible();

@@ -42,7 +42,7 @@ function RunRow({ run }: { run: PaperRunEntry }) {
           </Link>
         </h3>
         {run.job_kind !== null && <Badge variant="secondary">{run.job_kind === "papers" ? "Reading" : "Writing functions"}</Badge>}
-        {run.given && <Badge variant="outline">Functions given to conversations</Badge>}
+        {run.given && <Badge variant="outline">Functions given to programs</Badge>}
       </div>
       <p className="text-xs text-muted-foreground">{describeSource(run.source)}</p>
       <p className="text-xs text-muted-foreground">{runFacts(run)}</p>

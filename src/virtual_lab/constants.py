@@ -484,6 +484,11 @@ MAX_UPLOAD_NAME_BYTES = 200
 # The most characters of the researcher's first message used as the conversation's title
 MAX_CHAT_TITLE_CHARS = 80
 
+# What a program, which is a conversation with its files, can be begun as: a quick task, or a custom
+# program of the researcher's own naming, with instructions of up to this many characters
+PROGRAM_KINDS = ("quick_task", "custom")
+MAX_PROGRAM_INSTRUCTION_CHARS = 8_000
+
 # Identifies this library to the services it queries. NCBI and EMBL-EBI both ask clients to say
 # who they are, and an unidentified client is the first to be throttled.
 WEB_USER_AGENT = "virtual-lab (https://github.com/zou-group/virtual_lab)"

@@ -5,7 +5,7 @@ test.describe("the shell", () => {
     await ask(page, "The first of two conversations");
     await answered(page, "This answer is from a script");
 
-    await page.getByRole("link", { name: "New chat", exact: true }).click();
+    await page.getByRole("link", { name: "New program", exact: true }).click();
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue("");
 
@@ -13,7 +13,7 @@ test.describe("the shell", () => {
     await answered(page, "This answer is from a script");
 
     const titles = await page
-      .getByRole("navigation", { name: "Conversations" })
+      .getByRole("navigation", { name: "Programs" })
       .getByRole("link")
       .allInnerTexts();
     const first = titles.findIndex((title) => title.includes("The first of two conversations"));
@@ -108,7 +108,7 @@ test.describe("the shell", () => {
   });
 
   test("the conversations can be hidden and shown, the rail stays, and the choice is kept", async ({ page }) => {
-    const conversations = page.getByRole("navigation", { name: "Conversations" });
+    const conversations = page.getByRole("navigation", { name: "Programs" });
     const pages = page.getByRole("navigation", { name: "Pages" });
     await expect(conversations).toBeVisible();
     await expect(pages).toBeVisible();
@@ -135,11 +135,11 @@ test.describe("on a narrow screen", () => {
     const sidebar = page.getByRole("complementary", { name: "Sidebar" });
     await expect(sidebar).toBeHidden();
 
-    await page.getByRole("button", { name: "Show the conversations" }).click();
+    await page.getByRole("button", { name: "Show the programs" }).click();
     await expect(sidebar).toBeVisible();
     await expect(sidebar).toBeInViewport();
 
-    await page.getByRole("link", { name: "New chat", exact: true }).click();
+    await page.getByRole("link", { name: "New program", exact: true }).click();
     await expect(page.getByRole("heading", { name: HOME_HEADING })).toBeVisible();
     await expect(sidebar).toBeHidden();
   });
@@ -147,12 +147,12 @@ test.describe("on a narrow screen", () => {
   test("the drawer closes with Escape, and with a tap outside it", async ({ page }) => {
     const sidebar = page.getByRole("complementary", { name: "Sidebar" });
 
-    await page.getByRole("button", { name: "Show the conversations" }).click();
+    await page.getByRole("button", { name: "Show the programs" }).click();
     await expect(sidebar).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(sidebar).toBeHidden();
 
-    await page.getByRole("button", { name: "Show the conversations" }).click();
+    await page.getByRole("button", { name: "Show the programs" }).click();
     await expect(sidebar).toBeVisible();
     await page.mouse.click(380, 400);
     await expect(sidebar).toBeHidden();

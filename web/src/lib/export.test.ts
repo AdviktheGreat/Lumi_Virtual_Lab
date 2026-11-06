@@ -17,7 +17,7 @@ describe("the name a document is saved as", () => {
 
   it("is not read from the middle of another parameter", () => {
     expect(exportNameOf("attachment; filename=\"x-filename*=utf-8''evil.html\"", "html")).toBe("x-filename*=utf-8''evil.html");
-    expect(exportNameOf("attachment; xfilename=\"other.html\"", "html")).toBe("conversation.html");
+    expect(exportNameOf("attachment; xfilename=\"other.html\"", "html")).toBe("program.html");
   });
 
   it("is the one that is not ASCII where both are sent", () => {
@@ -26,23 +26,23 @@ describe("the name a document is saved as", () => {
 
   it("is the plain one where the other is not encoded as it says", () => {
     expect(exportNameOf("attachment; filename*=utf-8''100%.html; filename=\"plan.html\"", "html")).toBe("plan.html");
-    expect(exportNameOf("attachment; filename*=utf-8''100%.html", "html")).toBe("conversation.html");
+    expect(exportNameOf("attachment; filename*=utf-8''100%.html", "html")).toBe("program.html");
   });
 
   it("is not a path or a hidden file, and has no control characters in it", () => {
-    expect(exportNameOf("attachment; filename*=utf-8''..%2F..%2Fetc%2Fpasswd", "html")).toBe("conversation.html");
+    expect(exportNameOf("attachment; filename*=utf-8''..%2F..%2Fetc%2Fpasswd", "html")).toBe("program.html");
     expect(exportNameOf("attachment; filename*=utf-8''a%2Fb%5Cc.html", "html")).toBe("a-b-c.html");
     expect(exportNameOf("attachment; filename*=utf-8''a%0D%0Ab.html", "html")).toBe("a-b.html");
-    expect(exportNameOf("attachment; filename*=utf-8''.html", "html")).toBe("conversation.html");
+    expect(exportNameOf("attachment; filename*=utf-8''.html", "html")).toBe("program.html");
   });
 
   it("is made for what it is where the server sent none", () => {
-    expect(exportNameOf(null, "html")).toBe("conversation.html");
-    expect(exportNameOf(null, "pdf")).toBe("conversation.pdf");
-    expect(exportNameOf(null, "ipynb")).toBe("conversation.ipynb");
-    expect(exportNameOf("attachment", "pdf")).toBe("conversation.pdf");
-    expect(exportNameOf("attachment; filename=", "pdf")).toBe("conversation.pdf");
-    expect(exportNameOf('attachment; filename=""', "pdf")).toBe("conversation.pdf");
+    expect(exportNameOf(null, "html")).toBe("program.html");
+    expect(exportNameOf(null, "pdf")).toBe("program.pdf");
+    expect(exportNameOf(null, "ipynb")).toBe("program.ipynb");
+    expect(exportNameOf("attachment", "pdf")).toBe("program.pdf");
+    expect(exportNameOf("attachment; filename=", "pdf")).toBe("program.pdf");
+    expect(exportNameOf('attachment; filename=""', "pdf")).toBe("program.pdf");
   });
 });
 

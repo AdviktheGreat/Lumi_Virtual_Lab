@@ -132,7 +132,7 @@ export function SkillInstall({ onPutIn }: { onPutIn: (result: SkillsPutIn) => vo
             <AlertDialogTitle>Put in the skills of {address ?? "this folder"}?</AlertDialogTitle>
             <AlertDialogDescription>
               A skill is instructions that the lead follows, and it may come with scripts that code can run in a
-              conversation. Put in only those you trust. They are copied, so a later change at{" "}
+              program. Put in only those you trust. They are copied, so a later change at{" "}
               {address === null ? "the folder" : "the repository"} is not picked up.
               {from !== null && "path" in from && <> The folder is {from.path}.</>}
             </AlertDialogDescription>

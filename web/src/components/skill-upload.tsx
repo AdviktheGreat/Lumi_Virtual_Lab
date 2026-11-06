@@ -184,7 +184,7 @@ function UploadBody({
           {result.installed.length > 0 && (
             <p className="text-xs text-muted-foreground">
               {result.installed.map((skill) => skill.name).join(", ")} {result.installed.length === 1 ? "is" : "are"} now with the
-              lab&apos;s skills, and on, so the next conversation is given {result.installed.length === 1 ? "it" : "them"}.
+              lab&apos;s skills, and on, so the next program is given {result.installed.length === 1 ? "it" : "them"}.
             </p>
           )}
         </div>
@@ -290,7 +290,7 @@ function UploadBody({
         </div>
       )}
       <p className="text-xs text-muted-foreground">
-        A skill is instructions that the lead follows, and it may come with scripts that code can run in a conversation. Upload
+        A skill is instructions that the lead follows, and it may come with scripts that code can run in a program. Upload
         only skills you trust. They are copied into the lab, so a later change to the folder is not picked up.
       </p>
       <DialogFooter>
