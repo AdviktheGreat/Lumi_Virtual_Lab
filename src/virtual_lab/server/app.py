@@ -97,6 +97,7 @@ from virtual_lab.constants import (
     MAX_CHAT_DELEGATION_ROUNDS,
     MAX_CHAT_DELEGATIONS,
     MAX_CHAT_TITLE_CHARS,
+    MAX_PROGRAM_INSTRUCTION_CHARS,
     MAX_UPLOAD_BYTES,
 )
 from virtual_lab.directives import MAX_LAB_MEMBERS, MAX_LAB_QUESTION_CHARS, MAX_LAB_QUESTIONS, MAX_LAB_TITLE_CHARS
@@ -196,6 +197,8 @@ class ChatBody(RequestModel):
     """A new conversation. What is left out is what the settings say, or the library's lead and team."""
 
     title: str | None = Field(None, max_length=500)
+    kind: Literal["quick_task", "custom"] | None = None
+    instructions: str | None = Field(None, max_length=MAX_PROGRAM_INSTRUCTION_CHARS * 2)
     model: str = ""
     lead: str | ScientistBody | None = None
     team: list[str | ScientistBody] | None = None
@@ -1131,7 +1134,7 @@ def create_app(
     def rename_chat(chat_id: str, body: RenameBody) -> dict[str, Any]:
         title = " ".join(body.title.split())[:MAX_CHAT_TITLE_CHARS]
         if not title:
-            raise ApiError(422, "invalid", "A conversation needs a title with something in it")
+            raise ApiError(422, "invalid", "A program needs a name with something in it")
         handle = conversations.get(chat_id)
         handle.chat.rename(title)
 

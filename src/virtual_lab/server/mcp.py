@@ -303,7 +303,7 @@ def check_connection(
         if sign_in_kept(name, given) is False:
             return {
                 **failed,
-                "reason": f"{title} is not signed in to yet. A conversation that has it on asks you to sign in, "
+                "reason": f"{title} is not signed in to yet. A program that has it on asks you to sign in, "
                 "when you send its first message.",
             }
         opened = connect(

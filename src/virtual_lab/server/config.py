@@ -17,6 +17,8 @@ from virtual_lab.constants import (
     CEILING_CHAT_DELEGATION_ROUNDS,
     CEILING_CHAT_DELEGATIONS,
     CEILING_CHAT_TOOL_ITERATIONS,
+    MAX_PROGRAM_INSTRUCTION_CHARS,
+    PROGRAM_KINDS,
 )
 from virtual_lab.execution import ExecutionError, check_mountable
 from virtual_lab.llm import detect_source
@@ -102,6 +104,8 @@ class ChatConfig:
     :param max_tool_iterations: The most tool calls and runs of code the lead may make in answering one message, or
         None for what it is given unless it is told otherwise.
     :param check_results: Whether the lead is asked to check its result before answering a message it ran code for.
+    :param kind: What the program was begun as: "quick_task", or "custom", which has a name and instructions of its own.
+    :param instructions: What the lead is told throughout a custom program, which is empty for any other.
     """
 
     model: str
@@ -121,6 +125,8 @@ class ChatConfig:
     max_rounds: int | None = None
     max_tool_iterations: int | None = None
     check_results: bool = True
+    kind: str = "quick_task"
+    instructions: str = ""
 
     def lead_agent(self) -> Agent:
         return agent_from({**self.lead, "model": self.model})
@@ -155,6 +161,8 @@ class ChatConfig:
             "max_rounds": self.max_rounds,
             "max_tool_iterations": self.max_tool_iterations,
             "check_results": self.check_results,
+            "kind": self.kind,
+            "instructions": self.instructions,
         }
 
     @classmethod
@@ -186,6 +194,9 @@ class ChatConfig:
             max_tool_iterations=data.get("max_tool_iterations"),
             # A conversation begun before the lead could be asked to check its results is asked to, as any is now
             check_results=bool(data.get("check_results", True)),
+            # A conversation begun before there were kinds of program is a quick task
+            kind=str(data["kind"]) if data.get("kind") in PROGRAM_KINDS else "quick_task",
+            instructions=str(data.get("instructions") or ""),
         )
 
 
@@ -220,7 +231,7 @@ def check_data_lake(value: Any, workspace: Workspace) -> str:
         raise ValueError(str(error)) from error
     chats = workspace.chats_dir
     if path.is_relative_to(chats) or chats.is_relative_to(path):
-        raise ValueError(f"The data lake cannot be where conversations are kept, {chats}, or hold them")
+        raise ValueError(f"The data lake cannot be where programs are kept, {chats}, or hold them")
 
     return str(path)
 
@@ -345,6 +356,36 @@ def check_results_choice(value: Any) -> bool:
     return value
 
 
+def check_program(kind: Any, instructions: Any) -> tuple[str, str]:
+    """What a program is begun as, and its instructions, checked: a quick task, which has none, or a custom program,
+    which has some.
+
+    :raises ValueError: If the kind is not one there is, a custom program has no instructions or too many, or any
+        other has some.
+    """
+    if kind is None:
+        kind = "quick_task"
+    if kind not in PROGRAM_KINDS:
+        raise ValueError(f"A program is begun as one of {', '.join(PROGRAM_KINDS)}, not {kind!r}")
+    if instructions is not None and not isinstance(instructions, str):
+        raise ValueError(f"The instructions of a program are text, not {instructions!r}")
+    written = (instructions or "").strip()
+    if kind != "custom":
+        if written:
+            raise ValueError("Only a custom program has instructions of its own")
+
+        return kind, ""
+    if not written:
+        raise ValueError("A custom program needs instructions")
+    if len(written) > MAX_PROGRAM_INSTRUCTION_CHARS:
+        raise ValueError(
+            f"The instructions of a program are at most {MAX_PROGRAM_INSTRUCTION_CHARS:,} characters, "
+            f"and these are {len(written):,}"
+        )
+
+    return kind, written
+
+
 def check_limits(changes: Mapping[str, Any]) -> dict[str, Any]:
     """The limits of a conversation that a request gives, checked: the most it may spend, the most team sessions the
     lead may start in answering a message, and the most rounds of discussion it may ask one for.
@@ -376,7 +417,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         "lead" and each of "team", by title or described, "code" with any of where, sandbox, network, python,
         and resources, "max_cost" (null for no limit), "max_delegations", "max_rounds" and "max_tool_iterations"
         (null for what the lead is given unless it is told otherwise), "check_results" (whether the lead is asked to
-        check a result before answering, which it is unless this is false), "stream", "commercial_mode", "tools", the
+        check a result before answering, which it is unless this is false), "kind" ("quick_task", or "custom", which
+        needs "instructions"), "stream", "commercial_mode", "tools", the
         names of the library's tools to give, which are all but those the workspace has turned off, "mcp", the names
         of the MCP servers to give, which are those the workspace has turned on, and "data" and "software", the
         names of what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of
@@ -435,6 +477,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         turned_off = workspace.load_disabled_skills()
         skills = [skill.name for skill in found.skills if skill.name not in turned_off]
 
+    kind, instructions = check_program(request.get("kind"), request.get("instructions"))
+
     return ChatConfig(
         model=model,
         lead=lead,
@@ -453,6 +497,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         max_rounds=allowed.get("max_rounds"),
         max_tool_iterations=check_tool_iterations(request.get("max_tool_iterations")),
         check_results=check_results_choice(request.get("check_results")),
+        kind=kind,
+        instructions=instructions,
     )
 
 

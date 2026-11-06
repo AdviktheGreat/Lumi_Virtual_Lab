@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
   await page.reload();
 });
 
-const SAVED = "Saved. New conversations use these settings.";
+const SAVED = "Saved. New programs use these settings.";
 
 test.describe("the settings", () => {
   test("open from the sidebar, show what they are, and close with the button or with Escape, giving the focus back", async ({ page }) => {
@@ -598,7 +598,7 @@ test.describe("on a narrow screen", () => {
   test.use({ viewport: { width: 390, height: 700 } });
 
   test("open from the drawer, fit the screen, and give the focus back", async ({ page }) => {
-    await page.getByRole("button", { name: "Show the conversations" }).click();
+    await page.getByRole("button", { name: "Show the programs" }).click();
     const gear = page.getByRole("button", { name: "Settings", exact: true });
     await gear.click();
 

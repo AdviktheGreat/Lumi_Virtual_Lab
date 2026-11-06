@@ -271,7 +271,7 @@ test.describe("a server that is signed in to", () => {
 
     const dialog = await openTools(page);
 
-    await expect(signIn(dialog)).toHaveText("Signed in. Conversations use it without asking you.");
+    await expect(signIn(dialog)).toHaveText("Signed in. Programs use it without asking you.");
     await expect(row(dialog, "gate").getByRole("button", { name: "Sign out of gate" })).toBeVisible();
   });
 

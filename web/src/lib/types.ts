@@ -35,7 +35,14 @@ export interface CodeSetup {
   forward_env: string[];
 }
 
+// What a program is begun as: a quick task is a conversation with the lead, and a custom program is a named one with
+// instructions of its own
+export type ProgramKind = "quick_task" | "custom";
+
 export interface ChatConfig {
+  kind: ProgramKind;
+  // What a custom program was told to do in all that it does, which a program of any other kind has none of
+  instructions: string;
   model: string;
   lead: Scientist;
   team: Scientist[];
@@ -68,6 +75,7 @@ export interface ChatSummary {
   created_at: string | null;
   updated_at: string | null;
   state: ListedChatState;
+  kind: ProgramKind;
   turns: number;
   spent: number | null;
   max_cost: number | null;
@@ -110,6 +118,8 @@ export interface LabChoice {
 // What a new conversation is set up with: anything left out is what the settings say
 export interface NewChat {
   title?: string;
+  kind?: ProgramKind;
+  instructions?: string;
   model?: string;
   lead?: string | Scientist;
   team?: (string | Scientist)[];

@@ -9,7 +9,7 @@ API they talk to, so there is nothing to run but the server. To use the interfac
 
 | Path | What is there |
 | --- | --- |
-| `src/app` | The pages: `/` starts a conversation, `/chat?id=…` is one |
+| `src/app` | The pages: `/` begins a program, `/chat?id=…` is one |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
 | `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, the scientists, and the tools; and what there is to set up for code in Docker, and the jobs that build and fetch it; and the MCP servers, what a check of one found and whether it is signed in to, and what they and their tools ask of the researcher |
 | `e2e` | Playwright tests, and the scripted server they run against |
@@ -44,9 +44,27 @@ virtual-lab-server --static-dir out
 The server turns away any page that is not its own, so `next dev` on another port cannot talk to it: rebuild instead,
 which takes seconds.
 
-## The list of conversations
+## Programs
 
-The sidebar lists every conversation under the day it was last at work (Today, Yesterday, Previous 7 days, Earlier, by
+A program is one conversation with the lead, with its files and what it ran. The interface calls it a program everywhere
+(the sidebar, the menus, the messages), while the library and the API still say conversation, and keep `/chat` and
+`/api/chats`. A program is begun as one of two kinds, which the home page offers above the box, and which the server
+keeps in the program's `config` as `kind`:
+
+- **Quick task** is the default: ask the lead for something and follow it through. Nothing else is asked for.
+- **Custom program** has a name and instructions of its own, and may have a spending limit. The name is what the
+  program is called from the start (the server keeps it as the title, and a rename changes it). The instructions, up to
+  8,000 characters, are given to the lead with every message, and it does what is asked within them. They are kept in
+  `config.instructions` and cannot be changed once the program has begun. Sending without a name or instructions begins
+  nothing: the form says what is missing and puts the focus on it (`src/lib/programs.ts` checks, as the server does). The
+  spending limit is chosen in the same panel as `/budget`, and is the settings' where none was chosen.
+
+In the sidebar a custom program is marked "Custom", and its header has a button of the same name that shows the
+instructions it was begun with. A program with no title yet is listed as "Untitled program".
+
+## The list of programs
+
+The sidebar lists every program under the day it was last at work (Today, Yesterday, Previous 7 days, Earlier, by
 the reader's own calendar), the latest first, and looks again every few seconds and whenever the page is shown. With
 eight or more there is a search box, which finds the titles that have all the words typed, in any order and whatever
 their case; Escape empties it.
@@ -61,7 +79,7 @@ already is as good as deleted.
 
 ## Data
 
-The sidebar has a link to each page besides the conversations, under New chat; the one that is open is marked as the
+The sidebar has a link to each page besides the programs, under New program; the one that is open is marked as the
 current page. The Data page (`/data`) is where the lab is given what it works on, in three parts.
 
 - **Your data** is the files and folders the person gave the lab. A file is uploaded, and the lab keeps its own copy
@@ -400,6 +418,7 @@ a word in it:
 | `tool:unknown`, `tool:resources` | Calls a tool it does not have, or looks for resources |
 | `tool:files` | Looks at the file attached to the conversation, `counts.csv`, with the library's own tools for that |
 | `tool:offered` | Answers with the names of the tools the model was offered, which is how a test sees what the settings gave it |
+| `instructions:` | Answers with the instructions of a custom program that the lead was given, or that it was given none (`e2e/programs.spec.ts`) |
 | `mcp:echo`, `count`, `both`, `order`, `confirm`, `signed`, `gated` | Calls the tools of the test server that the tests of `e2e/mcp` set up as `genes` (or `vault`, for `signed`, and `gate`, for `gated`): `echo`, `count`, `count` and then `echo`, `order` (which asks what to order), and `confirm` (which asks yes or no) |
 | `pdf:unavailable` | Has saving the conversation as a PDF fail, as it does where WeasyPrint is not installed (the PDF is otherwise made by a stand-in that needs no WeasyPrint) |
 | `lab:team` | Brings in the team for a round of discussion, in which the scientists answer as the script says |

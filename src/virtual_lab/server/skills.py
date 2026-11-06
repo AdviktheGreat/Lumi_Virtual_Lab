@@ -526,7 +526,7 @@ class Skills:
                     409,
                     "not_yours",
                     f"{name} comes with the lab, so it cannot be deleted. Turn it off here to leave it out of new "
-                    "conversations, or put in a skill of the same name, which is used in its place.",
+                    "programs, or put in a skill of the same name, which is used in its place.",
                 )
             if target is None:
                 raise ApiError(

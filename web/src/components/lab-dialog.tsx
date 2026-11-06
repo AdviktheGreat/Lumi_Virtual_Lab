@@ -243,7 +243,7 @@ function LabForm({
         </fieldset>
         {joins.length > 0 && (
           <Aside>
-            {joins.join(", ")} {joins.length === 1 ? "is" : "are"} not on this conversation&apos;s team, and {joins.length === 1 ? "joins" : "join"} it.
+            {joins.join(", ")} {joins.length === 1 ? "is" : "are"} not on this program&apos;s team, and {joins.length === 1 ? "joins" : "join"} it.
           </Aside>
         )}
 

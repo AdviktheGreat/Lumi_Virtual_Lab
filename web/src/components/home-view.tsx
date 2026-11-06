@@ -13,6 +13,7 @@ import { LimitsDialog } from "@/components/limits-dialog";
 import { Notice, ProblemNotice } from "@/components/messages";
 import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { PageHeader } from "@/components/page-header";
+import { PROGRAM_INSTRUCTIONS_ID, PROGRAM_NAME_ID, ProgramStart } from "@/components/program-start";
 import { useServer } from "@/components/server-provider";
 import { useSettings } from "@/components/settings-provider";
 import { SkillsDialog } from "@/components/skills-dialog";
@@ -21,6 +22,8 @@ import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
 import { isDirective, written, type Invocation } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
+import { formatAmount } from "@/lib/limits";
+import { checkProgram, type ProgramDraft, type ProgramProblems } from "@/lib/programs";
 import { choiceButtonText, choiceKept, choiceStart, vanished } from "@/lib/skills";
 import { DEFAULT_LEAD_TITLE } from "@/lib/team-choice";
 import { useAttachments } from "@/lib/use-attachments";
@@ -64,6 +67,9 @@ export function HomeView() {
   // What was written after /lab while it is being chosen who works on it, which is null while it is not
   const [labbing, setLabbing] = useState<string | null>(null);
   const [helping, setHelping] = useState(false);
+  // What it is to be begun as, and what is wrong with what was typed of it, which is shown once it has been tried to begin it
+  const [program, setProgram] = useState<ProgramDraft>({ kind: "quick_task", name: "", instructions: "" });
+  const [shown, setShown] = useState<ProgramProblems>({});
   // There is no conversation to send files to until the message is, so they are held until then
   const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
 
@@ -78,6 +84,7 @@ export function HomeView() {
     let chat: ChatInfo | null = null;
     try {
       chat = await api.createChat({
+        ...checkProgram(program).begin,
         ...(chosen === null ? {} : { model: chosen }),
         ...limitsChosen,
         ...(skillsChosen === null ? {} : { skills: skillsChosen }),
@@ -107,6 +114,7 @@ export function HomeView() {
 
   // A conversation is begun with what is in the box, or with a command, which is given with the message that begins it
   async function start(command?: Invocation) {
+    if (!programReady()) return;
     const text = command ? command.arg.trim() : draft.trim();
     setSending(true);
     setProblem(null);
@@ -119,6 +127,16 @@ export function HomeView() {
       await forgetGoneSkills();
       setSending(false);
     }
+  }
+
+  // Whether what was typed of the program is enough to begin it, which if it is not is shown, with the focus on the first of it
+  function programReady(): boolean {
+    const { problems } = checkProgram(program);
+    setShown(problems);
+    if (problems.name === undefined && problems.instructions === undefined) return true;
+    document.getElementById(problems.name === undefined ? PROGRAM_INSTRUCTIONS_ID : PROGRAM_NAME_ID)?.focus();
+
+    return false;
   }
 
   // The same, from the panel that chose who is to work on it, which stays open to be changed where it could not be begun
@@ -143,14 +161,25 @@ export function HomeView() {
   const noCode = ready !== null && ready.code === "none" ? "code is turned off in the settings" : null;
   const directives = ready === null ? null : { code: noCode, plot: noCode };
 
+  // What a custom program may spend, in words, as it will be where nothing was chosen for it
+  const spendLimit = "max_cost" in limitsChosen ? (limitsChosen.max_cost ?? null) : (ready?.max_cost ?? null);
+  const spending = spendLimit === null ? "Spending limit: none" : `Spending limit: $${formatAmount(spendLimit)}`;
+
   function run(invocation: Invocation) {
     const { name, arg } = invocation;
-    if (name === "lab") setLabbing(arg);
-    else if (isDirective(name)) void start(invocation);
-    else if (name === "budget") setLimiting(true);
-    else if (name === "model") setChoosing(true);
-    else if (name === "skills") setSkilling(true);
-    else if (name === "help") setHelping(true);
+    if (name === "lab") {
+      if (programReady()) setLabbing(arg);
+    } else if (isDirective(name)) {
+      void start(invocation);
+    } else if (name === "budget") {
+      setLimiting(true);
+    } else if (name === "model") {
+      setChoosing(true);
+    } else if (name === "skills") {
+      setSkilling(true);
+    } else if (name === "help") {
+      setHelping(true);
+    }
   }
 
   return (
@@ -168,6 +197,18 @@ export function HomeView() {
                 Ask the lead scientist. When a question needs more expertise, the lead brings in the lab&apos;s team.
               </p>
             </div>
+
+            <ProgramStart
+              draft={program}
+              onChange={(next) => {
+                setProgram(next);
+                setShown({});
+              }}
+              problems={shown}
+              disabled={sending}
+              spending={spending}
+              onSpending={() => setLimiting(true)}
+            />
 
             <div className="flex flex-col gap-2">
               {problem && <ProblemNotice problem={problem} />}
@@ -215,7 +256,7 @@ export function HomeView() {
           {choosing && model !== null && (
             <ModelDialog
               title="Choose the model"
-              description="The lead and the team of this conversation answer with it. You can change it later, from the conversation."
+              description="The lead and the team of this program answer with it. You can change it later, from the program."
               current={model}
               onChoose={async (next) => {
                 setChosen(next);

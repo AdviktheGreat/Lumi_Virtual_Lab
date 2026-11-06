@@ -731,7 +731,7 @@ describe("a conversation as a document", () => {
     const { file, name } = await api.exportChat("a", "pdf");
 
     expect(fetch).toHaveBeenCalledWith("/api/chats/a/export?format=pdf", { signal: undefined });
-    expect(name).toBe("conversation.pdf");
+    expect(name).toBe("program.pdf");
     expect(file.size).toBe(8);
   });
 

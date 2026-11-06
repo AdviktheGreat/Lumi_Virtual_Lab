@@ -217,9 +217,9 @@ export function tokensSaid(chars: number): string {
 // What listing the skills that are on takes of every conversation, as a person reads it, and whether there is too little
 // room for it, so that descriptions are cut
 export function catalogSaid(catalog: SkillsCatalog): { text: string; tight: boolean } {
-  if (catalog.skills === 0) return { text: "No skill is on, so no conversation begins with a list of skills.", tight: false };
+  if (catalog.skills === 0) return { text: "No skill is on, so no program begins with a list of skills.", tight: false };
   const takes = catalog.skills === 1 ? "The skill that is on takes" : `The ${catalog.skills.toLocaleString("en-US")} skills that are on take`;
-  const text = `${takes} ${tokensSaid(catalog.chars)} of the start of every conversation.`;
+  const text = `${takes} ${tokensSaid(catalog.chars)} of the start of every program.`;
   const tight = catalog.without_description > 0 || catalog.description_chars < DESCRIPTION_LISTED;
   if (!tight) return { text, tight };
   const without =

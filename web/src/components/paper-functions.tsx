@@ -282,10 +282,10 @@ function Give({ run, onChanged }: Pick<Shared, "run" | "onChanged">) {
           disabled={attempt.busy}
           aria-describedby={id}
         />
-        Give these functions to the conversations I start
+        Give these functions to the programs I start
       </label>
       <p id={id} className="text-xs text-muted-foreground">
-        The lead can call the ones that passed as tools, in conversations that begin from now on. One that is already going is not given
+        The lead can call the ones that passed as tools, in programs that begin from now on. One that is already going is not given
         them.
       </p>
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}

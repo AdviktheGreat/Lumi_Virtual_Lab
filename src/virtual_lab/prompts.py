@@ -634,6 +634,18 @@ def view_image_prompt() -> str:
     )
 
 
+def program_instructions_prompt(instructions: str) -> str:
+    """Gives the lead the instructions the researcher wrote for a program of their own.
+
+    :param instructions: What the researcher wrote.
+    """
+    return (
+        "The researcher set this up as a program of its own, with these instructions for you. They hold for every "
+        "message in it, and what the researcher asks in a message is done within them:\n\n"
+        f"{instructions.strip()}"
+    )
+
+
 def chat_note_prompt(note: str) -> str:
     """Generates the message that gives the lead a note the human researcher added while it worked.
 

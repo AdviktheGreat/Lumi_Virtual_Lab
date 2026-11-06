@@ -40,7 +40,7 @@ export function SkillsView() {
     <PageFrame
       wide
       title="Skills Nexus"
-      intro="Written guidance on how to do a kind of work. The lead is told what each skill is for, and reads one when a task calls for it. A conversation begins with the skills that are on."
+      intro="Written guidance on how to do a kind of work. The lead is told what each skill is for, and reads one when a task calls for it. A program begins with the skills that are on."
       action={
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

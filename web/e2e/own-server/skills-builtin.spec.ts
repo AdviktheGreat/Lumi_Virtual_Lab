@@ -37,7 +37,7 @@ const card = (page: Page, name: string) => page.getByTestId("skill-card").filter
 const count = (page: Page) => page.getByTestId("skills-count");
 const builtIn = (page: Page) => page.getByRole("button", { name: /^Built in/ });
 const mine = (page: Page) => page.getByRole("button", { name: /^Mine/ });
-const switchOf = (page: Page, name: string) => card(page, name).getByRole("switch", { name: `Give new conversations ${name}` });
+const switchOf = (page: Page, name: string) => card(page, name).getByRole("switch", { name: `Give new programs ${name}` });
 const read = (page: Page, name: string) => card(page, name).locator("button[aria-haspopup='dialog']").click();
 const detail = (page: Page, name: string) => page.getByRole("dialog", { name });
 

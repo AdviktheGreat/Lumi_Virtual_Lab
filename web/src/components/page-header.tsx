@@ -14,7 +14,7 @@ export function PageHeader({ children, className }: { children?: React.ReactNode
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label="Show the conversations"
+        aria-label="Show the programs"
         onClick={() => setDrawerOpen(true)}
         className="md:hidden"
       >

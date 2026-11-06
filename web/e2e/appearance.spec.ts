@@ -99,8 +99,8 @@ for (const theme of ["light", "dark"] as const) {
         await page.getByRole("button", { name: "Close the files" }).click();
 
         if (size.name === "phone") {
-          await page.getByRole("button", { name: "Show the conversations" }).click();
-          await expect(page.getByRole("navigation", { name: "Conversations" })).toBeVisible();
+          await page.getByRole("button", { name: "Show the programs" }).click();
+          await expect(page.getByRole("navigation", { name: "Programs" })).toBeVisible();
           await looksRight(page, "the conversations");
         }
 
@@ -181,7 +181,7 @@ for (const theme of ["light", "dark"] as const) {
           await held;
           await route.fulfill({ json: found });
         });
-        if (size.name === "phone") await page.getByRole("button", { name: "Show the conversations" }).click();
+        if (size.name === "phone") await page.getByRole("button", { name: "Show the programs" }).click();
         await page.getByRole("button", { name: "Settings" }).first().click();
         await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCSS("opacity", "1");
         await page.getByRole("tab", { name: "Tools" }).click();
@@ -238,7 +238,7 @@ for (const theme of ["light", "dark"] as const) {
             },
           }),
         );
-        if (size.name === "phone") await page.getByRole("button", { name: "Show the conversations" }).click();
+        if (size.name === "phone") await page.getByRole("button", { name: "Show the programs" }).click();
         await page.getByRole("button", { name: "Settings" }).first().click();
         await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCSS("opacity", "1");
         await page.getByRole("tab", { name: "Keys" }).click();
@@ -316,8 +316,8 @@ test.describe("what is shown while something is being got", () => {
     });
 
     await page.goto(`/chat?id=${empty}`);
-    await expect(page.getByRole("status", { name: "Loading conversations" })).toBeVisible();
-    await expect(page.getByRole("status", { name: "Loading the conversation" })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Loading programs" })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Loading the program" })).toBeVisible();
     await looksRight(page, "the list and the conversation, being got");
     release();
 

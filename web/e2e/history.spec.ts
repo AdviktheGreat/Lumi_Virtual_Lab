@@ -22,11 +22,11 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-const list = (page: Page) => page.getByRole("navigation", { name: "Conversations" });
+const list = (page: Page) => page.getByRole("navigation", { name: "Programs" });
 // A conversation's row is told by its id, which a title that is changed leaves as it was
 const row = (page: Page, id: string) => list(page).locator(`[data-chat-id="${id}"]`);
-const options = (page: Page, id: string) => row(page, id).getByRole("button", { name: "Conversation options" });
-const titleField = (page: Page) => page.getByRole("textbox", { name: "Conversation title" });
+const options = (page: Page, id: string) => row(page, id).getByRole("button", { name: "Program options" });
+const titleField = (page: Page) => page.getByRole("textbox", { name: "Program title" });
 
 // Makes a conversation through the server, and has the page look at the list again so that it is there
 async function make(page: Page, title: string): Promise<string> {
@@ -77,7 +77,7 @@ async function listing(page: Page, chats: ReturnType<typeof listed>[]): Promise<
     route.request().method() === "GET" ? route.fulfill({ json: { chats } }) : route.continue(),
   );
   await page.reload();
-  await expect(page.locator('nav[aria-label="Conversations"] a').first()).toBeAttached();
+  await expect(page.locator('nav[aria-label="Programs"] a').first()).toBeAttached();
 }
 
 test.describe("the list of conversations", () => {
@@ -117,10 +117,10 @@ test.describe("the list of conversations", () => {
       "GWAS quality control",
     ];
     await listing(page, titles.map((title, index) => listed(title, new Date(now.getTime() - index * 1000))));
-    await expect(page.getByRole("searchbox", { name: "Search conversations" })).toHaveCount(0);
+    await expect(page.getByRole("searchbox", { name: "Search programs" })).toHaveCount(0);
 
     await listing(page, [...titles, "Western blot troubleshooting"].map((title, index) => listed(title, new Date(now.getTime() - index * 1000))));
-    const search = page.getByRole("searchbox", { name: "Search conversations" });
+    const search = page.getByRole("searchbox", { name: "Search programs" });
     await expect(search).toBeVisible();
     await expect(list(page).getByRole("link")).toHaveCount(8);
 
@@ -130,7 +130,7 @@ test.describe("the list of conversations", () => {
 
     await search.fill("zzz");
     await expect(list(page).getByRole("link")).toHaveCount(0);
-    await expect(list(page).getByText("No conversation has all of those words in its title.")).toBeVisible();
+    await expect(list(page).getByText("No program has all of those words in its title.")).toBeVisible();
 
     await page.getByRole("button", { name: "Clear the search" }).click();
     await expect(search).toHaveValue("");
@@ -151,7 +151,7 @@ test.describe("the list of conversations", () => {
     const titles = Array.from({ length: 8 }, (_, index) => `Question number ${index + 1}`);
     const all = titles.map((title, index) => listed(title, new Date(now.getTime() - index * 1000)));
     await listing(page, all);
-    await page.getByRole("searchbox", { name: "Search conversations" }).fill("number 3");
+    await page.getByRole("searchbox", { name: "Search programs" }).fill("number 3");
     await expect(list(page).getByRole("link")).toHaveCount(1);
 
     // Another page deletes one, which leaves seven: too few to need a search, so what is still typed in the box, which
@@ -162,7 +162,7 @@ test.describe("the list of conversations", () => {
     );
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 
-    await expect(page.getByRole("searchbox", { name: "Search conversations" })).toHaveCount(0);
+    await expect(page.getByRole("searchbox", { name: "Search programs" })).toHaveCount(0);
     await expect(list(page).getByRole("link")).toHaveCount(7);
   });
 
@@ -390,7 +390,7 @@ test.describe("deleting a conversation", () => {
     });
 
     await chooseFrom(page, id, "Delete");
-    const dialog = page.getByRole("alertdialog", { name: "Delete this conversation?" });
+    const dialog = page.getByRole("alertdialog", { name: "Delete this program?" });
     await expect(dialog).toContainText(`“${title}” is removed with its messages, its files, and what it ran. This cannot be undone.`);
     // The safe answer is the one the focus is on
     await expect(dialog.getByRole("button", { name: "Keep it" })).toBeFocused();
@@ -530,7 +530,7 @@ test.describe("the list on a narrow screen", () => {
     const title = `Drawer ${tag()}`;
     const id = await make(page, title);
     const drawer = page.getByRole("complementary", { name: "Sidebar" });
-    await page.getByRole("button", { name: "Show the conversations" }).click();
+    await page.getByRole("button", { name: "Show the programs" }).click();
     await expect(drawer).toBeVisible();
 
     await options(page, id).click();
@@ -559,8 +559,8 @@ test.describe("the list on a narrow screen", () => {
     const now = new Date();
     await listing(page, Array.from({ length: 9 }, (_, index) => listed(`Search drawer ${index}`, new Date(now.getTime() - index * 1000))));
     const drawer = page.getByRole("complementary", { name: "Sidebar" });
-    await page.getByRole("button", { name: "Show the conversations" }).click();
-    const search = page.getByRole("searchbox", { name: "Search conversations" });
+    await page.getByRole("button", { name: "Show the programs" }).click();
+    const search = page.getByRole("searchbox", { name: "Search programs" });
 
     await search.fill("drawer 3");
     await search.press("Escape");
@@ -578,7 +578,7 @@ test.describe("the list on a screen that is touched", () => {
   test("shows what can be done to a conversation without a pointer to rest on it", async ({ page }) => {
     const title = `Touch ${tag()}`;
     const id = await make(page, title);
-    await page.getByRole("button", { name: "Show the conversations" }).click();
+    await page.getByRole("button", { name: "Show the programs" }).click();
 
     await expect(options(page, id)).toHaveCSS("opacity", "1");
   });

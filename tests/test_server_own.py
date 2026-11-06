@@ -482,7 +482,7 @@ class TestPointingToWhatIsThere:
         for path in (workspace.chats_dir, inside, inside / "plot.png", workspace.root, tmp_path):
             error = refused(own.add_path, str(path), "Mine")
             assert (error.status, error.code) == (422, "invalid"), path
-            assert "is where conversations are kept, or holds them" in error.message, path
+            assert "is where programs are kept, or holds them" in error.message, path
         assert data(own) == {}
 
     def test_what_was_uploaded_is_not_given_a_second_time_by_where_it_is_kept(

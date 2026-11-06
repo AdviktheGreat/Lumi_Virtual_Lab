@@ -44,7 +44,7 @@ describe("finding a conversation by its title", () => {
   });
 
   it("takes a conversation with no title for the name it is listed by", () => {
-    expect(matchingTitles(chats, "new chat")).toEqual([{ title: "" }]);
+    expect(matchingTitles(chats, "untitled program")).toEqual([{ title: "" }]);
   });
 
   it("gives all of them for nothing typed", () => {

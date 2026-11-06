@@ -82,6 +82,7 @@ from virtual_lab.prompts import (
     faked_tool_calls_prompt,
     lab_chat_prompt,
     out_of_tool_turns_prompt,
+    program_instructions_prompt,
     result_check_prompt,
     view_image_prompt,
 )
@@ -430,6 +431,9 @@ class Chat:
         passes on what they need. None are listed with none.
     :param skills_catalog_chars: The most characters to tell the lead of its skills in, which is in every request it
         makes. Each skill's purpose is cut short to fit them all.
+    :param instructions: What the researcher wants of the lead throughout, which the lead is told after what the lab
+        is, in every request it makes. They are the lead's alone: the team in its sessions is told what the lead
+        asks of it. None are given with none.
     :param max_tool_iterations: The most tool calls the lead makes in answering one message before it
         is asked to answer without them. Defaults to 20 with a session, and 5 without one.
     :param check_results: Whether the lead, having run code for a message and written its answer, is asked once to
@@ -477,6 +481,7 @@ class Chat:
         commercial_mode: bool = False,
         skills: Sequence[Skill] = (),
         skills_catalog_chars: int = CATALOG_CHARS,
+        instructions: str = "",
         max_tool_iterations: int | None = None,
         check_results: bool = False,
         max_delegations: int = MAX_CHAT_DELEGATIONS,
@@ -554,6 +559,7 @@ class Chat:
         self.commercial_mode = commercial_mode
         self.skills = tuple(skills)
         self.skills_catalog_chars = skills_catalog_chars
+        self.instructions = instructions.strip()
         self.max_tool_iterations = max_tool_iterations
         self.check_results = check_results
         self.max_delegations = max_delegations
@@ -1592,7 +1598,8 @@ class Chat:
         lab = lab_chat_prompt(self.lead, self.team if delegating else (), can_run_code=self.session is not None)
         delegation = self._delegation_tools() if delegating else ()
         self._lead_tools = (*self._fixed_tools, *delegation)
-        self._system = "\n\n".join([lab, *self._fixed_parts])
+        own = [program_instructions_prompt(self.instructions)] if self.instructions else []
+        self._system = "\n\n".join([lab, *own, *self._fixed_parts])
 
     def _add_late_tools(self) -> None:
         """Asks for the tools that could not be had before the first message, and adds them to the lead's and the

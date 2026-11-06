@@ -130,7 +130,7 @@ test.describe("the menu of commands", () => {
 
     await command(page, "/help");
     await expect(page.getByTestId("commands-help")).toContainText("/rename");
-    await expect(page.getByTestId("commands-help")).toContainText("Save the conversation as a document");
+    await expect(page.getByTestId("commands-help")).toContainText("Save the program as a document");
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("commands-help")).toHaveCount(0);
     await expect(box(page)).toHaveValue("");
@@ -188,7 +188,7 @@ test.describe("/budget", () => {
     await answered(page, "You asked: A question under a limit");
     const info = await chatInfo(page, id);
     expect(info).toMatchObject({ max_cost: 0.5, max_delegations: 1, max_rounds: 2 });
-    await expect(page.getByTitle("Spent in this conversation")).toContainText("of $0.50");
+    await expect(page.getByTitle("Spent in this program")).toContainText("of $0.50");
   });
 
   test("says what is wrong with a limit, and asks for nothing until it is put right", async ({ page }) => {
@@ -240,7 +240,7 @@ test.describe("/budget", () => {
     await expect(page.getByTestId("pending-note")).toHaveCount(0);
 
     await answered(page, "That is done: 1 step ran.", 30_000);
-    await expect(page.getByTitle("Spent in this conversation")).toContainText("of $5.00");
+    await expect(page.getByTitle("Spent in this program")).toContainText("of $5.00");
     await expect(page.getByTestId("note")).toHaveCount(0);
 
     // Opened again, it has what it was given
@@ -657,9 +657,9 @@ test.describe("/lab", () => {
 
     await command(page, "/lab Design a nanobody");
     await teamMember(panel(page), "Immunologist").check();
-    await expect(panel(page).getByText("not on this conversation's team")).toHaveCount(0);
+    await expect(panel(page).getByText("not on this program's team")).toHaveCount(0);
     await teamMember(panel(page), "Geneticist").check();
-    await expect(panel(page).getByText("Geneticist is not on this conversation's team, and joins it.")).toBeVisible();
+    await expect(panel(page).getByText("Geneticist is not on this program's team, and joins it.")).toBeVisible();
     await labQuestions(panel(page)).fill("Which epitope?\n\nHow stable is it?");
     await startLab(page).click();
 

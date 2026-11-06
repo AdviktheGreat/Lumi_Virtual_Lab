@@ -144,7 +144,7 @@ export function ModelTab({
           hint={
             models.kind === "failed"
               ? "The list of models could not be read, so the model is named here."
-              : "The lead and the team of a new conversation use it."
+              : "The lead and the team of a new program use it."
           }
         >
           <ModelPicker
@@ -169,7 +169,7 @@ export function ModelTab({
         {browsing && (
           <ModelDialog
             title="Choose the model"
-            description="The lead and the team of a new conversation use it. A conversation that has begun keeps its own, which can be changed from it."
+            description="The lead and the team of a new program use it. A program that has begun keeps its own, which can be changed from it."
             current={draft.model.trim()}
             onChoose={async (model) => {
               onChange({ model });
@@ -193,9 +193,9 @@ export function ModelTab({
       <Section title="Spending and replies">
         <Field
           id="settings-limit"
-          label="Spending limit for a conversation (US dollars)"
+          label="Spending limit for a program (US dollars)"
           problem={problems.limit}
-          hint="The most one conversation may spend. Leave it empty for no limit."
+          hint="The most one program may spend. Leave it empty for no limit."
         >
           <Input
             id="settings-limit"

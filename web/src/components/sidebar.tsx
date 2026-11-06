@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 
 // The pages, which are reached from the rail: the conversations first, and then the rest
 const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
-  { href: "/", label: "Chats", icon: MessagesSquare },
+  { href: "/", label: "Programs", icon: MessagesSquare },
   { href: "/data", label: "Data", icon: Database },
   { href: "/skills", label: "Skills", icon: Puzzle },
   { href: "/papers", label: "Papers", icon: FileText },
@@ -56,8 +56,8 @@ function Search({ typed, onTyped }: { typed: string; onTyped: (typed: string) =>
             event.preventDefault();
             onTyped("");
           }}
-          placeholder="Search conversations"
-          aria-label="Search conversations"
+          placeholder="Search programs"
+          aria-label="Search programs"
           autoComplete="off"
           className="pl-8 pr-8 [&::-webkit-search-cancel-button]:appearance-none"
         />
@@ -120,7 +120,7 @@ function ChatList() {
 
   if (chats === null) {
     return (
-      <div className="flex flex-col gap-2 px-2.5 py-1" role="status" aria-busy="true" aria-label="Loading conversations">
+      <div className="flex flex-col gap-2 px-2.5 py-1" role="status" aria-busy="true" aria-label="Loading programs">
         {[0, 1, 2].map((row) => (
           <div key={row} className="flex flex-col gap-1.5">
             <Skeleton className="h-4 w-4/5" />
@@ -131,7 +131,7 @@ function ChatList() {
     );
   }
   if (chats.length === 0) {
-    return <p className="px-2.5 py-1 text-sm text-muted-foreground">Conversations you start are kept here.</p>;
+    return <p className="px-2.5 py-1 text-sm text-muted-foreground">Programs you start are kept here.</p>;
   }
 
   // What was typed no longer counts once there are too few conversations to need it, which is when it is not shown
@@ -142,7 +142,7 @@ function ChatList() {
     <>
       {searchable && <Search typed={typed} onTyped={setTyped} />}
       {shown.length === 0 && (
-        <p className="px-2.5 py-1 text-sm text-muted-foreground">No conversation has all of those words in its title.</p>
+        <p className="px-2.5 py-1 text-sm text-muted-foreground">No program has all of those words in its title.</p>
       )}
       {inDays(shown).map((day) => (
         <div key={day.name}>
@@ -217,11 +217,11 @@ function Panel() {
         <Button asChild className="w-full justify-start gap-2" size="lg">
           <Link href="/">
             <SquarePen className="size-4" />
-            New chat
+            New program
           </Link>
         </Button>
       </div>
-      <nav id={LIST_ID} tabIndex={-1} aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none">
+      <nav id={LIST_ID} tabIndex={-1} aria-label="Programs" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none">
         <ChatList />
       </nav>
       {server.status === "ready" && (

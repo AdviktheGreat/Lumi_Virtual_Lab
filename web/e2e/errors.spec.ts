@@ -70,7 +70,7 @@ test.describe("when something goes wrong", () => {
 
     await ask(page, "A question whose answer is never streamed");
 
-    await expect(page.getByText("The live connection to this conversation was lost")).toBeVisible();
+    await expect(page.getByText("The live connection to this program was lost")).toBeVisible();
     await expect(page.getByTestId("chat-title")).toHaveText("A question whose answer is never streamed");
   });
 
@@ -90,7 +90,7 @@ test.describe("when something goes wrong", () => {
 
     await ask(page, "A question in a conversation that goes");
 
-    const gone = page.getByRole("heading", { name: "This conversation is not here" });
+    const gone = page.getByRole("heading", { name: "This program is not here" });
     await expect(gone).toBeVisible();
     await firstAnswer;
     // Time for the page to have been wrong, if it was going to be

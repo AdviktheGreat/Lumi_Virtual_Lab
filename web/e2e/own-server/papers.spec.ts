@@ -240,7 +240,7 @@ test("writes functions for the tasks the papers share, shows their code, and giv
   await expect(row.getByLabel(`Code of ${name}`, { exact: true })).toHaveCount(0);
 
   // A conversation that is made before they are given is not given them, and one made after is
-  const given = page.getByLabel("Give these functions to the conversations I start");
+  const given = page.getByLabel("Give these functions to the programs I start");
   await expect(given).not.toBeChecked();
   await given.click();
   await expect(given).toBeChecked();

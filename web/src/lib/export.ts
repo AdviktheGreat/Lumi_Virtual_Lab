@@ -43,7 +43,7 @@ export function exportNameOf(disposition: string | null, format: ExportFormat): 
     .replace(/[\u0000-\u001f\u007f/\\]+/g, "-")
     .trim();
 
-  return name === "" || name.startsWith(".") ? `conversation.${format}` : name;
+  return name === "" || name.startsWith(".") ? `program.${format}` : name;
 }
 
 // Gives the browser a file to save, which it does as it does for a link that downloads

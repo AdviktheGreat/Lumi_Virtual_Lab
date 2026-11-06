@@ -26,7 +26,7 @@ export function ExportMenu({
           size="sm"
           disabled={disabled}
           aria-busy={saving !== null}
-          title={disabled ? "There is nothing to save yet" : "Save this conversation as a document"}
+          title={disabled ? "There is nothing to save yet" : "Save this program as a document"}
           data-testid="export-toggle"
         >
           {saving === null ? <FileDown aria-hidden /> : <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden />}

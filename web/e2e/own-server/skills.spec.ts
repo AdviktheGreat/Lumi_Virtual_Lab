@@ -37,7 +37,7 @@ const cards = (page: Page) => page.getByTestId("skill-card");
 const count = (page: Page) => page.getByTestId("skills-count");
 const search = (page: Page) => page.getByRole("searchbox", { name: "Search all skills" });
 const mine = (page: Page) => page.getByRole("button", { name: /^Mine/ });
-const switchOf = (page: Page, name: string) => card(page, name).getByRole("switch", { name: `Give new conversations ${name}` });
+const switchOf = (page: Page, name: string) => card(page, name).getByRole("switch", { name: `Give new programs ${name}` });
 const detail = (page: Page, name: string) => page.getByRole("dialog", { name });
 
 async function listed(page: Page) {
@@ -281,7 +281,7 @@ test.describe("a skill", () => {
     await putInAndShow(page, write("mine", "dose-response", "Fits a curve."));
     await card(page, "dose-response").locator("button[aria-haspopup='dialog']").click();
 
-    await detail(page, "dose-response").getByRole("switch", { name: "Give new conversations dose-response" }).click();
+    await detail(page, "dose-response").getByRole("switch", { name: "Give new programs dose-response" }).click();
 
     await expect.poll(async () => (await listed(page)).skills[0].enabled).toBe(false);
     await expect(detail(page, "dose-response").getByRole("switch")).toHaveAttribute("aria-checked", "false");

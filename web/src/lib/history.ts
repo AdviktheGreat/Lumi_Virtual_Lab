@@ -5,7 +5,7 @@ export const SEARCH_FROM = 8;
 export const TITLE_LIMIT = 80;
 
 // What a conversation is called in the list, where it has no title yet
-export const UNTITLED = "New chat";
+export const UNTITLED = "Untitled program";
 
 // Text cut to the most a title may be, in characters, which are more than the units that a box counts for its length
 // where there are any that are written with two
