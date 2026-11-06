@@ -22,8 +22,9 @@ test.beforeEach(async ({ page }) => {
   folder = `${(await settings(page)).workspace}-builtin-skills`;
   write(folder, "house-style", "Use when figures are made for the lab's papers.");
   write(folder, "house-stats", "Use when a number is asked for.");
-  await page.goto("/skills?tab=yours");
-  await expect(page.getByRole("heading", { name: "Your skills", level: 2, exact: true })).toBeVisible();
+  await page.goto("/skills");
+  await expect(page.getByRole("heading", { name: "Skills Nexus", level: 1 })).toBeVisible();
+  await builtIn(page).click();
 });
 
 test.afterEach(async ({ page }) => {
@@ -32,8 +33,13 @@ test.afterEach(async ({ page }) => {
   for (const name of fs.readdirSync(folder)) fs.rmSync(path.join(folder, name), { recursive: true, force: true });
 });
 
-const row = (page: Page, name: string) => page.getByTestId("skill").filter({ has: page.getByText(name, { exact: true }) });
+const card = (page: Page, name: string) => page.getByTestId("skill-card").filter({ has: page.getByText(name, { exact: true }) });
 const count = (page: Page) => page.getByTestId("skills-count");
+const builtIn = (page: Page) => page.getByRole("button", { name: /^Built in/ });
+const mine = (page: Page) => page.getByRole("button", { name: /^Mine/ });
+const switchOf = (page: Page, name: string) => card(page, name).getByRole("switch", { name: `Give new conversations ${name}` });
+const read = (page: Page, name: string) => card(page, name).locator("button[aria-haspopup='dialog']").click();
+const detail = (page: Page, name: string) => page.getByRole("dialog", { name });
 
 async function listed(page: Page) {
   return (await page.request.get("/api/skills")).json();
@@ -41,26 +47,28 @@ async function listed(page: Page) {
 
 test.describe("the skills that come with the lab", () => {
   test("are listed as on, say that they come with the lab, and cannot be deleted", async ({ page }) => {
-    await expect(count(page)).toHaveText("2 skills, all on");
-    await expect(row(page, "house-style").getByText("Comes with the lab", { exact: true })).toBeVisible();
-    await expect(row(page, "house-style").getByRole("checkbox")).toBeChecked();
-    await expect(row(page, "house-style").getByRole("button", { name: "Delete house-style" })).toHaveCount(0);
-    await expect(page.getByText("The lab comes with 2 skills of its own. They cannot be deleted, but they can be turned off")).toBeVisible();
+    await expect(builtIn(page)).toHaveText("Built in2");
+    await expect(count(page)).toHaveText("2 of 52 skills, 2 on");
+    await expect(card(page, "house-style").getByText("Built in", { exact: true })).toBeVisible();
+    await expect(switchOf(page, "house-style")).toHaveAttribute("aria-checked", "true");
+    await read(page, "house-style");
+    await expect(detail(page, "house-style").getByRole("button", { name: "Delete house-style" })).toHaveCount(0);
     expect((await page.request.delete("/api/skills/house-style")).status()).toBe(409);
     expect(fs.existsSync(path.join(folder, "house-style", "SKILL.md"))).toBe(true);
   });
 
   test("can be read, with where they are found said", async ({ page }) => {
-    await row(page, "house-style").getByRole("button", { name: "Read what house-style tells the lead" }).click();
+    await read(page, "house-style");
 
-    await expect(row(page, "house-style").getByText("The skills that come with the lab: ", { exact: false })).toBeVisible();
-    await expect(row(page, "house-style").getByText("Do it well.")).toBeVisible();
+    await expect(detail(page, "house-style").getByText("The skills that come with the lab: ", { exact: false })).toBeVisible();
+    await expect(detail(page, "house-style").getByText("Do it well.")).toBeVisible();
   });
 
   test("can be turned off for new conversations, which are then not given them", async ({ page }) => {
-    await row(page, "house-style").getByRole("checkbox", { name: "Give new conversations house-style" }).uncheck();
+    await switchOf(page, "house-style").click();
 
-    await expect(count(page)).toHaveText("2 skills, 1 on");
+    await expect(switchOf(page, "house-style")).toHaveAttribute("aria-checked", "false");
+    await expect(count(page)).toHaveText("2 of 52 skills, 1 on");
     await expect
       .poll(async () => (await listed(page)).skills.filter((skill: { enabled: boolean }) => !skill.enabled).map((skill: { name: string }) => skill.name))
       .toEqual(["house-style"]);
@@ -81,28 +89,31 @@ test.describe("the skills that come with the lab", () => {
   });
 
   test("give way to a skill that is put in with the same name, which can then be deleted", async ({ page }) => {
-    const mine = path.join(folder, "..", `${path.basename(folder)}-mine`);
-    write(mine, "house-style", "Mine, for figures.");
+    const own = path.join(folder, "..", `${path.basename(folder)}-mine`);
+    write(own, "house-style", "Mine, for figures.");
     try {
-      const put = await page.request.post("/api/skills/install", { data: { path: mine } });
+      const put = await page.request.post("/api/skills/install", { data: { path: own } });
       expect(put.status()).toBe(200);
       await page.reload();
 
-      await expect(count(page)).toHaveText("2 skills, all on");
-      await expect(row(page, "house-style").getByText("Mine, for figures.")).toBeVisible();
-      await expect(row(page, "house-style").getByText("Comes with the lab", { exact: true })).toHaveCount(0);
-      await row(page, "house-style").getByRole("button", { name: "Delete house-style" }).click();
+      await expect(builtIn(page)).toHaveText("Built in1");
+      await expect(mine(page)).toHaveText("Mine1");
+      await mine(page).click();
+      await expect(card(page, "house-style").getByText("Mine, for figures.")).toBeVisible();
+      await read(page, "house-style");
+      await detail(page, "house-style").getByRole("button", { name: "Delete house-style" }).click();
       await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click();
 
-      await expect(row(page, "house-style").getByText("Comes with the lab", { exact: true })).toBeVisible();
-      await expect(row(page, "house-style").getByText("Use when figures are made for the lab's papers.")).toBeVisible();
+      await expect(builtIn(page)).toHaveText("Built in2");
+      await builtIn(page).click();
+      await expect(card(page, "house-style").getByText("Use when figures are made for the lab's papers.")).toBeVisible();
     } finally {
-      fs.rmSync(mine, { recursive: true, force: true });
+      fs.rmSync(own, { recursive: true, force: true });
     }
   });
 
   test("have nothing wrong that axe can find", async ({ page }) => {
-    await expect(count(page)).toHaveText("2 skills, all on");
+    await expect(count(page)).toHaveText("2 of 52 skills, 2 on");
 
     expect(await accessibilityProblems(page)).toEqual([]);
   });
