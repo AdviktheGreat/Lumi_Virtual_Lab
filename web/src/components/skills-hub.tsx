@@ -35,7 +35,7 @@ import {
   type HubSkill,
   type HubSource,
 } from "@/lib/skills";
-import type { LibraryCategory, SkillLibrary, Skills, SkillsPutIn } from "@/lib/types";
+import type { LibraryCategory, LibrarySkill, SkillLibrary, Skills, SkillsPutIn } from "@/lib/types";
 import { useSkillSwitches } from "@/lib/use-skill-switches";
 import { cn } from "@/lib/utils";
 
@@ -102,7 +102,8 @@ export function SkillsHub({
   const [category, setCategory] = useState("");
   const [shown, setShown] = useState(HUB_SHOWN);
   const [openName, setOpenName] = useState<string | null>(null);
-  const [adding, setAdding] = useState<string[] | null>(null);
+  // What is asked about adding stays as it was when it was asked, so that the question does not change while it is open
+  const [adding, setAdding] = useState<LibrarySkill[]>([]);
   const [working, setWorking] = useState(false);
   const [putProblem, setPutProblem] = useState<string | null>(null);
   const [result, setResult] = useState<SkillsPutIn | null>(null);
@@ -124,8 +125,7 @@ export function SkillsHub({
   const toTurnOn = found.filter((skill) => skill.info !== null && !skill.info.enabled);
   const toTurnOff = found.filter((skill) => skill.info?.enabled);
   const open = openName === null ? null : (all.find((skill) => skill.name === openName) ?? null);
-  const adds = all.filter((skill) => adding?.includes(skill.name) && skill.library !== null);
-  const addedLibrary = adds.flatMap((skill) => (skill.library === null ? [] : [skill.library]));
+  const addedLibrary = adding;
   const warnings = licenseWarnings(addedLibrary);
   const problem = putProblem ?? switches.problem;
   const these = filtering ? "these" : "all";
@@ -134,10 +134,12 @@ export function SkillsHub({
     setShown(HUB_SHOWN);
   }
 
-  function askToAdd(names: string[], from: HTMLElement | null) {
+  function askToAdd(skills: HubSkill[], from: HTMLElement | null) {
+    const offered = skills.flatMap((skill) => (skill.info === null && skill.library !== null ? [skill.library] : []));
+    if (offered.length === 0) return;
     asker.current = from;
     setPutProblem(null);
-    setAdding(names);
+    setAdding(offered);
     setAskingToAdd(true);
   }
 
@@ -272,12 +274,7 @@ export function SkillsHub({
             <Button
               size="sm"
               disabled={working}
-              onClick={(event) =>
-                askToAdd(
-                  toAdd.map((skill) => skill.name),
-                  event.currentTarget,
-                )
-              }
+              onClick={(event) => askToAdd(toAdd, event.currentTarget)}
             >
               {working ? "Adding…" : `Add ${these} ${toAdd.length}`}
             </Button>
@@ -310,7 +307,7 @@ export function SkillsHub({
                 setOpenName(skill.name);
               }}
               onTurn={(enabled) => switches.turn([skill.name], enabled)}
-              onAdd={(button) => askToAdd([skill.name], button)}
+              onAdd={(button) => askToAdd([skill], button)}
             />
           ))}
         </ul>
@@ -329,7 +326,7 @@ export function SkillsHub({
           if (open !== null) switches.turn([open.name], enabled);
         }}
         onAdd={(button) => {
-          if (open !== null) askToAdd([open.name], button);
+          if (open !== null) askToAdd([open], button);
         }}
         onRemove={(button) => {
           if (open === null) return;

@@ -33,8 +33,16 @@ export function useSkillSwitches(
   const queue = useRef<Promise<void>>(Promise.resolve());
   const waiting = useRef(0);
 
+  // While changes are waiting, what they are made to is what the last answer gave, to which are added the skills that came
+  // some other way meanwhile, such as by being added, so that the next change does not leave them out
   useEffect(() => {
-    if (waiting.current === 0) latest.current = skills.skills;
+    if (waiting.current === 0) {
+      latest.current = skills.skills;
+      return;
+    }
+    const known = new Set(latest.current.map((skill) => skill.name));
+    const added = skills.skills.filter((skill) => !known.has(skill.name));
+    if (added.length > 0) latest.current = [...latest.current, ...added];
   }, [skills]);
 
   const clear = useCallback(() => {
@@ -65,23 +73,34 @@ export function useSkillSwitches(
     [onChanged, report],
   );
 
+  // Deleting waits for the changes made before it, so that one of them that is still being saved does not give back a list
+  // that has the skill in it
   const remove = useCallback(
-    async (skill: SkillInfo): Promise<boolean> => {
-      setProblem(null);
-      setDone(null);
-      try {
-        const kept = await api.removeSkill(skill.name);
-        latest.current = kept.skills;
-        onChanged(kept);
-        setDone(`Deleted ${skill.name}.`);
+    (skill: SkillInfo): Promise<boolean> => {
+      waiting.current += 1;
+      const done = queue.current.then(async (): Promise<boolean> => {
+        try {
+          setProblem(null);
+          setDone(null);
+          const kept = await api.removeSkill(skill.name);
+          latest.current = kept.skills;
+          onChanged(kept);
+          setDone(`Deleted ${skill.name}.`);
 
-        return true;
-      } catch (error) {
-        report(error);
-        setProblem(describeError(error));
+          return true;
+        } catch (error) {
+          report(error);
+          setProblem(describeError(error));
 
-        return false;
-      }
+          return false;
+        } finally {
+          waiting.current -= 1;
+          if (waiting.current === 0) setChosen({});
+        }
+      });
+      queue.current = done.then(() => undefined);
+
+      return done;
     },
     [onChanged, report],
   );
