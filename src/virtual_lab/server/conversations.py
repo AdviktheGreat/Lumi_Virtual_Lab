@@ -228,7 +228,8 @@ class Conversations:
     :param max_upload_bytes: The most bytes of one file that may be attached to a message.
     :param catalog: The models OpenRouter serves, whose prices a conversation that has one of them needs known to work
         out what it has cost, or None to leave that to whoever registered them.
-    :param skill_saver: What a program that builds a skill saves it with, or None for the workspace's own skills.
+    :param skill_saver: What a program that builds a skill saves it with, or None for a Skills of the workspace's own,
+        which has a lock of its own, so a server that keeps skills elsewhere gives it the one that it keeps.
     """
 
     def __init__(

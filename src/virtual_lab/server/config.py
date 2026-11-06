@@ -486,7 +486,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
                 "Building a skill needs code to run, and code is turned off. Turn it on in the settings, "
                 "under Code, and begin again"
             )
-        # Offered when the skills are not named, even if it is turned off, since it says how a skill is written
+        # Offered when the skills are not named, even if the workspace has it turned off: it says how a skill is written
         if request.get("skills") is None and SKILL_CREATOR_NAME not in skills and found.named(SKILL_CREATOR_NAME):
             skills.append(SKILL_CREATOR_NAME)
 
