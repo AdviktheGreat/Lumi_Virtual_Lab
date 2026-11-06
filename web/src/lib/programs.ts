@@ -16,7 +16,7 @@ export const PROGRAM_KINDS: ProgramKindInfo[] = [
   {
     kind: "quick_task",
     name: "Quick task",
-    about: "Ask the lead for something and follow it through, in one conversation.",
+    about: "Ask the lead for something and follow it through.",
   },
   {
     kind: "custom",

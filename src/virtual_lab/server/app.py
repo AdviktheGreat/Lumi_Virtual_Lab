@@ -198,6 +198,7 @@ class ChatBody(RequestModel):
 
     title: str | None = Field(None, max_length=500)
     kind: Literal["quick_task", "custom"] | None = None
+    # Twice the most, so that blank space around instructions is not refused here: check_program counts them trimmed
     instructions: str | None = Field(None, max_length=MAX_PROGRAM_INSTRUCTION_CHARS * 2)
     model: str = ""
     lead: str | ScientistBody | None = None
