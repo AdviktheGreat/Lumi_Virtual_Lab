@@ -212,10 +212,18 @@ test.describe("the Skills Nexus", () => {
     await expect(switchOf(page, "rna-counts")).toBeVisible();
   });
 
-  test("is added to by a button that opens where a skill of your own is put in", async ({ page }) => {
-    await page.getByRole("button", { name: "Add skills", exact: true }).click();
+  test("is added to by a menu that offers to upload a skill folder, or to put in skills from a repository or a folder", async ({ page }) => {
+    const menu = page.getByRole("button", { name: "New skill", exact: true });
+    await menu.click();
 
-    await expect(page.getByRole("dialog", { name: "Add skills" }).getByRole("form", { name: "Put in skills" })).toBeVisible();
+    await expect(page.getByRole("menuitem")).toHaveText([/^Upload skill/, /^From a repository or folder/]);
+    await page.getByRole("menuitem", { name: /^From a repository or folder/ }).click();
+    const from = page.getByRole("dialog", { name: "From a repository or folder" });
+    await expect(from.getByRole("form", { name: "Put in skills" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await expect(from).toHaveCount(0);
+    await expect(menu).toBeFocused();
   });
 
   test("is no longer on the Data page, whose other parts are as they were", async ({ page }) => {

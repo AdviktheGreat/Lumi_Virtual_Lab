@@ -101,7 +101,12 @@ the lab, those in the workspace, and those in `~/.agents/skills`) with the libra
   tool's is not deleted from here).
 - Above the cards, what is shown can be added, turned on, or turned off together. Adding asks first, since the dialog says
   how much of every request the skills add (`catalogAdded`) and warns of a license that is not free.
-- The Add skills button opens `SkillsAdd`, the place to put in skills of your own from a git repository or a folder.
+- The New skill button is a menu (`SkillsView`) with two ways to put in skills of your own. Upload skill opens
+  `SkillUpload`: a folder is chosen with an `<input webkitdirectory>` or dropped (`webkitGetAsEntry`, walked by
+  `folderFromDrop`), and `src/lib/skill-folder.ts` says what is in it before it is sent (the skills found, with name and
+  description, whether there is a `SKILL.md`, and the most files and bytes the server takes). `api.uploadSkillFolder` sends
+  it as one multipart form with progress (`POST /api/skills/upload`), and the dialog is not closed while it goes. From a
+  repository or folder opens `SkillsAdd`, which is the form for a git address or a path on the server's machine.
 
 Above the cards is a meter of how much of the skills catalog the skills that are on fill (`SkillsMeter`), which is the
 `catalog` of `GET /api/skills`. What is changed is in every conversation made from then on, and not in one that is

@@ -19,8 +19,9 @@ import subprocess
 import tempfile
 import threading
 import time
-from pathlib import Path
-from typing import Any
+from collections.abc import Sequence
+from pathlib import Path, PurePosixPath
+from typing import Any, BinaryIO
 from urllib.parse import urlsplit
 
 from virtual_lab.server.errors import ApiError, not_found
@@ -28,7 +29,10 @@ from virtual_lab.server.workspace import Workspace
 from virtual_lab.skill_library import check_library_names, files_of, library_directory, read_library
 from virtual_lab.skills import (
     BUILTIN_SOURCE,
+    MAX_COPIED_BYTES,
+    MAX_COPIED_FILES,
     MAX_SKILLS,
+    SKIPPED_DIRECTORIES,
     Skill,
     SkillError,
     SkillLibrary,
@@ -54,6 +58,12 @@ BUILTIN_SKILLS_DIR_VARIABLE = "VIRTUAL_LAB_BUILTIN_SKILLS_DIR"
 # Names a folder to read the library of skills that can be put in from, in place of the one shipped with the lab, which
 # the tests use so that they work with a few skills and not the hundred and more that ship
 SKILL_LIBRARY_DIR_VARIABLE = "VIRTUAL_LAB_SKILL_LIBRARY_DIR"
+
+# What of a folder that is uploaded is not kept, beside the folders a repository holds that a skill does not need
+UPLOAD_SKIPPED_FILES = frozenset({".DS_Store"})
+UPLOAD_PATH_CHARS = 500
+UPLOAD_PATH_PARTS = 12
+UPLOAD_FOLDER_CHARS = 100
 
 # How long to give Git to fetch a repository of skills, how much of the disk it may take while it does, how often that
 # is looked at, how many folders to search for skills in a folder on this machine, which may be a whole disk, and how
@@ -245,6 +255,43 @@ def check_folder(path: str) -> Path:
     return source
 
 
+def check_upload_path(path: Any) -> PurePosixPath | None:
+    """Where a file of an uploaded folder is in it, as a path from the folder, or None for one that is not kept: what a
+    repository's folders hold that a skill does not need.
+
+    :raises ApiError: If it is not the path of a file in the folder, which one that leads out of it, or is written
+        with backslashes, is not.
+    """
+    if not isinstance(path, str) or not path or len(path) > UPLOAD_PATH_CHARS:
+        raise ApiError(422, "invalid", f"A file of the folder is named {path!r}, which is not a path that can be kept")
+    parts = path.split("/")
+    if (
+        path.startswith("/")
+        or "\\" in path
+        or any(part in ("", ".", "..") or "\x00" in part for part in parts)
+        or len(parts) > UPLOAD_PATH_PARTS
+    ):
+        raise ApiError(422, "invalid", f"{path!r} is not a path in the folder: it must lead down into it")
+    if UPLOAD_SKIPPED_FILES.intersection(parts[-1:]) or SKIPPED_DIRECTORIES.intersection(parts[:-1]):
+        return None
+
+    return PurePosixPath(path)
+
+
+def check_upload_folder(name: Any) -> str:
+    """The name to give a folder that is uploaded, which is the last of what it was called, as it is what a skill is
+    called where its SKILL.md does not say.
+
+    :raises ApiError: If it is not text.
+    """
+    if not isinstance(name, str):
+        raise ApiError(422, "invalid", "Say what the folder is called")
+    last = name.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    kept = "".join(character for character in last if character.isprintable())[:UPLOAD_FOLDER_CHARS].strip()
+
+    return kept if kept not in ("", ".", "..") else "skill"
+
+
 class Skills:
     """The skills the person keeps from the Skills page."""
 
@@ -360,6 +407,58 @@ class Skills:
             assert path is not None
             folder = check_folder(path)
             result = self._put_in(folder, str(folder))
+
+        return {**self.describe(), **result}
+
+    def upload(self, folder: Any, files: Sequence[tuple[Any, BinaryIO]]) -> dict[str, Any]:
+        """Puts in the skills of a folder that was sent as its files, each with where it is in the folder, as copies,
+        leaving those whose names are taken, and says which it did and which it left. A folder with a SKILL.md at its
+        top is a skill, and one without is searched for skills, as a folder on this machine is.
+
+        :raises ApiError: If a path leads out of the folder, or the folder has too many files or is too big, or has no
+            skill in it.
+        """
+        name = check_upload_folder(folder)
+        with tempfile.TemporaryDirectory(prefix="lumi-skills-") as scratch:
+            root = Path(scratch) / name
+            root.mkdir()
+            kept: set[PurePosixPath] = set()
+            size = 0
+            for sent, content in files:
+                relative = check_upload_path(sent)
+                if relative is None:
+                    continue
+                if relative in kept:
+                    raise ApiError(422, "invalid", f"The folder has {sent!r} twice")
+                if len(kept) >= MAX_COPIED_FILES:
+                    raise ApiError(
+                        422,
+                        "too_many_files",
+                        f"The folder has more than {MAX_COPIED_FILES:,} files, which is more than a skill needs. "
+                        "Upload fewer skills at once.",
+                    )
+                kept.add(relative)
+                target = root.joinpath(*relative.parts)
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    out = open(target, "wb")
+                except OSError as error:
+                    # A file that is also a folder of the others, for one
+                    raise ApiError(
+                        422, "invalid", f"{sent!r} cannot be kept with the other files: {error.strerror or error}"
+                    ) from error
+                with out:
+                    while chunk := content.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > MAX_COPIED_BYTES:
+                            raise ApiError(
+                                413,
+                                "too_large",
+                                f"The folder is more than {MAX_COPIED_BYTES // 1_000_000} MB, which is more than a "
+                                "skill needs.",
+                            )
+                        out.write(chunk)
+            result = self._put_in(root, f"the folder {name}")
 
         return {**self.describe(), **result}
 

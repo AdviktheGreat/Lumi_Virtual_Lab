@@ -1,5 +1,6 @@
 import { exportNameOf, type ExportFormat } from "./export";
 import { fileUrl } from "./files";
+import type { PickedFolder } from "./skill-folder";
 import type {
   Attachment,
   BenchmarkQuestion,
@@ -126,12 +127,12 @@ interface UploadOptions {
   signal?: AbortSignal;
 }
 
-// Sends a file as the body of a request, which is read by hand rather than with fetch, since fetch cannot say how much
-// of a body has gone. What the server answers with is taken by `accept`, which gives back what it is, or undefined if it
-// is not what was to be answered with, which `unclear` then says.
+// Sends a file, or a form with files in it, as the body of a request, which is read by hand rather than with fetch, since
+// fetch cannot say how much of a body has gone. What the server answers with is taken by `accept`, which gives back what it
+// is, or undefined if it is not what was to be answered with, which `unclear` then says.
 function sendFile<T>(
   address: string,
-  file: File,
+  body: File | FormData,
   accept: (parsed: unknown) => T | undefined,
   unclear: string,
   { onProgress, signal }: UploadOptions = {},
@@ -164,10 +165,17 @@ function sendFile<T>(
       }
     };
     // The browser says nothing of why, and a folder, which has nothing to read, fails the same way as a lost connection
-    upload.onerror = () => reject(new Error("The file could not be sent. It may be a folder, or the server may have stopped."));
+    upload.onerror = () =>
+      reject(
+        new Error(
+          body instanceof FormData
+            ? "The folder could not be sent. The server may have stopped, or a file in it may have been changed or moved."
+            : "The file could not be sent. It may be a folder, or the server may have stopped.",
+        ),
+      );
     upload.onabort = () => reject(aborted());
     signal?.addEventListener("abort", () => upload.abort(), { once: true });
-    upload.send(file);
+    upload.send(body);
   });
 }
 
@@ -177,6 +185,30 @@ function uploadFile(chatId: string, file: File, options: UploadOptions = {}): Pr
     file,
     (parsed) => (isAttachment(parsed) ? parsed : undefined),
     "The server did not say where it kept the file",
+    options,
+  );
+}
+
+function isSkillsPutIn(value: unknown): value is SkillsPutIn {
+  if (typeof value !== "object" || value === null) return false;
+  const { skills, installed, skipped } = value as Record<string, unknown>;
+
+  return Array.isArray(skills) && Array.isArray(installed) && Array.isArray(skipped);
+}
+
+// Puts in the skills of a folder that was given to the page, each file sent with where it is in the folder
+function uploadSkillFolder(folder: PickedFolder, options: UploadOptions = {}): Promise<SkillsPutIn> {
+  const form = new FormData();
+  form.append("folder", folder.name);
+  // The server pairs each path with the file that comes at the same place, so they are sent as two lists in one order
+  for (const { path } of folder.files) form.append("paths", path);
+  for (const { path, file } of folder.files) form.append("files", file, path.split("/").pop() ?? file.name);
+
+  return sendFile(
+    "/api/skills/upload",
+    form,
+    (parsed) => (isSkillsPutIn(parsed) ? parsed : undefined),
+    "The server did not say what it put in",
     options,
   );
 }
@@ -376,6 +408,8 @@ export const api = {
   saveSkills: (disabled: string[]) => request<Skills>("PUT", "/skills", { disabled }),
   // Puts in copies of the skills of a Git repository, or of a folder on the server's machine, which can take a while
   putInSkills: (from: SkillsFrom) => request<SkillsPutIn>("POST", "/skills/install", from),
+  // Puts in the skills of a folder that a person chose or dropped on the page, as it is on their machine
+  uploadSkillFolder,
   previewSkill: (name: string, signal?: AbortSignal) =>
     request<SkillPreview>("GET", `/skills/${encodeURIComponent(name)}`, undefined, signal),
   // The library of skills that comes with the lab, which are not used until they are put in
