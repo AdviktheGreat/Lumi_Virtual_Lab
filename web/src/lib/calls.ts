@@ -98,11 +98,33 @@ const LOOKUPS: Record<string, Lookup> = {
   }),
 };
 
-export function summarize(call: Pick<Call, "name" | "arguments" | "status">): CallSummary {
+// The name of the skill that a call to save one saved, which is null for one that has not saved a skill: the first call for
+// a folder only says what would be saved, and one that was refused has no JSON to read
+export function savedSkill(call: Pick<Call, "name" | "output">): string | null {
+  if (call.name !== "save_skill" || call.output === null) return null;
+  try {
+    const result: unknown = JSON.parse(call.output);
+    if (typeof result !== "object" || result === null) return null;
+    const { saved, name } = result as { saved?: unknown; name?: unknown };
+
+    return saved === true && typeof name === "string" && name !== "" ? name : null;
+  } catch {
+    return null;
+  }
+}
+
+export function summarize(call: Pick<Call, "name" | "arguments" | "status"> & Partial<Pick<Call, "output">>): CallSummary {
   const args = parseArguments(call.arguments) ?? {};
   const now = call.status === "running";
 
   switch (call.name) {
+    case "save_skill": {
+      const saved = savedSkill({ name: call.name, output: call.output ?? null });
+      const folder = oneLine(args.path, 120);
+      if (saved !== null) return { title: `Saved the skill ${saved}`, detail: folder, code: null };
+
+      return { title: now ? "Saving a skill" : "Checked a skill before saving it", detail: folder, code: null };
+    }
     case "run_code": {
       const language = typeof args.language === "string" && args.language !== "" ? args.language : "python";
       const text = typeof args.code === "string" ? args.code : null;

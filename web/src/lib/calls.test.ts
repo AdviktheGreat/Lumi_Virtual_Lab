@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeResources, languageLabel, parseArguments, summarize } from "./calls";
+import { describeResources, languageLabel, parseArguments, savedSkill, summarize } from "./calls";
 import type { Resources } from "./transcript";
 
 const call = (name: string, args: unknown, status: "running" | "done" | "interrupted" = "done") => ({
@@ -34,6 +34,34 @@ describe("a language", () => {
 
   it("is named the same whatever the case it was written in", () => {
     expect([languageLabel("PYTHON"), languageLabel("Bash")]).toEqual(["Python", "shell"]);
+  });
+});
+
+describe("a call that saves a skill", () => {
+  const path = { path: "new_skills/dose-response" };
+  const said = (result: unknown) => ({ ...call("save_skill", path), output: typeof result === "string" ? result : JSON.stringify(result) });
+
+  it("has saved one when what it gave back says so, and then is the name of the skill", () => {
+    expect(savedSkill(said({ saved: true, name: "dose-response" }))).toBe("dose-response");
+    expect(summarize(said({ saved: true, name: "dose-response" }))).toEqual({
+      title: "Saved the skill dose-response",
+      detail: "new_skills/dose-response",
+      code: null,
+    });
+  });
+
+  it("has saved none when it only said what would be saved, or was refused, or has nothing back yet", () => {
+    for (const output of [{ saved: false, name: "dose-response" }, "There is a skill called dose-response already.", "[1]", "null", ""]) {
+      expect(savedSkill(said(output))).toBeNull();
+    }
+    expect(savedSkill({ name: "save_skill", output: null })).toBeNull();
+    expect(savedSkill({ name: "web_fetch", output: JSON.stringify({ saved: true, name: "x" }) })).toBeNull();
+    expect(summarize(said({ saved: false, name: "dose-response" }))).toMatchObject({ title: "Checked a skill before saving it" });
+    expect(summarize({ ...call("save_skill", path, "running"), output: null })).toEqual({
+      title: "Saving a skill",
+      detail: "new_skills/dose-response",
+      code: null,
+    });
   });
 });
 

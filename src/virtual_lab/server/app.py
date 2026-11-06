@@ -197,7 +197,7 @@ class ChatBody(RequestModel):
     """A new conversation. What is left out is what the settings say, or the library's lead and team."""
 
     title: str | None = Field(None, max_length=500)
-    kind: Literal["quick_task", "custom"] | None = None
+    kind: Literal["quick_task", "custom", "build_skill"] | None = None
     # Twice the most, so that blank space around instructions is not refused here: check_program counts them trimmed
     instructions: str | None = Field(None, max_length=MAX_PROGRAM_INSTRUCTION_CHARS * 2)
     model: str = ""
@@ -529,6 +529,7 @@ def create_app(
     store = Workspace(Path(workspace))
     models_of_openrouter = catalog if catalog is not None else Catalog(store.root / OPENROUTER_FILE_NAME)
     setup = Setup(store, docker_command, release_url)
+    skills = Skills(store)
     conversations = Conversations(
         store,
         check_keys=check_keys,
@@ -537,9 +538,9 @@ def create_app(
         setup=setup if check_setup else None,
         max_upload_bytes=max_upload_bytes,
         catalog=models_of_openrouter,
+        skill_saver=skills.save_built,
     )
     own = Own(store, max_upload_bytes)
-    skills = Skills(store)
     papers = Papers(
         store,
         setup.jobs,

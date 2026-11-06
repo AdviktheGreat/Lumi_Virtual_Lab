@@ -23,6 +23,12 @@ export const PROGRAM_KINDS: ProgramKindInfo[] = [
     name: "Custom program",
     about: "A named program with instructions of its own, which the lead follows in all that it does there.",
   },
+  {
+    kind: "build_skill",
+    name: "Build skill",
+    about:
+      "Work out a skill with the lead, which writes it with code, shows it to you, and saves it among the lab's skills when you agree.",
+  },
 ];
 
 export function kindName(kind: ProgramKind): string {
@@ -39,6 +45,8 @@ export interface ProgramDraft {
 export interface ProgramProblems {
   name?: string;
   instructions?: string;
+  // What stops a program that needs code, where there is none
+  code?: string;
 }
 
 export interface CheckedProgram {
@@ -53,9 +61,15 @@ export function lengthOf(text: string): number {
   return [...text].length;
 }
 
+export const NO_CODE_FOR_SKILL = "Building a skill needs code to run, and code is turned off. Turn it on in the settings, under Code.";
+
 // What a program is begun with, from what was typed. A custom program has a name, which is what it is called from the
-// start, and instructions that are not empty or longer than the most there may be.
-export function checkProgram(draft: ProgramDraft): CheckedProgram {
+// start, and instructions that are not empty or longer than the most there may be. One that builds a skill has neither,
+// and needs code, which is on unless it is said not to be.
+export function checkProgram(draft: ProgramDraft, codeOn = true): CheckedProgram {
+  if (draft.kind === "build_skill") {
+    return codeOn ? { begin: { kind: "build_skill" }, problems: {} } : { begin: {}, problems: { code: NO_CODE_FOR_SKILL } };
+  }
   if (draft.kind !== "custom") return { begin: {}, problems: {} };
 
   const problems: ProgramProblems = {};

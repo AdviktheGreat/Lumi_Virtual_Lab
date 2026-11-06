@@ -49,7 +49,7 @@ from virtual_lab.server.config import (
 from virtual_lab.server.connections import Connections
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.functions import function_tools
-from virtual_lab.server.skills import load_skills
+from virtual_lab.server.skills import Skills, load_skills
 from virtual_lab.server.library import missing_keys
 from virtual_lab.server.mcp import is_on, server_title
 from virtual_lab.server.own import given
@@ -57,6 +57,7 @@ from virtual_lab.server.setup import Setup
 from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
 from virtual_lab.session import Session
+from virtual_lab.skills import SkillSaver
 from virtual_lab.utils import CostUnknownError, compute_token_cost
 from virtual_lab.vision import VIEW_IMAGE_TOOL_NAME, Picture
 
@@ -227,6 +228,7 @@ class Conversations:
     :param max_upload_bytes: The most bytes of one file that may be attached to a message.
     :param catalog: The models OpenRouter serves, whose prices a conversation that has one of them needs known to work
         out what it has cost, or None to leave that to whoever registered them.
+    :param skill_saver: What a program that builds a skill saves it with, or None for the workspace's own skills.
     """
 
     def __init__(
@@ -238,8 +240,10 @@ class Conversations:
         setup: Setup | None = None,
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         catalog: Catalog | None = None,
+        skill_saver: SkillSaver | None = None,
     ) -> None:
         self.workspace = workspace
+        self.skill_saver = skill_saver if skill_saver is not None else Skills(workspace).save_built
         self.catalog = catalog
         self.check_keys = check_keys
         self.setup = setup
@@ -651,6 +655,7 @@ class Conversations:
                 late_tools=handle.connections.tools if handle.connections is not None else None,
                 skills=skills,
                 instructions=config.instructions,
+                skill_saver=self.skill_saver if config.kind == "build_skill" else None,
                 max_cost=config.max_cost,
                 max_delegations=MAX_CHAT_DELEGATIONS if config.max_delegations is None else config.max_delegations,
                 max_rounds=MAX_CHAT_DELEGATION_ROUNDS if config.max_rounds is None else config.max_rounds,

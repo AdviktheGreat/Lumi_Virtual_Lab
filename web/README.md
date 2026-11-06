@@ -48,7 +48,7 @@ which takes seconds.
 
 A program is one conversation with the lead, with its files and what it ran. The interface calls it a program everywhere
 (the sidebar, the menus, the messages), while the library and the API still say conversation, and keep `/chat` and
-`/api/chats`. A program is begun as one of two kinds, which the home page offers above the box, and which the server
+`/api/chats`. A program is begun as one of three kinds, which the home page offers above the box, and which the server
 keeps in the program's `config` as `kind`:
 
 - **Quick task** is the default: ask the lead for something and follow it through. Nothing else is asked for.
@@ -58,8 +58,14 @@ keeps in the program's `config` as `kind`:
   `config.instructions` and cannot be changed once the program has begun. Sending without a name or instructions begins
   nothing: the form says what is missing and puts the focus on it (`src/lib/programs.ts` checks, as the server does). The
   spending limit is chosen in the same panel as `/budget`, and is the settings' where none was chosen.
+- **Build skill** is for writing a skill with the lead (see
+  [Building a skill with the lead](../docs/tools-and-skills.md#building-a-skill-with-the-lead)). It has no name or
+  instructions to fill in, but it needs code to run: where the settings have code off, choosing it says so, with a button
+  that opens the settings at Code, and sending begins nothing. The Skills page's "New skill" menu has "Build with Lumi",
+  which goes to `/?program=build_skill`, the home page with it chosen. A call to `save_skill` is shown as "Checked a
+  skill before saving it" until it has saved one, and then as "Saved the skill NAME", with a link to the Skills page.
 
-In the sidebar a custom program is marked "Custom", and its header has a button of the same name that shows the
+In the sidebar a custom program is marked "Custom", and one that builds a skill "Build skill", and its header has a button of the same name that shows the
 instructions it was begun with. A program with no title yet is listed as "Untitled program".
 
 ## The list of programs
@@ -419,6 +425,7 @@ a word in it:
 | `tool:files` | Looks at the file attached to the conversation, `counts.csv`, with the library's own tools for that |
 | `tool:offered` | Answers with the names of the tools the model was offered, which is how a test sees what the settings gave it |
 | `instructions:` | Answers with the instructions of a custom program that the lead was given, or that it was given none (`e2e/programs.spec.ts`) |
+| `skill:build:NAME`, `skill:save:NAME` | Writes the skill NAME in the session's `new_skills/` with code and calls `save_skill` for it, or calls `save_skill` alone, as the lead does for a program that builds a skill (`e2e/own-server/skills-build.spec.ts`) |
 | `mcp:echo`, `count`, `both`, `order`, `confirm`, `signed`, `gated` | Calls the tools of the test server that the tests of `e2e/mcp` set up as `genes` (or `vault`, for `signed`, and `gate`, for `gated`): `echo`, `count`, `count` and then `echo`, `order` (which asks what to order), and `confirm` (which asks yes or no) |
 | `pdf:unavailable` | Has saving the conversation as a PDF fail, as it does where WeasyPrint is not installed (the PDF is otherwise made by a stand-in that needs no WeasyPrint) |
 | `lab:team` | Brings in the team for a round of discussion, in which the scientists answer as the script says |

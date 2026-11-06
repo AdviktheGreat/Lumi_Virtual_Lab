@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { KeyRound } from "lucide-react";
 import { BrandLogo } from "@/components/brand";
 import { CapabilityCards } from "@/components/capability-cards";
@@ -13,7 +13,7 @@ import { LimitsDialog } from "@/components/limits-dialog";
 import { Notice, ProblemNotice } from "@/components/messages";
 import { ModelButton, ModelDialog } from "@/components/model-dialog";
 import { PageHeader } from "@/components/page-header";
-import { PROGRAM_INSTRUCTIONS_ID, PROGRAM_NAME_ID, ProgramStart } from "@/components/program-start";
+import { PROGRAM_CODE_ID, PROGRAM_INSTRUCTIONS_ID, PROGRAM_NAME_ID, ProgramStart } from "@/components/program-start";
 import { useServer } from "@/components/server-provider";
 import { useSettings } from "@/components/settings-provider";
 import { SkillsDialog } from "@/components/skills-dialog";
@@ -28,7 +28,7 @@ import { choiceButtonText, choiceKept, choiceStart, vanished } from "@/lib/skill
 import { DEFAULT_LEAD_TITLE } from "@/lib/team-choice";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
-import type { ChatInfo, LabChoice, LimitsChange } from "@/lib/types";
+import type { ChatInfo, LabChoice, LimitsChange, ProgramKind } from "@/lib/types";
 
 // What shows what is chosen of the skills, beside the model, and opens the choice
 function SkillsButton({ chosen, disabled, onClick }: { chosen: string[] | null; disabled: boolean; onClick: () => void }) {
@@ -46,7 +46,16 @@ function SkillsButton({ chosen, disabled, onClick }: { chosen: string[] | null; 
   );
 }
 
+// The page where a program is begun, which begins as the one that a link to it names (build_skill), and as a quick task
+// otherwise. It begins again when the link changes, as a new program does, with nothing typed.
 export function HomeView() {
+  const named = useSearchParams().get("program");
+  const kind: ProgramKind = named === "build_skill" ? "build_skill" : "quick_task";
+
+  return <Home key={kind} kind={kind} />;
+}
+
+function Home({ kind }: { kind: ProgramKind }) {
   const router = useRouter();
   const { server, report } = useServer();
   const { refresh } = useChats();
@@ -68,7 +77,7 @@ export function HomeView() {
   const [labbing, setLabbing] = useState<string | null>(null);
   const [helping, setHelping] = useState(false);
   // What it is to be begun as, and what is wrong with what was typed of it, which is shown once it has been tried to begin it
-  const [program, setProgram] = useState<ProgramDraft>({ kind: "quick_task", name: "", instructions: "" });
+  const [program, setProgram] = useState<ProgramDraft>({ kind, name: "", instructions: "" });
   const [shown, setShown] = useState<ProgramProblems>({});
   // There is no conversation to send files to until the message is, so they are held until then
   const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
@@ -84,7 +93,7 @@ export function HomeView() {
     let chat: ChatInfo | null = null;
     try {
       chat = await api.createChat({
-        ...checkProgram(program).begin,
+        ...checkProgram(program, !codeOff).begin,
         ...(chosen === null ? {} : { model: chosen }),
         ...limitsChosen,
         ...(skillsChosen === null ? {} : { skills: skillsChosen }),
@@ -131,10 +140,11 @@ export function HomeView() {
 
   // Whether what was typed of the program is enough to begin it, which if it is not is shown, with the focus on the first of it
   function programReady(): boolean {
-    const { problems } = checkProgram(program);
+    const { problems } = checkProgram(program, !codeOff);
     setShown(problems);
-    if (problems.name === undefined && problems.instructions === undefined) return true;
-    document.getElementById(problems.name === undefined ? PROGRAM_INSTRUCTIONS_ID : PROGRAM_NAME_ID)?.focus();
+    if (Object.keys(problems).length === 0) return true;
+    const first = problems.code !== undefined ? PROGRAM_CODE_ID : problems.name === undefined ? PROGRAM_INSTRUCTIONS_ID : PROGRAM_NAME_ID;
+    document.getElementById(first)?.focus();
 
     return false;
   }
@@ -158,7 +168,8 @@ export function HomeView() {
   const ready = server.status === "ready" ? server.settings : null;
 
   // Where code cannot run, what asks for it is not offered, which is known before there is a conversation
-  const noCode = ready !== null && ready.code === "none" ? "code is turned off in the settings" : null;
+  const codeOff = ready !== null && ready.code === "none";
+  const noCode = codeOff ? "code is turned off in the settings" : null;
   const directives = ready === null ? null : { code: noCode, plot: noCode };
 
   // What a custom program may spend, in words, as it will be where nothing was chosen for it
@@ -208,6 +219,8 @@ export function HomeView() {
               disabled={sending}
               spending={spending}
               onSpending={() => setLimiting(true)}
+              noCode={codeOff}
+              onCode={() => settings.open("code")}
             />
 
             <div className="flex flex-col gap-2">

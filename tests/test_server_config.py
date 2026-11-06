@@ -126,7 +126,7 @@ class TestResolving:
     @pytest.mark.parametrize(
         ("request_", "message"),
         [
-            ({"kind": "campaign"}, "begun as one of quick_task, custom, not 'campaign'"),
+            ({"kind": "campaign"}, "begun as one of quick_task, custom, build_skill, not 'campaign'"),
             ({"kind": "custom"}, "A custom program needs instructions"),
             ({"kind": "custom", "instructions": "  \n"}, "A custom program needs instructions"),
             ({"kind": "custom", "instructions": 5}, "instructions of a program are text"),

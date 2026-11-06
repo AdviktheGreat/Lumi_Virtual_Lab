@@ -16,12 +16,13 @@ file (see builtin_skills).
 
 import difflib
 import errno
+import hashlib
 import os
 import re
 import shutil
 import threading
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,14 @@ SKILL_FILE_NAME = "SKILL.md"
 
 ACTIVATE_SKILL_TOOL_NAME = "activate_skill"
 READ_SKILL_FILE_TOOL_NAME = "read_skill_file"
-SKILL_TOOL_NAMES = frozenset({ACTIVATE_SKILL_TOOL_NAME, READ_SKILL_FILE_TOOL_NAME})
+SAVE_SKILL_TOOL_NAME = "save_skill"
+
+# The skill that comes with the lab and says how a skill is written, which a program for building one is given
+SKILL_CREATOR_NAME = "skill-creator"
+SKILL_TOOL_NAMES = frozenset({ACTIVATE_SKILL_TOOL_NAME, READ_SKILL_FILE_TOOL_NAME, SAVE_SKILL_TOOL_NAME})
+
+# Where in a session's directory the lead builds a skill that it is to save, a folder for each by its name
+BUILD_SKILLS_DIR_NAME = "new_skills"
 
 # Where in a session's directory a skill that is activated is put, a folder for each by its name
 SESSION_SKILLS_DIR_NAME = "skills"
@@ -593,6 +601,157 @@ def copy_skill(source: Path, target: Path) -> int:
         raise
 
     return left_out
+
+
+def skill_files(folder: Path) -> Iterator[Path]:
+    """The files of a skill's folder that are copied when it is, in order: those below it, but for links and what a
+    repository's folders hold that a skill does not need."""
+    for directory, names, files in os.walk(folder):
+        names[:] = sorted(
+            name for name in names if name not in SKIPPED_DIRECTORIES and not (Path(directory) / name).is_symlink()
+        )
+        for file in sorted(files):
+            path = Path(directory) / file
+            if path.is_file() and not path.is_symlink():
+                yield path
+
+
+def fingerprint(folder: Path) -> str:
+    """What identifies the files of a skill's folder as they are, so that what was shown is told from what has been
+    changed since.
+
+    :raises ValueError: If there are more bytes than a skill may have.
+    """
+    digest = hashlib.sha256()
+    size = 0
+    for path in skill_files(folder):
+        digest.update(path.relative_to(folder).as_posix().encode("utf-8") + b"\0")
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_COPIED_BYTES:
+                    raise ValueError(
+                        f"The folder is more than {MAX_COPIED_BYTES // 1_000_000} MB, which is too much for a skill"
+                    )
+                digest.update(chunk)
+        digest.update(b"\0")
+
+    return digest.hexdigest()
+
+
+# What saves a skill that was built in a session among the lab's skills. It is called with the skill's folder, which is
+# inside the session's directory, and whether to save it, and says what would be saved or was. It raises ValueError,
+# with what is wrong in words for the lead, where it cannot.
+SkillSaver = Callable[[Path, bool], Mapping[str, Any]]
+
+
+def save_skill_tool(session: Session, save: SkillSaver, turns: Callable[[], int]) -> Tool:
+    """The tool that saves a skill the lead built in the session among the lab's skills, once the researcher has agreed.
+
+    The first call for a folder as it is saves nothing: it says what would be saved, for the lead to show the
+    researcher and ask about. A later call for the same files saves it, but not before the researcher has sent a message
+    since the first, so that nothing is saved that they have not been asked about, and what is changed after they were
+    asked is shown to them again.
+
+    :param session: The session the lead builds the skill in, whose directory the folder is in.
+    :param save: Says what would be saved and saves it.
+    :param turns: How many messages the researcher has sent.
+    """
+    asked_at: dict[str, int] = {}
+    saved: dict[str, str] = {}
+    saving = threading.Lock()
+
+    def folder_of(path: Any) -> tuple[Path, str]:
+        asked = str(path).strip().replace("\\", "/")
+        where = session.where_code_runs().rstrip("/")
+        inside = asked == where or asked.startswith(f"{where}/")
+        if inside:
+            asked = asked[len(where) :]
+        parts = [part for part in asked.split("/") if part not in ("", ".")]
+        relative = "/".join(parts)
+        example = f"{BUILD_SKILLS_DIR_NAME}/my-skill"
+        if (asked.startswith("/") and not inside) or ".." in parts or not parts:
+            raise ValueError(f"Give the folder's path in the session, such as {example}")
+        folder = session.directory / relative
+        if not is_inside(folder, session.directory):
+            raise ValueError(f"Give the folder's path in the session, such as {example}")
+        if not folder.is_dir():
+            raise ValueError(
+                f"There is no folder {relative!r} in the session. Build the skill there first, in {example}"
+            )
+        if (folder / SKILL_FILE_NAME).is_symlink() or not (folder / SKILL_FILE_NAME).is_file():
+            raise ValueError(f"The folder {relative!r} has no {SKILL_FILE_NAME} in it, which is what makes it a skill")
+
+        return folder, relative
+
+    def say(found: Mapping[str, Any]) -> str:
+        files, more = listing([str(file) for file in found.get("files", ())], MAX_LISTED_FILES, MAX_LISTING_CHARS)
+        listed = ", ".join(files) + (f" and {more} more" if more else "")
+
+        return f"{found.get('name')}: {found.get('description')} Files: {listed or 'none'}."
+
+    def save_skill(path: str) -> dict[str, Any]:
+        folder, relative = folder_of(path)
+        key = fingerprint(folder)
+        with saving:
+            if key in saved:
+                return {"saved": True, "name": saved[key], "message": f"That is saved already, as {saved[key]}."}
+            found = save(folder, False)
+            now = turns()
+            if key not in asked_at:
+                asked_at[key] = now
+                return {
+                    "saved": False,
+                    "name": found.get("name"),
+                    "message": (
+                        f"Nothing is saved yet. This is what would be saved: {say(found)} Show the researcher "
+                        "what you built, which is its name, its description, SKILL.md in full, and the other files, "
+                        "and ask whether to save it or what to change. Call this again with the folder as it is "
+                        "once they have answered and agree."
+                    ),
+                }
+            if now <= asked_at[key]:
+                return {
+                    "saved": False,
+                    "name": found.get("name"),
+                    "message": (
+                        "Nothing is saved: the researcher has not answered since you were told what would be saved. "
+                        "Show it to them in your reply and ask whether to save it. Call this again once they have "
+                        "answered and agree."
+                    ),
+                }
+            result = dict(save(folder, True))
+            saved[key] = str(result.get("name"))
+
+        return {
+            "saved": True,
+            **result,
+            "message": (
+                f"Saved as the skill {result.get('name')} among the lab's skills. It is on for the programs that "
+                "are begun from now on, and can be turned off or deleted on the Skills page. Tell the researcher."
+            ),
+        }
+
+    return Tool(
+        name=SAVE_SKILL_TOOL_NAME,
+        description=(
+            "Save a skill you built in the session among the lab's skills, where programs begun after are given it. "
+            "Give the path of the skill's folder, which has a SKILL.md in it. The first call for a folder only says "
+            "what would be saved: show that to the researcher, ask whether to save it, and call again with the "
+            "folder as it is after they have answered and agree. A name that is taken is refused."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": f"The skill's folder in the session, such as {BUILD_SKILLS_DIR_NAME}/my-skill.",
+                }
+            },
+            "required": ["path"],
+        },
+        function=save_skill,
+    )
 
 
 def skill_tools(skills: Sequence[Skill], session: Session | None = None) -> tuple[Tool, ...]:

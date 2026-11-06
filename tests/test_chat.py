@@ -36,7 +36,13 @@ from virtual_lab.constants import CHECK_TOOL_ROUNDS, HUMAN_SPEAKER, MAX_FAKED_CA
 from virtual_lab.directives import LabRequest
 from virtual_lab.events import ChatEvent
 from virtual_lab.failures import KEY_REFUSED, SAFETY_FLAGGED, UNWELL
-from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC, checks_over_prompt, result_check_prompt
+from virtual_lab.prompts import (
+    PRINCIPAL_INVESTIGATOR,
+    SCIENTIFIC_CRITIC,
+    build_skill_prompt,
+    checks_over_prompt,
+    result_check_prompt,
+)
 from virtual_lab.resources import KnowHow
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
@@ -352,6 +358,74 @@ class TestInstructions:
 
         for call in (0, 1):
             assert "program of its own" not in request_messages(fake_client, call)[0]["content"]
+
+
+class TestBuildingASkill:
+    def saver(self, asked: list[tuple[Path, bool]]) -> Any:
+        def save(folder: Path, commit: bool) -> dict[str, Any]:
+            asked.append((folder, commit))
+
+            return {"name": folder.name, "description": "Fits a curve.", "files": ["SKILL.md"]}
+
+        return save
+
+    def test_the_lead_is_told_how_to_build_one_and_given_the_tool_that_saves_it(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path, session=session, skill_saver=self.saver([]))
+
+        chat.send("Hello")
+
+        first = fake_client.completions.calls[0]
+        assert "save_skill" in [tool["function"]["name"] for tool in first["tools"]]
+        folder = f"{session.where_code_runs().rstrip('/')}/new_skills"
+        assert build_skill_prompt(folder) in first["messages"][0]["content"]
+        assert "build a skill with you" in first["messages"][0]["content"]
+
+    def test_a_conversation_not_for_building_one_is_given_neither(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        chat = make_chat(tmp_path, session=session)
+
+        chat.send("Hello")
+
+        first = fake_client.completions.calls[0]
+        assert "save_skill" not in [tool["function"]["name"] for tool in first["tools"]]
+        assert "build a skill with you" not in first["messages"][0]["content"]
+
+    def test_it_needs_a_session_since_a_skill_is_built_with_code(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="needs a session to run it in"):
+            make_chat(tmp_path, skill_saver=self.saver([]))
+
+    def test_no_other_tool_may_be_called_what_saves_a_skill(self, tmp_path: Path) -> None:
+        mine = Tool(name="save_skill", description="Mine.", parameters={"type": "object"}, function=lambda: "x")
+
+        with pytest.raises(ValueError, match="named save_skill"):
+            make_chat(tmp_path, tools=(mine,))
+
+    def test_what_is_built_is_saved_on_a_message_after_it_was_shown_and_not_on_the_one_that_showed_it(
+        self, fake_client: FakeClient, session: LocalSession, tmp_path: Path
+    ) -> None:
+        asked: list[tuple[Path, bool]] = []
+        folder = session.directory / "new_skills" / "dose-response"
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text("---\nname: dose-response\ndescription: x\n---\n")
+        fake_client.completions.responses = [
+            tool_call_response("save_skill", {"path": "new_skills/dose-response"}),
+            text_response("Shall I save it?"),
+            tool_call_response("save_skill", {"path": "new_skills/dose-response"}),
+            text_response("Saved."),
+        ]
+        chat = make_chat(tmp_path, session=session, skill_saver=self.saver(asked))
+
+        chat.send("Build it")
+        assert [commit for _, commit in asked] == [False]
+        chat.send("Yes")
+
+        assert [commit for _, commit in asked] == [False, False, True]
+        assert {path.name for path, _ in asked} == {"dose-response"}
+        saved = [json.loads(output.text) for output in of(chat.events_since(), "tool_output")]
+        assert [each["saved"] for each in saved] == [False, True]
 
 
 class TestCode:

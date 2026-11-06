@@ -212,11 +212,11 @@ test.describe("the Skills Nexus", () => {
     await expect(switchOf(page, "rna-counts")).toBeVisible();
   });
 
-  test("is added to by a menu that offers to upload a skill folder, or to put in skills from a repository or a folder", async ({ page }) => {
+  test("is added to by a menu that offers to build a skill, to upload a skill folder, or to put in skills from a repository or a folder", async ({ page }) => {
     const menu = page.getByRole("button", { name: "New skill", exact: true });
     await menu.click();
 
-    await expect(page.getByRole("menuitem")).toHaveText([/^Upload skill/, /^From a repository or folder/]);
+    await expect(page.getByRole("menuitem")).toHaveText([/^Build with Lumi/, /^Upload skill/, /^From a repository or folder/]);
     await page.getByRole("menuitem", { name: /^From a repository or folder/ }).click();
     const from = page.getByRole("dialog", { name: "From a repository or folder" });
     await expect(from.getByRole("form", { name: "Put in skills" })).toBeVisible();

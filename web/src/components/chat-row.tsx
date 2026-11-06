@@ -57,9 +57,9 @@ function ChatLink({ chat, active }: { chat: ChatSummary; active: boolean }) {
         )}
       </span>
       <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-        {chat.kind === "custom" && (
+        {chat.kind !== "quick_task" && (
           <span data-testid="program-kind" className="shrink-0 rounded-full bg-highlight px-1.5 text-[10px] font-medium leading-4 text-highlight-foreground">
-            Custom
+            {chat.kind === "custom" ? "Custom" : "Build skill"}
           </span>
         )}
         <span className="truncate">{timeAgo(chat.updated_at ?? chat.created_at)}</span>

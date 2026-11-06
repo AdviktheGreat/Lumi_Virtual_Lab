@@ -16,16 +16,21 @@ from virtual_lab.skills import (
     CATALOG_CHARS,
     PAGE_CHARS,
     READ_SKILL_FILE_TOOL_NAME,
+    SAVE_SKILL_TOOL_NAME,
+    SKILL_TOOL_NAMES,
     Skill,
     SkillError,
     SkillLibrary,
     catalog_use,
     discover_skills,
     find_skill_files,
+    fingerprint,
     lenient_fields,
     names_that_fit,
     parse_skill,
+    save_skill_tool,
     shorten,
+    skill_files,
     skill_tools,
     skills_prompt,
 )
@@ -804,3 +809,184 @@ class TestReadingFiles:
         assert activate.parameters["required"] == ["name"]
         assert read.parameters["required"] == ["name", "path"]
         assert set(read.parameters["properties"]) == {"name", "path", "offset"}
+
+
+class Saving:
+    """A way to save a skill that is built that says what it was asked and has the researcher's messages counted."""
+
+    def __init__(self, tmp_path: Path, name: str = "dose-response") -> None:
+        self.session = SimpleNamespace(directory=tmp_path / "work", where_code_runs=lambda: "/workspace")
+        self.asked: list[tuple[Path, bool]] = []
+        self.turns = 1
+        self.folder = write_skill(self.session.directory / "new_skills", name=name)
+        self.tool = save_skill_tool(self.session, self.save, lambda: self.turns)
+
+    def save(self, folder: Path, commit: bool) -> dict[str, Any]:
+        self.asked.append((folder, commit))
+
+        return {"name": folder.name, "description": "Fits a curve.", "files": ["SKILL.md", "scripts/fit.py"]}
+
+    def call(self, path: str = "new_skills/dose-response") -> dict[str, Any]:
+        return self.tool.function(path)
+
+
+class TestSavingASkillThatWasBuilt:
+    def test_it_is_a_tool_that_asks_for_a_folder_and_is_one_of_the_names_a_skill_reserves(self, tmp_path: Path) -> None:
+        tool = Saving(tmp_path).tool
+
+        assert tool.name == SAVE_SKILL_TOOL_NAME == "save_skill"
+        assert tool.parameters["required"] == ["path"]
+        assert SAVE_SKILL_TOOL_NAME in SKILL_TOOL_NAMES
+
+    def test_the_first_call_for_a_folder_saves_nothing_and_says_what_would_be_saved(self, tmp_path: Path) -> None:
+        saving = Saving(tmp_path)
+
+        said = saving.call()
+
+        assert said["saved"] is False and said["name"] == "dose-response"
+        assert "Nothing is saved yet" in said["message"]
+        assert "dose-response: Fits a curve. Files: SKILL.md, scripts/fit.py." in said["message"]
+        assert saving.asked == [(saving.session.directory / "new_skills" / "dose-response", False)]
+
+    def test_a_call_before_the_researcher_has_answered_saves_nothing_either(self, tmp_path: Path) -> None:
+        saving = Saving(tmp_path)
+        saving.call()
+
+        said = saving.call()
+
+        assert said["saved"] is False and "has not answered" in said["message"]
+        assert [commit for _, commit in saving.asked] == [False, False]
+
+    def test_a_call_after_they_have_sent_a_message_saves_it(self, tmp_path: Path) -> None:
+        saving = Saving(tmp_path)
+        saving.call()
+        saving.turns = 2
+
+        said = saving.call()
+
+        assert said["saved"] is True and said["name"] == "dose-response"
+        assert "Saved as the skill dose-response" in said["message"]
+        assert [commit for _, commit in saving.asked] == [False, False, True]
+
+    def test_a_call_after_it_is_saved_says_so_and_saves_nothing_more(self, tmp_path: Path) -> None:
+        saving = Saving(tmp_path)
+        saving.call()
+        saving.turns = 2
+        saving.call()
+
+        said = saving.call()
+
+        assert said == {"saved": True, "name": "dose-response", "message": "That is saved already, as dose-response."}
+        assert [commit for _, commit in saving.asked].count(True) == 1
+
+    def test_a_folder_changed_after_it_was_shown_is_shown_again_before_it_is_saved(self, tmp_path: Path) -> None:
+        saving = Saving(tmp_path)
+        saving.call()
+        saving.turns = 2
+        (saving.folder / "references").mkdir()
+        (saving.folder / "references" / "guide.md").write_text("More.")
+
+        said = saving.call()
+
+        assert said["saved"] is False and "Nothing is saved yet" in said["message"]
+        saving.turns = 3
+        assert saving.call()["saved"] is True
+
+    def test_a_skill_that_cannot_be_saved_is_refused_with_the_reason_before_anything_is_asked_of_the_researcher(
+        self, tmp_path: Path
+    ) -> None:
+        saving = Saving(tmp_path)
+
+        def refuse(folder: Path, commit: bool) -> dict[str, Any]:
+            raise ValueError("There is a skill called dose-response already.")
+
+        tool = save_skill_tool(saving.session, refuse, lambda: 5)
+
+        with pytest.raises(ValueError, match="skill called dose-response already"):
+            tool.function("new_skills/dose-response")
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "new_skills/dose-response",
+            "/workspace/new_skills/dose-response",
+            "/workspace/new_skills/dose-response/",
+            "./new_skills/dose-response",
+            "new_skills\\dose-response",
+            "  new_skills//dose-response  ",
+        ],
+    )
+    def test_the_folder_is_given_in_the_session_or_as_code_sees_it(self, tmp_path: Path, path: str) -> None:
+        saving = Saving(tmp_path)
+
+        saving.call(path)
+
+        assert saving.asked == [(saving.session.directory / "new_skills" / "dose-response", False)]
+
+    @pytest.mark.parametrize("path", ["", ".", "/", "/workspace", "/etc", "../outside", "new_skills/../../outside"])
+    def test_a_path_outside_the_session_is_refused(self, tmp_path: Path, path: str) -> None:
+        saving = Saving(tmp_path)
+
+        with pytest.raises(ValueError, match="Give the folder's path in the session"):
+            saving.call(path)
+
+        assert saving.asked == []
+
+    def test_a_folder_that_is_not_there_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="There is no folder 'new_skills/other' in the session"):
+            Saving(tmp_path).call("new_skills/other")
+
+    def test_a_folder_without_a_skill_file_is_refused(self, tmp_path: Path) -> None:
+        saving = Saving(tmp_path)
+        (saving.session.directory / "new_skills" / "empty").mkdir()
+
+        with pytest.raises(ValueError, match="has no SKILL.md in it"):
+            saving.call("new_skills/empty")
+
+    def test_a_folder_inside_the_session_that_is_a_link_to_one_outside_is_refused(self, tmp_path: Path) -> None:
+        saving = Saving(tmp_path)
+        outside = write_skill(tmp_path / "outside", name="elsewhere")
+        (saving.session.directory / "new_skills" / "elsewhere").symlink_to(outside, target_is_directory=True)
+
+        with pytest.raises(ValueError, match="Give the folder's path in the session"):
+            saving.call("new_skills/elsewhere")
+
+    def test_a_skill_file_that_is_a_link_is_refused(self, tmp_path: Path) -> None:
+        saving = Saving(tmp_path)
+        other = tmp_path / "other.md"
+        other.write_text("---\nname: dose-response\ndescription: x\n---\n")
+        (saving.folder / "SKILL.md").unlink()
+        (saving.folder / "SKILL.md").symlink_to(other)
+
+        with pytest.raises(ValueError, match="has no SKILL.md in it"):
+            saving.call()
+
+    def test_two_folders_of_a_skill_are_told_apart_by_what_is_in_them(self, tmp_path: Path) -> None:
+        folder = write_skill(tmp_path / "one", files={"scripts/fit.py": "a"})
+        same = write_skill(tmp_path / "two", files={"scripts/fit.py": "a"})
+        other = write_skill(tmp_path / "three", files={"scripts/fit.py": "b"})
+        renamed = write_skill(tmp_path / "four", files={"scripts/fit2.py": "a"})
+
+        assert fingerprint(folder) == fingerprint(same)
+        assert len({fingerprint(folder), fingerprint(other), fingerprint(renamed)}) == 3
+
+    def test_the_files_of_a_skill_are_those_below_it_but_for_links_and_a_repositorys_folders(
+        self, tmp_path: Path
+    ) -> None:
+        folder = write_skill(tmp_path / "one", files={"scripts/fit.py": "a", ".git/config": "x", "assets/a.txt": "b"})
+        (folder / "link.md").symlink_to(folder / "SKILL.md")
+
+        assert [path.relative_to(folder).as_posix() for path in skill_files(folder)] == [
+            "SKILL.md",
+            "assets/a.txt",
+            "scripts/fit.py",
+        ]
+
+    def test_a_folder_of_more_bytes_than_a_skill_may_have_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(skills_module, "MAX_COPIED_BYTES", 10)
+        folder = write_skill(tmp_path / "one", files={"big.bin": b"x" * 100})
+
+        with pytest.raises(ValueError, match="too much for a skill"):
+            fingerprint(folder)
