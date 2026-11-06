@@ -283,6 +283,28 @@ test.describe("uploading a skill", () => {
     expect((await listed(page)).skills).toEqual([]);
   });
 
+  test("keeps the browser from opening a file that is dropped beside the place for it, while it is open", async ({ page }) => {
+    const dropped = () =>
+      page.evaluate(() => {
+        const made = new DataTransfer();
+        made.items.add(new File(["x"], "SKILL.md"));
+        const drop = new DragEvent("drop", { dataTransfer: made, bubbles: true, cancelable: true });
+        document.body.dispatchEvent(drop);
+
+        return drop.defaultPrevented;
+      });
+    await open(page);
+    await choose(page, folder("dose-folder", skill("dose-response", "Fits a curve.")));
+    await upload(page).click();
+    await expect(dialog(page).getByTestId("skills-put-in")).toBeVisible();
+
+    expect(await dropped()).toBe(true);
+
+    await dialog(page).getByRole("button", { name: "Done" }).click();
+    await expect(dialog(page)).toHaveCount(0);
+    expect(await dropped()).toBe(false);
+  });
+
   test("has nothing wrong that axe can find, and fits a narrow screen", async ({ page }) => {
     await open(page);
     // The dialog fades in, and is not looked at until it has

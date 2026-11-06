@@ -909,14 +909,29 @@ def create_app(
 
     @api.post("/skills/upload")
     async def upload_skills(request: Request) -> dict[str, Any]:
+        # The whole form is kept on disk while it is read, so what it may be is held to what its length says, which the
+        # server does not read past, and a request that gives none (one sent in chunks) is not taken
         declared = request.headers.get("content-length", "")
-        if declared.isdigit() and int(declared) > MAX_COPIED_BYTES + UPLOAD_OVERHEAD_BYTES:
+        if not declared.isdigit():
+            raise ApiError(411, "length_required", "A folder is sent with its length, which this request did not give")
+        if int(declared) > MAX_COPIED_BYTES + UPLOAD_OVERHEAD_BYTES:
             raise ApiError(
                 413,
                 "too_large",
                 f"The folder is more than {MAX_COPIED_BYTES // 1_000_000} MB, which is more than a skill needs",
             )
-        form = await request.form(max_files=MAX_COPIED_FILES + 1, max_fields=MAX_COPIED_FILES + 10)
+        try:
+            form = await request.form(max_files=MAX_COPIED_FILES + 1, max_fields=MAX_COPIED_FILES + 10)
+        except HTTPException as error:
+            if error.status_code != 400:
+                raise
+            if str(error.detail).startswith("Too many"):
+                raise ApiError(
+                    422,
+                    "too_many_files",
+                    f"The folder has more than {MAX_COPIED_FILES:,} files, which is more than a skill needs",
+                ) from error
+            raise ApiError(422, "invalid", f"The folder could not be read: {error.detail}") from error
         try:
             folder = form.get("folder")
             paths = form.getlist("paths")

@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from test_server_app import BEARER, LOCAL, TOKEN
 
+from virtual_lab.server import app as app_module
 from virtual_lab.server import skills as server_skills
 from virtual_lab.server.app import create_app
 from virtual_lab.server.skills import USER_SKILLS_DIR_VARIABLE, check_upload_folder, check_upload_path
@@ -214,6 +215,40 @@ class TestUploadingAFolder:
         assert response.status_code == 413
         assert response.json()["error"]["code"] == "too_large"
         assert not (workspace.skills_dir / "fit").exists()
+
+    def test_a_request_with_no_length_is_not_taken(self, client: TestClient, workspace: Workspace) -> None:
+        body = b'--x\r\nContent-Disposition: form-data; name="folder"\r\n\r\nfit\r\n--x--\r\n'
+
+        response = client.post(
+            "/api/skills/upload",
+            content=iter([body]),
+            headers={"content-type": "multipart/form-data; boundary=x"},
+        )
+
+        assert response.status_code == 411, response.text
+        assert response.json()["error"]["code"] == "length_required"
+
+    def test_a_request_that_says_it_is_too_big_is_refused_before_it_is_read(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(app_module, "MAX_COPIED_BYTES", 100)
+        monkeypatch.setattr(app_module, "UPLOAD_OVERHEAD_BYTES", 0)
+
+        response = upload(client, "fit", {"SKILL.md": SKILL, "big.bin": b"x" * 200})
+
+        assert response.status_code == 413
+        assert response.json()["error"]["code"] == "too_large"
+
+    def test_more_parts_than_a_folder_may_have_are_refused_as_too_many_files(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(app_module, "MAX_COPIED_FILES", 2)
+
+        # Files that are passed over are parts of the form too
+        response = upload(client, "fit", {"SKILL.md": SKILL, "a/.git/x": "x", "b/.git/y": "y", "c/.git/z": "z"})
+
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "too_many_files"
 
     def test_it_is_asked_with_the_token_as_the_other_routes_are(self, app: FastAPI) -> None:
         with TestClient(app, base_url=LOCAL) as anonymous:

@@ -330,6 +330,22 @@ export function SkillUpload({
   // While a folder is being sent the dialog is not closed from under it, which would lose what the server answers
   const [busy, setBusy] = useState(false);
 
+  // A folder dropped anywhere but on the place for it, such as on the dialog's result or beside the dialog, is not opened
+  // by the browser in place of the page, which would lose it
+  useEffect(() => {
+    if (!open) return;
+    const keep = (event: globalThis.DragEvent) => {
+      if (hasFiles(event.dataTransfer)) event.preventDefault();
+    };
+    window.addEventListener("dragover", keep);
+    window.addEventListener("drop", keep);
+
+    return () => {
+      window.removeEventListener("dragover", keep);
+      window.removeEventListener("drop", keep);
+    };
+  }, [open]);
+
   return (
     <Dialog
       open={open}
