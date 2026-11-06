@@ -25,6 +25,7 @@ and everything else is a request and an answer.
     PUT    /api/own/software            some software to give, and what it is for; DELETE /software/{name} gives it up
     GET    /api/skills, PUT             the skills there are, and which a new conversation is not given
     POST   /api/skills/install          put in the skills of a Git repository, or of a folder on this machine
+    POST   /api/skills/upload           put in the skills of a folder that a page sends, each file with its path
     GET    /api/skills/{name}           what a skill tells the lead, and its files; DELETE deletes one the lab was given
     GET    /api/skill-library           the skills that come with the lab to be put in, by category, and which are in
     POST   /api/skill-library/install   put in some of them, by name
@@ -88,6 +89,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StringConstraints
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
 
@@ -137,7 +139,7 @@ from virtual_lab.server.skills import Skills
 from virtual_lab.server.stream import follow
 from virtual_lab.server.tools import check_tool_names, describe_tools
 from virtual_lab.server.workspace import DEFAULT_WORKSPACE, Settings, Workspace
-from virtual_lab.skills import MAX_SKILLS
+from virtual_lab.skills import MAX_COPIED_BYTES, MAX_COPIED_FILES, MAX_SKILLS
 
 # The most characters of a message, which no one writes by hand
 # Where the server's own messages go, which the server shows as it runs
@@ -151,6 +153,9 @@ OPENROUTER_FILE_NAME = "openrouter-models.json"
 
 # Seconds the server waits for the next part of a file that is being uploaded
 UPLOAD_CHUNK_TIMEOUT = 120.0
+
+# What a folder of skills that is uploaded takes beyond its files, which is each file's path and where it ends
+UPLOAD_OVERHEAD_BYTES = 10_000_000
 
 # What a key may be at most, and the characters it may not hold, which an environment variable cannot
 MAX_KEY_CHARS = 4096
@@ -901,6 +906,28 @@ def create_app(
     @api.post("/skills/install")
     def install_skills(body: SkillInstallBody) -> dict[str, Any]:
         return skills.install(body.git, body.path)
+
+    @api.post("/skills/upload")
+    async def upload_skills(request: Request) -> dict[str, Any]:
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > MAX_COPIED_BYTES + UPLOAD_OVERHEAD_BYTES:
+            raise ApiError(
+                413,
+                "too_large",
+                f"The folder is more than {MAX_COPIED_BYTES // 1_000_000} MB, which is more than a skill needs",
+            )
+        form = await request.form(max_files=MAX_COPIED_FILES + 1, max_fields=MAX_COPIED_FILES + 10)
+        try:
+            folder = form.get("folder")
+            paths = form.getlist("paths")
+            files = form.getlist("files")
+            if not all(isinstance(each, UploadFile) for each in files) or len(paths) != len(files):
+                raise ApiError(422, "invalid", "Send each file of the folder with its path, in the same order")
+            sent = [(path, cast(UploadFile, file).file) for path, file in zip(paths, files, strict=True)]
+
+            return await run_in_threadpool(skills.upload, folder, sent)
+        finally:
+            await form.close()
 
     @api.get("/skill-library")
     def get_skill_library() -> dict[str, Any]:

@@ -26,24 +26,27 @@ function Folders({ skills }: { skills: Skills }) {
   );
 }
 
-// Where skills of your own are put in from: a Git repository or a folder on this machine
+// Where skills are put in from a place rather than a folder that was chosen: a Git repository, or a folder at a path on the
+// machine the lab runs on
 export function SkillsAdd({
   open,
   onOpenChange,
   skills,
   onPutIn,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   skills: Skills;
   onPutIn: (result: SkillsPutIn) => void;
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="sm:max-w-xl" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
-          <DialogTitle>Add skills</DialogTitle>
-          <DialogDescription>Put in your own skills, or those someone else has written.</DialogDescription>
+          <DialogTitle>From a repository or folder</DialogTitle>
+          <DialogDescription>Put in every skill of a Git repository, or of a folder at a path on this machine.</DialogDescription>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="flex flex-col gap-4">

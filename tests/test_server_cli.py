@@ -441,6 +441,7 @@ class TestInstalling:
             "keyring",
             "numpy",
             "pyarrow",
+            "python-multipart",
             "uvicorn",
             "Pillow",
             "pypdfium2",

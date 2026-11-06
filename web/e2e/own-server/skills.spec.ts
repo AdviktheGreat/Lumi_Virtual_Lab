@@ -30,7 +30,7 @@ test.afterEach(async ({ page }) => {
   await resetSkills(page);
 });
 
-const addDialog = (page: Page) => page.getByRole("dialog", { name: "Add skills" });
+const addDialog = (page: Page) => page.getByRole("dialog", { name: "From a repository or folder" });
 const form = (page: Page) => addDialog(page).getByRole("form", { name: "Put in skills" });
 const card = (page: Page, name: string) => page.getByTestId("skill-card").filter({ has: page.getByText(name, { exact: true }) });
 const cards = (page: Page) => page.getByTestId("skill-card");
@@ -58,7 +58,8 @@ function write(folder: string, name: string, description: string, files: Record<
 }
 
 async function openAdd(page: Page) {
-  await page.getByRole("button", { name: "Add skills", exact: true }).click();
+  await page.getByRole("button", { name: "New skill", exact: true }).click();
+  await page.getByRole("menuitem", { name: /^From a repository or folder/ }).click();
   await expect(addDialog(page)).toBeVisible();
 }
 
