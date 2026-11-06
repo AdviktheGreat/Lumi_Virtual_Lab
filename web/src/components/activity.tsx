@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { ChevronRight, Library, Loader2, StickyNote, Terminal } from "lucide-react";
 import { ApprovalCard, ConnectionCard, QuestionCard } from "@/components/asking";
 import { CallIcon } from "@/components/call-icon";
@@ -10,7 +11,7 @@ import { CodeCell, PendingCell } from "@/components/code-cell";
 import { LabSessionView } from "@/components/lab-session";
 import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
-import { describeResources, parseArguments, summarize } from "@/lib/calls";
+import { describeResources, parseArguments, savedSkill, summarize } from "@/lib/calls";
 import { stripAnsi } from "@/lib/format";
 import type { Call, Resources, Step } from "@/lib/transcript";
 import { cn } from "@/lib/utils";
@@ -98,6 +99,7 @@ function CodeCall({ call }: { call: Call }) {
 // Any other tool: what it was asked and what it gave back, which are there to be opened
 function ToolCall({ call }: { call: Call }) {
   const summary = summarize(call);
+  const saved = savedSkill(call);
   const args = parseArguments(call.arguments);
   const asked = args !== null && Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : null;
   const team = call.name === "convene_team" || call.name === "consult";
@@ -158,6 +160,11 @@ function ToolCall({ call }: { call: Call }) {
         )}
         {call.output === null && call.status === "running" && (
           <span className="text-xs text-muted-foreground">Nothing has come back yet.</span>
+        )}
+        {saved !== null && (
+          <Link href="/skills" className="w-fit text-sm font-medium text-primary underline-offset-4 hover:underline" data-testid="skill-saved">
+            See {saved} among the skills
+          </Link>
         )}
       </div>
     </details>

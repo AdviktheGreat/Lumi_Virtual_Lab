@@ -74,6 +74,7 @@ from virtual_lab.llm import (
 from virtual_lab.project import Project, sha256_file
 from virtual_lab.prompts import (
     SCIENTIFIC_CRITIC,
+    build_skill_prompt,
     chat_attachments_prompt,
     chat_note_prompt,
     chat_resources_prompt,
@@ -99,7 +100,16 @@ from virtual_lab.resources import (
 from virtual_lab.run_meeting import MeetingResult, TruncatedResponseError
 from virtual_lab.schemas import normalize_title
 from virtual_lab.session import CODE_TOOL_NAME, Session, own_resources_prompt, session_tool
-from virtual_lab.skills import CATALOG_CHARS, SKILL_TOOL_NAMES, Skill, skill_tools, skills_prompt
+from virtual_lab.skills import (
+    BUILD_SKILLS_DIR_NAME,
+    CATALOG_CHARS,
+    SKILL_TOOL_NAMES,
+    Skill,
+    SkillSaver,
+    save_skill_tool,
+    skill_tools,
+    skills_prompt,
+)
 from virtual_lab.tools import PUBMED_TOOL, Tool, run_tool_calls, tool_instructions_prompt
 from virtual_lab.utils import (
     BudgetExceededError,
@@ -434,6 +444,12 @@ class Chat:
     :param instructions: What the researcher wants of the lead throughout, which the lead is told after what the lab
         is, in every request it makes. They are the lead's alone: the team in its sessions is told what the lead
         asks of it. None are given with none.
+    :param skill_saver: Makes the conversation one for building a skill: the lead is told how, and given the tool that
+        saves a skill it built in the session, which it calls with the folder's path. The first call for a folder says
+        what would be saved, and a later one saves it, once the researcher has sent a message since, so that nothing is
+        saved that they were not asked about. It is called with the folder, which is in the session's directory, and
+        whether to save it, and says what would be saved or was; it raises ValueError, with what is wrong in words for
+        the lead, where it cannot. It needs a session.
     :param max_tool_iterations: The most tool calls the lead makes in answering one message before it
         is asked to answer without them. Defaults to 20 with a session, and 5 without one.
     :param check_results: Whether the lead, having run code for a message and written its answer, is asked once to
@@ -482,6 +498,7 @@ class Chat:
         skills: Sequence[Skill] = (),
         skills_catalog_chars: int = CATALOG_CHARS,
         instructions: str = "",
+        skill_saver: SkillSaver | None = None,
         max_tool_iterations: int | None = None,
         check_results: bool = False,
         max_delegations: int = MAX_CHAT_DELEGATIONS,
@@ -505,6 +522,8 @@ class Chat:
             raise TypeError(f"A conversation's skills are Skills, not {', '.join(not_skills)}")
         if len({skill.name.casefold() for skill in skills}) != len(skills):
             raise ValueError("Skill names must be unique, whatever their case")
+        if skill_saver is not None and session is None:
+            raise ValueError("A skill is built with code, so building one needs a session to run it in")
         if max_delegations < 0:
             raise ValueError(f"max_delegations must be zero or more, not {max_delegations}")
         if max_rounds < 0:
@@ -560,6 +579,7 @@ class Chat:
         self.skills = tuple(skills)
         self.skills_catalog_chars = skills_catalog_chars
         self.instructions = instructions.strip()
+        self.skill_saver = skill_saver
         self.max_tool_iterations = max_tool_iterations
         self.check_results = check_results
         self.max_delegations = max_delegations
@@ -1563,6 +1583,10 @@ class Chat:
         if self.skills:
             tools.extend(skill_tools(self.skills, session))
             parts.append(skills_prompt(self.skills, self.skills_catalog_chars))
+
+        if self.skill_saver is not None and session is not None:
+            tools.append(save_skill_tool(session, self.skill_saver, lambda: self._turn))
+            parts.append(build_skill_prompt(f"{session.where_code_runs().rstrip('/')}/{BUILD_SKILLS_DIR_NAME}"))
 
         retrieving = catalog is not None and self.resources == "retrieve" and not catalog.is_empty()
         if catalog is not None:

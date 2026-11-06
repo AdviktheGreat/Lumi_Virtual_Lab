@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ChevronDown, FolderUp, GitBranch, Plus } from "lucide-react";
+import Link from "next/link";
+import { ChevronDown, FolderUp, GitBranch, Plus, Sparkles } from "lucide-react";
 import { Given } from "@/components/given";
 import { PageFrame } from "@/components/page-frame";
 import { useServer } from "@/components/server-provider";
@@ -51,6 +52,15 @@ export function SkillsView() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80">
+            <DropdownMenuItem asChild>
+              <Link href="/?program=build_skill">
+                <Sparkles aria-hidden />
+                <span className="flex flex-col">
+                  <span>Build with Lumi</span>
+                  <span className="text-xs text-muted-foreground">Describe the skill, and the lead writes it and saves it when you agree</span>
+                </span>
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setOpened("upload")}>
               <FolderUp aria-hidden />
               <span className="flex flex-col">

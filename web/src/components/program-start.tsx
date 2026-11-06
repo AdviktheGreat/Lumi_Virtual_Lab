@@ -1,19 +1,23 @@
 "use client";
 
+import { Settings2 } from "lucide-react";
+import { Notice } from "@/components/messages";
 import { Radio } from "@/components/ui/radio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, describedBy } from "@/components/settings-fields";
 import { capTitle } from "@/lib/history";
-import { INSTRUCTIONS_LIMIT, lengthOf, PROGRAM_KINDS, type ProgramDraft, type ProgramProblems } from "@/lib/programs";
+import { INSTRUCTIONS_LIMIT, lengthOf, NO_CODE_FOR_SKILL, PROGRAM_KINDS, type ProgramDraft, type ProgramProblems } from "@/lib/programs";
 import { cn } from "@/lib/utils";
 
 export const PROGRAM_NAME_ID = "program-name";
+export const PROGRAM_CODE_ID = "program-code";
 export const PROGRAM_INSTRUCTIONS_ID = "program-instructions";
 
 // What a program is to be begun as, chosen above the box that it is begun with. A custom program is given a name and
-// instructions of its own, and may be given a spending limit, which is chosen as the limits of any program are.
+// instructions of its own, and may be given a spending limit, which is chosen as the limits of any program are. One that
+// builds a skill needs code, and where there is none says so, with the way to turn it on.
 export function ProgramStart({
   draft,
   onChange,
@@ -21,6 +25,8 @@ export function ProgramStart({
   disabled,
   spending,
   onSpending,
+  noCode,
+  onCode,
 }: {
   draft: ProgramDraft;
   onChange: (draft: ProgramDraft) => void;
@@ -29,6 +35,9 @@ export function ProgramStart({
   // The spending limit it will have, in words, which is the settings' where none was chosen
   spending: string;
   onSpending: () => void;
+  // Whether code is turned off in the settings, and what opens them at the setting
+  noCode: boolean;
+  onCode: () => void;
 }) {
   const kind = PROGRAM_KINDS.find((known) => known.kind === draft.kind) ?? PROGRAM_KINDS[0];
   const length = lengthOf(draft.instructions.trim());
@@ -63,6 +72,20 @@ export function ProgramStart({
           {kind.about}
         </p>
       </fieldset>
+
+      {draft.kind === "build_skill" && noCode && (
+        <Notice
+          tone={problems.code === undefined ? "muted" : "error"}
+          icon={Settings2}
+          action={
+            <Button id={PROGRAM_CODE_ID} variant="outline" size="xs" onClick={onCode} className="shrink-0 text-foreground">
+              Open settings
+            </Button>
+          }
+        >
+          {NO_CODE_FOR_SKILL}
+        </Notice>
+      )}
 
       {draft.kind === "custom" && (
         <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm" data-testid="program-custom">

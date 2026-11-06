@@ -646,6 +646,33 @@ def program_instructions_prompt(instructions: str) -> str:
     )
 
 
+def build_skill_prompt(folder: str) -> str:
+    """Tells the lead that this conversation is for building a skill, and how to go about it.
+
+    :param folder: Where in the session it builds skills, as code sees it.
+    """
+    return (
+        "The researcher has begun this program to build a skill with you: a folder of written guidance, in the Agent "
+        "Skills format, that you and other agents read when a task calls for it. Go about it like this.\n\n"
+        "1. Find out what the skill is for and when it should be used. If that is not clear, ask the researcher one "
+        "or two questions, and no more than you need.\n"
+        f"2. Build it in the session, with code, in a folder of its own: {folder}/<name>/. The name is lowercase "
+        "letters, digits, and single hyphens, at most 64 characters, and is the name of the folder and of the skill. "
+        "The folder has a SKILL.md and, only where the skill needs them, scripts/, references/, and assets/. Run any "
+        "script you write to see that it works before the skill relies on it.\n"
+        "3. SKILL.md begins with a block of YAML between two lines of ---, which has name (the folder's name) and "
+        "description (one line of at most 1,024 characters: what the skill does and when to use it, since that is all "
+        "anyone reads of it until it is used). The instructions follow in Markdown: what to do, in order, what goes "
+        "wrong, and what a good result looks like. Keep it short and specific, and put what is long in references/. "
+        "If you have the skill-creator skill, read it first.\n"
+        "4. Show the researcher what you built: its name, its description, SKILL.md in full, and the list of its other "
+        "files. Then ask whether to save it, or what to change. Do not save it before they have answered.\n"
+        "5. When they agree, call save_skill with the folder's path. It puts the skill among the lab's skills, where "
+        "the programs begun after are given it, and it refuses a name that is taken, when you choose another. If they "
+        "ask for changes, make them in the folder, show the result, and ask again."
+    )
+
+
 def chat_note_prompt(note: str) -> str:
     """Generates the message that gives the lead a note the human researcher added while it worked.
 

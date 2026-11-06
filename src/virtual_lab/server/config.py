@@ -33,6 +33,7 @@ from virtual_lab.server.own import check_own_names
 from virtual_lab.server.skills import check_skill_names, load_skills
 from virtual_lab.server.tools import check_tool_names, tool_names
 from virtual_lab.server.workspace import SCIENTIST_FIELDS, Settings, Workspace, read_json
+from virtual_lab.skills import SKILL_CREATOR_NAME
 from virtual_lab.utils import write_atomically
 
 CONFIG_FILE_NAME = "config.json"
@@ -357,8 +358,8 @@ def check_results_choice(value: Any) -> bool:
 
 
 def check_program(kind: Any, instructions: Any) -> tuple[str, str]:
-    """What a program is begun as, and its instructions, checked: a quick task, which has none, or a custom program,
-    which has some.
+    """What a program is begun as, and its instructions, checked: a quick task or one for building a skill, which have
+    none, or a custom program, which has some.
 
     :raises ValueError: If the kind is not one there is, a custom program has no instructions or too many, or any
         other has some.
@@ -417,8 +418,9 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         "lead" and each of "team", by title or described, "code" with any of where, sandbox, network, python,
         and resources, "max_cost" (null for no limit), "max_delegations", "max_rounds" and "max_tool_iterations"
         (null for what the lead is given unless it is told otherwise), "check_results" (whether the lead is asked to
-        check a result before answering, which it is unless this is false), "kind" ("quick_task", or "custom", which
-        needs "instructions"), "stream", "commercial_mode", "tools", the
+        check a result before answering, which it is unless this is false), "kind" ("quick_task", "custom", which
+        needs "instructions", or "build_skill", which needs code to run and, where the skills are not named, is given
+        a skill called skill-creator that the person has, however it is set), "stream", "commercial_mode", "tools", the
         names of the library's tools to give, which are all but those the workspace has turned off, "mcp", the names
         of the MCP servers to give, which are those the workspace has turned on, and "data" and "software", the
         names of what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of
@@ -478,6 +480,15 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         skills = [skill.name for skill in found.skills if skill.name not in turned_off]
 
     kind, instructions = check_program(request.get("kind"), request.get("instructions"))
+    if kind == "build_skill":
+        if code.where == "none":
+            raise ValueError(
+                "Building a skill needs code to run, and code is turned off. Turn it on in the settings, "
+                "under Code, and begin again"
+            )
+        # Offered when the skills are not named, even if the workspace has it turned off: it says how a skill is written
+        if request.get("skills") is None and SKILL_CREATOR_NAME not in skills and found.named(SKILL_CREATOR_NAME):
+            skills.append(SKILL_CREATOR_NAME)
 
     return ChatConfig(
         model=model,

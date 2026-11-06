@@ -32,6 +32,7 @@ from virtual_lab.skills import (
     MAX_COPIED_BYTES,
     MAX_COPIED_FILES,
     MAX_SKILLS,
+    SKILL_FILE_NAME,
     SKIPPED_DIRECTORIES,
     Skill,
     SkillError,
@@ -45,6 +46,7 @@ from virtual_lab.skills import (
     parse_skill,
     read_body,
     search_skill_files,
+    skill_files,
 )
 
 # Names a folder to look in beside the workspace's, in place of ~/.agents/skills, which a person may keep their skills
@@ -510,6 +512,57 @@ class Skills:
             installed.append({"name": skill.name, "left_out": left_out})
 
         return {"installed": installed, "skipped": skipped}
+
+    def save_built(self, folder: Path, commit: bool = True) -> dict[str, Any]:
+        """Says what would be saved of a skill that the lead built in a session, and saves it as a copy in the
+        workspace's skills/ where commit is true. It is held to the standard more closely than one that is put in: a
+        name that is lowercase letters, digits, and single hyphens and is the folder's, and no name that any skill has
+        already, wherever it comes from, so that one the researcher relies on is not replaced.
+
+        :param folder: The skill's folder, in the session.
+        :raises ValueError: If it cannot be saved, with why, for the lead to put right or to tell the researcher.
+        """
+        file = folder / SKILL_FILE_NAME
+        if file.is_symlink() or not file.is_file():
+            raise ValueError(f"There is no {SKILL_FILE_NAME} in {folder.name}, which is what makes a folder a skill")
+        try:
+            skill = parse_skill(file, "workspace")
+        except SkillError as error:
+            raise ValueError(f"This cannot be used as a skill: {error}") from error
+        if skill.name != folder.name:
+            raise ValueError(f"The folder is called {folder.name} and the skill {skill.name}. Give them one name")
+        if skill.notes:
+            raise ValueError(
+                f"This departs from the format of a skill: {'; '.join(skill.notes)}. Put that right, and call again"
+            )
+        files = [path.relative_to(folder).as_posix() for path in skill_files(folder)]
+        size = sum(path.stat().st_size for path in skill_files(folder))
+        if len(files) > MAX_COPIED_FILES or size > MAX_COPIED_BYTES:
+            raise ValueError(
+                f"The folder has {len(files):,} files of {size // 1_000_000} MB, and a skill may have at most "
+                f"{MAX_COPIED_FILES:,} files and {MAX_COPIED_BYTES // 1_000_000} MB. Leave out what it does not need"
+            )
+        found = {"name": skill.name, "description": skill.description, "files": sorted(files)}
+        with self._lock:
+            library = load_skills(self.workspace)
+            names = {*self.taken_names(library), *(each.name.casefold() for each in library.skills)}
+            if skill.name.casefold() in names:
+                raise ValueError(
+                    f"There is a skill called {skill.name} already. Choose another name for this one, or have the "
+                    "researcher delete the old one on the Skills page, if they want this to take its place"
+                )
+            if len(library.skills) >= MAX_SKILLS:
+                raise ValueError(f"Only {MAX_SKILLS} skills are used, so no more can be saved")
+            if not commit:
+                return found
+            try:
+                self.workspace.skills_dir.mkdir(parents=True, exist_ok=True)
+                target = self.workspace.skills_dir / skill.name
+                copy_skill(folder, target)
+            except OSError as error:
+                raise ValueError(f"It could not be saved: {error.strerror or error}") from error
+
+        return {**found, "directory": str(target)}
 
     def remove(self, name: str) -> dict[str, Any]:
         """Deletes a skill that is in the workspace's skills/.

@@ -20,6 +20,9 @@ from a script: no key is needed, and every run says the same. What it says depen
   in the team for a round of discussion, and "lab:consult" ask one scientist, whose replies the script writes too.
   "lab:code" brings in one scientist who runs code in the session, if the conversation has one, before they reply.
   "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
+- "skill:build:" and a name make it write a skill of that name in the session's new_skills/ with code, and call
+  save_skill for it, as it does for a program that builds a skill, and "skill:save:" and a name make it call save_skill
+  for that folder alone, as it does once the researcher has agreed.
 - A message given with a command, such as /ask, is answered as it is without one, except that /review has it bring in the
   Scientific Critic, that /lab has it hold the session that was asked for, with the agenda below (and "lab:skip" has it
   not), and that what the command tells the lead is not repeated in the reply that repeats the question.
@@ -509,9 +512,32 @@ def function_code(name: str) -> str:
     return FUNCTION_CODE.format(name=name)
 
 
+SKILL_TRIGGER = re.compile(r"skill:(build|save):([a-z0-9-]+)")
+
+
+def skill_scenario(step: str, name: str) -> list[tuple[str, str, dict[str, Any]]]:
+    """What the lead does to build the skill of this name, or to save the one it built."""
+    folder = f"new_skills/{name}"
+    saves = ("Saving it.", "save_skill", {"path": folder})
+    if step == "save":
+        return [saves]
+    code = (
+        "import os\n"
+        f"os.makedirs({folder!r}, exist_ok=True)\n"
+        f"text = '---\\nname: {name}\\ndescription: Use when a dose-response curve is fitted to a drug screen.\\n---\\n"
+        f"\\n# {name}\\n\\nFit a four-parameter logistic, and report the IC50 with its interval.\\n'\n"
+        f"open({folder!r} + '/SKILL.md', 'w').write(text)\n"
+        "print('written')"
+    )
+
+    return [("Writing the skill.", "run_code", {"code": code}), ("Seeing what would be saved.", *saves[1:])]
+
+
 def scenario_for(question: str) -> list[tuple[str, str, dict[str, Any]]] | None:
     if "lab:skip" in question:
         return None
+    if (skill := SKILL_TRIGGER.search(question)) is not None:
+        return skill_scenario(*skill.groups())
 
     return next((steps for word, steps in SCENARIOS.items() if word in question), None)
 

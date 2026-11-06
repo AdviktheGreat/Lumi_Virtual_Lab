@@ -35,9 +35,10 @@ export interface CodeSetup {
   forward_env: string[];
 }
 
-// What a program is begun as: a quick task is a conversation with the lead, and a custom program is a named one with
-// instructions of its own
-export type ProgramKind = "quick_task" | "custom";
+// What a program is begun as: a quick task is a conversation with the lead, a custom program is a named one with
+// instructions of its own, and one that builds a skill is a conversation in which the lead writes a skill with code and
+// saves it when the person agrees
+export type ProgramKind = "quick_task" | "custom" | "build_skill";
 
 export interface ChatConfig {
   kind: ProgramKind;
