@@ -10,18 +10,23 @@ import {
   enabledNames,
   filesLeftOut,
   givenSkills,
+  HUB_SHOWN,
+  hubCounts,
+  hubSaid,
+  hubSkills,
   howManyChosen,
   howManyOn,
   licenseLabel,
   licenseNote,
   licenseWarnings,
   matching,
-  matchingLibrary,
+  matchingHub,
   NOTHING_TO_PUT_IN_FROM,
   pickedWhen,
   putInSaid,
   sizeSaid,
   skillsFrom,
+  sourceLabel,
   tokensSaid,
   vanished,
   whereFound,
@@ -241,18 +246,65 @@ const library = [
   librarySkill("pydeseq2", "Bioinformatics & Genomics", "Differential expression."),
 ];
 
-describe("finding a skill of the library", () => {
-  it("is by every word written, in its name, description, or category, whatever the case", () => {
-    expect(matchingLibrary(library, "single CELL", "").map((each) => each.name)).toEqual(["scanpy"]);
-    expect(matchingLibrary(library, "drug", "").map((each) => each.name)).toEqual(["rdkit"]);
-    expect(matchingLibrary(library, "bioinformatics expression", "").map((each) => each.name)).toEqual(["pydeseq2"]);
+const builtIn = (name: string): SkillInfo => ({ ...skill(name), source: "builtin", removable: false });
+
+describe("the skills the Skills page shows", () => {
+  const have = [
+    builtIn("sample-ids-and-pca"),
+    skill("my-protocol", "Our lab's own protocol."),
+    skill("scanpy", "Single-cell analysis with Scanpy.", false),
+  ];
+  const all = hubSkills(have, library);
+
+  it("are those the lab has, in its order, and then those of the library that it does not", () => {
+    expect(all.map((each) => each.name)).toEqual(["sample-ids-and-pca", "my-protocol", "scanpy", "rdkit", "pydeseq2"]);
+    expect(all.filter((each) => each.info === null).map((each) => each.name)).toEqual(["rdkit", "pydeseq2"]);
   });
 
-  it("is within the category chosen, which is all of them where none is", () => {
-    expect(matchingLibrary(library, "", "Bioinformatics & Genomics").map((each) => each.name)).toEqual(["scanpy", "pydeseq2"]);
-    expect(matchingLibrary(library, "differential", "Bioinformatics & Genomics").map((each) => each.name)).toEqual(["pydeseq2"]);
-    expect(matchingLibrary(library, "differential", "Cheminformatics & Drug Discovery")).toEqual([]);
-    expect(matchingLibrary(library, "  ", "")).toHaveLength(3);
+  it("say where each comes from: built in, the library, or the person's own", () => {
+    expect(all.map((each) => each.source)).toEqual(["builtin", "mine", "library", "library", "library"]);
+    expect(sourceLabel("mine")).toBe("Mine");
+    expect(sourceLabel("builtin")).toBe("Built in");
+    expect(sourceLabel("library")).toBe("Library");
+  });
+
+  it("show a skill of the library that the lab has once, as the lab's copy, with the category the library gives it", () => {
+    const scanpy = all.filter((each) => each.name === "scanpy");
+    expect(scanpy).toHaveLength(1);
+    expect(scanpy[0].info?.enabled).toBe(false);
+    expect(scanpy[0].category).toBe("Bioinformatics & Genomics");
+    expect(all[1].category).toBeNull();
+  });
+
+  it("are counted by source, whatever is searched for", () => {
+    expect(hubCounts(all)).toEqual({ all: 5, mine: 1, builtin: 1, library: 3 });
+    expect(hubCounts([])).toEqual({ all: 0, mine: 0, builtin: 0, library: 0 });
+  });
+
+  it("are found by every word written, in the name, description, or category, whatever the case", () => {
+    expect(matchingHub(all, "single CELL", "", "").map((each) => each.name)).toEqual(["scanpy"]);
+    expect(matchingHub(all, "drug", "", "").map((each) => each.name)).toEqual(["rdkit"]);
+    expect(matchingHub(all, "bioinformatics expression", "", "").map((each) => each.name)).toEqual(["pydeseq2"]);
+    expect(matchingHub(all, "  ", "", "")).toHaveLength(5);
+  });
+
+  it("are narrowed to a source, and to a category, which only the library's skills have", () => {
+    expect(matchingHub(all, "", "mine", "").map((each) => each.name)).toEqual(["my-protocol"]);
+    expect(matchingHub(all, "", "builtin", "").map((each) => each.name)).toEqual(["sample-ids-and-pca"]);
+    expect(matchingHub(all, "", "library", "Bioinformatics & Genomics").map((each) => each.name)).toEqual(["scanpy", "pydeseq2"]);
+    expect(matchingHub(all, "differential", "", "Cheminformatics & Drug Discovery")).toEqual([]);
+    expect(matchingHub(all, "", "mine", "Bioinformatics & Genomics")).toEqual([]);
+  });
+
+  it("are said as how many there are, of how many, and how many of those the lab has on", () => {
+    expect(hubSaid(all, 5)).toBe("5 skills, 2 on");
+    expect(hubSaid(matchingHub(all, "", "library", ""), 5)).toBe("3 of 5 skills, 0 on");
+    expect(hubSaid(matchingHub(all, "drug", "", ""), 5)).toBe("1 of 5 skills");
+    expect(hubSaid(matchingHub(all, "protocol", "", ""), 1)).toBe("1 skill, 1 on");
+  });
+
+  it("are listed in whole rows of one, two, and three columns", () => {
+    expect(HUB_SHOWN % 6).toBe(0);
   });
 });
 

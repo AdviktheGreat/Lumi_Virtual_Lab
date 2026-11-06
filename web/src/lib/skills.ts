@@ -3,6 +3,10 @@ import type { LibrarySkill, LicenseKind, SkillInfo, SkillsCatalog, SkillsFrom, S
 // How many skills are listed before the rest are asked for, so that a library of hundreds does not fill the page
 export const SKILLS_SHOWN = 40;
 
+// How many cards the Skills page lists before the rest are asked for: a number that fills whole rows of one, two, and
+// three columns
+export const HUB_SHOWN = 36;
+
 // The skills whose name or description has every word that was written, whatever its case
 export function matching<T extends Pick<SkillInfo, "name" | "description">>(skills: T[], query: string): T[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -137,19 +141,6 @@ export function givenSkills(skills: SkillInfo[], names: string[]): { name: strin
   return names.map((name) => ({ name, description: by.get(name) ?? null }));
 }
 
-// The skills of the library that are in the category chosen, if one was ("" is every category), and have every word that
-// was written in their name, description, or category, whatever its case
-export function matchingLibrary(skills: LibrarySkill[], query: string, category: string): LibrarySkill[] {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-
-  return skills.filter((skill) => {
-    if (category !== "" && skill.category !== category) return false;
-    const text = `${skill.name} ${skill.description} ${skill.category}`.toLowerCase();
-
-    return words.every((word) => text.includes(word));
-  });
-}
-
 // What a person ought to know of a skill's license before it is put in, or null where there is nothing to say
 export function licenseNote(kind: LicenseKind): string | null {
   if (kind === "noncommercial") return "Its license allows noncommercial use only.";
@@ -254,4 +245,85 @@ const DESCRIPTION_LISTED = 250;
 // its description, which is as much as is listed of one where there is room
 export function catalogAdded(skills: Pick<LibrarySkill, "name" | "description">[]): number {
   return skills.reduce((total, skill) => total + skill.name.length + 5 + Math.min(skill.description.length, DESCRIPTION_LISTED), 0);
+}
+
+// Where a skill on the Skills page comes from, as a person sorts them: the skills they put in or keep for other tools
+// (mine), those the lab is built with (builtin), and the lab's library of skills to add (library)
+export type HubSource = "mine" | "builtin" | "library";
+
+export const HUB_SOURCES: { source: HubSource; label: string }[] = [
+  { source: "mine", label: "Mine" },
+  { source: "builtin", label: "Built in" },
+  { source: "library", label: "Library" },
+];
+
+export function sourceLabel(source: HubSource): string {
+  return HUB_SOURCES.find((each) => each.source === source)?.label ?? source;
+}
+
+// A skill as the Skills page shows it: one of the lab's skills (info), which is on or off, or one of the library that is
+// not among them yet (info is null), and what the library says of it
+export interface HubSkill {
+  name: string;
+  description: string;
+  category: string | null;
+  source: HubSource;
+  info: SkillInfo | null;
+  library: LibrarySkill | null;
+}
+
+// Every skill the page shows: those the lab has, in the order it lists them, and then those of the library that it has
+// not. A skill of the library that the lab has is shown once, as the lab's own copy.
+export function hubSkills(skills: SkillInfo[], library: LibrarySkill[]): HubSkill[] {
+  const offered = new Map(library.map((skill) => [skill.name, skill]));
+  const have = new Set(skills.map((skill) => skill.name));
+  const kept: HubSkill[] = skills.map((info) => {
+    const entry = offered.get(info.name) ?? null;
+    const source: HubSource = info.source === "builtin" ? "builtin" : entry !== null ? "library" : "mine";
+
+    return { name: info.name, description: info.description, category: entry?.category ?? null, source, info, library: entry };
+  });
+  const rest: HubSkill[] = library
+    .filter((skill) => !have.has(skill.name))
+    .map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      category: skill.category,
+      source: "library",
+      info: null,
+      library: skill,
+    }));
+
+  return [...kept, ...rest];
+}
+
+// How many skills there are of each source, and in all, whatever is searched for
+export function hubCounts(skills: HubSkill[]): Record<HubSource | "all", number> {
+  const counts = { all: skills.length, mine: 0, builtin: 0, library: 0 };
+  for (const skill of skills) counts[skill.source] += 1;
+
+  return counts;
+}
+
+// The skills of one source ("" is every source) and one category ("" is every category) that have every word that was
+// written in their name, description, or category, whatever its case
+export function matchingHub(skills: HubSkill[], query: string, source: HubSource | "", category: string): HubSkill[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+
+  return skills.filter((skill) => {
+    if (source !== "" && skill.source !== source) return false;
+    if (category !== "" && skill.category !== category) return false;
+    const text = `${skill.name} ${skill.description} ${skill.category ?? ""}`.toLowerCase();
+
+    return words.every((word) => text.includes(word));
+  });
+}
+
+// How many of the skills the lab has are on, and how many it does not have yet, as a person reads it above the skills
+export function hubSaid(skills: HubSkill[], of: number): string {
+  const have = skills.filter((skill) => skill.info !== null);
+  const on = have.filter((skill) => skill.info?.enabled).length;
+  const many = `${skills.length.toLocaleString("en-US")}${of !== skills.length ? ` of ${of.toLocaleString("en-US")}` : ""} skill${of === 1 ? "" : "s"}`;
+
+  return have.length === 0 ? many : `${many}, ${on} on`;
 }

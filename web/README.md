@@ -87,22 +87,23 @@ does, so that what is wrong is said where it is written.
 
 ## Skills Nexus
 
-The Skills page (`/skills`) has the skills the lab can follow, in two tabs; `/skills?tab=yours` opens the second.
+The Skills page (`/skills`, the Skills Nexus) shows every skill the lab can follow as one grid of cards (`SkillsHub`).
+`hubSkills` in `src/lib/skills.ts` joins what the server lists as the lab's own (`GET /api/skills`: those that come with
+the lab, those in the workspace, and those in `~/.agents/skills`) with the library that comes with it
+(`GET /api/skill-library`), so that a skill is shown once, whichever it is.
 
-- **Discover** is the library that comes with the lab, K-Dense's scientific skills (`GET /api/skill-library`). It says
-  where they are from (author, repository, version, license), has a search box and a category to narrow them (the
-  categories are under the group each is in), and a box for each skill, which is replaced by "In your skills" once it is
-  put in. Each shows its license, in red when it is for noncommercial use only, and opens to its facts and its
-  instructions, which are read from the server only when asked for. "Put in" copies what is ticked (or all that match,
-  or all) into the workspace and turns it on, after asking, since the dialog says how much of every request they add
-  (`catalogAdded` in `src/lib/skills.ts`) and warns of a license that is not free. Forty are shown at first, with a button
-  for more.
-- **Your skills** is the skills the lab has found, as the server lists them (`GET /api/skills`): those that come with
-  the lab, those in the workspace, and those in `~/.agents/skills`, each to be turned on or off, read, or deleted (a
-  skill that is the lab's or another tool's is not deleted from here), and the place to install from a git repository or a
-  folder.
+- A search box, a Source filter (All, Mine, Built in, Library, each with how many) and a category menu (the categories
+  are under the group each is in) narrow the cards. Thirty-six are shown at first, with a button for more.
+- A card names the skill, says what it is for, and has what can be done with it: a skill the lab has is a switch (on or
+  off), and one it does not has an Add button. A noncommercial license is marked in red.
+- A card opens (`SkillDetail`) to the skill's facts, license, what it tells the lead, and its files, which are read from
+  the server only when asked for, and to Delete where the skill is in the workspace (one that is the lab's or another
+  tool's is not deleted from here).
+- Above the cards, what is shown can be added, turned on, or turned off together. Adding asks first, since the dialog says
+  how much of every request the skills add (`catalogAdded`) and warns of a license that is not free.
+- The Add skills button opens `SkillsAdd`, the place to put in skills of your own from a git repository or a folder.
 
-Above both is a meter of how much of the skills catalog the skills that are on fill (`SkillsMeter`), which is the
+Above the cards is a meter of how much of the skills catalog the skills that are on fill (`SkillsMeter`), which is the
 `catalog` of `GET /api/skills`. What is changed is in every conversation made from then on, and not in one that is
 already going.
 
