@@ -13,14 +13,12 @@ from virtual_lab.agent import Agent
 from virtual_lab.constants import HUMAN_SPEAKER
 from virtual_lab.events import MeetingEvent, NextTurn
 from virtual_lab.export import meeting_html
-from virtual_lab.planning import run_project
 from virtual_lab.project import Project
 from virtual_lab.prompts import human_note_prompt
 from virtual_lab.utils import count_discussion_tokens
 
 from conftest import FakeClient, text_response
-from test_events import CRITIC, GOAL, LEAD, individual, team
-from test_planning import decide, plan, review, roster
+from test_events import GOAL, individual, team
 
 
 def notes_for(*notes: str | None) -> tuple[list[NextTurn], Any]:
@@ -331,34 +329,6 @@ class TestProjects:
         )
         assert again.discussion == first.discussion
         assert len(fake_client.completions.calls) == 1
-
-    def test_a_note_reaches_the_team_lead_as_it_decides_a_project_step(
-        self, fake_client: FakeClient, tmp_path: Path
-    ) -> None:
-        fake_client.completions.parsed_responses.extend(
-            [
-                roster("Immunologist"),
-                plan("Task 1", "Task 2"),
-                decide("finish", done=2, answer="Nanobody A binds better."),
-                review(True),
-            ]
-        )
-        asked: list[NextTurn] = []
-
-        def steer(turn: NextTurn) -> str | None:
-            asked.append(turn)
-            return "Do not finish without binding data." if turn.meeting == "round_01_decision" else None
-
-        report = run_project(Project(tmp_path, GOAL, steer=steer), team_lead=LEAD, critic=CRITIC)
-
-        assert report.status == "finished"
-        meetings = list(dict.fromkeys(turn.meeting for turn in asked))
-        assert meetings == ["team", "plan", "round_01_decision", "round_01_review"]
-        note = human_note_prompt("Do not finish without binding data.")
-        given = [call for call in fake_client.completions.calls if note in [m["content"] for m in call["messages"]]]
-        assert given and all(call["messages"][0]["content"] == LEAD.prompt for call in given)
-        decision = json.loads((tmp_path / "meetings" / "round_01_decision.json").read_text(encoding="utf-8"))
-        assert {"agent": HUMAN_SPEAKER, "message": "Do not finish without binding data."} in decision
 
     def test_a_steered_meeting_with_text_responses_still_ends_on_its_summary(
         self, fake_client: FakeClient, team_member: Agent, tmp_path: Path

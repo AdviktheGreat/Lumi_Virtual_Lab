@@ -1,4 +1,4 @@
-"""Tests for following a meeting or a project live: the events they tell of, and replies streamed
+"""Tests for following a meeting live: the events it tells of, and replies streamed
 as they are written."""
 
 import dataclasses
@@ -10,18 +10,15 @@ import pytest
 from pydantic import BaseModel
 
 from virtual_lab.agent import Agent
-from virtual_lab.events import MeetingEvent, ProjectEvent
+from virtual_lab.events import MeetingEvent
 from virtual_lab.llm import ask
-from virtual_lab.planning import run_project
 from virtual_lab.project import Project
-from virtual_lab.prompts import PRINCIPAL_INVESTIGATOR, SCIENTIFIC_CRITIC
 from virtual_lab.run_meeting import hold_meeting
 from virtual_lab.session import LocalSession, Session
 from virtual_lab.tools import Tool
 
-from conftest import TEST_MODEL, FakeClient, fake_llm, parsed_response, text_response, tool_call_response
+from conftest import FakeClient, fake_llm, parsed_response, text_response, tool_call_response
 from test_hold_meeting import bad_request
-from test_planning import decide, found, plan, review, roster
 
 LONG = "x" * 5_000
 
@@ -427,12 +424,10 @@ class TestCode:
         assert of(events, "started")[0].data["session"] == {**session.describe(), "cells": 1}
 
 
-LEAD = PRINCIPAL_INVESTIGATOR.with_model(TEST_MODEL)
-CRITIC = SCIENTIFIC_CRITIC.with_model(TEST_MODEL)
 GOAL = "Find which of two nanobodies binds KP.3 better."
 
 
-class TestProjectEvents:
+class TestProjectMeetingEvents:
     def test_the_options_that_follow_a_meeting_do_not_make_it_another(
         self, fake_client: FakeClient, team_member: Agent, tmp_path: Path
     ) -> None:
@@ -472,95 +467,6 @@ class TestProjectEvents:
         assert {event.meeting for event in events} == {"first"}
         assert "writing" in kinds(events)
         assert kinds(events)[-1] == "finished"
-
-    def test_a_project_is_told_of_step_by_step_with_its_meetings(
-        self, fake_client: FakeClient, tmp_path: Path
-    ) -> None:
-        fake_client.completions.parsed_responses.extend(
-            [
-                roster("Immunologist"),
-                plan("Task 1", "Task 2"),
-                decide("team_meeting", participants=["Immunologist"], agenda="Compare the binding data."),
-                found(),
-                decide("finish", done=2, answer="Nanobody A binds better."),
-                review(True),
-            ]
-        )
-        own: list[MeetingEvent] = []
-        events: list[MeetingEvent | ProjectEvent] = []
-
-        def on_event(event: MeetingEvent | ProjectEvent) -> None:
-            # The project's own on_event is called first
-            if isinstance(event, MeetingEvent):
-                assert own[-1] is event
-            events.append(event)
-
-        project = Project(tmp_path, GOAL, on_event=own.append)
-        report = run_project(project, team_lead=LEAD, critic=CRITIC, on_event=on_event)
-
-        told = [event for event in events if isinstance(event, ProjectEvent)]
-        assert [(event.kind, event.round) for event in told] == [
-            ("team", None),
-            ("plan", None),
-            ("decided", 1),
-            ("round", 1),
-            ("decided", 2),
-            ("round", 2),
-            ("finished", 2),
-        ]
-        assert [member["title"] for member in told[0].data["team"]] == ["Immunologist"]
-        assert told[0].data["change"] == report.team_changes[0]
-        assert told[1].data["plan"] == [{"task": "Task 1", "status": "to do"}, {"task": "Task 2", "status": "to do"}]
-        assert told[2].data["proposed"]["action"] == "team_meeting"
-        assert told[3].data["round"] == dataclasses.asdict(report.rounds[0])
-        assert told[3].data["plan"] == report.rounds[0].proposed["plan"]
-        assert told[-1].text == report.reason
-        assert told[-1].data["report"] == report.to_dict()
-
-        meetings = [event.meeting for event in events if isinstance(event, MeetingEvent) and event.kind == "started"]
-        assert meetings == [
-            "team",
-            "plan",
-            "round_01_decision",
-            "round_01_meeting",
-            "round_02_decision",
-            "round_02_review",
-        ]
-        assert [event for event in own] == [event for event in events if isinstance(event, MeetingEvent)]
-
-        # Each meeting is told of before the step it is part of
-        decided = events.index(told[2])
-        assert isinstance(events[decided - 1], MeetingEvent) and events[decided - 1].meeting == "round_01_decision"
-
-    def test_code_run_for_a_project_is_told_of(self, fake_client: FakeClient, tmp_path: Path) -> None:
-        from test_planning import code
-        from virtual_lab.execution import LocalExecutor
-
-        fake_client.completions.parsed_responses.extend(
-            [
-                roster("Immunologist"),
-                plan("Task 1", "Task 2"),
-                decide("write_code", participants=["Immunologist"], agenda="Compare them."),
-                code("print('A binds better')"),
-                found("A binds better"),
-                decide("finish", done=2, answer="A.", findings=["F1"]),
-                review(True),
-            ]
-        )
-        events: list[MeetingEvent | ProjectEvent] = []
-
-        run_project(
-            Project(tmp_path, GOAL),
-            team_lead=LEAD,
-            critic=CRITIC,
-            executor=LocalExecutor(warn=False),
-            on_event=events.append,
-        )
-
-        (ran,) = [event for event in events if isinstance(event, ProjectEvent) and event.kind == "code"]
-        assert ran.round == 1
-        assert ran.data == {"name": "round_01_run", "succeeded": True}
-        assert "A binds better" in ran.text
 
 
 class TestAsk:
@@ -618,45 +524,3 @@ class TestEndingEvents:
         # Carried on, the meeting is read back rather than held and paid for again
         Project(tmp_path, GOAL).meeting("individual", "Compute a number.", name="first", team_member=team_member)
         assert len(fake_client.completions.calls) == 1
-
-    def test_on_event_failing_when_told_the_project_ended_leaves_its_report_and_log_agreeing(
-        self, fake_client: FakeClient, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        fake_client.completions.parsed_responses.extend(
-            [plan("Task 1"), decide("finish", done=2, answer="A."), review(True)]
-        )
-
-        def on_event(event: MeetingEvent | ProjectEvent) -> None:
-            if isinstance(event, ProjectEvent) and event.kind == "finished":
-                raise ValueError("The interface closed")
-
-        report = run_project(Project(tmp_path, GOAL), team_lead=LEAD, critic=CRITIC, team=(), on_event=on_event)
-
-        assert report.status == "finished"
-        assert json.loads((tmp_path / "research_log.json").read_text())["status"] == "finished"
-        assert json.loads((tmp_path / "report.json").read_text())["status"] == "finished"
-        assert "on_event failed when told the project had ended: ValueError('The interface closed')" in (
-            capsys.readouterr().out
-        )
-
-    def test_on_event_failing_as_the_budget_runs_out_is_logged_as_the_error(
-        self, fake_client: FakeClient, tmp_path: Path
-    ) -> None:
-        from test_planning import CALL_COST
-
-        fake_client.completions.parsed_responses.extend(
-            [plan("Task 1"), decide("individual_meeting", participants=["Principal Investigator"], agenda="One.")]
-        )
-
-        def on_event(event: MeetingEvent | ProjectEvent) -> None:
-            if isinstance(event, ProjectEvent) and event.kind == "round":
-                raise ValueError("The interface closed")
-
-        project = Project(tmp_path, GOAL, max_cost=7.5 * CALL_COST)
-        with pytest.raises(ValueError, match="interface closed"):
-            run_project(project, team_lead=LEAD, critic=CRITIC, team=(), on_event=on_event)
-
-        log = json.loads((tmp_path / "research_log.json").read_text())
-        assert log["status"] == "failed"
-        assert log["error"] == {"type": "ValueError", "message": "The interface closed"}
-        assert not (tmp_path / "report.json").exists()

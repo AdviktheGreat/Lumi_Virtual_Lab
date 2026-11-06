@@ -1,13 +1,12 @@
-"""Meetings and projects as documents to read, print, or share: HTML, and PDF through WeasyPrint.
+"""Meetings as documents to read, print, or share: HTML, and PDF through WeasyPrint.
 
 Biomni saves its agent's conversation as a PDF, turning the Markdown it writes into HTML and that
 into a PDF with WeasyPrint, with its figures embedded. A meeting is exported the same way, laid
 out as a meeting: its agenda and team first, then its summary, then the discussion round by round,
 each agent in a colour of its own, with the code that was run, what it printed, and the figures
-it drew next to the turn that drew them, and what the meeting cost last. A project is exported
-as its report, with its meetings after it if asked for.
+it drew next to the turn that drew them, and what the meeting cost last.
 
-Everything is read from what a meeting or project saved, so a document can be made of any meeting
+Everything is read from what a meeting saved, so a document can be made of any meeting
 at any time, including one that failed, from what it left under partial/. A transcript saved
 before meetings kept records, as the Virtual Lab's original ones were, is exported from the
 transcript alone.
@@ -35,8 +34,6 @@ from virtual_lab.actions import find_code_action
 from virtual_lab.constants import (
     HUMAN_SPEAKER,
     METADATA_DIR_NAME,
-    PROJECT_FILE_NAME,
-    REPORT_FILE_NAME,
     SESSION_LOG_DIR_NAME,
 )
 from virtual_lab.utils import cost_at_prices
@@ -113,6 +110,7 @@ def load_meeting(transcript_path: Path) -> SavedMeeting:
 
 
 # Rendering pieces
+
 
 @functools.cache
 def markdown_renderer() -> Any:
@@ -336,6 +334,7 @@ def team_cards(members: list[tuple[dict[str, str], str, str | None]]) -> str:
 
 
 # Meetings
+
 
 def kinds_of(meeting: SavedMeeting) -> list[str]:
     """Each turn's kind: the record's, or for a transcript without one, worked out from who spoke."""
@@ -638,165 +637,6 @@ def save_meeting_pdf(transcript_path: Path, pdf_path: Path | None = None, **opti
 
 # Projects
 
-def project_body(project_dir: Path) -> tuple[str, str]:
-    """A project's report as the body of a document, and its title."""
-    report_path = project_dir / REPORT_FILE_NAME
-    if not report_path.is_file():
-        raise FileNotFoundError(f"{project_dir} has no {REPORT_FILE_NAME}: run_project writes one when a run ends")
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-
-    status = report["status"]
-    badge = f'<span class="badge {"ok" if status == "finished" else "bad"}">{escape(status.replace("_", " "))}</span>'
-    limit = f" of a limit of {money(report['max_cost'])}" if report.get("max_cost") is not None else ""
-    parts = [
-        '<div class="eyebrow">Virtual Lab · Project report</div>',
-        f"<h1>{escape(first_line(report['goal']))}</h1>",
-        meta_line([badge, f"{len(report['rounds'])} rounds", f"spent {money(report.get('spent'))}{limit}"]),
-        f'<div class="callout"><div class="label">Goal</div>{markdown(report["goal"])}'
-        f"<p>{escape(report['reason'])}</p></div>",
-    ]
-
-    if report.get("answer") is not None:
-        parts.append(f"<h2>Answer</h2>{markdown(report['answer'])}")
-    elif report.get("proposed_answer") is not None:
-        parts.append(
-            f"<h2>Last answer proposed, which the critic did not accept</h2>{markdown(report['proposed_answer'])}"
-        )
-    if report.get("objections"):
-        items = "".join(f"<li>{markdown(objection)}</li>" for objection in report["objections"])
-        parts.append(f"<h2>The critic's objections</h2><ul>{items}</ul>")
-
-    agents = [
-        (report["team_lead"], "team lead"),
-        (report["critic"], "critic"),
-        *((member, None) for member in report["team"]),
-    ]
-    members = [(agent, AGENT_COLOURS[index % len(AGENT_COLOURS)], part) for index, (agent, part) in enumerate(agents)]
-    parts.append(f"<h2>Team</h2>{team_cards(members)}")
-
-    if report.get("team_changes"):
-        rows = "".join(
-            f"<tr><td class='number'>{change['round'] or 'start'}</td>"
-            f"<td>{escape(', '.join(agent['title'] for agent in change['added']) or '-')}</td>"
-            f"<td>{escape(', '.join(change['removed']) or '-')}</td><td>{escape(change['why'])}</td></tr>"
-            for change in report["team_changes"]
-        )
-        parts.append(
-            "<h3>Changes to the team</h3><table><thead><tr><th class='number'>Round</th><th>Joined</th><th>Left</th>"
-            f"<th>Why</th></tr></thead><tbody>{rows}</tbody></table>"
-        )
-
-    marks = {"done": "done", "dropped": "dropped", "in progress": "progress", "to do": "todo"}
-    items = "".join(
-        f'<li class="{marks.get(task["status"], "todo")}">{escape(task["task"])}</li>' for task in report["plan"]
-    )
-    parts.append(f'<h2>Plan</h2><ul class="plan">{items}</ul>')
-
-    if report.get("findings"):
-        rows = "".join(
-            f"<tr><td>{escape(finding['id'])}</td><td>{markdown(finding['claim'])}</td>"
-            f"<td>{markdown(finding.get('evidence') or '')}</td></tr>"
-            for finding in report["findings"]
-        )
-        parts.append(
-            "<h2>Findings</h2><table><thead><tr><th>Id</th><th>Claim</th><th>Evidence</th></tr></thead>"
-            f"<tbody>{rows}</tbody></table>"
-        )
-
-    rows = []
-    for round_ in report["rounds"]:
-        decision = round_.get("approved") or round_["proposed"]
-        what = decision["action"].replace("_", " ")
-        if decision.get("participants"):
-            what += f" ({', '.join(decision['participants'])})"
-        if decision.get("agenda"):
-            what += f": {decision['agenda']}"
-        outcome = round_["outcome"].replace("_", " ") + (f": {round_['note']}" if round_.get("note") else "")
-        rows.append(
-            f"<tr><td class='number'>{round_['number']}</td><td>{escape(what)}</td><td>{escape(outcome)}</td></tr>"
-        )
-    parts.append(
-        "<h2>Rounds</h2><table><thead><tr><th class='number'>Round</th><th>Decision</th><th>Outcome</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-    )
-
-    return "\n".join(parts), first_line(report["goal"])
-
-
-def first_line(text: str, max_chars: int = 120) -> str:
-    line = text.strip().splitlines()[0] if text.strip() else ""
-    return line if len(line) <= max_chars else line[: max_chars - 1].rstrip() + "…"
-
-
-def project_meetings(project_dir: Path) -> list[Path]:
-    """The transcripts of a project's finished meetings, in the order they were held."""
-    ledger = json.loads((project_dir / PROJECT_FILE_NAME).read_text(encoding="utf-8"))
-
-    return [
-        project_dir / step["files"]["transcript"]
-        for step in ledger["steps"]
-        if step["kind"] == "meeting" and step["status"] == "completed" and "transcript" in step.get("files", {})
-    ]
-
-
-def project_html(
-    project_dir: Path,
-    meetings: bool = False,
-    include_prompts: bool = False,
-    max_output_chars: int = MAX_EXPORTED_OUTPUT_CHARS,
-) -> str:
-    """A project run with run_project as an HTML document: its report, and its meetings if asked for.
-
-    :param project_dir: The project's directory, where run_project saved its report.
-    :param meetings: Whether to add every meeting the project finished, each from a new page.
-    :param include_prompts: For the meetings, whether to show each agent's prompts.
-    :param max_output_chars: For the meetings, the most output to show for one message.
-    :raises FileNotFoundError: If the project has no report, as before any run of it has ended.
-    :return: The document.
-    """
-    project_dir = Path(project_dir)
-    body, title = project_body(project_dir)
-    if meetings:
-        for path in project_meetings(project_dir):
-            section = meeting_body(load_meeting(path), include_prompts, max_output_chars, heading_level=2)
-            body += f'\n<section class="meeting">{section}</section>'
-
-    return document(title, body)
-
-
-def save_project_html(project_dir: Path, html_path: Path | None = None, **options: Any) -> Path:
-    """Saves a project's report as an HTML document, as report.html in its directory unless told where.
-
-    :param project_dir: The project's directory.
-    :param html_path: Where to save it, or None for report.html in the project's directory.
-    :param options: What project_html takes.
-    :return: Where it was saved.
-    """
-    project_dir = Path(project_dir)
-    path = Path(html_path) if html_path is not None else project_dir / "report.html"
-    document = project_html(project_dir, **options)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(document, encoding="utf-8")
-
-    return path
-
-
-def save_project_pdf(project_dir: Path, pdf_path: Path | None = None, **options: Any) -> Path:
-    """Saves a project's report as a PDF, as report.pdf in its directory unless told where.
-
-    :param project_dir: The project's directory.
-    :param pdf_path: Where to save it, or None for report.pdf in the project's directory.
-    :param options: What project_html takes.
-    :raises PDFExportError: If WeasyPrint or Pango is not installed.
-    :return: Where it was saved.
-    """
-    project_dir = Path(project_dir)
-    path = Path(pdf_path) if pdf_path is not None else project_dir / "report.pdf"
-
-    return render_pdf(project_html(project_dir, **options), path)
-
-
-# PDF
 
 def url_fetcher(weasyprint: Any) -> Any:
     """What WeasyPrint fetches with: only data: URIs, which the document carries its figures in,

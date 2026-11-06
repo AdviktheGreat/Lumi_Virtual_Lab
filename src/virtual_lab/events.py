@@ -1,12 +1,10 @@
-"""What a meeting or a project tells a caller as it goes, so that it can be followed live.
+"""What a meeting tells a caller as it goes, so that it can be followed live.
 
 Biomni's agent yields each step of its work once the step is done, for its web interface to show.
 A meeting here does the same through a function given as on_event, which is called with a
 MeetingEvent at every turn, every message added to the transcript, every tool call and run of
 code, and every response's usage. With stream, it is also called as each reply is written, with
-the reply so far, so that a person can read it word by word. A project run with run_project is
-followed the same way, with a ProjectEvent at each decision and round besides the events of the
-meetings it holds.
+the reply so far, so that a person can read it word by word.
 
 An event is told of once it has happened, apart from "tool_calls" and "code", which are told of
 before the tools or code run, so that what is running can be shown while it does.
@@ -38,8 +36,6 @@ MeetingEventKind = Literal[
     "failed",
     "read_back",
 ]
-
-ProjectEventKind = Literal["team", "plan", "decided", "code", "round", "finished"]
 
 ChatEventKind = Literal[
     "user",
@@ -111,35 +107,6 @@ class MeetingEvent:
     meeting: str
     round: int | None = None
     speaker: str | None = None
-    text: str = ""
-    data: Mapping[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ProjectEvent:
-    """Something that happened in a project run with run_project.
-
-    :param kind: What happened:
-
-        - "team": the team was chosen, given, or changed. data holds the team, each member as
-          describe_agent gives it, and the change, as the research log records it.
-        - "plan": the team made the plan. data["plan"] holds its tasks.
-        - "decided": the team lead decided the round's step. data holds the decision as
-          proposed, as NextStep.model_dump gives it, which the approve hook is asked about next.
-        - "code": code written for the round was run, and repaired if it failed. text is what
-          came of it, as its author is told.
-        - "round": the round ended. data holds the round as the research log records it, and the
-          plan as it stands.
-        - "finished": the project ended. text is why, and data holds the report, as
-          ProjectReport.to_dict gives it.
-
-    :param round: The round, from 1, or None before the first.
-    :param text: What was found or decided, as kind describes.
-    :param data: Everything else, as kind describes, in JSON's types.
-    """
-
-    kind: ProjectEventKind
-    round: int | None = None
     text: str = ""
     data: Mapping[str, Any] = field(default_factory=dict)
 
@@ -298,9 +265,6 @@ OnMeetingEvent = Callable[[MeetingEvent], None]
 
 # What a conversation calls, with each ChatEvent
 OnChatEvent = Callable[[ChatEvent], None]
-
-# What run_project calls, with its own events and those of every meeting it holds
-OnProjectEvent = Callable[[MeetingEvent | ProjectEvent], None]
 
 # What a meeting asks before every turn, for a note from the person following it, or None
 Steer = Callable[[NextTurn], str | None]
