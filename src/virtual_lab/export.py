@@ -57,7 +57,7 @@ PDF_INSTALL_HELP = (
     "pip install 'virtual-lab[pdf]', and Pango with brew install pango on macOS, or apt install "
     "libpango-1.0-0 libpangoft2-1.0-0 on Debian and Ubuntu; for Windows and the rest, see "
     "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html. The HTML the PDF is made from can be "
-    "saved without either, with save_meeting_html or save_project_html."
+    "saved without either, with save_meeting_html."
 )
 
 
@@ -633,9 +633,6 @@ def save_meeting_pdf(transcript_path: Path, pdf_path: Path | None = None, **opti
     path = Path(pdf_path) if pdf_path is not None else transcript_path.with_suffix(".pdf")
 
     return render_pdf(meeting_html(transcript_path, **options), path)
-
-
-# Projects
 
 
 def url_fetcher(weasyprint: Any) -> Any:

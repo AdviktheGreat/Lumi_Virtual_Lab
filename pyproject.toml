@@ -24,7 +24,7 @@ dependencies = [
     "langchain-anthropic>=1.0",
     "langchain-core>=1.0",
     "langchain-openai>=1.0",
-    # Renders what the agents write as HTML, for meetings and projects saved as documents
+    # Renders what the agents write as HTML, for meetings and conversations saved as documents
     "markdown-it-py>=3.0",
     "notebook",
     # parse on chat.completions outside beta, and the finish-reason errors carrying the response
@@ -67,7 +67,7 @@ eval = ["numpy", "pandas", "pyarrow"]
 # Tools from MCP servers, with connect_mcp, and tools served over MCP, with serve_mcp and
 # virtual-lab-mcp. PyYAML reads Biomni's YAML configs
 mcp = ["mcp>=2.3,<3", "PyYAML"]
-# Meetings and projects saved as PDFs, as Biomni saves its conversations. WeasyPrint also needs
+# Meetings and conversations saved as PDFs, as Biomni saves its conversations. WeasyPrint also needs
 # the Pango library, which pip cannot install
 pdf = ["weasyprint>=66"]
 # Reading papers saved as PDFs, for the tasks, databases, and software in them

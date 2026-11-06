@@ -1,11 +1,11 @@
 """A conversation with the head of a lab, who answers, runs code, or has the team work on it.
 
-Meetings and projects are run to a plan: they are given an agenda or a goal and report when they
-are done. A Chat is the other way round. A researcher talks to one agent, the lead, which answers
-directly when it can, runs code in a session when the answer needs a computation, and, when a
-question needs more than one kind of expertise, calls a tool to bring the team in: convene_team
-for a discussion the lead leads, or consult for one scientist to work on a focused task with the
-Scientific Critic reviewing it. Those are meetings, held as a Project holds them, in the same
+Meetings are run to a plan: they are given an agenda and report when they are done. A Chat is
+the other way round. A researcher talks to one agent, the lead, which answers directly when it
+can, runs code in a session when the answer needs a computation, and, when a question needs more
+than one kind of expertise, calls a tool to bring the team in: convene_team for a discussion the
+lead leads, or consult for one scientist to work on a focused task with the Scientific Critic
+reviewing it. Those are meetings, held as a Project holds them, in the same
 session and within the same budget, and the lead is given what they concluded.
 
 Everything that happens is told of through ChatEvents, kept in order, so that a page can follow a
