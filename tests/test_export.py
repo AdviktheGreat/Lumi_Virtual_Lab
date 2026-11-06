@@ -1,4 +1,4 @@
-"""Tests for saving meetings and projects as documents, in HTML and as PDFs."""
+"""Tests for saving meetings as documents, in HTML and as PDFs."""
 
 import base64
 import builtins
@@ -25,16 +25,10 @@ from virtual_lab.export import (
     image_uri,
     load_meeting,
     meeting_html,
-    project_html,
-    project_meetings,
     save_meeting_html,
     save_meeting_pdf,
-    save_project_html,
-    save_project_pdf,
     usage_table,
 )
-from virtual_lab.planning import run_project
-from virtual_lab.project import Project
 from virtual_lab.run_meeting import hold_meeting
 from virtual_lab.session import LocalSession
 from virtual_lab.tools import Tool
@@ -42,8 +36,6 @@ from virtual_lab import utils
 from virtual_lab.utils import MeetingUsage, price_per_million
 
 from conftest import TEST_MODEL, FakeClient, make_usage, parsed_response, text_response, tool_call_response
-from test_events import CRITIC, GOAL, LEAD
-from test_planning import decide, found, plan, review, roster
 
 # The smallest PNG there is: one transparent pixel
 PNG = base64.b64decode(
@@ -546,119 +538,6 @@ class TestUsageTable:
         assert "<td class='number'>unknown</td>" in unreported
 
 
-def run_a_project(fake_client: FakeClient, tmp_path: Path) -> Project:
-    fake_client.completions.parsed_responses.extend(
-        [
-            roster("Immunologist"),
-            plan("Task 1", "Task 2"),
-            decide("team_meeting", participants=["Immunologist"], agenda="Compare the binding data."),
-            found("A binds better"),
-            decide("finish", done=2, answer="Nanobody **A** binds better.", findings=["F1"]),
-            review(True),
-        ]
-    )
-    project = Project(tmp_path, GOAL)
-    run_project(project, team_lead=LEAD, critic=CRITIC)
-
-    return project
-
-
-class TestProjects:
-    def test_a_project_is_shown_as_its_report(self, fake_client: FakeClient, tmp_path: Path) -> None:
-        run_a_project(fake_client, tmp_path)
-        report = json.loads((tmp_path / "report.json").read_text())
-
-        document = project_html(tmp_path)
-        text = text_of(document)
-
-        assert f"<title>{GOAL}</title>" in document
-        assert "Virtual Lab · Project report" in text
-        assert '<span class="badge ok">finished</span>' in document
-        assert f"{len(report['rounds'])} rounds" in text
-        assert report["reason"] in text
-        assert "Answer Nanobody A binds better." in text and "<strong>A</strong>" in document
-        assert f"{LEAD.title} (team lead)" in text and f"{CRITIC.title} (critic)" in text and "Immunologist" in text
-        assert '<li class="done">Task 1</li><li class="done">Task 2</li>' in document
-        assert "Findings Id Claim Evidence F1 A binds better Shown for A binds better" in text
-        assert "team meeting (Immunologist): Compare the binding data." in text
-        assert "finish" in text
-        # The meetings are left out unless asked for
-        assert '<section class="meeting">' not in document
-
-    def test_a_project_can_be_shown_with_every_meeting_it_finished(
-        self, fake_client: FakeClient, tmp_path: Path
-    ) -> None:
-        run_a_project(fake_client, tmp_path)
-        meetings = project_meetings(tmp_path)
-
-        document = project_html(tmp_path, meetings=True)
-
-        assert len(meetings) >= 3 and all(path.is_file() for path in meetings)
-        assert document.count('<section class="meeting">') == len(meetings)
-        sections = document.split('<section class="meeting">')[1:]
-        for path, section in zip(meetings, sections):
-            assert f"<h2>{export.humanize(path.stem)}</h2>" in section
-        # The critic reviewing the answer on its own is both the member and the critic, and is shown once
-        (review,) = [section for path, section in zip(meetings, sections) if path.stem.endswith("_review")]
-        assert text_of(review).count(f"{CRITIC.title} (critic)") == 1
-        assert text_of(review).count(CRITIC.expertise) == 1
-        # The report alone has a top heading, so each page's footer names the project
-        assert document.count("<h1>") == 1
-
-    def test_only_meetings_that_completed_are_added(self, fake_client: FakeClient, tmp_path: Path) -> None:
-        run_a_project(fake_client, tmp_path)
-        ledger_path = tmp_path / "project.json"
-        ledger = json.loads(ledger_path.read_text())
-        meetings = [step for step in ledger["steps"] if step["kind"] == "meeting"]
-        meetings[0]["status"] = "failed"
-        meetings[1]["status"] = "interrupted"
-        meetings[2]["status"] = "running"
-        ledger_path.write_text(json.dumps(ledger))
-
-        assert project_meetings(tmp_path) == [tmp_path / step["files"]["transcript"] for step in meetings[3:]]
-
-    def test_a_project_that_did_not_finish_shows_the_answer_the_critic_refused(
-        self, fake_client: FakeClient, tmp_path: Path
-    ) -> None:
-        fake_client.completions.parsed_responses.extend(
-            [
-                roster("Immunologist"),
-                plan("Task 1", "Task 2"),
-                decide("finish", done=1, answer="Nanobody A, *probably*."),
-                review(False, "Task 2 is not done.", "No **binding** data."),
-            ]
-        )
-        run_project(Project(tmp_path, GOAL), team_lead=LEAD, critic=CRITIC, max_rounds=1)
-
-        document = project_html(tmp_path)
-        text = text_of(document)
-
-        assert '<span class="badge bad">out of rounds</span>' in document
-        assert "Last answer proposed, which the critic did not accept Nanobody A, probably ." in text
-        assert "<em>probably</em>" in document
-        assert "The critic's objections Task 2 is not done. No binding data." in text
-        assert "<strong>binding</strong>" in document
-        assert '<li class="done">Task 1</li><li class="todo">Task 2</li>' in document
-        assert "<h2>Answer</h2>" not in document
-
-    def test_a_project_without_a_report_cannot_be_shown(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="has no report.json"):
-            project_html(tmp_path)
-
-    def test_a_project_is_saved_in_its_directory_unless_told_where(
-        self, fake_client: FakeClient, tmp_path: Path
-    ) -> None:
-        run_a_project(fake_client, tmp_path)
-
-        saved = save_project_html(tmp_path)
-        elsewhere = save_project_html(tmp_path, tmp_path / "out" / "everything.html", meetings=True)
-
-        assert saved == tmp_path / "report.html"
-        assert elsewhere == tmp_path / "out" / "everything.html"
-        assert saved.read_text(encoding="utf-8") == project_html(tmp_path)
-        assert elsewhere.read_text(encoding="utf-8") == project_html(tmp_path, meetings=True)
-
-
 class TestPDF:
     def test_a_pdf_without_weasyprint_says_how_to_install_it(
         self, fake_client: FakeClient, team_member: Agent, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -811,18 +690,3 @@ class TestPDF:
         assert path.is_file()
         assert asked == []
         assert sum(len(page.images) for page in PdfReader(path).pages) == 0
-
-    @needs_weasyprint
-    def test_a_project_is_saved_as_a_pdf_with_its_meetings(self, fake_client: FakeClient, tmp_path: Path) -> None:
-        from pypdf import PdfReader
-
-        run_a_project(fake_client, tmp_path)
-
-        report = save_project_pdf(tmp_path)
-        everything = save_project_pdf(tmp_path, tmp_path / "everything.pdf", meetings=True)
-
-        assert report == tmp_path / "report.pdf"
-        short, long = PdfReader(report), PdfReader(everything)
-        assert "Nanobody A binds better." in short.pages[0].extract_text()
-        # Each meeting starts a page of its own
-        assert len(long.pages) >= len(short.pages) + len(project_meetings(tmp_path))

@@ -77,15 +77,12 @@ from virtual_lab.evaluation import (
     TeamMeeting,
     run_benchmark,
 )
-from virtual_lab.events import ChatEvent, MeetingEvent, NextTurn, ProjectEvent
+from virtual_lab.events import ChatEvent, MeetingEvent, NextTurn
 from virtual_lab.export import (
     PDFExportError,
     meeting_html,
-    project_html,
     save_meeting_html,
     save_meeting_pdf,
-    save_project_html,
-    save_project_pdf,
 )
 from virtual_lab.export_chat import chat_html, save_chat_html, save_chat_pdf
 from virtual_lab.export_notebook import chat_notebook, save_chat_notebook
@@ -129,7 +126,6 @@ from virtual_lab.literature import (
 from virtual_lab.mcp_auth import SignInError, sign_out_mcp
 from virtual_lab.mcp_presets import MCP_PRESETS, MCPPreset
 from virtual_lab.mcp_tools import MCPServerError, MCPToolError, MCPTools, connect_mcp
-from virtual_lab.memory import Finding, Findings, LabMemory, MemoryEntry
 from virtual_lab.paper_batch import (
     Paper,
     PaperResult,
@@ -157,7 +153,6 @@ from virtual_lab.papers import (
     read_paper,
     split_text,
 )
-from virtual_lab.planning import NextStep, PlanTask, ProjectReport, ProjectRound, ResearchPlan, Review, run_project
 from virtual_lab.project import Project, ProjectBudgetExceededError, ProjectStateError, ProjectStep
 from virtual_lab.records import DatabaseError, RecordNotFoundError
 from virtual_lab.repair import (
@@ -315,8 +310,6 @@ __all__ = [
     "EvaluationReport",
     "ExecutionError",
     "ExecutionResult",
-    "Finding",
-    "Findings",
     "FunctionBudgetExceededError",
     "FunctionGenerationError",
     "FunctionRunReport",
@@ -329,7 +322,6 @@ __all__ = [
     "ImplementationPlan",
     "KnowHow",
     "LabBench",
-    "LabMemory",
     "LocalExecutor",
     "LocalSession",
     "MCPPreset",
@@ -339,8 +331,6 @@ __all__ = [
     "MCP_PRESETS",
     "MeetingEvent",
     "MeetingResult",
-    "MemoryEntry",
-    "NextStep",
     "NextTurn",
     "PDB_LOOKUP_TOOL",
     "Paper",
@@ -358,13 +348,9 @@ __all__ = [
     "PDFExportError",
     "PUBCHEM_LOOKUP_TOOL",
     "PUBMED_TOOL",
-    "PlanTask",
     "PredictedStructure",
     "Project",
     "ProjectBudgetExceededError",
-    "ProjectEvent",
-    "ProjectReport",
-    "ProjectRound",
     "ProjectStateError",
     "ProjectStep",
     "Preprint",
@@ -375,11 +361,9 @@ __all__ = [
     "RecordNotFoundError",
     "RepairAttempt",
     "RepairOutcome",
-    "ResearchPlan",
     "Resource",
     "Resources",
     "ResponseTooLargeError",
-    "Review",
     "SANDBOX_LIBRARIES",
     "SANDBOX_PLATFORM",
     "SearchHits",
@@ -461,7 +445,6 @@ __all__ = [
     "meeting_html",
     "paper_text",
     "papers_in",
-    "project_html",
     "read_biorxiv_subjects",
     "read_function",
     "read_page",
@@ -472,7 +455,6 @@ __all__ = [
     "run_benchmark",
     "run_files",
     "run_meeting",
-    "run_project",
     "run_with_repair",
     "sandbox_image",
     "save_artifacts",
@@ -482,8 +464,6 @@ __all__ = [
     "save_execution_record",
     "save_meeting_html",
     "save_meeting_pdf",
-    "save_project_html",
-    "save_project_pdf",
     "saved_functions",
     "script_name",
     "search_articles",

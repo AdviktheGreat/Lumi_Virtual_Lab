@@ -91,18 +91,17 @@ hold_meeting(..., steer=steer)
 - The meeting waits while `steer` does, which is how it is paused: a function that waits for a person to resume holds the meeting before the turn, with nothing sent. `steer` is asked only between turns, so an agent running code or calling tools finishes its turn first.
 - An exception `steer` raises stops the meeting the way any other failure does, saving what was done under `save_dir/partial/`.
 - `interrupt` is called about every fifth of a second while a request waits for its reply, which is how a meeting is stopped while a provider says nothing: what it raises ends the meeting at once, the way an exception from `steer` does, and the request is left to end as it will, with its reply dropped. A `Chat` gives its meetings its own check for a stop. Like `steer`, it does not make a finished meeting a different one.
-- `Project` takes `steer` as an option for its meetings, which with `run_project` includes the meetings in which the team lead decides each step, so a note can reach the team lead before its next decision. Like `on_event`, it does not make a finished meeting a different one: what was said is in the meeting's transcript, and a project carried on reads it back.
+- `Project` takes `steer` as an option for its meetings. Like `on_event`, it does not make a finished meeting a different one: what was said is in the meeting's transcript, and a project carried on reads it back.
 
-### Saving a meeting, a project, or a conversation as a document
+### Saving a meeting or a conversation as a document
 
-Biomni saves its agent's conversation as a PDF. A meeting can be saved as one too, or as a page of HTML, laid out as a meeting: its agenda, team, and summary first, then the discussion round by round, each agent in a colour of its own, with the code each agent ran, what it printed, and the figures it drew, then what the meeting cost. A project is saved as its report, with every meeting it finished after it if asked for, each from a new page. A conversation with the head of a lab, as the web interface has it, is saved as what was asked and answered, turn by turn.
+Biomni saves its agent's conversation as a PDF. A meeting can be saved as one too, or as a page of HTML, laid out as a meeting: its agenda, team, and summary first, then the discussion round by round, each agent in a colour of its own, with the code each agent ran, what it printed, and the figures it drew, then what the meeting cost. A conversation with the head of a lab, as the web interface has it, is saved as what was asked and answered, turn by turn.
 
 ```python
-from virtual_lab import save_chat_html, save_chat_notebook, save_chat_pdf, save_meeting_html, save_meeting_pdf, save_project_pdf
+from virtual_lab import save_chat_html, save_chat_notebook, save_chat_pdf, save_meeting_html, save_meeting_pdf
 
 save_meeting_pdf("results/discussion.json")            # results/discussion.pdf
 save_meeting_html("results/discussion.json")           # results/discussion.html, which needs no extra
-save_project_pdf("project", meetings=True)             # project/report.pdf
 save_chat_pdf("workspace/chats/2025-03-04_0912_counts")   # conversation.pdf in that folder
 save_chat_notebook("workspace/chats/2025-03-04_0912_counts")   # conversation.ipynb, which needs no extra
 ```
@@ -111,7 +110,7 @@ save_chat_notebook("workspace/chats/2025-03-04_0912_counts")   # conversation.ip
 - Everything is read from what was saved, so any meeting can be saved as a document at any time, including one that failed, from `partial/`, and a transcript saved before meetings kept records, which is shown from the transcript alone.
 - The prompts each agent was given are left out, since the agenda stands for them; `include_prompts=True` shows them. Notes a person gave through `steer` are always shown. A tool's or the session's output is cut to `max_output_chars`, 6,000 characters by default, from the middle.
 - What the agents wrote is rendered as Markdown, with any HTML in it shown as text, and the document carries its figures, so neither the HTML nor the PDF fetches anything: an image an agent linked to, on the web or on disk, is shown as a link to it. A figure is read only from the session's own directory.
-- `meeting_html`, `project_html`, and `chat_html` return the document rather than saving it.
+- `meeting_html` and `chat_html` return the document rather than saving it.
 - A conversation is saved as it went. Each turn has what the researcher wrote and attached, then what the lead did, in order: what it said, the code it ran with what it printed and the figures it drew, the files it made, and the tools it called with what they gave back. Each time the lead brought in the team, the call links to the team's session, which is added after the conversation as a meeting is. A conversation that is still going is saved as far as it has got, and saving it changes nothing in what it saved.
 - A conversation can also be saved as a Jupyter notebook, as Biomni's agent works: what the researcher and the lead wrote are Markdown cells, each piece of code the lead ran is a code cell holding what it printed, the value it came to, and the figures it drew as its outputs, and what else the lead called is told in Markdown. R and shell code is a cell that starts with `%%R` (which needs rpy2) or `%%bash`. `chat_notebook` returns the notebook rather than saving it.
 - A conversation is read from its folder under the workspace's `chats/`, so `save_chat_html`, `save_chat_pdf`, and `save_chat_notebook` take that folder and save `conversation.html`, `conversation.pdf`, or `conversation.ipynb` in it unless told where. The figures are read from the session's directory, which is where the conversation says it was; if the folder has been moved, `files_dir` says where it is now.

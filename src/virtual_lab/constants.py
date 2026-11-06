@@ -451,15 +451,6 @@ SESSION_LOG_DIR_NAME = "sessions"
 PROJECT_FILE_NAME = "project.json"
 PROJECT_MEETINGS_DIR_NAME = "meetings"
 
-# What a project run to its goal records of each round, and the report it ends with, in the
-# project's directory
-RESEARCH_LOG_FILE_NAME = "research_log.json"
-REPORT_FILE_NAME = "report.json"
-REPORT_MARKDOWN_FILE_NAME = "report.md"
-
-# The findings a project run to its goal has made, as its LabMemory keeps them
-MEMORY_FILE_NAME = "memory.json"
-
 # A conversation with the head of a lab keeps in its directory what it is, the messages the lead
 # was sent, one JSON object to a line, and what happened as it went, in the same form; the files
 # the researcher attached; and, as a project, the team sessions the lead started

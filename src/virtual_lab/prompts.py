@@ -523,17 +523,6 @@ def code_session_prompt(
     )
 
 
-CODING_RULES = (
-    "Your code must be self-contained (with appropriate imports) and complete.",
-    "Your code may not include any undefined or unimplemented variables or functions.",
-    "Your code may not include any pseudocode; it must be fully functioning code.",
-    "Your code may not include any hard-coded examples.",
-    "If your code needs user-provided values, write code to parse those values from the command line.",
-    "Your code must be high quality, well-engineered, efficient, and well-documented (including docstrings, comments, and Python type hints if using Python).",
-)
-
-
-
 def lab_chat_prompt(lead: Agent, team: Iterable[Agent], can_run_code: bool) -> str:
     """Tells the head of a lab how to work in a conversation with a human researcher: answer,
     run code, or have the team work on it.

@@ -5,7 +5,7 @@ A chat-first workbench for computational biology. You talk to the head of a lab,
 Lumi has two parts that work together:
 
 - **A chat interface**, served by a local server, for working with the lead: files you attach, figures and files it makes, notes you can leave it while it works, and a spending limit for each conversation.
-- **A Python library**, `virtual_lab`, underneath it, for running meetings and long projects from a script, giving agents tools, and measuring them on benchmarks.
+- **A Python library**, `virtual_lab`, underneath it, for running meetings from a script, giving agents tools, and measuring them on benchmarks.
 
 Lumi began as a fork of the [Virtual Lab](https://github.com/zou-group/virtual-lab) by Kyle Swanson and colleagues, and builds on [Biomni](https://github.com/snap-stanford/Biomni) from Stanford SNAP. See [Licenses and acknowledgements](#licenses-and-acknowledgements).
 
@@ -93,7 +93,7 @@ with LocalSession(Path("work")) as session:
 | [Models and API keys](docs/models-and-keys.md) | Which provider each model name goes to, OpenRouter, keys and `.env` files |
 | [Meetings](docs/meetings.md) | Team and individual meetings, spending limits, following and steering a meeting, saving documents |
 | [Running code](docs/running-code.md) | The Docker sandbox, sessions, Biomni's software, data lake, and tools |
-| [Repairing code and running a project](docs/projects.md) | Fixing code that fails, and many meetings within one budget |
+| [Repairing code and running steps within one budget](docs/projects.md) | Fixing code that fails, and many meetings within one budget |
 | [Conversations, the server, and the chat interface](docs/chat-and-server.md) | The lead, its limits, the server's API, and building the pages |
 | [Growing the toolset from papers](docs/papers-and-functions.md) | Reading papers, and writing a function for each task |
 | [Benchmarks](docs/benchmarks.md) | Measuring an agent or a team on Biomni's benchmarks |
