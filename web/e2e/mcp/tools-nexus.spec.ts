@@ -223,6 +223,34 @@ test.describe("the catalog of more tools", () => {
     await expect(page.getByRole("button", { name: "Add MCP server" })).toBeFocused();
   });
 
+  test("keeps a server that is added while a change to another is still being kept", async ({ page }) => {
+    await setUp(page, "nexus_prog", program());
+    await open(page);
+    let release: () => void = () => undefined;
+    const hold = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/mcp/servers/nexus_prog", async (route) => {
+      if (route.request().method() !== "PATCH") return route.continue();
+      // The servers as the server gave them before the one was added, which come back after it is
+      const answer = await route.fetch();
+      await hold;
+      await route.fulfill({ response: answer });
+    });
+
+    await switchOf(page, "nexus_prog", "nexus_prog").click();
+    await expect(switchOf(page, "nexus_prog", "nexus_prog")).toHaveAttribute("aria-checked", "false");
+    await listed(page, "context7").getByRole("button", { name: "Add Context7" }).click();
+
+    // The catalog is asked nothing until the change before it has been answered
+    await page.waitForTimeout(250);
+    expect((await servers(page)).some((server) => server.name === "context7")).toBe(false);
+    release();
+
+    await expect(said(page)).toContainText("Added Context7");
+    await expect(card(page, "context7")).toBeVisible();
+    await expect(switchOf(page, "nexus_prog", "nexus_prog")).toHaveAttribute("aria-checked", "false");
+    expect((await servers(page)).some((server) => server.name === "context7")).toBe(true);
+  });
+
   test("is shown to be empty once every server of it is added", async ({ page }) => {
     await page.route("**/api/mcp/catalog", (route) =>
       route.request().method() === "GET"

@@ -52,9 +52,8 @@ export function ToolsView() {
   useEffect(() => {
     if (added.current === null || servers.value.kind !== "ready") return;
     const card = document.querySelector<HTMLElement>(`[data-testid="tool-${added.current}"] button`);
-    if (card === null) return;
-    card.focus();
     added.current = null;
+    card?.focus();
   }, [servers.value]);
 
   function markAdded(name: string) {
@@ -62,26 +61,29 @@ export function ToolsView() {
     catalog.set(catalog.value.value.map((server) => (server.name === name ? { ...server, added: true } : server)));
   }
 
-  async function add(server: McpCatalogServer) {
+  function add(server: McpCatalogServer) {
     if (adding !== null) return;
     setAdding(server.name);
     changes.setProblem(null);
     changes.setDone(null);
-    try {
-      const kept = await api.addCatalogServer(server.name);
-      added.current = server.name;
-      servers.set(kept);
-      markAdded(server.name);
-      changes.setDone(addedSaid(server));
-    } catch (error) {
-      report(error);
-      changes.setProblem(describeError(error));
-      // It may have been added by another page since the catalog was looked at
-      servers.reload();
-      catalog.reload();
-    } finally {
-      setAdding(null);
-    }
+    // After any change that was asked for before it, whose answer would otherwise replace the list this gives back
+    changes.serial(async () => {
+      try {
+        const kept = await api.addCatalogServer(server.name);
+        added.current = server.name;
+        servers.set(kept);
+        markAdded(server.name);
+        changes.setDone(addedSaid(server));
+      } catch (error) {
+        report(error);
+        changes.setProblem(describeError(error));
+        // It may have been added by another page since the catalog was looked at
+        servers.reload();
+        catalog.reload();
+      } finally {
+        setAdding(null);
+      }
+    });
   }
 
   function describe(button: HTMLButtonElement) {
@@ -202,7 +204,7 @@ export function ToolsView() {
                     <h3 className="text-sm font-medium text-muted-foreground">{group.group}</h3>
                     <ul aria-label={group.group} className={GRID}>
                       {group.servers.map((server) => (
-                        <CatalogCard key={server.name} server={server} busy={adding !== null} onAdd={() => void add(server)} />
+                        <CatalogCard key={server.name} server={server} busy={adding !== null} onAdd={() => add(server)} />
                       ))}
                     </ul>
                   </div>

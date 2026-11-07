@@ -14,6 +14,9 @@ export interface McpChanges {
   // The servers as they were chosen, which a box shows at once, and not yet as the server has kept them
   shown: (servers: McpServer[]) => McpServer[];
   change: (name: string, what: McpChange) => void;
+  // Another change to the servers, made after those asked for before it and before those asked for after, so that the list it
+  // gives back is not replaced by one that was asked for before it
+  serial: (task: () => Promise<void>) => void;
   // What a key that was given or taken away changes is what the server says it is missing
   refresh: () => Promise<void>;
   signOut: (server: McpServer) => Promise<void>;
@@ -49,6 +52,10 @@ export function useMcpChanges(onChanged: (servers: McpServer[]) => void, report:
         if (waiting.current === 0) setChosen({});
       }
     });
+  }
+
+  function serial(task: () => Promise<void>) {
+    queue.current = queue.current.then(task).catch(report);
   }
 
   async function refresh() {
@@ -87,5 +94,5 @@ export function useMcpChanges(onChanged: (servers: McpServer[]) => void, report:
     return servers.map((server) => (server.name in chosen ? { ...server, ...chosen[server.name] } : server));
   }
 
-  return { problem, done, setProblem, setDone, shown, change, refresh, signOut, remove };
+  return { problem, done, setProblem, setDone, shown, change, serial, refresh, signOut, remove };
 }
