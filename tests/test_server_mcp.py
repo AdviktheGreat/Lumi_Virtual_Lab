@@ -15,6 +15,7 @@ from virtual_lab.server.app import create_app
 from virtual_lab.server.config import ChatConfig, resolve_config
 from virtual_lab.server.mcp import (
     MAX_SERVERS,
+    NOT_OFFERED,
     change_entry,
     check_entry,
     check_server_names,
@@ -38,6 +39,9 @@ LOCAL = "http://localhost"
 BEARER = {"Authorization": f"Bearer {TOKEN}"}
 
 SERVICE_KEYS = ("PAPERCLIP_API_KEY", "FOUNDRY_API_TOKEN", "FOUNDRY_TESTING_TOKEN")
+
+# The presets that the settings list when nothing has been set up
+OFFERED = ["paperclip", "proto", "proto_hosted"]
 
 GENES = {"command": ["python", "genes.py"], "approval": {"ask": ["order"]}}
 SEARCH = {"url": "https://search.example.org/mcp", "headers": {"Authorization": "Bearer ${SEARCH_TOKEN}"}}
@@ -185,16 +189,25 @@ class TestWhatTheSettingsShow:
     def test_the_presets_are_listed_first_in_the_librarys_order_and_none_is_on_until_set_up(self) -> None:
         servers = describe_servers({})
 
-        assert [server["name"] for server in servers] == list(MCP_PRESETS)
-        assert [server["title"] for server in servers] == [preset.title for preset in MCP_PRESETS.values()]
+        assert [server["name"] for server in servers] == OFFERED
+        assert [server["title"] for server in servers] == [MCP_PRESETS[name].title for name in OFFERED]
         assert not any(server["added"] or server["enabled"] for server in servers)
         assert all(server["preset"] for server in servers)
-        assert [server["about"] for server in servers] == [preset.about for preset in MCP_PRESETS.values()]
+        assert [server["about"] for server in servers] == [MCP_PRESETS[name].about for name in OFFERED]
+
+    def test_the_presets_that_are_not_offered_yet_are_left_out_until_they_are_set_up(self) -> None:
+        assert set(MCP_PRESETS) - {server["name"] for server in describe_servers({})} == {"adaptyv", "adaptyv_testing"}
+        assert set(NOT_OFFERED) <= set(MCP_PRESETS)
+
+        stored = {"adaptyv_testing": {"preset": "adaptyv_testing", "enabled": False}}
+        listed = [server["name"] for server in describe_servers(stored)]
+
+        assert listed == ["paperclip", "adaptyv_testing", "proto", "proto_hosted"]
 
     def test_servers_of_ones_own_follow_in_the_order_they_were_set_up(self) -> None:
         servers = describe_servers({"genes": GENES, "paperclip": {"preset": "paperclip"}, "search": SEARCH})
 
-        assert [server["name"] for server in servers] == [*MCP_PRESETS, "genes", "search"]
+        assert [server["name"] for server in servers] == [*OFFERED, "genes", "search"]
         own = by_name(servers)["genes"]
         assert (own["title"], own["about"], own["preset"]) == ("genes", None, False)
         assert (own["added"], own["enabled"]) == (True, True)
@@ -237,7 +250,7 @@ class TestWhatTheSettingsShow:
         assert servers["paperclip"]["keys_set"] == ["PAPERCLIP_API_KEY"]
         # A server of a person's own asks for what it wants from the environment, which the interface does not change
         assert servers["search"]["keys_set"] == []
-        assert servers["adaptyv"]["keys_set"] == []
+        assert servers["proto"]["keys_set"] == []
         assert "the-other-secret" not in json.dumps(servers)
 
     def test_a_server_that_is_signed_in_to_needs_no_key(self) -> None:
@@ -259,7 +272,7 @@ class TestWhatTheSettingsShow:
         assert search["target"] == "https://search.example.org/mcp"
 
     def test_the_servers_whose_tools_wait_for_approval_say_so(self) -> None:
-        servers = by_name(describe_servers({"genes": GENES, "search": SEARCH}))
+        servers = by_name(describe_servers({"genes": GENES, "search": SEARCH, "adaptyv": {"preset": "adaptyv"}}))
 
         assert servers["adaptyv"]["asks"] is True
         assert servers["proto"]["asks"] is True
@@ -563,7 +576,7 @@ class TestTheRoutes:
 
         assert response.status_code == 200
         servers = response.json()["servers"]
-        assert [server["name"] for server in servers] == list(MCP_PRESETS)
+        assert [server["name"] for server in servers] == OFFERED
         assert not any(server["enabled"] for server in servers)
 
     def test_a_preset_is_turned_on_and_listed_back(self, client: TestClient, workspace: Workspace) -> None:
@@ -757,9 +770,7 @@ class TestTheKeysOfTheServices:
         assert client.delete("/api/keys/FOUNDRY_API_TOKEN").status_code == 200
 
         assert "FOUNDRY_API_TOKEN" not in os.environ
-        assert by_name(client.get("/api/mcp").json()["servers"])["adaptyv"]["missing"] == [
-            {"name": "FOUNDRY_API_TOKEN", "settable": True}
-        ]
+        assert describe_server("adaptyv", None)["missing"] == [{"name": "FOUNDRY_API_TOKEN", "settable": True}]
 
     @pytest.mark.parametrize("name", ["PATH", "SEARCH_TOKEN", "LD_PRELOAD", "HOME", "paperclip_api_key"])
     def test_no_other_variable_can_be_set_or_removed(self, client: TestClient, name: str) -> None:

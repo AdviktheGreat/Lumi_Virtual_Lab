@@ -18,6 +18,7 @@ from typing import Any
 from virtual_lab.mcp_auth import has_sign_in, sign_out_mcp
 from virtual_lab.mcp_presets import MCP_PRESETS, preset_entry
 from virtual_lab.mcp_tools import SERVER_KEYS, VARIABLE, MCPServerConfig, MCPTools, connect_mcp, parse_server
+from virtual_lab.server.mcp_catalog import MCP_CATALOG, CatalogServer
 from virtual_lab.websearch import EXA_KEY
 
 # What a server's name may be, which its tools' names start with, so that it is one of letters, digits, and "_"
@@ -29,6 +30,11 @@ MAX_SERVERS = 64
 # Seconds a check of a server waits for it to start, or to answer, which is less than a conversation waits, since a
 # person is watching for the answer
 CHECK_TIMEOUT = 30.0
+
+# The presets that the interface does not list until the service is ready to be used from it, which is not so of
+# Adaptyv's yet. One that has been set up is listed all the same, so that it can be turned off or taken away. They are
+# still presets of the library, and work wherever a config names them.
+NOT_OFFERED = frozenset({"adaptyv", "adaptyv_testing"})
 
 
 def with_defaults(value: Any) -> Any:
@@ -76,10 +82,23 @@ def is_on(entry: Mapping[str, Any]) -> bool:
     return entry.get("enabled", True) is True and entry.get("disabled", False) is not True
 
 
+def catalog_server(name: str, entry: Mapping[str, Any] | None) -> CatalogServer | None:
+    """The server of the catalog that a kept server is: one added from it, which is kept as the catalog describes it. A
+    server of a person's own that has the same name and is reached otherwise is not taken for it."""
+    found = MCP_CATALOG.get(name)
+    if found is None or entry is None:
+        return None
+    kept = {key: value for key, value in entry.items() if key not in ("enabled", "disabled")}
+
+    return found if kept == dict(found.entry) else None
+
+
 def server_title(name: str, entry: Mapping[str, Any] | None) -> str:
-    """What to call a server: a preset by its title, and any other by its name."""
+    """What to call a server: a preset, or one added from the catalog, by its title, and any other by its name."""
     if name in MCP_PRESETS and (entry is None or entry.get("preset") == name):
         return MCP_PRESETS[name].title
+    if (found := catalog_server(name, entry)) is not None:
+        return found.title
 
     return name
 
@@ -201,6 +220,7 @@ def describe_server(name: str, entry: Mapping[str, Any] | None) -> dict[str, Any
     else:
         preset, given = None, entry or {}
     added = entry is not None
+    from_catalog = catalog_server(name, entry)
     problem: str | None = None
     parsed = None
     try:
@@ -221,7 +241,7 @@ def describe_server(name: str, entry: Mapping[str, Any] | None) -> dict[str, Any
     return {
         "name": name,
         "title": server_title(name, entry),
-        "about": preset.about if preset is not None else None,
+        "about": preset.about if preset is not None else (from_catalog.about if from_catalog is not None else None),
         "preset": preset is not None,
         "added": added,
         "enabled": added and is_on(given),
@@ -322,14 +342,15 @@ def check_connection(
 
 
 def describe_servers(stored: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Every server the settings show: the presets, in the library's order, whether or not they are set up, and then
-    the person's own, in the order they were added.
+    """Every server the settings show: the presets, in the library's order, whether or not they are set up, except
+    those that are not offered yet, and then the person's own, in the order they were added.
 
     :param stored: The servers that are kept, by name.
     """
     own = [name for name in stored if name not in MCP_PRESETS]
+    offered = [name for name in MCP_PRESETS if name not in NOT_OFFERED or name in stored]
 
-    return [describe_server(name, stored.get(name)) for name in (*MCP_PRESETS, *own)]
+    return [describe_server(name, stored.get(name)) for name in (*offered, *own)]
 
 
 def check_server_names(names: Any, stored: Mapping[str, Mapping[str, Any]]) -> list[str]:

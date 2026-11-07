@@ -19,6 +19,7 @@ import type {
   LabChoice,
   LibraryScientist,
   LimitsChange,
+  McpCatalogServer,
   McpChange,
   McpCheck,
   McpEntry,
@@ -362,6 +363,11 @@ export const api = {
   saveTools: async (disabled: string[]) => (await request<{ tools: ToolInfo[] }>("PUT", "/tools", { disabled })).tools,
   // The MCP servers: the presets, whether or not they are set up, and then those the person described
   mcp: async (signal?: AbortSignal) => (await request<{ servers: McpServer[] }>("GET", "/mcp", undefined, signal)).servers,
+  // The servers others run that can be added with a click, and the adding of one, which gives the servers back as they now are
+  mcpCatalog: async (signal?: AbortSignal) =>
+    (await request<{ servers: McpCatalogServer[] }>("GET", "/mcp/catalog", undefined, signal)).servers,
+  addCatalogServer: async (name: string) =>
+    (await request<{ servers: McpServer[] }>("POST", `/mcp/catalog/${encodeURIComponent(name)}`)).servers,
   // Turns a server on or off, or chooses how a preset is signed in to, and gives the servers back as they now are
   changeMcpServer: async (name: string, change: McpChange) =>
     (await request<{ servers: McpServer[] }>("PATCH", `/mcp/servers/${encodeURIComponent(name)}`, change)).servers,

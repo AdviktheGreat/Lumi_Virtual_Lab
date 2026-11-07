@@ -15,7 +15,7 @@ Lumi began as a fork of the [Virtual Lab](https://github.com/zou-group/virtual-l
 - **Runs code it writes**, in Python, R, and shell, in a Docker container with no access to your files or keys. The container can hold Biomni's bioinformatics software, 223 of Biomni's tool functions, and its 76-file data lake. See [Running code](docs/running-code.md).
 - **Looks things up** in UniProt, the PDB, AlphaFold, PubChem, ChEMBL, Europe PMC, PubMed, and arXiv, and searches and reads the web. It also looks at images and the pages of PDFs. See [Tools, data, skills, and MCP servers](docs/tools-and-skills.md).
 - **Follows skills**: written guidance in the [Agent Skills](https://agentskills.io) format. Seven come with Lumi, and the [Skills Nexus](docs/tools-and-skills.md#the-skills-nexus) page has 177 more scientific skills to add with a click. You can also upload a skill folder of your own, or add skills from a git repository or a folder, and choose which a conversation is given.
-- **Connects to MCP servers** for more tools, with approval before a call that costs money or cannot be undone.
+- **Connects to MCP servers** for more tools, with approval before a call that costs money or cannot be undone. The [Tools Nexus](docs/tools-and-skills.md#the-tools-nexus) page shows what the lead can call, what each tool needs, and adds public databases and documentation servers with a click.
 - **Uses any model**: OpenAI, Anthropic, Google, Groq, Azure, OpenRouter, Ollama, and Amazon Bedrock. See [Models and API keys](docs/models-and-keys.md).
 - **Saves a conversation or a meeting** as a Jupyter notebook, a PDF, or a page of HTML.
 - **Measures itself** on Biomni's benchmarks. See [Benchmarks](docs/benchmarks.md).
