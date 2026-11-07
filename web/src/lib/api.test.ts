@@ -87,6 +87,19 @@ describe("the API", () => {
     ]);
   });
 
+  it("gives a message with a skill only when it has one", async () => {
+    const fetch = stub(answer({ turn: 1, state: "running" }, 202));
+
+    await api.send("a", "Fit it", [], false, undefined, undefined, "dose-response");
+    await api.send("a", "Fit it", [], true, null, null, null);
+
+    const bodies = (fetch.mock.calls as unknown as [string, RequestInit][]).map(([, options]) => options.body);
+    expect(bodies).toEqual([
+      JSON.stringify({ text: "Fit it", attachments: [], skill: "dose-response" }),
+      JSON.stringify({ text: "Fit it", attachments: [], replace_last: true }),
+    ]);
+  });
+
   it("steers a turn with a note, a pause, a resume, or a stop, and says whether it was taken", async () => {
     // A response can be read once, so each request is given its own
     const fetch = vi.fn(async () => answer({ accepted: true }));

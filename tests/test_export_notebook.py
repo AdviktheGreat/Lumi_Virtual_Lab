@@ -215,6 +215,16 @@ class TestNotebook:
 
         assert source_of(notebook["cells"][1]) == "## Turn 1\n\n> **Researcher**\n>\n> Hi\n>\n> Command: /ask"
 
+    def test_the_skill_a_message_was_given_with_is_named(self, tmp_path: Path) -> None:
+        notebook = chat_notebook(
+            saved_chat(
+                tmp_path / "chat",
+                [happened("user", text="Hi", skill="dose-response"), happened("answer", text="Hello")],
+            )
+        )
+
+        assert source_of(notebook["cells"][1]) == "## Turn 1\n\n> **Researcher**\n>\n> Hi\n>\n> Skill: /dose-response"
+
     def test_who_a_lab_session_was_asked_for_is_in_the_command(self, tmp_path: Path) -> None:
         lab = {"mode": "individual", "members": ["Immunologist"], "rounds": 1, "questions": []}
         notebook = chat_notebook(

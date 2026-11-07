@@ -138,6 +138,7 @@ class ChatEvent:
           had been sent and had said by then, which is where the conversation is cut back to if this one
           is replaced. data["directive"] is the name of the command it was given with, if it was, and for
           /lab, data["lab"] is who was to work on it: the mode, the members' titles, the rounds, and the questions.
+          data["skill"] is the name of the skill it was given with instead, if it was, which the lead was told to read.
         - "withdrawn": the researcher replaced the last message, to send it again or changed. The turn it began,
           which is data["turn"], and all that came of it, is taken out of the conversation, and the new message
           begins that turn again. Told of just before the "user" event that does.
@@ -182,7 +183,8 @@ class ChatEvent:
           max_cost.
         - "answer": the lead answered, which ends the turn. text is the answer, and data holds the
           conversation's usage and elapsed_time, and, for a message given with a command that asks for something
-          that can be checked, directive_met, whether the lead did it.
+          that can be checked, or with a skill, directive_met, whether the lead did it, which for a skill is whether
+          it read it.
         - "stopped": the researcher stopped the turn, which ends it. text says so.
         - "failed": the turn ended with an error. text is the error, and data holds its type, which
           is "Interrupted" for a turn that the process running it did not live to end.

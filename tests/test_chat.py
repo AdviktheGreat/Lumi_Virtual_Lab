@@ -29,6 +29,7 @@ from virtual_lab.chat import (
     ChatClosedError,
     ChatReply,
     UploadTooLargeError,
+    activated_name,
     describe_size,
     safe_filename,
     title_of,
@@ -3475,6 +3476,174 @@ class TestCommands:
         saved = lines(tmp_path / "chat" / "events.jsonl")
 
         assert [event["data"]["directive"] for event in saved if event["kind"] == "user"] == ["plan"]
+
+
+class TestSkillCommand:
+    """A message given with one of the conversation's skills, as the researcher writes /NAME."""
+
+    def skilled(self, tmp_path: Path, *names: str) -> Chat:
+        skills = [make_skill(tmp_path / "found", name=name) for name in (names or ("dose-response",))]
+
+        return make_chat(tmp_path, skills=skills)
+
+    def test_the_lead_is_told_beside_the_message_to_read_the_skill_first(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("activate_skill", {"name": "dose-response"}),
+            text_response("IC50 is 3 nM."),
+            text_response("x"),
+        ]
+        chat = self.skilled(tmp_path)
+
+        reply = chat.send("Fit my curve", skill="dose-response")
+
+        assert reply.text == "IC50 is 3 nM."
+        told = request_messages(fake_client, 0)[-1]["content"]
+        assert told.startswith("Fit my curve\n\n") and "/dose-response" in told and "activate_skill" in told
+        (user,) = of(chat.events_since(), "user")
+        assert user.text == "Fit my curve" and user.data["skill"] == "dose-response"
+        assert "directive" not in user.data
+        # It had read the skill, so it was not told again, and the answer says so
+        assert len(fake_client.completions.calls) == 2
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is True
+
+        # The next message is given with none of it
+        chat.send("And another?")
+        assert "dose-response" not in request_messages(fake_client, 2)[-1]["content"]
+        assert "skill" not in of(chat.events_since(), "user")[1].data
+
+    def test_a_lead_that_answers_without_reading_the_skill_is_told_once_to_read_it(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            text_response("Probably 3 nM."),
+            tool_call_response("activate_skill", {"name": "dose-response"}),
+            text_response("IC50 is 3 nM."),
+        ]
+        chat = self.skilled(tmp_path)
+
+        reply = chat.send("Fit my curve", skill="dose-response")
+
+        assert reply.text == "IC50 is 3 nM."
+        events = chat.events_since()
+        first, _ = of(events, "tool_calls")
+        assert (first.text, first.data["calls"]) == ("Probably 3 nM.", [])
+        told = request_messages(fake_client, 1)
+        assert [message["role"] for message in told[-2:]] == ["assistant", "user"]
+        assert "You have not read the skill dose-response" in told[-1]["content"]
+        assert of(events, "answer")[0].data["directive_met"] is True
+
+    def test_it_is_told_only_once_and_the_answer_says_when_it_still_did_not_read_it(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("Probably 3 nM."), text_response("Still 3 nM.")]
+        chat = self.skilled(tmp_path)
+
+        reply = chat.send("Fit my curve", skill="dose-response")
+
+        assert reply.text == "Still 3 nM." and reply.status == "answered"
+        assert len(fake_client.completions.calls) == 2
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is False
+
+    def test_another_skill_that_was_read_does_not_count(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("activate_skill", {"name": "other-skill"}),
+            text_response("Done."),
+            text_response("Done again."),
+        ]
+        chat = self.skilled(tmp_path, "dose-response", "other-skill")
+
+        chat.send("Fit my curve", skill="dose-response")
+
+        assert "You have not read the skill dose-response" in request_messages(fake_client, 2)[-1]["content"]
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is False
+
+    def test_the_skill_is_found_whatever_the_case_it_was_written_in(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("activate_skill", {"name": "Dose-Response"}),
+            text_response("Done."),
+        ]
+        chat = self.skilled(tmp_path)
+
+        chat.send("Fit my curve", skill=" DOSE-response ")
+
+        (user,) = of(chat.events_since(), "user")
+        assert user.data["skill"] == "dose-response"
+        assert of(chat.events_since(), "answer")[0].data["directive_met"] is True
+
+    def test_a_skill_that_cannot_be_used_is_refused_before_anything_is_said(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        chat = self.skilled(tmp_path)
+
+        with pytest.raises(ValueError, match="no skill called 'nothing'"):
+            chat.send("Go", skill="nothing")
+        with pytest.raises(ValueError, match="/dose-response needs what it is for written after it"):
+            chat.send("  ", skill="dose-response")
+        with pytest.raises(ValueError, match="not given with the /ask command"):
+            chat.send("Go", directive="ask", skill="dose-response")
+        with pytest.raises(ValueError, match="no skill called 'dose-response'"):
+            make_chat(tmp_path / "bare").send("Go", skill="dose-response")
+
+        assert chat.events_since() == [] and chat.messages == [] and chat.state == "idle"
+        assert fake_client.completions.calls == []
+
+    def test_the_skill_is_kept_when_the_message_is_replaced(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("activate_skill", {"name": "dose-response"}),
+            text_response("One."),
+            tool_call_response("activate_skill", {"name": "dose-response"}),
+            text_response("Two."),
+        ]
+        chat = self.skilled(tmp_path)
+        chat.send("Fit my curve", skill="dose-response")
+
+        chat.send("Fit my other curve", replace_last=True, skill="dose-response")
+
+        users = of(chat.events_since(), "user")
+        assert [(event.text, event.data.get("skill")) for event in users] == [
+            ("Fit my other curve", "dose-response")
+        ]
+        assert "/dose-response" in request_messages(fake_client, 2)[-1]["content"]
+
+        # It need not be given again to be replaced by a message without it
+        fake_client.completions.responses = [text_response("Three.")]
+        chat.send("Never mind", replace_last=True)
+        assert [event.data.get("skill") for event in of(chat.events_since(), "user")] == [None]
+
+    @pytest.mark.parametrize(
+        ("arguments", "name"),
+        [
+            ('{"name": " Dose-Response "}', "dose-response"),
+            ('{"name": 5}', "5"),
+            ("[]", ""),
+            ("not json", ""),
+            (None, ""),
+        ],
+    )
+    def test_the_skill_a_call_reads_is_the_name_it_gives_whatever_else_it_gives(
+        self, arguments: str | None, name: str
+    ) -> None:
+        call = ChatCompletionMessageToolCall.model_construct(
+            id="call_1", type="function", function=Function.model_construct(name="activate_skill", arguments=arguments)
+        )
+
+        assert activated_name(call) == name
+
+    def test_the_skill_is_kept_in_the_saved_events(self, fake_client: FakeClient, tmp_path: Path) -> None:
+        fake_client.completions.responses = [
+            tool_call_response("activate_skill", {"name": "dose-response"}),
+            text_response("Done."),
+        ]
+        chat = self.skilled(tmp_path)
+        chat.send("Fit my curve", skill="dose-response")
+
+        saved = lines(tmp_path / "chat" / "events.jsonl")
+
+        assert [event["data"]["skill"] for event in saved if event["kind"] == "user"] == ["dose-response"]
 
 
 def request_text(fake_client: FakeClient, call: int) -> str:

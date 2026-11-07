@@ -96,8 +96,9 @@ export type Step =
 
 export interface Turn {
   number: number;
-  // What the researcher sent, and the command it was given with, if it was given with one, and with /lab who was to work on it
-  user: { text: string; attachments: Attachment[]; directive: string | null; lab: LabChoice | null } | null;
+  // What the researcher sent, and the command it was given with, if it was given with one, and with /lab who was to work on it,
+  // or the skill it was given with instead
+  user: { text: string; attachments: Attachment[]; directive: string | null; lab: LabChoice | null; skill: string | null } | null;
   steps: Step[];
   // What the lead is writing now, which the reply that is final replaces
   writing: string;
@@ -106,7 +107,8 @@ export interface Turn {
   text: string;
   // What kind of error ended a turn that failed
   errorType: string | null;
-  // Whether the lead did what the command it was given asked for, where that is checked, or null where it is not
+  // Whether the lead did what the command it was given asked for, or read the skill it was given with, where that is checked,
+  // or null where it is not
   directiveMet: boolean | null;
 }
 
@@ -342,6 +344,7 @@ export function reduce(transcript: Transcript, event: ChatEvent): Transcript {
           attachments: attachmentsOf(event),
           directive: typeof event.data.directive === "string" ? event.data.directive : null,
           lab: labChoiceOf(event.data.lab),
+          skill: typeof event.data.skill === "string" ? event.data.skill : null,
         },
       }));
     case "withdrawn": {

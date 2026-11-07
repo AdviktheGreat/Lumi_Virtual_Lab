@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { attachedNames, readiness } from "@/lib/attachments";
-import { isDirective, written, type Invocation } from "@/lib/commands";
+import { givenAs, isDirective, written, type Invocation } from "@/lib/commands";
 import { joining } from "@/lib/team-choice";
 import { describeError, plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { EXPORT_CHOICES } from "@/lib/export";
@@ -36,12 +36,16 @@ import { cleanTitle } from "@/lib/history";
 import { currentTurn, unreadNotes, type SentNote } from "@/lib/steering";
 import { useAttachments } from "@/lib/use-attachments";
 import { useChat } from "@/lib/use-chat";
+import { useSkillChoices } from "@/lib/use-skill-choices";
 import { useDocumentTitle } from "@/lib/use-document-title";
 import { useExport } from "@/lib/use-export";
 import { useFiles } from "@/lib/use-files";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import { waitingOnYou, type Turn } from "@/lib/transcript";
 import type { ChatState, LabChoice, LimitsChange } from "@/lib/types";
+
+// What the conversation has of skills until it is known, which is kept the same so that what is made of it is not made again
+const NO_SKILLS: readonly string[] = [];
 
 const STATE_LABELS: Record<ChatState, string | null> = {
   idle: null,
@@ -88,6 +92,7 @@ export function ChatView({ id }: { id: string }) {
   const exporter = useExport(id, setProblem);
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
   const { scroller, atBottom, jump, onScroll } = useStickToBottom<HTMLDivElement>(transcript.lastId);
+  const skillChoices = useSkillChoices(status.kind === "ready" ? status.info.config.skills : NO_SKILLS, draft.startsWith("/"));
   // The files are looked at again when something may have changed them: code ran, a turn ended, or a file was sent
   const sentFiles = attachments.items.filter((item) => item.status === "ready").length;
   const listed = useFiles(id, filesChanged(transcript) + sentFiles);
@@ -122,7 +127,8 @@ export function ChatView({ id }: { id: string }) {
     setSending(true);
     setProblem(null);
     try {
-      await api.send(id, text, attachedNames(sent), false, command?.name);
+      const { directive, skill } = givenAs(command);
+      await api.send(id, text, attachedNames(sent), false, directive, undefined, skill);
       setDraft("");
       attachments.remove(sent.map((item) => item.id));
       jump("instant");
@@ -163,6 +169,7 @@ export function ChatView({ id }: { id: string }) {
         true,
         turn.user?.directive,
         turn.user?.lab,
+        turn.user?.skill,
       );
       setSentNotes([]);
       jump("instant");
@@ -221,6 +228,11 @@ export function ChatView({ id }: { id: string }) {
   }
 
   function run(invocation: Invocation) {
+    if ("skill" in invocation) {
+      void send(invocation);
+
+      return;
+    }
     const { name, arg } = invocation;
     if (name === "lab") {
       setLabbing(arg);
@@ -401,6 +413,7 @@ export function ChatView({ id }: { id: string }) {
                   turns: transcript.turns.length,
                   answered: transcript.turns.filter((turn) => turn.outcome === "answered").length,
                   directives: status.kind === "ready" ? status.info.directives : null,
+                  skills: skillChoices,
                   onRun: run,
                 }}
                 footer={

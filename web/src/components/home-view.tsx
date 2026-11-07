@@ -20,7 +20,7 @@ import { SkillsDialog } from "@/components/skills-dialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
-import { isDirective, written, type Invocation } from "@/lib/commands";
+import { givenAs, isDirective, written, type Invocation } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { formatAmount } from "@/lib/limits";
 import { checkProgram, type ProgramDraft, type ProgramProblems } from "@/lib/programs";
@@ -28,6 +28,7 @@ import { choiceButtonText, choiceKept, choiceStart, vanished } from "@/lib/skill
 import { DEFAULT_LEAD_TITLE } from "@/lib/team-choice";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
+import { useSkillChoices } from "@/lib/use-skill-choices";
 import type { ChatInfo, LabChoice, LimitsChange, ProgramKind } from "@/lib/types";
 
 // What shows what is chosen of the skills, beside the model, and opens the choice
@@ -94,7 +95,7 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
 
   // A conversation is begun with a message, which a command may be given with, and with /lab who is to work on it. If it could
   // not be, there is no conversation, and the error is thrown.
-  async function begin(text: string, directive?: string, lab?: LabChoice) {
+  async function begin(text: string, directive?: string, lab?: LabChoice, skill?: string) {
     let chat: ChatInfo | null = null;
     try {
       chat = await api.createChat({
@@ -105,7 +106,7 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
         ...(skillsChosen === null ? {} : { skills: skillsChosen }),
       });
       const names = await attachments.upload(chat.id);
-      await api.send(chat.id, text, names, false, directive, lab);
+      await api.send(chat.id, text, names, false, directive, lab, skill);
       void refresh();
       router.push(`/chat?id=${encodeURIComponent(chat.id)}`);
     } catch (error) {
@@ -134,7 +135,8 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
     setSending(true);
     setProblem(null);
     try {
-      await begin(text, command?.name);
+      const { directive, skill } = givenAs(command);
+      await begin(text, directive, undefined, skill);
     } catch (error) {
       if (command) setDraft(written(command));
       report(error);
@@ -177,12 +179,20 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
   const codeOff = ready !== null && ready.code === "none";
   const noCode = codeOff ? "code is turned off in the settings" : null;
   const directives = ready === null ? null : { code: noCode, plot: noCode };
+  // Which skills are on is not known until they are read, which is done as the page opens, so that a command pasted in whole is
+  // not taken for a message
+  const skillChoices = useSkillChoices(skillsChosen, true);
 
   // What a custom program may spend, in words, as it will be where nothing was chosen for it
   const spendLimit = "max_cost" in limitsChosen ? (limitsChosen.max_cost ?? null) : (ready?.max_cost ?? null);
   const spending = spendLimit === null ? "Spending limit: none" : `Spending limit: $${formatAmount(spendLimit)}`;
 
   function run(invocation: Invocation) {
+    if ("skill" in invocation) {
+      void start(invocation);
+
+      return;
+    }
     const { name, arg } = invocation;
     if (name === "lab") {
       if (programReady()) setLabbing(arg);
@@ -259,7 +269,7 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
                   onRemove: (id) => attachments.remove([id]),
                   onRetry: attachments.retry,
                 }}
-                commands={{ place: "home", turns: 0, answered: 0, directives, onRun: run }}
+                commands={{ place: "home", turns: 0, answered: 0, directives, skills: skillChoices, onRun: run }}
                 autoFocus
                 roomy
                 footer={

@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from conftest import TEST_MODEL, FakeClient, text_response
+from conftest import TEST_MODEL, FakeClient, text_response, tool_call_response
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from test_server_app import BEARER, LOCAL, TOKEN, handle_of, new_chat, wait_idle
@@ -245,3 +245,35 @@ class TestGivingThemToAConversation:
 
         names = {tool["function"]["name"] for tool in fake_client.completions.calls[0]["tools"]}
         assert {"activate_skill", "read_skill_file"} <= names
+
+    def test_a_message_can_be_given_with_one_of_the_skills_and_is_refused_with_one_it_has_not(
+        self, client: TestClient, app: FastAPI, workspace: Workspace, fake_client: FakeClient
+    ) -> None:
+        write_skill(workspace.skills_dir, name="alpha")
+        write_skill(workspace.skills_dir, name="beta")
+        chat = new_chat(client, skills=["alpha"])
+        url = f"/api/chats/{chat['id']}/messages"
+
+        for body, message in (
+            ({"text": "Go", "skill": "beta"}, "no skill called 'beta'"),
+            ({"text": "", "skill": "alpha"}, "/alpha needs what it is for written after it"),
+            ({"text": "Go", "skill": "alpha", "directive": "ask"}, "not given with the /ask command"),
+        ):
+            response = client.post(url, json=body)
+            assert response.status_code == 422 and message in response.text, response.text
+        assert client.post(url, json={"text": "Go", "skill": 5}).status_code == 422
+        assert client.post(url, json={"text": "Go", "skill": "x" * 1000}).status_code == 422
+        assert client.get(f"/api/chats/{chat['id']}").json()["turns"] == 0 and fake_client.completions.calls == []
+
+        fake_client.completions.responses = [
+            tool_call_response("activate_skill", {"name": "alpha"}),
+            text_response("Done."),
+        ]
+        response = client.post(url, json={"text": "Do the alpha thing", "skill": "Alpha"})
+        assert response.status_code == 202, response.text
+        wait_idle(client, chat["id"])
+
+        (user,) = [event for event in handle_of(app, chat["id"]).chat.events_since() if event.kind == "user"]
+        assert (user.text, user.data["skill"]) == ("Do the alpha thing", "alpha")
+        told = fake_client.completions.calls[0]["messages"][-1]["content"]
+        assert told.startswith("Do the alpha thing") and "activate_skill" in told

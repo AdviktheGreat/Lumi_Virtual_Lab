@@ -87,10 +87,24 @@ export function commandsFor(place: Place): Command[] {
   return COMMANDS.filter((command) => command.places.includes(place));
 }
 
-// What a command is given when it is run: what it takes, which is nothing for most
-export interface Invocation {
-  name: CommandName;
-  arg: string;
+// A skill of the conversation that can be written after a slash, with what it is for
+export interface SkillChoice {
+  name: string;
+  description: string;
+}
+
+// How many skills the menu lists for the letters of a name, so that a library of hundreds does not fill it
+export const SKILL_ROWS = 8;
+
+// What a command is given when it is run: what it takes, which is nothing for most. A skill is given the words that say what
+// it is to be used for, and goes with a message as a command does.
+export type Invocation = { name: CommandName; arg: string } | { skill: string; arg: string };
+
+// What a message is sent to the server with for an invocation: the command it names, or the skill
+export function givenAs(invocation: Invocation | undefined): { directive?: string; skill?: string } {
+  if (invocation === undefined) return {};
+
+  return "skill" in invocation ? { skill: invocation.skill } : { directive: invocation.name };
 }
 
 // Where the person is, as far as what a command can do depends on it
@@ -106,6 +120,8 @@ export interface Surroundings {
   // Why the conversation cannot be given each of the commands that are given with a message, as it says, or null where
   // it is not begun, so that it is not known
   directives: Record<string, string | null> | null;
+  // The skills the conversation has, or will be begun with, which can be written after a slash
+  skills?: readonly SkillChoice[];
 }
 
 function sentence(text: string): string {
@@ -131,9 +147,16 @@ export function unmetNote(name: string): string | null {
   }
 }
 
+// What the person is told when the lead answered a message given with a skill without having read it
+export function skillUnmetNote(name: string): string {
+  return `The lead answered without reading the skill ${name}, though /${name} asked for it.`;
+}
+
 // What a command is as it was written in the box, to put back there when it could not be run
-export function written({ name, arg }: Invocation): string {
-  return arg === "" ? `/${name}` : `/${name} ${arg}`;
+export function written(invocation: Invocation): string {
+  const name = "skill" in invocation ? invocation.skill : invocation.name;
+
+  return invocation.arg === "" ? `/${name}` : `/${name} ${invocation.arg}`;
 }
 
 // Whether a command is given with words of the person's own: a message that says nothing is not one, unless the command is
@@ -147,12 +170,19 @@ function needsWords(command: Command): boolean {
   return command.takes !== undefined && !(command.takes.kind === "text" && command.takes.optional === true);
 }
 
+// Why what goes with a message cannot be given now, which is the same for a command and a skill
+function givenWhy({ state, holdUp }: Pick<Surroundings, "state" | "holdUp">): string | null {
+  if (state !== "idle") return "It is given when the lead has finished";
+
+  return holdUp;
+}
+
 // Why a command cannot be run now, in words, or null if it can
 export function unavailableWhy(command: Command, { place, state, turns, answered, holdUp, directives }: Surroundings): string | null {
   const controls = controlsFor(state);
   if (isDirective(command.name)) {
-    if (state !== "idle") return "It is given when the lead has finished";
-    if (holdUp !== null) return holdUp;
+    const held = givenWhy({ state, holdUp });
+    if (held !== null) return held;
     if (command.name === "review" && answered === 0) return "There is no answer to review yet";
     const why = directives?.[command.name];
 
@@ -184,21 +214,30 @@ export type Typed =
   // A slash and the first letters of a name, which is being chosen
   | { kind: "naming"; query: string }
   // The name of a command, and what has been written after it
-  | { kind: "arguing"; command: Command; rest: string };
+  | { kind: "arguing"; command: Command; rest: string }
+  // The name of one of the skills, and what has been written after it
+  | { kind: "skilling"; skill: SkillChoice; rest: string };
 
-// A command is the whole of the box, on one line unless it is given with a message: a slash, a name, and what the command takes. What is written to the lead
-// that begins with a slash, such as the path of a file, is not one unless a command has that name.
-export function typedCommand(draft: string, place: Place): Typed {
-  const naming = /^\/([a-z]*)$/i.exec(draft);
+// A command is the whole of the box, on one line unless it is given with a message: a slash, a name, and what the command
+// takes. A skill is the same, with the words it is to be used for, and its name is letters, digits, hyphens, dots, and
+// underscores. What is written to the lead that begins with a slash, such as the path of a file, is not one unless a command
+// or a skill has that name, which a command is where both have.
+export function typedCommand(draft: string, place: Place, skills: readonly SkillChoice[] = []): Typed {
+  const naming = /^\/([a-z0-9._-]*)$/i.exec(draft);
   if (naming) return { kind: "naming", query: naming[1].toLowerCase() };
-  const arguing = /^\/([a-z]+)[ \t]+([\s\S]*)$/i.exec(draft);
+  const arguing = /^\/([a-z0-9._-]+)[ \t]+([\s\S]*)$/i.exec(draft);
   if (!arguing) return { kind: "none" };
   const name = arguing[1].toLowerCase();
   const command = commandsFor(place).find((candidate) => candidate.name === name);
-  // What is given to the lead can be several lines, which what is given to the page cannot
-  if (!command || (arguing[2].includes("\n") && !isDirective(command.name))) return { kind: "none" };
+  if (command) {
+    // What is given to the lead can be several lines, which what is given to the page cannot
+    if (arguing[2].includes("\n") && !isDirective(command.name)) return { kind: "none" };
 
-  return { kind: "arguing", command, rest: arguing[2] };
+    return { kind: "arguing", command, rest: arguing[2] };
+  }
+  const skill = skills.find((candidate) => candidate.name.toLowerCase() === name);
+
+  return skill ? { kind: "skilling", skill, rest: arguing[2] } : { kind: "none" };
 }
 
 // A line of the menu
@@ -223,10 +262,33 @@ function nameRow(command: Command, surroundings: Surroundings): Row {
   };
 }
 
+const SKILL_NEEDS = "Type what to use it for";
+
+// The skills whose names have the letters written after a slash, which are not listed until there are some, since there may
+// be hundreds. Those named from the first letter come first.
+function skillRows(query: string, surroundings: Surroundings): Row[] {
+  if (query === "") return [];
+  const named = (surroundings.skills ?? []).filter((skill) => skill.name.toLowerCase().includes(query));
+  const reason = givenWhy(surroundings);
+
+  return [
+    ...named.filter((skill) => skill.name.toLowerCase().startsWith(query)),
+    ...named.filter((skill) => !skill.name.toLowerCase().startsWith(query)),
+  ]
+    .slice(0, SKILL_ROWS)
+    .map((skill) => ({
+      key: `skill ${skill.name}`,
+      label: `/${skill.name}`,
+      summary: skill.description === "" ? "Have the lead read this skill first" : `Skill: ${skill.description}`,
+      reason,
+      action: { fill: `/${skill.name} ` },
+    }));
+}
+
 // The lines of the menu for what is in the box, which is none when it is not for a command. What can be chosen comes first,
 // and what is named from its first letter before what has the letters elsewhere in its name.
 export function rowsFor(draft: string, surroundings: Surroundings): Row[] {
-  const typed = typedCommand(draft, surroundings.place);
+  const typed = typedCommand(draft, surroundings.place, surroundings.skills);
   if (typed.kind === "none") return [];
 
   if (typed.kind === "naming") {
@@ -236,7 +298,22 @@ export function rowsFor(draft: string, surroundings: Surroundings): Row[] {
       ...named.filter((command) => !command.name.startsWith(typed.query)),
     ].map((command) => nameRow(command, surroundings));
 
-    return [...rows.filter((row) => row.reason === null), ...rows.filter((row) => row.reason !== null)];
+    return [...rows.filter((row) => row.reason === null), ...rows.filter((row) => row.reason !== null), ...skillRows(typed.query, surroundings)];
+  }
+
+  if (typed.kind === "skilling") {
+    const { skill, rest } = typed;
+    const text = rest.trim();
+
+    return [
+      {
+        key: `skill ${skill.name}`,
+        label: `/${skill.name}`,
+        summary: text === "" ? SKILL_NEEDS : `Use the skill ${skill.name} for: ${text}`,
+        reason: givenWhy(surroundings) ?? (text === "" ? SKILL_NEEDS : null),
+        action: { run: { skill: skill.name, arg: text } },
+      },
+    ];
   }
 
   const { command, rest } = typed;

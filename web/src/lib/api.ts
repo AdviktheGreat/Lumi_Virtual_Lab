@@ -486,7 +486,7 @@ export const api = {
   // Attachments are named as the server named them when it was sent the files. With replaceLast the message takes the
   // place of the last one, which is taken out of the conversation, to send it again or changed. With a directive the
   // message is given with a command, such as "ask", which says how the lead is to answer it, and with /lab, who is to work
-  // on it.
+  // on it. With a skill, one of the conversation's, it is given with that instead, and the lead is to read it first.
   send: (
     id: string,
     text: string,
@@ -494,6 +494,7 @@ export const api = {
     replaceLast = false,
     directive?: string | null,
     lab?: LabChoice | null,
+    skill?: string | null,
   ) =>
     request<{ turn: number; state: string }>("POST", `/chats/${encodeURIComponent(id)}/messages`, {
       text,
@@ -501,6 +502,7 @@ export const api = {
       ...(replaceLast ? { replace_last: true } : {}),
       ...(directive ? { directive } : {}),
       ...(lab ? { lab } : {}),
+      ...(skill ? { skill } : {}),
     }),
   // What steers a turn that is running is accepted or not: a turn that has ended meanwhile has nothing to steer
   note: (id: string, text: string) =>

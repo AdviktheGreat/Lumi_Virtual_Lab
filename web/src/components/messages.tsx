@@ -7,7 +7,7 @@ import { Markdown } from "@/components/markdown";
 import { useSettings } from "@/components/settings-provider";
 import { useSetup } from "@/components/setup-provider";
 import { Button } from "@/components/ui/button";
-import { takesText, unmetNote } from "@/lib/commands";
+import { skillUnmetNote, takesText, unmetNote } from "@/lib/commands";
 import type { Problem } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { holdNotice } from "@/lib/steering";
@@ -33,14 +33,15 @@ function Files({ files }: { files: Attachment[] }) {
   );
 }
 
-// The command a message was given with, which says how the lead was to answer it, and with /lab who was to work on it
-function DirectiveChip({ name, lab }: { name: string; lab: LabChoice | null }) {
+// The command a message was given with, which says how the lead was to answer it, and with /lab who was to work on it, or
+// the skill it was given with
+function DirectiveChip({ name, lab, skill = false }: { name: string; lab: LabChoice | null; skill?: boolean }) {
   return (
     <span className="flex max-w-full flex-wrap items-center justify-end gap-x-2 gap-y-1">
       <span
         className="rounded-md border border-brand/30 bg-highlight px-1.5 py-0.5 font-mono text-xs font-medium text-highlight-foreground"
-        data-testid="directive-chip"
-        title="The command this message was given with"
+        data-testid={skill ? "skill-chip" : "directive-chip"}
+        title={skill ? "The skill this message was given with" : "The command this message was given with"}
       >
         /{name}
       </span>
@@ -58,16 +59,19 @@ export function UserMessage({
   attachments,
   directive = null,
   lab = null,
+  skill = null,
 }: {
   text: string;
   attachments: Attachment[];
   directive?: string | null;
   lab?: LabChoice | null;
+  skill?: string | null;
 }) {
   return (
     <div className="flex flex-col items-end gap-1.5" data-testid="user-message">
       <Files files={attachments} />
       {directive !== null && <DirectiveChip name={directive} lab={lab} />}
+      {skill !== null && <DirectiveChip name={skill} lab={null} skill />}
       {text && (
         <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-border bg-card px-4 py-2.5 text-[15px] leading-6">
           {text}
@@ -78,18 +82,20 @@ export function UserMessage({
 }
 
 // The last message, which can be sent again as it was or changed, in place of it and of what came of it. Its files go
-// with it.
+// with it, and the command or skill it was given with.
 function ReplaceableUserMessage({
   text,
   attachments,
   directive,
   lab,
+  skill,
   onReplace,
 }: {
   text: string;
   attachments: Attachment[];
   directive: string | null;
   lab: LabChoice | null;
+  skill: string | null;
   onReplace: (text: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -107,6 +113,7 @@ function ReplaceableUserMessage({
       >
         <Files files={attachments} />
         {directive !== null && <DirectiveChip name={directive} lab={lab} />}
+        {skill !== null && <DirectiveChip name={skill} lab={null} skill />}
         <textarea
           aria-label="Edit message"
           autoFocus
@@ -132,7 +139,7 @@ function ReplaceableUserMessage({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <UserMessage text={text} attachments={attachments} directive={directive} lab={lab} />
+      <UserMessage text={text} attachments={attachments} directive={directive} lab={lab} skill={skill} />
       <div className="flex gap-1">
         <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => onReplace(text)}>
           <RotateCcw aria-hidden />
@@ -256,6 +263,15 @@ export function TurnView({
   const thinking = isThinking(turn, state === "running");
   // The lead is not thinking while it is held, and says so instead
   const held = turn.outcome === "running" ? holdNotice(state) : null;
+  // What the lead did not do that the researcher asked for, with a command or a skill, if it answered without doing it
+  const unmet =
+    turn.outcome !== "answered" || turn.directiveMet !== false || !turn.user
+      ? null
+      : turn.user.skill
+        ? skillUnmetNote(turn.user.skill)
+        : turn.user.directive
+          ? unmetNote(turn.user.directive)
+          : null;
 
   return (
     <section className="flex flex-col gap-5" aria-label={`Turn ${turn.number}`}>
@@ -267,10 +283,17 @@ export function TurnView({
             attachments={turn.user.attachments}
             directive={turn.user.directive}
             lab={turn.user.lab}
+            skill={turn.user.skill}
             onReplace={onReplace}
           />
         ) : (
-          <UserMessage text={turn.user.text} attachments={turn.user.attachments} directive={turn.user.directive} lab={turn.user.lab} />
+          <UserMessage
+            text={turn.user.text}
+            attachments={turn.user.attachments}
+            directive={turn.user.directive}
+            lab={turn.user.lab}
+            skill={turn.user.skill}
+          />
         ))}
       {(turn.steps.length > 0 || reply !== "" || thinking || held !== null) && (
         <LeadBlock speaker={lead}>
@@ -293,9 +316,9 @@ export function TurnView({
           )}
         </LeadBlock>
       )}
-      {turn.outcome === "answered" && turn.directiveMet === false && turn.user?.directive && unmetNote(turn.user.directive) && (
+      {unmet && (
         <Notice tone="muted" icon={Info}>
-          <span data-testid="directive-unmet">{unmetNote(turn.user.directive)}</span>
+          <span data-testid="directive-unmet">{unmet}</span>
         </Notice>
       )}
       {turn.outcome === "stopped" && <Notice tone="muted">{turn.text || "Stopped."}</Notice>}

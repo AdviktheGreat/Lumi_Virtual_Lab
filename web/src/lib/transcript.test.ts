@@ -26,7 +26,7 @@ describe("a transcript", () => {
     expect(transcript.turns).toEqual([
       {
         number: 1,
-        user: { text: "What is a nanobody?", attachments: [{ name: "a.csv", path: "uploads/a.csv", size: 3 }], directive: null, lab: null },
+        user: { text: "What is a nanobody?", attachments: [{ name: "a.csv", path: "uploads/a.csv", size: 3 }], directive: null, lab: null, skill: null },
         steps: [],
         writing: "Nanobodies are small",
         outcome: "running",
@@ -158,6 +158,21 @@ describe("a transcript", () => {
       ["code", false],
       ["plot", true],
       ["ask", null],
+      [null, null],
+    ]);
+  });
+
+  it("holds the skill a message was given with, and whether the lead read it", () => {
+    next = 0;
+    const transcript = replay([
+      event("user", 1, { text: "Fit it", data: { skill: "dose-response" } }),
+      event("answer", 1, { text: "Done.", data: { directive_met: false } }),
+      event("user", 2, { text: "Again", data: { skill: 5 } }),
+      event("answer", 2, { text: "Done." }),
+    ]);
+
+    expect(transcript.turns.map((turn) => [turn.user?.skill ?? null, turn.directiveMet])).toEqual([
+      ["dose-response", false],
       [null, null],
     ]);
   });

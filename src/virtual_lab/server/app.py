@@ -61,7 +61,8 @@ and everything else is a request and an answer.
     POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background, and
                                         which with replace_last takes the place of the last one, and with
                                         directive is given with a command, such as ask, which says how to
-                                        answer it, and with lab, who is to work on it, for the command lab
+                                        answer it, and with lab, who is to work on it, for the command lab, or
+                                        with skill, one of its skills that the lead is to use for it
     POST   /api/chats/{id}/note         a note for the lead or the team, which they read as they work
     POST   /api/chats/{id}/pause        also resume and stop, steering the turn that is running
     POST   /api/chats/{id}/approvals/{request}   allow or decline a call that waits for it, which the events tell of
@@ -415,6 +416,8 @@ class MessageBody(RequestModel):
     directive: str | None = Field(None, max_length=50)
     # With the command "lab", who is to work on the message, and how
     lab: LabBody | None = None
+    # One of the conversation's skills that the lead is to use for the message, which is not given with a command
+    skill: str | None = Field(None, max_length=MAX_ID_CHARS)
 
 
 class NoteBody(RequestModel):
@@ -1244,6 +1247,7 @@ def create_app(
                 body.replace_last,
                 body.directive,
                 body.lab.model_dump() if body.lab is not None else None,
+                body.skill,
             )
         except ChatBusyError as error:
             raise ApiError(409, "busy", str(error)) from error

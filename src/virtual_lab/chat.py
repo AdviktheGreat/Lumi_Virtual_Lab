@@ -80,6 +80,8 @@ from virtual_lab.prompts import (
     chat_note_prompt,
     chat_resources_prompt,
     chat_session_prompt,
+    chat_skill_prompt,
+    chat_skill_reminder_prompt,
     checks_over_prompt,
     faked_tool_calls_prompt,
     lab_chat_prompt,
@@ -102,6 +104,7 @@ from virtual_lab.run_meeting import MeetingResult, TruncatedResponseError
 from virtual_lab.schemas import normalize_title
 from virtual_lab.session import CODE_TOOL_NAME, Session, own_resources_prompt, session_tool
 from virtual_lab.skills import (
+    ACTIVATE_SKILL_TOOL_NAME,
     BUILD_SKILLS_DIR_NAME,
     CATALOG_CHARS,
     SKILL_TOOL_NAMES,
@@ -407,6 +410,16 @@ def request_of(call: ToolCall) -> tuple[str, str]:
     return call.function.name, arguments
 
 
+def activated_name(call: ToolCall) -> str:
+    """The skill that a call of activate_skill reads, as it was named, in lower case, or "" if it did not name one."""
+    try:
+        arguments = json.loads(call.function.arguments)
+    except (ValueError, TypeError):
+        return ""
+
+    return str(arguments.get("name", "")).strip().casefold() if isinstance(arguments, dict) else ""
+
+
 class Chat:
     """A conversation between a researcher and the head of a lab.
 
@@ -645,12 +658,15 @@ class Chat:
         self._usage = MeetingUsage()
         self._requests = itertools.count(1)
         self._call_id: str | None = None
-        # The command the message being answered was given with, and with /lab who is to work on it, what the lead has
-        # called since, whether the Critic has reviewed its last answer, and how many cells the session had run when
+        # The command the message being answered was given with, and with /lab who is to work on it, the skill it was
+        # given with instead of a command, what the lead has called since and which skills it has read (by name, in
+        # lower case), whether the Critic has reviewed its last answer, and how many cells the session had run when
         # it began
         self._directive: Directive | None = None
         self._lab: LabRequest | None = None
+        self._skill: Skill | None = None
         self._called: set[str] = set()
+        self._activated: set[str] = set()
         self._reviewed = False
         self._cells_before = 0
 
@@ -1142,6 +1158,7 @@ class Chat:
         replace_last: bool = False,
         directive: str | None = None,
         lab: LabRequest | Mapping[str, Any] | None = None,
+        skill: str | None = None,
     ) -> ChatReply:
         """Sends the lead a message, and waits for its answer.
 
@@ -1156,15 +1173,20 @@ class Chat:
         :param lab: With the command "lab", who is to work on the message and how: a LabRequest, or as one is written
             out, with a mode ("team" or "individual"), the titles of the members, the rounds, and the questions.
             The lead is given the one tool that brings them together, which has them set, and writes the agenda.
+        :param skill: The name of one of the conversation's skills that the lead is to use for this message, as the
+            researcher writes /NAME. The lead is told to read it first, and if it answers without having, it is told
+            once to, and the answer says in directive_met whether it did. It is not given with a command, and needs
+            something written with it.
         :raises ChatBusyError: If the last message is still being answered.
         :raises ChatClosedError: If the conversation was closed.
         :raises ValueError: If there is no message and no file, or a file was not attached, or there is no
             message to replace, or the last one was sent before messages could be replaced, or the command is not
-            one, or cannot be given in this conversation, or needs something written with it.
+            one, or cannot be given in this conversation, or needs something written with it, or the skill is not one
+            of the conversation's, or is given with a command.
         :return: How the turn ended. A turn that failed is reported in the reply, and told of as an
             event, rather than raised.
         """
-        text, files = self._begin(message, attachments, replace_last, directive, lab)
+        text, files = self._begin(message, attachments, replace_last, directive, lab, skill)
 
         return self._run_turn(text, files)
 
@@ -1175,6 +1197,7 @@ class Chat:
         replace_last: bool = False,
         directive: str | None = None,
         lab: LabRequest | Mapping[str, Any] | None = None,
+        skill: str | None = None,
     ) -> threading.Thread:
         """Sends the lead a message as send does, but answers in a thread of its own, followed through
         the events, and the last_reply once it has ended. The message is told of before this returns.
@@ -1184,7 +1207,7 @@ class Chat:
         :raises ValueError: As send says.
         :return: The thread, started.
         """
-        text, files = self._begin(message, attachments, replace_last, directive, lab)
+        text, files = self._begin(message, attachments, replace_last, directive, lab, skill)
 
         thread = threading.Thread(
             target=self._run_turn, args=(text, files), name=f"virtual-lab-chat-{self.id}", daemon=True
@@ -1220,14 +1243,18 @@ class Chat:
         replace_last: bool = False,
         directive: str | None = None,
         lab: LabRequest | Mapping[str, Any] | None = None,
+        skill: str | None = None,
     ) -> tuple[str, list[Attachment]]:
         """Takes the conversation for a turn, and tells of the message that begins it."""
         chosen = directive_named(directive) if directive is not None else None
         request = self._lab_request(chosen, lab)
         text = message.strip()
+        used = self._skill_named(skill, chosen)
         files = self._attachments(attachments)
         if chosen is not None and chosen.needs_text and not text:
             raise ValueError(f"/{chosen.name} needs what it is for written after it")
+        if used is not None and not text:
+            raise ValueError(f"/{used.name} needs what it is for written after it")
         if not text and not files and (chosen is None or chosen.needs_text):
             raise ValueError("A message needs something in it: some text or a file")
 
@@ -1249,7 +1276,9 @@ class Chat:
             self._delegations = 0
             self._directive = chosen
             self._lab = request
+            self._skill = used
             self._called = set()
+            self._activated = set()
             self._reviewed = False
             told = self._change_state("running")
             self._save_info()
@@ -1266,6 +1295,7 @@ class Chat:
                 messages_before=sent_after,
                 **({"directive": chosen.name} if chosen is not None else {}),
                 **({"lab": request.to_dict()} if request is not None else {}),
+                **({"skill": used.name} if used is not None else {}),
             )
             if not self.title:
                 self.rename(title_of(text, files))
@@ -1406,10 +1436,30 @@ class Chat:
             )
         if self._directive is not None:
             parts.append(self._directive.prompt_for(self._lab))
+        if self._skill is not None:
+            parts.append(chat_skill_prompt(self._skill.name))
 
         return "\n\n".join(parts)
 
     # Commands
+
+    def _skill_named(self, name: str | None, directive: Directive | None) -> Skill | None:
+        """The skill of the conversation that a message is given with, which is none where it is given with none.
+
+        :raises ValueError: If it is given with a command, or the conversation has no skill of that name.
+        """
+        if name is None:
+            return None
+        if directive is not None:
+            raise ValueError(
+                f"A skill is not given with the /{directive.name} command, since a message has one or the other"
+            )
+        asked = name.strip().casefold()
+        found = next((skill for skill in self.skills if skill.name.casefold() == asked), None)
+        if found is None:
+            raise ValueError(f"This conversation has no skill called {name.strip()!r}")
+
+        return found
 
     def _lab_request(
         self, directive: Directive | None, lab: LabRequest | Mapping[str, Any] | None
@@ -1516,6 +1566,8 @@ class Chat:
 
     def _carried_out(self) -> bool | None:
         """Whether the command of this message was carried out, or None if it has nothing that is checked."""
+        if self._skill is not None:
+            return self._skill.name.casefold() in self._activated
         directive = self._directive
 
         return None if directive is None or directive.check is None else self._done(directive.check)
@@ -1527,13 +1579,20 @@ class Chat:
         :return: Whether it was told.
         """
         directive = self._directive
-        if directive is None or directive.reminder is None or self._carried_out() is not False:
+        reminder = (
+            chat_skill_reminder_prompt(self._skill.name)
+            if self._skill is not None
+            else None
+            if directive is None
+            else directive.reminder
+        )
+        if reminder is None or self._carried_out() is not False:
             return False
 
         if reply.content.strip():
             self._append({"role": "assistant", "name": self.lead.name, "content": reply.content})
             self._emit("tool_calls", speaker=self.lead.title, text=reply.content, calls=[])
-        self._append({"role": "user", "content": directive.reminder})
+        self._append({"role": "user", "content": reminder})
 
         return True
 
@@ -1805,6 +1864,8 @@ class Chat:
             if asked is not None:
                 held[asked] = call.id
             self._called.add(call.function.name)
+            if call.function.name == ACTIVATE_SKILL_TOOL_NAME:
+                self._activated.add(activated_name(call))
             self._call_id = call.id
             outputs, messages = run_tool_calls([call], self._turn_tools())  # type: ignore[arg-type]
             self._call_id = None

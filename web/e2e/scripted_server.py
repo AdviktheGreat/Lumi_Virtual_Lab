@@ -23,10 +23,12 @@ from a script: no key is needed, and every run says the same. What it says depen
   "lab:slow" brings in one scientist who writes a long reply, slowly, so that a session can be followed as it goes.
 - "skill:build:" and a name make it write a skill of that name in the session's new_skills/ with code, and call
   save_skill for it, as it does for a program that builds a skill, and "skill:save:" and a name make it call save_skill
-  for that folder alone, as it does once the researcher has agreed.
+  for that folder alone, as it does once the researcher has agreed, and "skill:use:" and a name make it read that skill
+  with activate_skill, as it does for a message that is given with the skill, which it is told to read first.
 - A message given with a command, such as /ask, is answered as it is without one, except that /review has it bring in the
   Scientific Critic, that /lab has it hold the session that was asked for, with the agenda below (and "lab:skip" has it
-  not), and that what the command tells the lead is not repeated in the reply that repeats the question.
+  not), and that what the command, or the skill a message is given with, tells the lead is not repeated in the reply
+  that repeats the question.
 - "mcp:" and a word (echo, count, both, order, confirm, signed, gated) make it call the tools of the MCP servers that
   the tests of mcp/ set up, which are the test server of tests/mcp_test_server.py under the names genes, vault, and
   gate.
@@ -528,11 +530,13 @@ def function_code(name: str) -> str:
     return FUNCTION_CODE.format(name=name)
 
 
-SKILL_TRIGGER = re.compile(r"skill:(build|save):([a-z0-9-]+)")
+SKILL_TRIGGER = re.compile(r"skill:(build|save|use):([a-z0-9-]+)")
 
 
 def skill_scenario(step: str, name: str) -> list[tuple[str, str, dict[str, Any]]]:
-    """What the lead does to build the skill of this name, or to save the one it built."""
+    """What the lead does to build the skill of this name, or to save the one it built, or to read it."""
+    if step == "use":
+        return [("Reading the skill.", "activate_skill", {"name": name})]
     folder = f"new_skills/{name}"
     saves = ("Saving it.", "save_skill", {"path": folder})
     if step == "save":
@@ -587,8 +591,8 @@ def call_response(narration: str, name: str, arguments: dict[str, Any], call_id:
 
 
 def reply_to(question: str) -> str:
-    # What a command tells the lead goes after what the researcher wrote, and is not what they asked
-    question = question.split("\n\nThe researcher gave the /")[0]
+    # What a command, or a skill, tells the lead goes after what the researcher wrote, and is not what they asked
+    question = re.split(r"\n\nThe researcher (?:gave the /|asked for the skill )", question)[0]
     if "USER QUERY:" in question and "AVAILABLE TOOLS:" in question:
         return RETRIEVAL_REPLY
     if "markdown:" in question:

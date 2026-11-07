@@ -6,7 +6,7 @@ import { AttachmentTray } from "@/components/attachment-tray";
 import { SlashMenu } from "@/components/slash-menu";
 import { Button } from "@/components/ui/button";
 import type { TrayItem } from "@/lib/attachments";
-import { rowsFor, type Invocation, type Place, type Row } from "@/lib/commands";
+import { rowsFor, type Invocation, type Place, type Row, type SkillChoice } from "@/lib/commands";
 import { controlsFor } from "@/lib/steering";
 import type { ChatState } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,8 @@ export interface ComposerCommands {
   answered: number;
   // Why the conversation cannot be given each command that goes with a message, once there is one
   directives?: Record<string, string | null> | null;
+  // The skills that can be written after a slash, which are given with a message as a command is
+  skills?: readonly SkillChoice[];
   onRun: (invocation: Invocation) => void;
 }
 
@@ -118,10 +120,13 @@ export function Composer({
   const turns = commands?.turns ?? 0;
   const answered = commands?.answered ?? 0;
   const directives = commands?.directives ?? null;
+  const skills = commands?.skills;
   const rows = useMemo(
     () =>
-      place === undefined || putAwayAt === value ? [] : rowsFor(value, { place, state, turns, answered, holdUp, directives }),
-    [place, state, turns, answered, holdUp, directives, value, putAwayAt],
+      place === undefined || putAwayAt === value
+        ? []
+        : rowsFor(value, { place, state, turns, answered, holdUp, directives, skills }),
+    [place, state, turns, answered, holdUp, directives, skills, value, putAwayAt],
   );
   const menuOpen = rows.length > 0;
   const lit = menuOpen ? litRow(rows, cursor) : -1;

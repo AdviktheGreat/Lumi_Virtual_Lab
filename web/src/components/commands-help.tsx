@@ -28,6 +28,10 @@ export function CommandsHelp({ place, onClose }: { place: Place; onClose: () => 
             Write a slash in the box to see them. The arrow keys choose one, Enter runs it, Tab writes it out, and Escape puts the list away.
           </DialogDescription>
         </DialogHeader>
+        <p className="text-sm text-muted-foreground" data-testid="commands-help-skills">
+          Write the name of one of the program&apos;s skills after a slash, and what to use it for, such as{" "}
+          <code className="font-mono text-foreground">/skill-name your question</code>, and the lead reads that skill first.
+        </p>
         <dl ref={measure} tabIndex={scrolls ? 0 : undefined} className="-mx-1 flex max-h-96 flex-col gap-2.5 overflow-y-auto px-1 text-sm">
           {commandsFor(place).map((command) => (
             <div key={command.name} className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
