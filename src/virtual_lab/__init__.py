@@ -30,7 +30,15 @@ from virtual_lab.benchmarks import (
     Question,
     download_benchmarks,
 )
-from virtual_lab.chat import Attachment, Chat, ChatBusyError, ChatClosedError, ChatReply, UploadTooLargeError
+from virtual_lab.chat import (
+    Attachment,
+    CampaignBrief,
+    Chat,
+    ChatBusyError,
+    ChatClosedError,
+    ChatReply,
+    UploadTooLargeError,
+)
 from virtual_lab.chemistry import (
     Activity,
     ActivityResults,
@@ -277,6 +285,7 @@ __all__ = [
     "CHEMBL_LOOKUP_TOOL",
     "CHEMBL_SEARCH_TOOL",
     "CHEMBL_TARGET_SEARCH_TOOL",
+    "CampaignBrief",
     "CellResult",
     "Chain",
     "Chat",

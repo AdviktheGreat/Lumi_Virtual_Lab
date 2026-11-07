@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowDown } from "lucide-react";
 import { NoteChip } from "@/components/activity";
+import { CampaignButton, MoveDialog } from "@/components/campaign-move";
 import { CaughtUpProvider } from "@/components/caught-up";
 import { useChats } from "@/components/chats-provider";
 import { CommandsHelp } from "@/components/commands-help";
@@ -35,6 +36,7 @@ import { cleanTitle } from "@/lib/history";
 import { currentTurn, unreadNotes, type SentNote } from "@/lib/steering";
 import { useAttachments } from "@/lib/use-attachments";
 import { useChat } from "@/lib/use-chat";
+import { useDocumentTitle } from "@/lib/use-document-title";
 import { useExport } from "@/lib/use-export";
 import { useFiles } from "@/lib/use-files";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
@@ -68,7 +70,7 @@ export function ChatNotFound() {
 export function ChatView({ id }: { id: string }) {
   const router = useRouter();
   const { status, transcript, connection, reload } = useChat(id);
-  const { refresh } = useChats();
+  const { refresh, chats, campaigns } = useChats();
   const { server, report } = useServer();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -82,6 +84,7 @@ export function ChatView({ id }: { id: string }) {
   const [labbing, setLabbing] = useState<string | null>(null);
   const [helping, setHelping] = useState(false);
   const [instructing, setInstructing] = useState(false);
+  const [moving, setMoving] = useState(false);
   const exporter = useExport(id, setProblem);
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
   const { scroller, atBottom, jump, onScroll } = useStickToBottom<HTMLDivElement>(transcript.lastId);
@@ -90,6 +93,9 @@ export function ChatView({ id }: { id: string }) {
   const listed = useFiles(id, filesChanged(transcript) + sentFiles);
 
   const { state, title } = transcript;
+  // The campaign it is one of, from what the list of programs says, which is kept up to date, and not from how it was set up
+  const campaignId = chats?.find((chat) => chat.id === id)?.campaign ?? null;
+  const campaign = campaigns?.find((each) => each.id === campaignId) ?? null;
   const working = state !== "idle";
   const waitingNotes = unreadNotes(sentNotes, transcript.turns, working);
   const lead = status.kind === "ready" ? status.info.lead : "Lead scientist";
@@ -101,13 +107,7 @@ export function ChatView({ id }: { id: string }) {
     void refresh();
   }, [state, title, refresh]);
 
-  useEffect(() => {
-    document.title = title ? `${title} · Lumi Virtual Lab` : "Lumi Virtual Lab";
-
-    return () => {
-      document.title = "Lumi Virtual Lab";
-    };
-  }, [title]);
+  useDocumentTitle(title);
 
   function attach(files: File[]) {
     const refused = attachments.add(files);
@@ -304,6 +304,9 @@ export function ChatView({ id }: { id: string }) {
           {status.kind === "ready" && status.info.config.kind === "custom" && (
             <InstructionsButton onClick={() => setInstructing(true)} />
           )}
+          {status.kind === "ready" && (campaign !== null || (campaigns ?? []).length > 0) && (
+            <CampaignButton name={campaign?.name ?? null} onClick={() => setMoving(true)} />
+          )}
           {label && (
             <Badge variant="secondary" className="gap-1.5 border-primary/35 bg-highlight text-highlight-foreground" data-testid="chat-state">
               <span className="size-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none" aria-hidden />
@@ -439,6 +442,9 @@ export function ChatView({ id }: { id: string }) {
         {helping && <CommandsHelp place="chat" onClose={() => setHelping(false)} />}
         {instructing && status.kind === "ready" && (
           <InstructionsDialog name={title || status.info.title} instructions={status.info.config.instructions} onClose={() => setInstructing(false)} />
+        )}
+        {moving && status.kind === "ready" && (
+          <MoveDialog chat={{ id, title: title || status.info.title, campaign: campaign?.id ?? null }} onClose={() => setMoving(false)} />
         )}
         {choosingModel && model !== null && (
           <ModelDialog

@@ -22,7 +22,7 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatResult
 from openai import OpenAI, OpenAIError
 
-from virtual_lab.chat import Chat, is_count
+from virtual_lab.chat import CampaignBrief, Chat, is_count
 from virtual_lab.constants import (
     CHAT_FILE_NAME,
     CHAT_UPLOADS_DIR_NAME,
@@ -36,9 +36,11 @@ from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, accepts_images, dete
 from virtual_lab.mcp_tools import tool_prefix
 from virtual_lab.openrouter import Catalog
 from virtual_lab.server.asking import Asker
+from virtual_lab.server.campaigns import Campaigns
 from virtual_lab.schemas import normalize_title
 from virtual_lab.server.config import (
     ChatConfig,
+    check_campaign,
     check_limits,
     describe_scientist,
     library,
@@ -245,6 +247,7 @@ class Conversations:
     ) -> None:
         self.workspace = workspace
         self.skill_saver = skill_saver if skill_saver is not None else Skills(workspace).save_built
+        self.campaigns = Campaigns(workspace)
         self.catalog = catalog
         self.check_keys = check_keys
         self.setup = setup
@@ -271,6 +274,7 @@ class Conversations:
     def summaries(self) -> list[dict[str, Any]]:
         """Every conversation, the latest first, as a list shows them. Those that are open say what they are doing."""
         found: list[dict[str, Any]] = []
+        campaigns = {item["id"] for item in self.campaigns.load()}
         for directory in self.workspace.chats_dir.iterdir():
             info = read_json(directory / CHAT_FILE_NAME)
             if not isinstance(info, dict):
@@ -295,10 +299,88 @@ class Conversations:
                     "max_cost": number_or_none(info.get("max_cost")),
                     "model": config.model if config is not None else None,
                     "kind": config.kind if config is not None else "quick_task",
+                    # A program left pointing at a campaign that is gone is part of none
+                    "campaign": config.campaign if config is not None and config.campaign in campaigns else None,
                 }
             )
 
         return sorted(found, key=lambda item: (item["updated_at"] or "", item["id"]), reverse=True)
+
+    def describe_campaign(self, campaign_id: str) -> dict[str, Any]:
+        """A campaign, with its programs, the latest first, and what they have spent between them.
+
+        :raises ApiError: If there is no such campaign.
+        """
+        campaign = self.campaigns.get(campaign_id)
+        programs = [item for item in self.summaries() if item["campaign"] == campaign_id]
+
+        return {**campaign, "programs": programs, "spent": sum(item["spent"] or 0 for item in programs)}
+
+    def set_campaign(self, chat_id: str, campaign_id: str | None) -> str | None:
+        """Makes a program one of a campaign, in place of the one it was, or one of none. The lead is told the goal of
+        the campaign from the next message it is sent, and nothing else about it changes, so it can be done while it is
+        working, and a program that is not open is not opened for it.
+
+        :param campaign_id: The campaign's id, or None or "" for none.
+        :return: The id of the campaign it is one of, or None.
+        :raises ApiError: If there is no such program or campaign, or the program's setup cannot be read.
+        """
+        # With the lock held, as a campaign is deleted, so that a program is not put in one that is being deleted
+        with self._lock:
+            directory = self.directory(chat_id)
+            try:
+                wanted = check_campaign(campaign_id, self.workspace)
+            except ValueError as error:
+                raise ApiError(422, "invalid", str(error)) from error
+            handle = self._open.get(chat_id)
+            config = handle.config if handle is not None else load_config(directory)
+            if config is None:
+                raise ApiError(409, "unreadable", "This program's setup cannot be read, so it cannot be changed")
+            if config.campaign != wanted:
+                changed = replace(config, campaign=wanted)
+                save_config(directory, changed)
+                if handle is not None:
+                    handle.config = changed
+            if handle is not None:
+                handle.chat.set_campaign(self._brief_of(wanted))
+
+        return wanted or None
+
+    def campaign_changed(self, campaign_id: str) -> None:
+        """Tells the lead of each open program of a campaign what its goal is now, from the next message it is sent."""
+        brief = self._brief_of(campaign_id)
+        with self._lock:
+            for handle in self._open.values():
+                if handle.config.campaign == campaign_id:
+                    handle.chat.set_campaign(brief)
+
+    def delete_campaign(self, campaign_id: str) -> None:
+        """Deletes a campaign. Its programs are kept, and are one of no campaign from now on.
+
+        :raises ApiError: If there is no such campaign.
+        """
+        with self._lock:
+            self.campaigns.remove(campaign_id)
+            for directory in self.workspace.chats_dir.iterdir():
+                handle = self._open.get(directory.name)
+                config = handle.config if handle is not None else load_config(directory)
+                if config is None or config.campaign != campaign_id or directory.name in self._deleting:
+                    continue
+                changed = replace(config, campaign="")
+                try:
+                    save_config(directory, changed)
+                except OSError:
+                    # A program whose directory cannot be written is left pointing at it, which is taken for none
+                    continue
+                if handle is not None:
+                    handle.config = changed
+                    handle.chat.set_campaign(None)
+
+    def _brief_of(self, campaign_id: str) -> CampaignBrief | None:
+        """What the lead is told of a campaign, or None for none, or for one that has been deleted."""
+        found = self.campaigns.find(campaign_id) if campaign_id else None
+
+        return CampaignBrief(found["name"], found["brief"]) if found is not None else None
 
     def create(self, request: Mapping[str, Any], title: str | None = None) -> ChatHandle:
         """Makes a conversation and opens it.
@@ -656,6 +738,7 @@ class Conversations:
                 late_tools=handle.connections.tools if handle.connections is not None else None,
                 skills=skills,
                 instructions=config.instructions,
+                campaign=self._brief_of(config.campaign),
                 skill_saver=self.skill_saver if config.kind == "build_skill" else None,
                 max_cost=config.max_cost,
                 max_delegations=MAX_CHAT_DELEGATIONS if config.max_delegations is None else config.max_delegations,

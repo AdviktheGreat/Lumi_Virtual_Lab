@@ -646,6 +646,19 @@ def program_instructions_prompt(instructions: str) -> str:
     )
 
 
+def campaign_brief_prompt(name: str, brief: str) -> str:
+    """Gives the lead the goal of the campaign that its program is one of.
+
+    :param name: What the researcher called the campaign.
+    :param brief: The goal and background the researcher wrote for it.
+    """
+    return (
+        f"This program is one of the programs of the researcher's campaign called {name.strip()}, which work toward "
+        "one goal. This is the campaign's goal and background, which holds for every message in this program:\n\n"
+        f"{brief.strip()}"
+    )
+
+
 def build_skill_prompt(folder: str) -> str:
     """Tells the lead that this conversation is for building a skill, and how to go about it.
 

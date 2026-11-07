@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Ellipsis, Pencil, Trash2 } from "lucide-react";
+import { Ellipsis, FolderInput, Pencil, Trash2 } from "lucide-react";
 import { useChats } from "@/components/chats-provider";
 import { useServer } from "@/components/server-provider";
 import {
@@ -227,8 +227,9 @@ function DeleteDialog({
   );
 }
 
-// A conversation in the list: where it is opened, and what can be done to it
-export function ChatRow({ chat, active }: { chat: ChatSummary; active: boolean }) {
+// A conversation in the list: where it is opened, and what can be done to it. Moving it to a campaign is for the list to do,
+// since the row is not where it was once it is moved.
+export function ChatRow({ chat, active, onMove }: { chat: ChatSummary; active: boolean; onMove: (chat: ChatSummary) => void }) {
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -275,7 +276,7 @@ export function ChatRow({ chat, active }: { chat: ChatSummary; active: boolean }
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="start"
-          className="w-40"
+          className="w-52"
           onCloseAutoFocus={(event) => {
             if (!chose.current) return;
             chose.current = false;
@@ -290,6 +291,15 @@ export function ChatRow({ chat, active }: { chat: ChatSummary; active: boolean }
           >
             <Pencil />
             Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              chose.current = true;
+              onMove(chat);
+            }}
+          >
+            <FolderInput />
+            Move to campaign…
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"

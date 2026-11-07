@@ -75,6 +75,7 @@ from virtual_lab.project import Project, sha256_file
 from virtual_lab.prompts import (
     SCIENTIFIC_CRITIC,
     build_skill_prompt,
+    campaign_brief_prompt,
     chat_attachments_prompt,
     chat_note_prompt,
     chat_resources_prompt,
@@ -194,6 +195,18 @@ class ChatStopped(Exception):
 
 class UploadTooLargeError(ValueError):
     """Raised when a file the researcher attached is larger than a conversation takes."""
+
+
+@dataclass(frozen=True)
+class CampaignBrief:
+    """What the lead is told of the campaign that its program is one of.
+
+    :param name: What the campaign is called.
+    :param brief: The goal and background of the campaign, which the lead is told in every request it makes.
+    """
+
+    name: str
+    brief: str
 
 
 @dataclass(frozen=True)
@@ -444,6 +457,9 @@ class Chat:
     :param instructions: What the researcher wants of the lead throughout, which the lead is told after what the lab
         is, in every request it makes. They are the lead's alone: the team in its sessions is told what the lead
         asks of it. None are given with none.
+    :param campaign: The campaign the conversation is one of, whose goal the lead is told after what the lab is, in
+        every request it makes. It is the lead's alone, as the instructions are. None are told with none, or where the
+        brief has nothing in it. It can be changed while the conversation goes on (see set_campaign).
     :param skill_saver: Makes the conversation one for building a skill: the lead is told how, and given the tool that
         saves a skill it built in the session, which it calls with the folder's path. The first call for a folder says
         what would be saved, and a later one saves it, once the researcher has sent a message since, so that nothing is
@@ -498,6 +514,7 @@ class Chat:
         skills: Sequence[Skill] = (),
         skills_catalog_chars: int = CATALOG_CHARS,
         instructions: str = "",
+        campaign: CampaignBrief | None = None,
         skill_saver: SkillSaver | None = None,
         max_tool_iterations: int | None = None,
         check_results: bool = False,
@@ -579,6 +596,7 @@ class Chat:
         self.skills = tuple(skills)
         self.skills_catalog_chars = skills_catalog_chars
         self.instructions = instructions.strip()
+        self.campaign = campaign if campaign is not None and campaign.brief.strip() else None
         self.skill_saver = skill_saver
         self.max_tool_iterations = max_tool_iterations
         self.check_results = check_results
@@ -1012,6 +1030,17 @@ class Chat:
             self._save_info()
         if changed_cost:
             self._tell_usage()
+
+    def set_campaign(self, campaign: CampaignBrief | None) -> None:
+        """Changes the campaign the conversation is one of, or has it be one of none, whether or not a turn is running.
+        The lead is told of the new goal from the next message it is sent, and not partway through the one it is
+        answering.
+
+        :param campaign: The campaign, or None. One whose brief has nothing in it tells the lead nothing.
+        """
+        with self._changed:
+            self.campaign = campaign if campaign is not None and campaign.brief.strip() else None
+            self._reassemble = True
 
     def rename(self, title: str) -> None:
         """Gives the conversation another title."""
@@ -1615,14 +1644,16 @@ class Chat:
 
     def _assemble(self) -> None:
         """Puts together what the lead is told and given from what was worked out, and from who is on the team and how
-        much they may be asked for, which are what the lead's limits change."""
+        much they may be asked for, which are what the lead's limits change, and from the campaign it is one of."""
         # Cleared before what it is for is read, so that a limit changed while this is done is put together again
         self._reassemble = False
         delegating = bool(self._consultants) and self.max_delegations > 0
         lab = lab_chat_prompt(self.lead, self.team if delegating else (), can_run_code=self.session is not None)
         delegation = self._delegation_tools() if delegating else ()
         self._lead_tools = (*self._fixed_tools, *delegation)
-        own = [program_instructions_prompt(self.instructions)] if self.instructions else []
+        own = [campaign_brief_prompt(self.campaign.name, self.campaign.brief)] if self.campaign else []
+        if self.instructions:
+            own.append(program_instructions_prompt(self.instructions))
         self._system = "\n\n".join([lab, *own, *self._fixed_parts])
 
     def _add_late_tools(self) -> None:

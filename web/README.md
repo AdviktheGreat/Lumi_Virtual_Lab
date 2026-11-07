@@ -9,7 +9,7 @@ API they talk to, so there is nothing to run but the server. To use the interfac
 
 | Path | What is there |
 | --- | --- |
-| `src/app` | The pages: `/` begins a program, `/chat?id=…` is one |
+| `src/app` | The pages: `/` begins a program, `/chat?id=…` is one, `/campaign?id=…` is a campaign |
 | `src/components` | What the pages are made of; `ui/` is shadcn's |
 | `src/lib` | The API client, the stream of a conversation's events, and the transcript they add up to: what the lead said, each call it made, the code that ran, what a team did when the lead brought it in, and the notes left for it; and the files that go with a message, the files of a conversation, and the way a turn is steered; and how the list of conversations is searched and put in days; and what the settings say, the keys, the scientists, and the tools; and what there is to set up for code in Docker, and the jobs that build and fetch it; and the MCP servers, what a check of one found and whether it is signed in to, and what they and their tools ask of the researcher |
 | `e2e` | Playwright tests, and the scripted server they run against |
@@ -82,6 +82,32 @@ with its words one space apart, cut to 80 characters (`src/lib/history.ts` does 
 conversation that is open, whose heading follows. Delete asks first, and removes the conversation with its messages and
 its files, stopping it if it is at work; if it is the one that is open, the page goes to the home page. One that is gone
 already is as good as deleted.
+
+## Campaigns
+
+A campaign groups the programs that work toward one goal. It has a name and a goal, which can be left empty, and the lead of
+each program of the campaign is told the goal in every message it answers (the server does this, as for the instructions
+of a custom program, so a campaign needs nothing from the page but the choice). A program is part of at most one campaign,
+kept in its `config` as `campaign`, and the list says it as `campaign` too. A campaign has no spending limit of its own:
+each program keeps its own, and the campaign's page adds up what they have spent.
+
+- **Making one.** "New campaign" in the sidebar, under New program, opens a form for the name and goal (`CampaignDialog`,
+  checked by `src/lib/campaigns.ts` as the server checks: a name is needed, the goal is at most 8,000 characters, and a
+  name that another campaign has, whatever its case, is refused by the server and said in the form), and goes to the
+  campaign's page. The dialog that moves a program can make one too, and moves the program into it.
+- **Beginning a program in one.** Where there are campaigns the home page has a Campaign choice under the kinds of
+  program, which says the goal that the lead will be told. The campaign's page has "New program in this campaign", which
+  is `/?campaign=ID`, the home page with it chosen. A program is begun in none unless one is chosen.
+- **Moving one.** There is no dragging. A program is moved from "Move to campaign…" in the menu of its row in the sidebar,
+  from the campaign button in its header (which says "Add to a campaign" while it has none), or from the button on its row
+  in the campaign's page. All three open the same dialog: the campaigns there are, and "No campaign", and nothing is
+  moved until Move is pressed. The lead is told the new goal from the next message it answers, not in the middle of one.
+- **In the sidebar.** The campaigns are listed above the programs that are part of none, the one that was last at work first,
+  each with its programs under it and how many there are. The arrow beside a name hides and shows its programs, and the
+  name leads to its page. A search shows only the campaigns that have a program it found, and opens them.
+- **The page** (`/campaign?id=…`) shows the goal, the programs with when each was last at work and what it has spent, and
+  what they have spent between them. Edit changes the name and goal, and Delete asks first: the programs are kept, and are
+  then part of none. An address of a campaign that is not there says so, with the way to begin a program.
 
 ## Data
 
@@ -425,6 +451,7 @@ a word in it:
 | `tool:files` | Looks at the file attached to the conversation, `counts.csv`, with the library's own tools for that |
 | `tool:offered` | Answers with the names of the tools the model was offered, which is how a test sees what the settings gave it |
 | `instructions:` | Answers with the instructions of a custom program that the lead was given, or that it was given none (`e2e/programs.spec.ts`) |
+| `campaign:` | Answers with the name and goal of the campaign that the lead was told its program is part of, or that it was told of none (`e2e/own-server/campaigns.spec.ts`) |
 | `skill:build:NAME`, `skill:save:NAME` | Writes the skill NAME in the session's `new_skills/` with code and calls `save_skill` for it, or calls `save_skill` alone, as the lead does for a program that builds a skill (`e2e/own-server/skills-build.spec.ts`) |
 | `mcp:echo`, `count`, `both`, `order`, `confirm`, `signed`, `gated` | Calls the tools of the test server that the tests of `e2e/mcp` set up as `genes` (or `vault`, for `signed`, and `gate`, for `gated`): `echo`, `count`, `count` and then `echo`, `order` (which asks what to order), and `confirm` (which asks yes or no) |
 | `pdf:unavailable` | Has saving the conversation as a PDF fail, as it does where WeasyPrint is not installed (the PDF is otherwise made by a stand-in that needs no WeasyPrint) |
