@@ -31,8 +31,8 @@ ROOT = Path(__file__).resolve().parent
 MINIMUM_PYTHON = (3, 12)
 MINIMUM_NODE = 22
 
-# What the interface needs beyond the lab itself: the server, MCP servers, reading papers, and the data libraries that
-# the code a conversation runs most often uses
+# What the interface needs beyond the lab itself: the server, MCP servers, reading papers, and numpy, pandas, and
+# pyarrow (the eval extra), which the server does not import but code a conversation runs on this machine may
 EXTRAS = "server,mcp,papers,eval"
 
 # The modules an environment needs for the interface, which are looked for and not imported, since importing the lab
