@@ -414,7 +414,7 @@ def activated_name(call: ToolCall) -> str:
     """The skill that a call of activate_skill reads, as it was named, in lower case, or "" if it did not name one."""
     try:
         arguments = json.loads(call.function.arguments)
-    except ValueError:
+    except (ValueError, TypeError):
         return ""
 
     return str(arguments.get("name", "")).strip().casefold() if isinstance(arguments, dict) else ""

@@ -29,6 +29,7 @@ from virtual_lab.chat import (
     ChatClosedError,
     ChatReply,
     UploadTooLargeError,
+    activated_name,
     describe_size,
     safe_filename,
     title_of,
@@ -3612,6 +3613,25 @@ class TestSkillCommand:
         fake_client.completions.responses = [text_response("Three.")]
         chat.send("Never mind", replace_last=True)
         assert [event.data.get("skill") for event in of(chat.events_since(), "user")] == [None]
+
+    @pytest.mark.parametrize(
+        ("arguments", "name"),
+        [
+            ('{"name": " Dose-Response "}', "dose-response"),
+            ('{"name": 5}', "5"),
+            ("[]", ""),
+            ("not json", ""),
+            (None, ""),
+        ],
+    )
+    def test_the_skill_a_call_reads_is_the_name_it_gives_whatever_else_it_gives(
+        self, arguments: str | None, name: str
+    ) -> None:
+        call = ChatCompletionMessageToolCall.model_construct(
+            id="call_1", type="function", function=Function.model_construct(name="activate_skill", arguments=arguments)
+        )
+
+        assert activated_name(call) == name
 
     def test_the_skill_is_kept_in_the_saved_events(self, fake_client: FakeClient, tmp_path: Path) -> None:
         fake_client.completions.responses = [
