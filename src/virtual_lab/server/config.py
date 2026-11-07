@@ -107,6 +107,8 @@ class ChatConfig:
     :param check_results: Whether the lead is asked to check its result before answering a message it ran code for.
     :param kind: What the program was begun as: "quick_task", or "custom", which has a name and instructions of its own.
     :param instructions: What the lead is told throughout a custom program, which is empty for any other.
+    :param campaign: The id of the campaign the program is one of, or empty for one that is not part of any. The
+        campaign may have been deleted since, and then the program is not part of any.
     """
 
     model: str
@@ -128,6 +130,7 @@ class ChatConfig:
     check_results: bool = True
     kind: str = "quick_task"
     instructions: str = ""
+    campaign: str = ""
 
     def lead_agent(self) -> Agent:
         return agent_from({**self.lead, "model": self.model})
@@ -164,6 +167,7 @@ class ChatConfig:
             "check_results": self.check_results,
             "kind": self.kind,
             "instructions": self.instructions,
+            "campaign": self.campaign,
         }
 
     @classmethod
@@ -198,6 +202,8 @@ class ChatConfig:
             # A conversation begun before there were kinds of program is a quick task
             kind=str(data["kind"]) if data.get("kind") in PROGRAM_KINDS else "quick_task",
             instructions=str(data.get("instructions") or ""),
+            # A conversation begun before there were campaigns is part of none
+            campaign=data["campaign"] if isinstance(data.get("campaign"), str) else "",
         )
 
 
@@ -387,6 +393,21 @@ def check_program(kind: Any, instructions: Any) -> tuple[str, str]:
     return kind, written
 
 
+def check_campaign(campaign: Any, workspace: Workspace) -> str:
+    """The id of a campaign that a program is to be one of, or "" for none.
+
+    :raises ValueError: If it is not the id of a campaign there is.
+    """
+    if campaign is None or campaign == "":
+        return ""
+    if not isinstance(campaign, str):
+        raise ValueError(f"A campaign is named by its id, not {campaign!r}")
+    if not any(item["id"] == campaign for item in workspace.load_campaigns()):
+        raise ValueError("There is no campaign with that id")
+
+    return campaign
+
+
 def check_limits(changes: Mapping[str, Any]) -> dict[str, Any]:
     """The limits of a conversation that a request gives, checked: the most it may spend, the most team sessions the
     lead may start in answering a message, and the most rounds of discussion it may ask one for.
@@ -420,7 +441,8 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         (null for what the lead is given unless it is told otherwise), "check_results" (whether the lead is asked to
         check a result before answering, which it is unless this is false), "kind" ("quick_task", "custom", which
         needs "instructions", or "build_skill", which needs code to run and, where the skills are not named, is given
-        a skill called skill-creator that the person has, however it is set), "stream", "commercial_mode", "tools", the
+        a skill called skill-creator that the person has, however it is set), "campaign", the id of the campaign the
+        program is one of, which is none unless it is given, "stream", "commercial_mode", "tools", the
         names of the library's tools to give, which are all but those the workspace has turned off, "mcp", the names
         of the MCP servers to give, which are those the workspace has turned on, and "data" and "software", the
         names of what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of
@@ -480,6 +502,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         skills = [skill.name for skill in found.skills if skill.name not in turned_off]
 
     kind, instructions = check_program(request.get("kind"), request.get("instructions"))
+    campaign = check_campaign(request.get("campaign"), workspace)
     if kind == "build_skill":
         if code.where == "none":
             raise ValueError(
@@ -510,6 +533,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         check_results=check_results_choice(request.get("check_results")),
         kind=kind,
         instructions=instructions,
+        campaign=campaign,
     )
 
 

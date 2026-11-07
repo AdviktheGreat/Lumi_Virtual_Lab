@@ -10,6 +10,7 @@ one workspace directory.
         own_data/                                        the files the person uploaded, which own.json describes
         skills/                                          the skills the person put there, each a folder with a SKILL.md
         skills.json                                      which skills a new conversation is not given
+        campaigns.json                                   the campaigns, each with the goal its programs share
         chats/2026-10-07_1500_what-is-a-nanobody/        a conversation with the head of a lab, as Chat saves it
         data_lake/                                       Biomni's data lake, unless the settings keep it elsewhere
         papers/                                          the runs that read papers, each in a directory of its own
@@ -26,10 +27,12 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from virtual_lab.constants import DEFAULT_MODEL
 from virtual_lab.utils import write_atomically
+
+T = TypeVar("T")
 
 DEFAULT_WORKSPACE = Path.home() / "virtual_lab_workspace"
 
@@ -57,6 +60,10 @@ OWN_DATA_DIR_NAME = "own_data"
 SKILLS_DIR_NAME = "skills"
 SKILLS_FILE_NAME = "skills.json"
 
+# The campaigns the person made, each a name and the goal its programs work toward; which campaign a program is one of
+# is kept with the program
+CAMPAIGNS_FILE_NAME = "campaigns.json"
+
 # What the lab was asked to read of papers, a directory for each run
 PAPERS_DIR_NAME = "papers"
 
@@ -65,6 +72,9 @@ BENCHMARKS_DIR_NAME = "benchmarks"
 
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
+
+# What a campaign's id may be, which is how a page names it
+CAMPAIGN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
 def is_text(value: Any) -> bool:
@@ -205,6 +215,8 @@ class Workspace:
         self._mcp_lock = threading.Lock()
         # Likewise for the data and software the person gave
         self._own_lock = threading.Lock()
+        # Likewise for the campaigns
+        self._campaigns_lock = threading.Lock()
 
     @property
     def chats_dir(self) -> Path:
@@ -400,6 +412,50 @@ class Workspace:
                 if undo is not None:
                     undo()
                 raise
+
+    @property
+    def campaigns_path(self) -> Path:
+        return self.root / CAMPAIGNS_FILE_NAME
+
+    def load_campaigns(self) -> list[dict[str, str]]:
+        """The campaigns, in the order they were made, each with an id, name, brief, and when it was made and last
+        changed. What a file edited by hand holds that is not of this kind is left out, and so is a campaign whose id
+        is one that an earlier campaign has."""
+        data = read_json(self.campaigns_path)
+        entries = data.get("campaigns") if isinstance(data, dict) else None
+        kept: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            campaign_id, name, brief = entry.get("id"), entry.get("name"), entry.get("brief")
+            if not (isinstance(campaign_id, str) and CAMPAIGN_ID_PATTERN.fullmatch(campaign_id)) or campaign_id in seen:
+                continue
+            if not (isinstance(name, str) and name.strip() and isinstance(brief, str)):
+                continue
+            seen.add(campaign_id)
+            created = entry.get("created_at") if isinstance(entry.get("created_at"), str) else ""
+            kept.append(
+                {
+                    "id": campaign_id,
+                    "name": name,
+                    "brief": brief,
+                    "created_at": created,
+                    "updated_at": entry["updated_at"] if isinstance(entry.get("updated_at"), str) else created,
+                }
+            )
+
+        return kept
+
+    def update_campaigns(self, change: Callable[[list[dict[str, str]]], T]) -> T:
+        """Changes the campaigns as `change` says, which is given what is kept, to change in place, and whose answer is
+        returned. A change made at the same time by another is not lost, and one that fails keeps nothing."""
+        with self._campaigns_lock:
+            kept = self.load_campaigns()
+            answer = change(kept)
+            write_atomically(self.campaigns_path, json.dumps({"campaigns": kept}, indent=4).encode("utf-8"))
+
+        return answer
 
     def new_chat_directory(self, title: str, now: datetime | None = None) -> Path:
         """A new directory for a conversation, named after when it began and what it is called.

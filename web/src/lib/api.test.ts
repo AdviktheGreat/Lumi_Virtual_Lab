@@ -123,6 +123,33 @@ describe("the API", () => {
     expect(fetch).toHaveBeenCalledWith("/api/chats/a%20b", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ title: "Kept" }) }));
   });
 
+  it("lists, makes, changes, and deletes campaigns, and moves a conversation into one or out of it", async () => {
+    // A response can be read once, so each request is given its own
+    const fetch = vi.fn(async (address: string, options: RequestInit) =>
+      options.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : answer(address === "/api/campaigns" && options.method === "GET" ? { campaigns: [{ id: "a-1" }] } : { id: "a b", campaign: null }),
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    expect((await api.campaigns()).map((campaign) => campaign.id)).toEqual(["a-1"]);
+    expect(await api.makeCampaign({ name: "Screen", brief: "Find a binder." })).toMatchObject({ id: "a b" });
+    await api.changeCampaign("a b", { brief: "" });
+    expect(await api.deleteCampaign("a b")).toBeUndefined();
+    expect(await api.setCampaign("a b", null)).toEqual({ id: "a b", campaign: null });
+    await api.setCampaign("a b", "a-1");
+
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([address, options]) => [address, options.method, options.body])).toEqual([
+      ["/api/campaigns", "GET", undefined],
+      ["/api/campaigns", "POST", JSON.stringify({ name: "Screen", brief: "Find a binder." })],
+      ["/api/campaigns/a%20b", "PATCH", JSON.stringify({ brief: "" })],
+      ["/api/campaigns/a%20b", "DELETE", undefined],
+      ["/api/chats/a%20b/campaign", "PUT", JSON.stringify({ campaign: null })],
+      ["/api/chats/a%20b/campaign", "PUT", JSON.stringify({ campaign: "a-1" })],
+    ]);
+  });
+
   it("changes the settings by the PATCH it is given only what changes, and gives back the settings", async () => {
     const fetch = stub(answer({ model: "gpt-5.2", max_cost: 5 }));
 

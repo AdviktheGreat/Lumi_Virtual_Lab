@@ -4,7 +4,7 @@ A chat-first workbench for computational biology. You talk to the head of a lab,
 
 Lumi has two parts that work together:
 
-- **A chat interface**, served by a local server, for working with the lead: files you attach, figures and files it makes, notes you can leave it while it works, and a spending limit for each program. A program is one conversation with its files and what it made: a quick task, a custom program with a name and instructions of its own, or one that builds a skill with you and saves it when you agree.
+- **A chat interface**, served by a local server, for working with the lead: files you attach, figures and files it makes, notes you can leave it while it works, and a spending limit for each program. A program is one conversation with its files and what it made: a quick task, a custom program with a name and instructions of its own, or one that builds a skill with you and saves it when you agree. Programs that work toward one goal can be grouped in a campaign, which has a goal that the lead is told in every program of it.
 - **A Python library**, `virtual_lab`, underneath it, for running meetings from a script, giving agents tools, and measuring them on benchmarks.
 
 Lumi began as a fork of the [Virtual Lab](https://github.com/zou-group/virtual-lab) by Kyle Swanson and colleagues, and builds on [Biomni](https://github.com/snap-stanford/Biomni) from Stanford SNAP. See [Licenses and acknowledgements](#licenses-and-acknowledgements).

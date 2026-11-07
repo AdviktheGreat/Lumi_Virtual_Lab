@@ -23,6 +23,7 @@ from virtual_lab.agent import Agent
 from virtual_lab.chat import (
     STOPPED_REPLY,
     Attachment,
+    CampaignBrief,
     Chat,
     ChatBusyError,
     ChatClosedError,
@@ -358,6 +359,61 @@ class TestInstructions:
 
         for call in (0, 1):
             assert "program of its own" not in request_messages(fake_client, call)[0]["content"]
+
+
+class TestCampaign:
+    def test_the_goal_of_the_campaign_is_told_to_the_lead_in_every_request_before_the_programs_instructions(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("One."), text_response("Two.")]
+        chat = make_chat(
+            tmp_path,
+            instructions="Always answer in verse.",
+            campaign=CampaignBrief("Nanobody screen", "  Find a nanobody that binds KP.3.\n"),
+        )
+
+        chat.send("Where do we begin?")
+        chat.send("And then?")
+
+        for call in (0, 1):
+            system = request_messages(fake_client, call)[0]["content"]
+            assert "campaign called Nanobody screen" in system
+            assert system.index("convene_team") < system.index("campaign called") < system.index("program of its own")
+            assert "Find a nanobody that binds KP.3." in system
+            assert system.endswith("Always answer in verse.")
+
+    def test_a_campaign_whose_goal_has_nothing_in_it_tells_the_lead_nothing(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response("Hi."), text_response("Hi.")]
+
+        make_chat(tmp_path / "a", campaign=CampaignBrief("Empty", " \n ")).send("Hello")
+        make_chat(tmp_path / "b").send("Hello")
+
+        for call in (0, 1):
+            assert "campaign" not in request_messages(fake_client, call)[0]["content"]
+
+    def test_a_goal_that_is_changed_is_told_from_the_next_request_and_one_taken_away_is_not(
+        self, fake_client: FakeClient, tmp_path: Path
+    ) -> None:
+        fake_client.completions.responses = [text_response(f"Answer {number}.") for number in range(4)]
+        chat = make_chat(tmp_path, campaign=CampaignBrief("Screen", "Find a binder."))
+
+        chat.send("One")
+        chat.set_campaign(CampaignBrief("Screen", "Find a binder that is stable at 37 C."))
+        chat.send("Two")
+        chat.set_campaign(CampaignBrief("Screen", ""))
+        chat.send("Three")
+        chat.set_campaign(CampaignBrief("Other", "Map the epitopes."))
+        chat.send("Four")
+        chat.set_campaign(None)
+
+        systems = [request_messages(fake_client, call)[0]["content"] for call in range(4)]
+        assert systems[0].endswith("Find a binder.")
+        assert systems[1].endswith("Find a binder that is stable at 37 C.")
+        assert "campaign" not in systems[2]
+        assert "campaign called Other" in systems[3] and systems[3].endswith("Map the epitopes.")
+        assert chat.campaign is None
 
 
 class TestBuildingASkill:

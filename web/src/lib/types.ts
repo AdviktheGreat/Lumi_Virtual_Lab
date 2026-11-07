@@ -66,6 +66,8 @@ export interface ChatConfig {
   software: string[];
   // The names of the skills the lead may read, as they were when the conversation began
   skills: string[];
+  // The id of the campaign the program is one of, or "" for one that is not part of any
+  campaign: string;
 }
 
 // A conversation as the list of them shows it
@@ -81,7 +83,28 @@ export interface ChatSummary {
   spent: number | null;
   max_cost: number | null;
   model: string | null;
+  // The id of the campaign it is one of, or null for one that is not part of any
+  campaign: string | null;
 }
+
+// A campaign: programs that work toward one goal, which the lead of each is told in every message
+export interface Campaign {
+  id: string;
+  name: string;
+  // The goal and background that the lead is given, which may be empty
+  brief: string;
+  // ISO 8601, in UTC
+  created_at: string;
+  updated_at: string;
+}
+
+// What a new campaign is made of, and what of one may be changed
+export interface NewCampaign {
+  name: string;
+  brief: string;
+}
+
+export type CampaignChange = Partial<NewCampaign>;
 
 // A conversation as it is opened
 export interface ChatInfo {
@@ -136,6 +159,8 @@ export interface NewChat {
   software?: string[];
   // The names of the skills the lead may read, in place of those that are on for new conversations
   skills?: string[];
+  // The id of the campaign the program is to be one of
+  campaign?: string | null;
 }
 
 // What a conversation may be changed to while it goes on: any of these, where null is no spending limit, or what the

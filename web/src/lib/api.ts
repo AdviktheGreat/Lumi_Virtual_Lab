@@ -10,6 +10,8 @@ import type {
   ChatFiles,
   ChatInfo,
   ChatSummary,
+  Campaign,
+  CampaignChange,
   DataLake,
   Health,
   Job,
@@ -23,6 +25,7 @@ import type {
   McpServer,
   Models,
   NewBenchmarkRun,
+  NewCampaign,
   NewChat,
   NewPaperRun,
   OpenRouterList,
@@ -470,6 +473,16 @@ export const api = {
   setLimits: (id: string, changes: LimitsChange) =>
     request<ChatInfo>("PUT", `/chats/${encodeURIComponent(id)}/limits`, changes),
   deleteChat: (id: string) => request<void>("DELETE", `/chats/${encodeURIComponent(id)}`),
+  campaigns: async (signal?: AbortSignal) =>
+    (await request<{ campaigns: Campaign[] }>("GET", "/campaigns", undefined, signal)).campaigns,
+  makeCampaign: (campaign: NewCampaign) => request<Campaign>("POST", "/campaigns", campaign),
+  changeCampaign: (id: string, changes: CampaignChange) =>
+    request<Campaign>("PATCH", `/campaigns/${encodeURIComponent(id)}`, changes),
+  // Its programs are kept, and are part of no campaign from then on
+  deleteCampaign: (id: string) => request<void>("DELETE", `/campaigns/${encodeURIComponent(id)}`),
+  // Makes the program one of a campaign, in place of the one it was, or with null one of none, even while it works
+  setCampaign: (id: string, campaign: string | null) =>
+    request<{ id: string; campaign: string | null }>("PUT", `/chats/${encodeURIComponent(id)}/campaign`, { campaign }),
   // Attachments are named as the server named them when it was sent the files. With replaceLast the message takes the
   // place of the last one, which is taken out of the conversation, to send it again or changed. With a directive the
   // message is given with a command, such as "ask", which says how the lead is to answer it, and with /lab, who is to work

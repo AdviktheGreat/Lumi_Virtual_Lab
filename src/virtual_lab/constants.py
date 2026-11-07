@@ -489,6 +489,12 @@ MAX_CHAT_TITLE_CHARS = 80
 PROGRAM_KINDS = ("quick_task", "custom", "build_skill")
 MAX_PROGRAM_INSTRUCTION_CHARS = 8_000
 
+# A campaign, which groups programs that work toward one goal: how many there may be, how long its name may be, and how
+# long the brief may be that the lead is given in every program of it
+MAX_CAMPAIGNS = 200
+MAX_CAMPAIGN_NAME_CHARS = 80
+MAX_CAMPAIGN_BRIEF_CHARS = 8_000
+
 # Identifies this library to the services it queries. NCBI and EMBL-EBI both ask clients to say
 # who they are, and an unidentified client is the first to be throttled.
 WEB_USER_AGENT = "virtual-lab (https://github.com/zou-group/virtual_lab)"

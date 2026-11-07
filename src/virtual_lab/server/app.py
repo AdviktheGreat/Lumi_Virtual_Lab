@@ -50,8 +50,12 @@ and everything else is a request and an answer.
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
     POST   /api/mcp/servers/{name}/check   connect to it, to say whether it can be and which tools it gives
     DELETE /api/mcp/servers/{name}/sign-in   forget the sign-in to it, so that the next conversation asks for one
+    GET    /api/campaigns, POST         the campaigns, each with the goal its programs share, and a new one
+    GET    /api/campaigns/{id}          one campaign, with its programs and what they have spent; PATCH changes its name
+                                        or goal, and DELETE deletes it, keeping its programs
     GET    /api/chats, POST             the conversations, and a new one
     GET    /api/chats/{id}              one conversation, which PATCH renames and DELETE removes
+    PUT    /api/chats/{id}/campaign     the campaign it is one of, or null for none, which can be changed while it works
     PUT    /api/chats/{id}/limits       what it may spend, and how much of the team's time the lead may ask for, which
                                         can be changed while it works
     POST   /api/chats/{id}/messages     a message for the lead, which is answered in the background, and
@@ -94,6 +98,8 @@ from virtual_lab.constants import (
     CEILING_CHAT_DELEGATION_ROUNDS,
     CEILING_CHAT_DELEGATIONS,
     CEILING_CHAT_TOOL_ITERATIONS,
+    MAX_CAMPAIGN_BRIEF_CHARS,
+    MAX_CAMPAIGN_NAME_CHARS,
     MAX_CHAT_DELEGATION_ROUNDS,
     MAX_CHAT_DELEGATIONS,
     MAX_CHAT_TITLE_CHARS,
@@ -160,6 +166,9 @@ MAX_PATH_CHARS = 4096
 # The most tools a request may name, which is more than there are
 MAX_TOOLS = 64
 
+# The most characters of an id a request may give, which is more than any id is
+MAX_ID_CHARS = 200
+
 # What a page of the interface is given to keep: what has a hash in its name never changes
 IMMUTABLE_PREFIX = "_next/static/"
 
@@ -217,6 +226,28 @@ class ChatBody(RequestModel):
     software: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
     functions: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
     skills: list[str] | None = Field(None, max_length=MAX_SKILLS)
+    campaign: str | None = Field(None, max_length=MAX_ID_CHARS)
+
+
+class CampaignBody(RequestModel):
+    """A new campaign: its name, and the goal that the lead of each of its programs is told."""
+
+    # Longer than the most, so that blank space around them is not refused here: they are counted trimmed
+    name: str = Field(max_length=MAX_CAMPAIGN_NAME_CHARS * 4)
+    brief: str = Field("", max_length=MAX_CAMPAIGN_BRIEF_CHARS * 2)
+
+
+class CampaignChangeBody(RequestModel):
+    """What to change of a campaign: its name, its goal, or both. What is not given is left as it was."""
+
+    name: str | None = Field(None, max_length=MAX_CAMPAIGN_NAME_CHARS * 4)
+    brief: str | None = Field(None, max_length=MAX_CAMPAIGN_BRIEF_CHARS * 2)
+
+
+class ChatCampaignBody(RequestModel):
+    """The campaign a program is one of, by its id, or null for none."""
+
+    campaign: str | None = Field(max_length=MAX_ID_CHARS)
 
 
 class SettingsBody(RequestModel):
@@ -1120,6 +1151,33 @@ def create_app(
 
         return {"servers": describe_servers(store.load_mcp_servers())}
 
+    @api.get("/campaigns")
+    def list_campaigns() -> dict[str, Any]:
+        return {"campaigns": conversations.campaigns.load()}
+
+    @api.post("/campaigns", status_code=201)
+    def make_campaign(body: CampaignBody) -> dict[str, Any]:
+        made = conversations.campaigns.create(body.name, body.brief)
+
+        return conversations.describe_campaign(made["id"])
+
+    @api.get("/campaigns/{campaign_id}")
+    def get_campaign(campaign_id: str) -> dict[str, Any]:
+        return conversations.describe_campaign(campaign_id)
+
+    @api.patch("/campaigns/{campaign_id}")
+    def change_campaign(campaign_id: str, body: CampaignChangeBody) -> dict[str, Any]:
+        conversations.campaigns.update(campaign_id, body.model_dump(include=body.model_fields_set))
+        conversations.campaign_changed(campaign_id)
+
+        return conversations.describe_campaign(campaign_id)
+
+    @api.delete("/campaigns/{campaign_id}")
+    def delete_campaign(campaign_id: str) -> Response:
+        conversations.delete_campaign(campaign_id)
+
+        return Response(status_code=204)
+
     @api.get("/chats")
     def list_chats() -> dict[str, Any]:
         return {"chats": conversations.summaries()}
@@ -1145,6 +1203,10 @@ def create_app(
     @api.put("/chats/{chat_id}/model")
     def switch_chat_model(chat_id: str, body: ModelBody) -> dict[str, Any]:
         return conversations.switch_model(chat_id, body.model).info()
+
+    @api.put("/chats/{chat_id}/campaign")
+    def set_chat_campaign(chat_id: str, body: ChatCampaignBody) -> dict[str, Any]:
+        return {"id": chat_id, "campaign": conversations.set_campaign(chat_id, body.campaign)}
 
     @api.put("/chats/{chat_id}/limits")
     def set_chat_limits(chat_id: str, body: LimitsBody) -> dict[str, Any]:

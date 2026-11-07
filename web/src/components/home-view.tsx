@@ -47,18 +47,20 @@ function SkillsButton({ chosen, disabled, onClick }: { chosen: string[] | null; 
 }
 
 // The page where a program is begun, which begins as the one that a link to it names (build_skill), and as a quick task
-// otherwise. It begins again when the link changes, as a new program does, with nothing typed.
+// otherwise, and in the campaign that the link names. It begins again when the link changes, as a new program does, with
+// nothing typed.
 export function HomeView() {
-  const named = useSearchParams().get("program");
-  const kind: ProgramKind = named === "build_skill" ? "build_skill" : "quick_task";
+  const params = useSearchParams();
+  const kind: ProgramKind = params.get("program") === "build_skill" ? "build_skill" : "quick_task";
+  const campaign = params.get("campaign") ?? "";
 
-  return <Home key={kind} kind={kind} />;
+  return <Home key={`${kind}:${campaign}`} kind={kind} linked={campaign} />;
 }
 
-function Home({ kind }: { kind: ProgramKind }) {
+function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
   const router = useRouter();
   const { server, report } = useServer();
-  const { refresh } = useChats();
+  const { refresh, campaigns } = useChats();
   const settings = useSettings();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -79,6 +81,9 @@ function Home({ kind }: { kind: ProgramKind }) {
   // What it is to be begun as, and what is wrong with what was typed of it, which is shown once it has been tried to begin it
   const [program, setProgram] = useState<ProgramDraft>({ kind, name: "", instructions: "" });
   const [shown, setShown] = useState<ProgramProblems>({});
+  // The campaign it is to be begun in, which is "" for none, and is none where the campaign that was asked for is not there
+  const [campaignChosen, setCampaignChosen] = useState(linked);
+  const campaign = campaigns === null || campaigns.some((each) => each.id === campaignChosen) ? campaignChosen : "";
   // There is no conversation to send files to until the message is, so they are held until then
   const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
 
@@ -94,6 +99,7 @@ function Home({ kind }: { kind: ProgramKind }) {
     try {
       chat = await api.createChat({
         ...checkProgram(program, !codeOff).begin,
+        ...(campaign === "" ? {} : { campaign }),
         ...(chosen === null ? {} : { model: chosen }),
         ...limitsChosen,
         ...(skillsChosen === null ? {} : { skills: skillsChosen }),
@@ -221,6 +227,9 @@ function Home({ kind }: { kind: ProgramKind }) {
               onSpending={() => setLimiting(true)}
               noCode={codeOff}
               onCode={() => settings.open("code")}
+              campaigns={campaigns ?? []}
+              campaign={campaign}
+              onCampaign={setCampaignChosen}
             />
 
             <div className="flex flex-col gap-2">

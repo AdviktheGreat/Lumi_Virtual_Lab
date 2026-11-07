@@ -2,6 +2,7 @@
 
 import { Settings2 } from "lucide-react";
 import { Notice } from "@/components/messages";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Radio } from "@/components/ui/radio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,15 +10,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Field, describedBy } from "@/components/settings-fields";
 import { capTitle } from "@/lib/history";
 import { INSTRUCTIONS_LIMIT, lengthOf, NO_CODE_FOR_SKILL, PROGRAM_KINDS, type ProgramDraft, type ProgramProblems } from "@/lib/programs";
+import type { Campaign } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const PROGRAM_NAME_ID = "program-name";
 export const PROGRAM_CODE_ID = "program-code";
 export const PROGRAM_INSTRUCTIONS_ID = "program-instructions";
+export const PROGRAM_CAMPAIGN_ID = "program-campaign";
 
 // What a program is to be begun as, chosen above the box that it is begun with. A custom program is given a name and
 // instructions of its own, and may be given a spending limit, which is chosen as the limits of any program are. One that
-// builds a skill needs code, and where there is none says so, with the way to turn it on.
+// builds a skill needs code, and where there is none says so, with the way to turn it on. Where there are campaigns, it may be
+// begun as one of them.
 export function ProgramStart({
   draft,
   onChange,
@@ -27,6 +31,9 @@ export function ProgramStart({
   onSpending,
   noCode,
   onCode,
+  campaigns,
+  campaign,
+  onCampaign,
 }: {
   draft: ProgramDraft;
   onChange: (draft: ProgramDraft) => void;
@@ -38,9 +45,14 @@ export function ProgramStart({
   // Whether code is turned off in the settings, and what opens them at the setting
   noCode: boolean;
   onCode: () => void;
+  // The campaigns there are, and the id of the one it is to be begun in, or "" for none
+  campaigns: Campaign[];
+  campaign: string;
+  onCampaign: (id: string) => void;
 }) {
   const kind = PROGRAM_KINDS.find((known) => known.kind === draft.kind) ?? PROGRAM_KINDS[0];
   const length = lengthOf(draft.instructions.trim());
+  const chosen = campaigns.find((each) => each.id === campaign) ?? null;
 
   return (
     <div className="flex flex-col gap-3" data-testid="program-start">
@@ -72,6 +84,31 @@ export function ProgramStart({
           {kind.about}
         </p>
       </fieldset>
+
+      {campaigns.length > 0 && (
+        <div className="flex flex-col gap-1.5" data-testid="program-campaign">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <label htmlFor={PROGRAM_CAMPAIGN_ID} className="text-sm font-medium">
+              Campaign
+            </label>
+            <div className="w-72 max-w-full">
+              <NativeSelect id={PROGRAM_CAMPAIGN_ID} value={campaign} disabled={disabled} onChange={(event) => onCampaign(event.target.value)}>
+                <option value="">None</option>
+                {campaigns.map((each) => (
+                  <option key={each.id} value={each.id}>
+                    {each.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
+          </div>
+          {chosen !== null && (
+            <p className="line-clamp-2 max-w-2xl text-xs text-muted-foreground" data-testid="program-campaign-goal">
+              {chosen.brief === "" ? "This campaign has no goal written, so the lead is told nothing of it." : `The lead is told the goal: ${chosen.brief}`}
+            </p>
+          )}
+        </div>
+      )}
 
       {draft.kind === "build_skill" && noCode && (
         <Notice
