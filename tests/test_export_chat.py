@@ -821,6 +821,22 @@ def test_the_command_a_message_was_given_with_is_named(tmp_path: Path) -> None:
     assert "Command /ask What is a nanobody?" in text
 
 
+def test_the_skill_a_message_was_given_with_is_named(tmp_path: Path) -> None:
+    events = [happened("user", text="Fit my curve", skill="dose-response"), happened("answer", text="Done.")]
+
+    text = text_of(chat_html(saved_chat(tmp_path / "chat", events)))
+
+    assert "Skill /dose-response Fit my curve" in text
+
+
+def test_the_name_of_a_skill_is_escaped(tmp_path: Path) -> None:
+    events = [happened("user", text="Go", skill="<b>x</b>"), happened("answer", text="Done.")]
+
+    document = chat_html(saved_chat(tmp_path / "chat", events))
+
+    assert "Skill /&lt;b&gt;x&lt;/b&gt;" in document and "<b>x</b>" not in document
+
+
 def test_a_command_with_nothing_written_after_it_is_still_named(tmp_path: Path) -> None:
     events = [happened("user", text="", directive="review"), happened("answer", text="Done.")]
 

@@ -206,6 +206,8 @@ def user_text(event: ChatEvent) -> str:
     if directive := event.data.get("directive"):
         what = describe_lab(event.data.get("lab")) if directive == "lab" else None
         parts.append(f">\n> Command: /{directive}" + (f", {what}" if what else ""))
+    if skill := event.data.get("skill"):
+        parts.append(f">\n> Skill: /{skill}")
     files = [file for file in event.data.get("attachments") or [] if isinstance(file, dict)]
     if files:
         items = "\n".join(

@@ -1,20 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
   commandsFor,
+  givenAs,
   isDirective,
   rowsFor,
   takesText,
   typedCommand,
+  skillUnmetNote,
   unavailableWhy,
   unmetNote,
   written,
   COMMANDS,
+  SKILL_ROWS,
   type Surroundings,
 } from "./commands";
 
 const IDLE: Surroundings = { place: "chat", state: "idle", turns: 2, answered: 2, holdUp: null, directives: {} };
 const WORKING: Surroundings = { ...IDLE, state: "running" };
 const HOME: Surroundings = { place: "home", state: "idle", turns: 0, answered: 0, holdUp: null, directives: null };
+
+const SKILLS = [
+  { name: "dose-response", description: "Fits a dose-response curve." },
+  { name: "Plot-Style", description: "Makes figures in the journal's style." },
+  { name: "rna-seq", description: "" },
+  { name: "ask", description: "A skill that has the name of a command." },
+];
+const SKILLED: Surroundings = { ...IDLE, skills: SKILLS };
 
 function command(name: string) {
   const found = COMMANDS.find((candidate) => candidate.name === name);
@@ -271,5 +282,93 @@ describe("the commands that go with a message", () => {
     expect(unmetNote("ask")).toBeNull();
     expect(unmetNote("plan")).toBeNull();
     expect(unmetNote("nothing")).toBeNull();
+  });
+});
+
+describe("skills written after a slash", () => {
+  it("are named by what follows a slash, with the hyphens, digits, and dots a skill's name has", () => {
+    expect(typedCommand("/dose-re", "chat", SKILLS)).toEqual({ kind: "naming", query: "dose-re" });
+    expect(typedCommand("/scanpy2.1", "chat", SKILLS)).toEqual({ kind: "naming", query: "scanpy2.1" });
+  });
+
+  it("are given the words written after the name, whatever the case it was written in, and over several lines", () => {
+    expect(typedCommand("/dose-response Fit my curve", "chat", SKILLS)).toEqual({
+      kind: "skilling",
+      skill: SKILLS[0],
+      rest: "Fit my curve",
+    });
+    expect(typedCommand("/PLOT-style a\nb", "home", SKILLS)).toEqual({ kind: "skilling", skill: SKILLS[1], rest: "a\nb" });
+  });
+
+  it("are not a skill unless the conversation has one of that name, and a command is one where both have the name", () => {
+    expect(typedCommand("/dose-response Fit it", "chat")).toEqual({ kind: "none" });
+    expect(typedCommand("/no-such-skill Fit it", "chat", SKILLS)).toEqual({ kind: "none" });
+    expect(typedCommand("/ask Why?", "chat", SKILLS)).toMatchObject({ kind: "arguing", command: command("ask") });
+    // The path of a file is still a message
+    expect(typedCommand("/data/dose-response.csv Fit it", "chat", SKILLS)).toEqual({ kind: "none" });
+  });
+
+  it("are not listed for a slash alone, and are for the letters of their names, after the commands", () => {
+    expect(rowsFor("/", SKILLED).map((row) => row.label)).toEqual(rowsFor("/", IDLE).map((row) => row.label));
+
+    const rows = rowsFor("/ose", SKILLED);
+    expect(rows).toMatchObject([
+      {
+        key: "skill dose-response",
+        label: "/dose-response",
+        summary: "Skill: Fits a dose-response curve.",
+        reason: null,
+        action: { fill: "/dose-response " },
+      },
+    ]);
+    expect(rowsFor("/r", SKILLED).map((row) => row.label)).toEqual([
+      "/review",
+      "/rename",
+      "/search",
+      "/export",
+      "/resume",
+      "/rna-seq",
+      "/dose-response",
+    ]);
+    expect(rowsFor("/rna", SKILLED).at(-1)?.summary).toBe("Have the lead read this skill first");
+  });
+
+  it("are listed up to as many as the menu has room for, those that start with the letters first", () => {
+    const many = Array.from({ length: SKILL_ROWS + 5 }, (_, number) => ({ name: `zz-${number}`, description: "" }));
+    const rows = rowsFor("/zz", { ...IDLE, skills: [{ name: "azz", description: "" }, ...many] });
+
+    expect(rows).toHaveLength(SKILL_ROWS);
+    expect(rows[0].label).toBe("/zz-0");
+  });
+
+  it("are sent with the words written after them, trimmed, and wait for there to be some", () => {
+    expect(rowsFor("/dose-response ", SKILLED)).toMatchObject([{ label: "/dose-response", reason: "Type what to use it for" }]);
+    expect(rowsFor("/dose-response  Fit my curve  ", SKILLED)).toMatchObject([
+      { reason: null, summary: "Use the skill dose-response for: Fit my curve", action: { run: { skill: "dose-response", arg: "Fit my curve" } } },
+    ]);
+    expect(rowsFor("/dose-response a\nb", SKILLED)[0].action).toEqual({ run: { skill: "dose-response", arg: "a\nb" } });
+  });
+
+  it("are given when the lead has finished, as a command is, and wait for a file that is still going", () => {
+    const working = { ...SKILLED, state: "running" as const };
+
+    expect(rowsFor("/ose", working)[0].reason).toMatch(/finished/);
+    expect(rowsFor("/dose-response Fit it", working)[0].reason).toMatch(/finished/);
+    expect(rowsFor("/dose-response Fit it", { ...SKILLED, holdUp: "A file is still going" })[0].reason).toBe("A file is still going");
+  });
+
+  it("are written out again as they were when they could not be sent", () => {
+    expect(written({ skill: "dose-response", arg: "Fit it" })).toBe("/dose-response Fit it");
+    expect(written({ skill: "dose-response", arg: "" })).toBe("/dose-response");
+  });
+
+  it("are given to the server as a skill, and a command as a command", () => {
+    expect(givenAs({ skill: "dose-response", arg: "x" })).toEqual({ skill: "dose-response" });
+    expect(givenAs({ name: "ask", arg: "x" })).toEqual({ directive: "ask" });
+    expect(givenAs(undefined)).toEqual({});
+  });
+
+  it("say when the lead did not read them", () => {
+    expect(skillUnmetNote("dose-response")).toBe("The lead answered without reading the skill dose-response, though /dose-response asked for it.");
   });
 });

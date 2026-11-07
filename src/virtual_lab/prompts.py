@@ -821,3 +821,19 @@ CHAT_DIRECTIVE_REMINDER_PROMPTS = {
         "agenda."
     ),
 }
+
+
+def chat_skill_prompt(name: str) -> str:
+    """What the lead is told beside a message that the researcher gave with one of its skills, as /NAME."""
+    return (
+        f"The researcher asked for the skill {name} to be used for this message, by writing /{name}. Before anything "
+        f"else, read it with activate_skill, giving the name {name}, and follow what it says as you answer."
+    )
+
+
+def chat_skill_reminder_prompt(name: str) -> str:
+    """What the lead is told when it answers a message that was given with a skill without having read the skill."""
+    return (
+        f"You have not read the skill {name} for this message, and the researcher asked for it with /{name}. Read it "
+        f"now with activate_skill, giving the name {name}, and follow what it says as you answer."
+    )

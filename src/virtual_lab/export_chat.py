@@ -401,6 +401,8 @@ def user_html(event: ChatEvent) -> str:
         what = describe_lab(event.data.get("lab")) if directive == "lab" else None
         label = f"Command /{escape(str(directive))}" + (f": {escape(what)}" if what else "")
         body = f'<div class="label">{label}</div>{body}'
+    if skill := event.data.get("skill"):
+        body = f'<div class="label">Skill /{escape(str(skill))}</div>{body}'
     files = [file for file in event.data.get("attachments") or [] if isinstance(file, dict)]
     if files:
         items = "".join(

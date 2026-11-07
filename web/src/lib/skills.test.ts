@@ -25,6 +25,7 @@ import {
   pickedWhen,
   putInSaid,
   sizeSaid,
+  skillChoices,
   skillsFrom,
   sourceLabel,
   tokensSaid,
@@ -218,6 +219,28 @@ describe("the skills a conversation was given", () => {
       { name: "gone", description: null },
       { name: "dose-response", description: "Fits a dose-response curve to titration data." },
     ]);
+  });
+});
+
+describe("the skills that can be written after a slash", () => {
+  it("are those that are on for new conversations where the conversation is not begun, once they are read", () => {
+    expect(skillChoices(null, null)).toEqual([]);
+    expect(skillChoices(skills, null)).toEqual([
+      { name: "dose-response", description: "Fits a dose-response curve to titration data." },
+      { name: "Plot-Style", description: "Makes figures that follow the journal's style." },
+    ]);
+  });
+
+  it("are those the conversation was given, with what each is for once the skills are read, and those that are gone left out", () => {
+    expect(skillChoices(null, ["rna-seq", "gone"])).toEqual([
+      { name: "rna-seq", description: "" },
+      { name: "gone", description: "" },
+    ]);
+    // A skill that is off for new conversations is still the conversation's
+    expect(skillChoices(skills, ["rna-seq", "gone"])).toEqual([
+      { name: "rna-seq", description: "Differential expression with DESeq2." },
+    ]);
+    expect(skillChoices(skills, [])).toEqual([]);
   });
 });
 

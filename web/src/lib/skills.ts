@@ -1,3 +1,4 @@
+import type { SkillChoice } from "./commands";
 import type { LibrarySkill, LicenseKind, SkillInfo, SkillsCatalog, SkillsFrom, SkillsPutIn } from "./types";
 
 // How many skills are listed before the rest are asked for, so that a library of hundreds does not fill the page
@@ -139,6 +140,18 @@ export function givenSkills(skills: SkillInfo[], names: string[]): { name: strin
   const by = new Map(skills.map((skill) => [skill.name, skill.description]));
 
   return names.map((name) => ({ name, description: by.get(name) ?? null }));
+}
+
+// The skills that can be written after a slash, each with what it is for, which is not known until the skills have been read.
+// They are those of the conversation, which are named, or where it is not begun, those that are on for new conversations,
+// which are not known until they are read. A skill that is not there any more is not offered.
+export function skillChoices(library: SkillInfo[] | null, names: readonly string[] | null): SkillChoice[] {
+  if (names === null) {
+    return library === null ? [] : library.filter((skill) => skill.enabled).map(({ name, description }) => ({ name, description }));
+  }
+  const by = library === null ? null : new Map(library.map((skill) => [skill.name, skill.description]));
+
+  return names.filter((name) => by === null || by.has(name)).map((name) => ({ name, description: by?.get(name) ?? "" }));
 }
 
 // What a person ought to know of a skill's license before it is put in, or null where there is nothing to say

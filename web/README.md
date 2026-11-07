@@ -349,6 +349,15 @@ the server holds the lead to it: an answer that did not do what was asked is sho
 cannot be carried out, such as `/code` where code is turned off in the settings, is listed with why, and one the server
 refuses puts the text back in the box. The rules are in `src/lib/commands.ts` and `src/lib/transcript.ts`.
 
+A skill of the conversation can be written after a slash too, as `/dose-response Fit my curve` (`skill` in
+`POST /api/chats/{id}/messages`, instead of a `directive`). The lead is told to read it first with `activate_skill`, and an
+answer that did not is shown with a note saying so, as for a command. The menu does not list the skills for a slash alone,
+which would be hundreds, but for the letters of their names, after the commands, with what each is for; they are the
+conversation's own skills, or on the home page those it will be begun with, and are read from the server when the home page
+opens, or when a slash is first written in a conversation (`src/lib/use-skill-choices.ts`). A command has the name where a skill has it too, and a name that no
+command or skill has is a message. The transcript shows the skill as a chip, Retry and Edit send it again with it, and the
+exports name it. The rules are in `src/lib/commands.ts` and `src/lib/skills.ts` (`skillChoices`).
+
 `/lab` is a command whose choices are made in a panel (`src/components/lab-dialog.tsx`), which opens with what was
 written after it as what the scientists are to work on. The researcher chooses a team that discusses it, with the lead
 leading, or one scientist whom the Critic reviews, who takes part from the whole library of scientists (not only those
@@ -453,6 +462,7 @@ a word in it:
 | `instructions:` | Answers with the instructions of a custom program that the lead was given, or that it was given none (`e2e/programs.spec.ts`) |
 | `campaign:` | Answers with the name and goal of the campaign that the lead was told its program is part of, or that it was told of none (`e2e/own-server/campaigns.spec.ts`) |
 | `skill:build:NAME`, `skill:save:NAME` | Writes the skill NAME in the session's `new_skills/` with code and calls `save_skill` for it, or calls `save_skill` alone, as the lead does for a program that builds a skill (`e2e/own-server/skills-build.spec.ts`) |
+| `skill:use:NAME` | Reads the skill NAME with `activate_skill`, as the lead does for a message given with `/NAME`, which without it is answered without reading it (`e2e/own-server/skills-slash.spec.ts`) |
 | `mcp:echo`, `count`, `both`, `order`, `confirm`, `signed`, `gated` | Calls the tools of the test server that the tests of `e2e/mcp` set up as `genes` (or `vault`, for `signed`, and `gate`, for `gated`): `echo`, `count`, `count` and then `echo`, `order` (which asks what to order), and `confirm` (which asks yes or no) |
 | `pdf:unavailable` | Has saving the conversation as a PDF fail, as it does where WeasyPrint is not installed (the PDF is otherwise made by a stand-in that needs no WeasyPrint) |
 | `lab:team` | Brings in the team for a round of discussion, in which the scientists answer as the script says |
