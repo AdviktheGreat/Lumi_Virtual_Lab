@@ -9,7 +9,6 @@ import {
   Database,
   FileText,
   FolderPlus,
-  Gauge,
   MessagesSquare,
   PanelLeftClose,
   Puzzle,
@@ -47,7 +46,6 @@ const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/skills", label: "Skills", icon: Puzzle },
   { href: "/tools", label: "Tools", icon: Wrench },
   { href: "/papers", label: "Papers", icon: FileText },
-  { href: "/benchmarks", label: "Benchmarks", icon: Gauge },
 ];
 
 function Search({ typed, onTyped }: { typed: string; onTyped: (typed: string) => void }) {

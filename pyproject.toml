@@ -76,7 +76,7 @@ papers = ["pypdf>=5"]
 # image down to a size a model is sent whole
 vision = ["pypdfium2>=4", "Pillow>=10"]
 # The server a page talks to, with virtual-lab-server or serve. keyring keeps the keys a person gives it in the
-# machine's own keychain, and pyarrow and numpy read Biomni's benchmarks for the runs it answers them in. It includes
+# machine's own keychain, and numpy and pyarrow are there for the code a conversation runs. It includes
 # what view_image needs, which a conversation has when its model reads images. python-multipart reads a folder of skills
 # that a page uploads
 server = [
