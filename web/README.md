@@ -186,13 +186,22 @@ The Tools page (`/tools`, the Tools Nexus) shows what the lead can call besides 
 Adaptyv's servers are not listed (the server leaves them out until they are ready, see `NOT_OFFERED` in
 `server/mcp.py`). A server of one's own is removed from its card after asking (`RemoveServer`).
 
-## Papers
+## PaperAgents
 
-The Papers page (`/papers`) is where the lab reads papers, and writes functions from what they share. It lists the runs,
-the latest first, each with where its papers come from and how far its reading has got, and makes one: from papers that are
-uploaded to it afterwards, from a folder on the server's machine, or from bioRxiv (a period, a subject, and how many
-preprints, which are checked where they are written, as the server checks them). A run is named in the address's query
-(`/papers?id=...`), as a conversation is, and its page has four parts.
+The PaperAgents page (`/papers`, which the rail calls PaperAgents) is where the lab works with papers. It has two parts,
+each with an address of its own, which the links under its title go between (`PaperAgentsNav`, a `nav` whose current link
+is `aria-current`):
+
+- **Agents** (`/papers`) is a PaperAgent for each paper made usable. None can be made yet, so it says so, and points to the
+  surveys, which are what can be done now.
+- **Surveys** (`/papers?view=surveys`) is where the lab reads many papers, and writes functions from what they share. It
+  lists the runs, the latest first, each with where its papers come from and how far its reading has got, and makes one:
+  from papers that are uploaded to it afterwards, from a folder on the server's machine, or from bioRxiv (a period, a
+  subject, and how many preprints, which are checked where they are written, as the server checks them). A run is named in
+  the address's query (`/papers?id=...`), as a conversation is.
+
+`paperView` in `src/lib/papers.ts` reads which part is asked for: the agents, unless the query says `surveys`. A run's page
+has four parts.
 
 - **Papers** is where they are from. A run whose papers are uploaded shows them, with the means to remove one and to add
   more (several at once, each with how much of it has been sent, and one that is not a paper, is too big, or has a name that

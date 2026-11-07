@@ -9,6 +9,7 @@ import {
   EMPTY_RUN,
   isPaperName,
   lastJob,
+  paperView,
   runFacts,
   uploadProblem,
   workJob,
@@ -242,5 +243,15 @@ describe("a paper that is uploaded", () => {
     expect(uploadProblem({ name: "a.txt", size: 2000 }, [], limits)).toContain("is larger than the 1000 B");
     expect(uploadProblem({ name: "A.TXT", size: 10 }, ["a.txt"], limits)).toContain("in this run already");
     expect(uploadProblem({ name: "c.txt", size: 10 }, ["a.txt", "b.txt"], limits)).toBe("No more than 2 papers can be uploaded to one run.");
+  });
+});
+
+describe("paperView", () => {
+  it("asks for the surveys only when the query says surveys", () => {
+    expect(paperView("surveys")).toBe("surveys");
+    expect(paperView(null)).toBe("agents");
+    expect(paperView("agents")).toBe("agents");
+    expect(paperView("Surveys")).toBe("agents");
+    expect(paperView("")).toBe("agents");
   });
 });

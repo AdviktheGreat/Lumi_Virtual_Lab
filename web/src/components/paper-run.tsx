@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { describeSource, lastJob, runFacts, workJob, workKey } from "@/lib/papers";
+import { describeSource, lastJob, runFacts, SURVEYS_ADDRESS, workJob, workKey } from "@/lib/papers";
 import type { PaperRun, PapersList } from "@/lib/types";
 import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
 import { usePaperRun, usePapersList } from "@/lib/use-papers";
@@ -40,7 +40,7 @@ function RunHeader({ run, working }: { run: PaperRun; working: boolean }) {
 
   async function remove() {
     const left = await attempt.run(() => api.deletePaperRun(run.id));
-    if (left) router.push("/papers");
+    if (left) router.push(SURVEYS_ADDRESS);
   }
 
   return (
@@ -134,7 +134,7 @@ export function RunPage({ id }: { id: string }) {
   return (
     <>
       <Link
-        href="/papers"
+        href={SURVEYS_ADDRESS}
         className="inline-flex items-center gap-1 self-start rounded-sm text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <ArrowLeft className="size-3.5" aria-hidden />
