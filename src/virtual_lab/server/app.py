@@ -46,6 +46,8 @@ and everything else is a request and an answer.
     POST   /api/benchmarks/runs/{id}/start   answer its questions, as a job, with the most it may spend
     GET    /api/benchmarks/runs/{id}/questions/{task}/{number}   one question, with its answer and what was said
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
+    GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
+    POST   /api/mcp/catalog/{name}      add one of them, on
     PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
     POST   /api/mcp/servers/{name}/check   connect to it, to say whether it can be and which tools it gives
@@ -132,6 +134,7 @@ from virtual_lab.server.mcp import (
     service_keys,
     sign_out,
 )
+from virtual_lab.server.mcp_catalog import MCP_CATALOG, describe_catalog
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
 from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_PAPERS, MAX_TITLE_CHARS, Papers
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
@@ -1111,6 +1114,24 @@ def create_app(
             raise not_found("server of yours with that name") from None
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
+
+        return {"servers": describe_servers(store.load_mcp_servers())}
+
+    @api.get("/mcp/catalog")
+    def get_mcp_catalog() -> dict[str, Any]:
+        return {"servers": describe_catalog(store.load_mcp_servers())}
+
+    @api.post("/mcp/catalog/{name}")
+    def add_catalog_server(name: str) -> dict[str, Any]:
+        found = MCP_CATALOG.get(name)
+        if found is None:
+            raise not_found("server of the catalog with that name")
+        stored = store.load_mcp_servers()
+        if name in stored:
+            raise ApiError(409, "exists", f"A server named {name} is set up already")
+        if len(stored) >= MAX_SERVERS:
+            raise ApiError(422, "invalid", f"At most {MAX_SERVERS} servers can be set up")
+        store.put_mcp_server(name, check_entry(name, found.entry))
 
         return {"servers": describe_servers(store.load_mcp_servers())}
 

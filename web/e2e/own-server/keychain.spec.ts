@@ -80,7 +80,7 @@ test.describe("keeping the keys in the keychain", () => {
     const sent = page.waitForRequest((request) => request.method() === "PUT" && request.url().endsWith("/api/keys/EXA_API_KEY"));
 
     await dialog
-      .locator("form", { has: dialog.getByLabel("Exa key", { exact: true }) })
+      .locator("form", { has: page.getByLabel("Exa key", { exact: true }) })
       .getByRole("button", { name: "Save", exact: true })
       .click();
 

@@ -162,6 +162,30 @@ Above the cards is a meter of how much of the skills catalog the skills that are
 `catalog` of `GET /api/skills`. What is changed is in every conversation made from then on, and not in one that is
 already going.
 
+## Tools Nexus
+
+The Tools page (`/tools`, the Tools Nexus) shows what the lead can call besides what it has built in as one grid of cards
+(`ToolsView`), in two parts.
+
+- **Your tools** is the search of the web (`WebSearchCard`), the library's servers, and the servers one added
+  (`ToolCard`). The search of the web is one of the library's tools and not a server, so its switch turns every tool of the
+  Web group on or off together (`PUT /api/tools`, as the Tools settings do, in order, one change after another), and its
+  box is the key of Exa, which it searches with in place of DuckDuckGo (`webSearchState` in `src/lib/tools-nexus.ts`).
+  A card says in a word whether the tool can be used as it is (`readiness`: Ready, Needs a key, Needs sign-in, Needs setup,
+  Problem) and what it needs (`needsText`), and has a switch (`role="switch"`, named "Give new programs ..."). Set up opens the
+  card to `ServerSetup` (the key, the choice of key or account, Check connection), the part that Settings → Tools has too,
+  and that `useMcpChanges` makes the changes of (`PATCH /api/mcp/servers/{name}`, kept one after another). The cards of a
+  row are as tall as the tallest, until one is opened.
+- **More tools** is the catalog (`GET /api/mcp/catalog`), grouped as the server groups it, each server a `CatalogCard` with an
+  Add button (`POST /api/mcp/catalog/{name}`, which sets it up on). Once added it moves to Your tools, and the focus goes to
+  its card, since the one it was on is gone. A server that was added by another page since the catalog was read is refused
+  with `exists`, which the page says before it reads both lists again. **Add MCP server** (the button of the page, and the one
+  under the catalog) opens `ToolsAdd`, which is `AddServer` in a dialog, and returns the focus to the new card, or to the
+  button that opened it.
+
+Adaptyv's servers are not listed (the server leaves them out until they are ready, see `NOT_OFFERED` in
+`server/mcp.py`). A server of one's own is removed from its card after asking (`RemoveServer`).
+
 ## Papers
 
 The Papers page (`/papers`) is where the lab reads papers, and writes functions from what they share. It lists the runs,
@@ -253,8 +277,8 @@ and offers to go and set it (`src/lib/errors.ts` tells those from other errors b
 
 ## Servers, calls to allow, and questions
 
-An MCP server gives the lead more tools. The library's servers (Paperclip, Adaptyv, Proto) are listed at the foot of the
-Tools settings, and a server of one's own is added there by what a config of any other tool says of it (`url`, or
+An MCP server gives the lead more tools. The library's servers (Paperclip, Proto) are listed at the foot of the
+Tools settings, and on the [Tools Nexus](#tools-nexus) page, which also adds servers from a catalog, and a server of one's own is added there by what a config of any other tool says of it (`url`, or
 `command` and `args`), with a warning that one that starts a program runs it on this computer. Each is kept as it is
 chosen, as the tools are (`PATCH /api/mcp/servers/{name}`), and shows at once as it was chosen. A server that is signed in
 to with a key takes it in a box, as the Keys settings do (the server only takes the keys of the library's own servers; a
@@ -444,6 +468,11 @@ server signs anyone in at once. Nothing opens a browser; a test follows the sign
 and the sign-ins are kept in a folder of the scripted server's own. The tests of each file run in order, and name the
 servers their conversations are given, since the files run beside each other. The check of a server, and its sign-in, are
 tested there too (`e2e/mcp/check.spec.ts`), and `appearance.spec.ts` looks at what they show in the dark and on a phone.
+The Tools page is tested in two places: the search of the web, which is one of the library's tools and is kept like them, is
+tried on the first scripted server beside the Tools settings (`e2e/own-server/tools-nexus.spec.ts`), and the servers and the
+catalog are tried here (`e2e/mcp/tools-nexus.spec.ts`), with servers of its own that are named for it, since the files run
+beside each other and the settings change the library's servers. A server of the catalog is added and shown, never asked
+for anything, since it is another person's.
 
 The scripted model answers a question with a short reply that repeats it. What else a message makes it do depends on
 a word in it:

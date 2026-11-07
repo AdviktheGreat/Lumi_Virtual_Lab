@@ -2,81 +2,18 @@
 
 import { useId, useRef, useState } from "react";
 import { Plug } from "lucide-react";
-import { Aside, Field, Section } from "@/components/settings-fields";
-import { KeyForm } from "@/components/settings-keys";
+import { AddServer, RemoveServer } from "@/components/mcp-add";
+import { ServerSetup } from "@/components/mcp-setup";
+import { Aside, Section } from "@/components/settings-fields";
 import { useServer } from "@/components/server-provider";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Radio } from "@/components/ui/radio";
-import { Textarea } from "@/components/ui/textarea";
-import { api } from "@/lib/api";
 import { describeError } from "@/lib/errors";
-import {
-  describeCheck,
-  describeSignIn,
-  describeTransport,
-  howManyOn,
-  keysToGive,
-  keysToSetElsewhere,
-  nameProblem,
-  readEntry,
-} from "@/lib/mcp";
-import type { McpChange, McpCheck, McpServer } from "@/lib/types";
+import { describeTransport, howManyOn } from "@/lib/mcp";
+import type { McpChange, McpServer } from "@/lib/types";
+import { useMcpChanges } from "@/lib/use-mcp-changes";
 import type { Loaded } from "@/lib/use-settings-data";
-
-// What looking at a server, by connecting to it, has come to
-type Check = { kind: "idle" } | { kind: "checking" } | { kind: "found"; check: McpCheck } | { kind: "failed"; problem: string };
-
-function CheckResult({ check }: { check: Check }) {
-  if (check.kind === "checking") {
-    return (
-      <p role="status" className="text-xs text-muted-foreground">
-        Connecting…
-      </p>
-    );
-  }
-  if (check.kind === "failed") {
-    return (
-      <p role="alert" className="text-xs text-destructive">
-        {check.problem}
-      </p>
-    );
-  }
-  if (check.kind === "idle") return null;
-  const { text, tools, more } = describeCheck(check.check);
-  if (!check.check.ok) {
-    return (
-      <p role="alert" className="text-xs whitespace-pre-wrap break-words text-destructive">
-        {text}
-      </p>
-    );
-  }
-
-  return (
-    <p role="status" className="text-xs break-words text-muted-foreground">
-      {text}
-      {tools.map((tool, at) => (
-        <span key={tool}>
-          {at === 0 ? " " : ", "}
-          <code>{tool}</code>
-        </span>
-      ))}
-      {more > 0 && ` and ${more} more`}
-    </p>
-  );
-}
 
 function ServerRow({
   server,
@@ -91,34 +28,8 @@ function ServerRow({
   onRemove: (button: HTMLButtonElement) => void;
   onSignOut: () => void;
 }) {
-  const { report } = useServer();
   const id = useId();
   const transport = describeTransport(server);
-  const elsewhere = keysToSetElsewhere(server);
-  const keys = keysToGive(server);
-  const signIn = describeSignIn(server);
-  const [check, setCheck] = useState<Check>({ kind: "idle" });
-  // Which check is the latest, so that what an earlier one found, after the server was changed, is not shown
-  const latest = useRef(0);
-
-  // What was found is of the server as it was, so a change to it takes the finding away
-  function forget() {
-    latest.current += 1;
-    setCheck({ kind: "idle" });
-  }
-
-  async function look() {
-    latest.current += 1;
-    const mine = latest.current;
-    setCheck({ kind: "checking" });
-    try {
-      const found = await api.checkMcpServer(server.name);
-      if (mine === latest.current) setCheck({ kind: "found", check: found });
-    } catch (error) {
-      report(error);
-      if (mine === latest.current) setCheck({ kind: "failed", problem: describeError(error) });
-    }
-  }
 
   return (
     <li className="flex flex-col gap-3 rounded-lg border border-border p-3" data-testid={`mcp-${server.name}`}>
@@ -150,219 +61,8 @@ function ServerRow({
           </Button>
         )}
       </div>
-
-      {server.auth_choices.length > 0 && (
-        <fieldset className="flex flex-col gap-1.5 pl-6.5">
-          <legend className="pb-1 text-xs font-medium text-muted-foreground">How it is signed in to</legend>
-          <label className="flex items-center gap-2 text-sm">
-            <Radio
-              name={`${id}-auth`}
-              checked={server.auth === "key"}
-              onChange={() => {
-                forget();
-                onChange({ auth: "key" });
-              }}
-            />
-            An API key
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <Radio
-              name={`${id}-auth`}
-              checked={server.auth === "oauth"}
-              onChange={() => {
-                forget();
-                onChange({ auth: "oauth" });
-              }}
-            />
-            Your account, signed in to in the browser
-          </label>
-        </fieldset>
-      )}
-
-      {keys.length > 0 && (
-        <div className="flex flex-col gap-2 pl-6.5">
-          {keys.map((key) => (
-            <KeyForm
-              key={key.name}
-              row={{ name: key.name, provider: server.title, set: key.set, source: null }}
-              onChanged={() => {
-                forget();
-                onKeysChanged();
-              }}
-            />
-          ))}
-        </div>
-      )}
-
-      {elsewhere.length > 0 && (
-        <p className="pl-6.5 text-xs text-muted-foreground">
-          It needs {elsewhere.map((name, at) => (
-            <span key={name}>
-              {at > 0 && ", "}
-              <code>{name}</code>
-            </span>
-          ))}
-          , which this page cannot give: set {elsewhere.length === 1 ? "it" : "them"} where the server was started, and start it again.
-        </p>
-      )}
-
-      {server.problem !== null && (
-        <p role="alert" className="pl-6.5 text-xs text-destructive">
-          {server.problem}
-        </p>
-      )}
-
-      {signIn !== null && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-6.5 text-xs text-muted-foreground">
-          <span data-testid={`mcp-${server.name}-sign-in`}>{signIn}</span>
-          {server.signed_in && (
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              aria-label={`Sign out of ${server.title}`}
-              onClick={() => {
-                forget();
-                onSignOut();
-              }}
-            >
-              Sign out
-            </Button>
-          )}
-        </div>
-      )}
-
-      {server.missing.length === 0 && (
-        <div className="flex flex-col items-start gap-1.5 pl-6.5">
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            disabled={check.kind === "checking"}
-            onClick={() => void look()}
-          >
-            Check connection<span className="sr-only"> to {server.title}</span>
-          </Button>
-          <CheckResult check={check} />
-        </div>
-      )}
-
-      {server.setup !== null && (
-        <details className="pl-6.5 text-xs text-muted-foreground">
-          <summary className="cursor-pointer rounded outline-none focus-visible:ring-3 focus-visible:ring-ring/50">How to set it up</summary>
-          <p className="mt-1.5 whitespace-pre-wrap break-words">{server.setup}</p>
-        </details>
-      )}
+      <ServerSetup server={server} onChange={onChange} onKeysChanged={onKeysChanged} onSignOut={onSignOut} inset />
     </li>
-  );
-}
-
-const ENTRY_EXAMPLE = '{\n  "url": "https://example.com/mcp"\n}';
-
-// Where a server of one's own is described: its name, and what a config of any other tool would say of it
-function AddServer({
-  servers,
-  onSaved,
-  nameInput,
-}: {
-  servers: McpServer[];
-  onSaved: (servers: McpServer[], name: string) => void;
-  nameInput: React.RefObject<HTMLInputElement | null>;
-}) {
-  const { report } = useServer();
-  const id = useId();
-  const [name, setName] = useState("");
-  const [entry, setEntry] = useState("");
-  const [problems, setProblems] = useState<{ name?: string; entry?: string }>({});
-  const [problem, setProblem] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const entryInput = useRef<HTMLTextAreaElement>(null);
-
-  async function add(event: React.FormEvent) {
-    event.preventDefault();
-    if (busy) return;
-    const wrongName = nameProblem(name, servers);
-    const read = readEntry(entry);
-    setProblem(null);
-    if (wrongName !== null || !read.ok) {
-      setProblems({ name: wrongName ?? undefined, entry: read.ok ? undefined : read.problem });
-      (wrongName !== null ? nameInput.current : entryInput.current)?.focus();
-
-      return;
-    }
-    setProblems({});
-    setBusy(true);
-    try {
-      const kept = await api.saveMcpServer(name.trim(), read.entry);
-      onSaved(kept, name.trim());
-      setName("");
-      setEntry("");
-    } catch (error) {
-      report(error);
-      setProblem(describeError(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={(event) => void add(event)} className="flex flex-col gap-3 rounded-lg border border-dashed border-border p-3" noValidate>
-      <h4 className="text-sm font-medium">Add a server of your own</h4>
-      <Field id={`${id}-name`} label="Name" hint="What its tools' names start with." problem={problems.name}>
-        <Input
-          ref={nameInput}
-          id={`${id}-name`}
-          value={name}
-          onChange={(event) => {
-            setName(event.target.value);
-            setProblems((was) => ({ ...was, name: undefined }));
-          }}
-          aria-invalid={problems.name !== undefined}
-          aria-describedby={problems.name ? `${id}-name-problem` : `${id}-name-hint`}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="my_tools"
-        />
-      </Field>
-      <Field
-        id={`${id}-entry`}
-        label="How to reach it"
-        hint={
-          <>
-            As a config of any other tool gives it: <code>url</code> for a server on the web, or <code>command</code> and{" "}
-            <code>args</code> for a program to start.
-          </>
-        }
-        problem={problems.entry}
-      >
-        <Textarea
-          ref={entryInput}
-          id={`${id}-entry`}
-          value={entry}
-          onChange={(event) => {
-            setEntry(event.target.value);
-            setProblems((was) => ({ ...was, entry: undefined }));
-          }}
-          aria-invalid={problems.entry !== undefined}
-          aria-describedby={problems.entry ? `${id}-entry-problem` : `${id}-entry-hint`}
-          className="font-mono text-[13px]"
-          rows={5}
-          spellCheck={false}
-          placeholder={ENTRY_EXAMPLE}
-        />
-      </Field>
-      <Aside tone="warning">A server that starts a program runs it on this computer, with the same access as you. Add only those you trust.</Aside>
-      {problem && (
-        <p role="alert" className="text-xs text-destructive">
-          {problem}
-        </p>
-      )}
-      <div>
-        <Button type="submit" variant="outline" disabled={busy}>
-          Add the server
-        </Button>
-      </div>
-    </form>
   );
 }
 
@@ -370,72 +70,13 @@ function AddServer({
 // given the servers that are on when it begins.
 export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]>; onChanged: (servers: McpServer[]) => void }) {
   const { report } = useServer();
-  const [problem, setProblem] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-  // What was chosen and is not yet kept, shown as it was chosen so that a box answers at once, until every change has been
-  // answered, and then what the server holds is what is shown, whether it kept them or not
-  const [chosen, setChosen] = useState<Record<string, McpChange>>({});
-  // The changes are made one after another, so that the list each gives back is not replaced by one that was asked for
-  // before it and answered after
-  const queue = useRef<Promise<void>>(Promise.resolve());
-  const waiting = useRef(0);
+  const changes = useMcpChanges(onChanged, report);
   const [removing, setRemoving] = useState<McpServer | null>(null);
   const [asking, setAsking] = useState(false);
   const asker = useRef<HTMLButtonElement | null>(null);
   const nameInput = useRef<HTMLInputElement | null>(null);
 
-  function change(name: string, what: McpChange) {
-    waiting.current += 1;
-    setChosen((was) => ({ ...was, [name]: { ...was[name], ...what } }));
-    queue.current = queue.current.then(async () => {
-      try {
-        setProblem(null);
-        setDone(null);
-        onChanged(await api.changeMcpServer(name, what));
-      } catch (error) {
-        report(error);
-        setProblem(describeError(error));
-      } finally {
-        waiting.current -= 1;
-        if (waiting.current === 0) setChosen({});
-      }
-    });
-  }
-
-  // What a key that was given or taken away changes is what the server says it is missing
-  async function refresh() {
-    try {
-      onChanged(await api.mcp());
-    } catch (error) {
-      report(error);
-    }
-  }
-
-  async function signOut(server: McpServer) {
-    setProblem(null);
-    setDone(null);
-    try {
-      onChanged(await api.signOutMcpServer(server.name));
-      setDone(`Signed out of ${server.title}. A program that has it on asks you to sign in again.`);
-    } catch (error) {
-      report(error);
-      setProblem(describeError(error));
-    }
-  }
-
-  async function remove(server: McpServer) {
-    setProblem(null);
-    setDone(null);
-    try {
-      onChanged(await api.removeMcpServer(server.name));
-      setDone(`Removed ${server.name}.`);
-    } catch (error) {
-      report(error);
-      setProblem(describeError(error));
-    }
-  }
-
-  const shown = servers.kind === "ready" ? servers.value.map((server) => (server.name in chosen ? { ...server, ...chosen[server.name] } : server)) : [];
+  const shown = servers.kind === "ready" ? changes.shown(servers.value) : [];
 
   return (
     <Section title="MCP servers">
@@ -456,14 +97,14 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
           <p role="status" className="text-sm text-muted-foreground" data-testid="mcp-count">
             {howManyOn(shown)}
           </p>
-          {problem && (
+          {changes.problem && (
             <p role="alert" className="text-xs text-destructive">
-              {problem}
+              {changes.problem}
             </p>
           )}
-          {done && (
+          {changes.done && (
             <p role="status" className="text-xs text-muted-foreground">
-              {done}
+              {changes.done}
             </p>
           )}
           <ul aria-label="MCP servers" className="flex flex-col gap-3">
@@ -471,9 +112,9 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
               <ServerRow
                 key={server.name}
                 server={server}
-                onChange={(what) => change(server.name, what)}
-                onKeysChanged={() => void refresh()}
-                onSignOut={() => void signOut(server)}
+                onChange={(what) => changes.change(server.name, what)}
+                onKeysChanged={() => void changes.refresh()}
+                onSignOut={() => void changes.signOut(server)}
                 onRemove={(button) => {
                   asker.current = button;
                   setRemoving(server);
@@ -487,39 +128,17 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
             nameInput={nameInput}
             onSaved={(kept, name) => {
               onChanged(kept);
-              setProblem(null);
-              setDone(`Saved ${name}. It is on, so programs begun from now on are given its tools.`);
+              changes.setProblem(null);
+              changes.setDone(`Saved ${name}. It is on, so programs begun from now on are given its tools.`);
             }}
           />
-          <AlertDialog open={asking} onOpenChange={setAsking}>
-            <AlertDialogContent
-              onCloseAutoFocus={(event) => {
-                // Nothing opened the question but a button of the list, which is gone when its server was removed
-                event.preventDefault();
-                const back = asker.current?.isConnected ? asker.current : nameInput.current;
-                back?.focus();
-              }}
-            >
-              <AlertDialogHeader>
-                <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This forgets how to reach it. Programs that have begun keep the tools they were given. Add it again to use
-                  it afterwards.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Keep</AlertDialogCancel>
-                <AlertDialogAction
-                  variant="destructive"
-                  onClick={() => {
-                    if (removing !== null) void remove(removing);
-                  }}
-                >
-                  Remove
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <RemoveServer
+            server={removing}
+            open={asking}
+            onOpenChange={setAsking}
+            onRemove={(server) => void changes.remove(server)}
+            returnFocus={() => (asker.current?.isConnected ? asker.current : nameInput.current)}
+          />
         </>
       )}
     </Section>

@@ -316,6 +316,28 @@ export interface McpServer {
   setup: string | null;
 }
 
+// One of the servers of the catalog, which others run and which are added with a click
+export interface McpCatalogServer {
+  // What its tools' names start with, and what it is kept under once it is added
+  name: string;
+  title: string;
+  about: string;
+  // What it is for, which is how the catalog is grouped
+  group: string;
+  // Who runs it
+  maker: string;
+  // Where to read more of it
+  site: string;
+  // Its address, which what the lead asks of it is sent to
+  target: string;
+  // Whether it is signed in to, in the browser, as a program that has it on is first sent a message
+  signs_in: boolean;
+  // Whether its calls wait for the researcher's approval
+  asks: boolean;
+  // Whether it is set up
+  added: boolean;
+}
+
 // What an MCP server of one's own is set up with, as a config gives it
 export type McpEntry = Record<string, unknown>;
 

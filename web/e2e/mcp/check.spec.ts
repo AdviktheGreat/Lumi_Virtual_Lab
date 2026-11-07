@@ -21,6 +21,10 @@ test.afterEach(async ({ page }) => {
   expect((await page.request.delete("/api/keys/FOUNDRY_TESTING_TOKEN")).ok()).toBe(true);
 });
 
+// The sandbox of Adaptyv's is the preset that needs a key and can be signed in to instead, which the settings list only once
+// it has been set up, since Adaptyv is not offered yet
+const SANDBOX = { preset: "adaptyv_testing", enabled: false };
+
 const row = (dialog: Locator, name: string) => dialog.getByTestId(`mcp-${name}`);
 const check = (dialog: Locator, name: string) => row(dialog, name).getByRole("button", { name: `Check connection to ${name}` });
 
@@ -138,6 +142,7 @@ test.describe("a server that cannot be checked", () => {
   });
 
   test("is not told of what a check found once the key or how it is signed in to is changed", async ({ page }) => {
+    await setUp(page, "adaptyv_testing", SANDBOX);
     const dialog = await openTools(page);
     const sandbox = row(dialog, "adaptyv_testing");
     const look = sandbox.getByRole("button", { name: "Check connection to Adaptyv Foundry testing sandbox" });
@@ -175,6 +180,7 @@ test.describe("a server that cannot be checked", () => {
   });
 
   test("is not told of what a check found that was still going when the key was changed", async ({ page }) => {
+    await setUp(page, "adaptyv_testing", SANDBOX);
     const dialog = await openTools(page);
     const sandbox = row(dialog, "adaptyv_testing");
     let release: () => void = () => undefined;
@@ -205,6 +211,7 @@ test.describe("a server that cannot be checked", () => {
   test("is not told of what the server answered to a check that was still going when the key was changed", async ({
     page,
   }) => {
+    await setUp(page, "adaptyv_testing", SANDBOX);
     const dialog = await openTools(page);
     const sandbox = row(dialog, "adaptyv_testing");
     let release: () => void = () => undefined;
@@ -232,6 +239,7 @@ test.describe("a server that cannot be checked", () => {
   });
 
   test("is not offered a check while a key it needs is missing", async ({ page }) => {
+    await setUp(page, "adaptyv_testing", SANDBOX);
     const dialog = await openTools(page);
 
     await expect(row(dialog, "adaptyv_testing").getByRole("button", { name: /^Check connection/ })).toHaveCount(0);

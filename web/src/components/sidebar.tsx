@@ -16,6 +16,7 @@ import {
   Search as SearchIcon,
   Settings,
   SquarePen,
+  Wrench,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -44,6 +45,7 @@ const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/", label: "Programs", icon: MessagesSquare },
   { href: "/data", label: "Data", icon: Database },
   { href: "/skills", label: "Skills", icon: Puzzle },
+  { href: "/tools", label: "Tools", icon: Wrench },
   { href: "/papers", label: "Papers", icon: FileText },
   { href: "/benchmarks", label: "Benchmarks", icon: Gauge },
 ];

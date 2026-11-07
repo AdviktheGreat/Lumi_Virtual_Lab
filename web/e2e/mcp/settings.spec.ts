@@ -40,8 +40,6 @@ test.describe("the servers of the library", () => {
 
     for (const [name, title, about] of [
       ["paperclip", "Paperclip", "Search and read papers, trials, patents, and regulatory documents"],
-      ["adaptyv", "Adaptyv Foundry", "Have proteins made and tested in a lab, which costs money"],
-      ["adaptyv_testing", "Adaptyv Foundry testing sandbox", "Try Adaptyv's calls out where nothing is ordered or charged"],
       ["proto", "Proto, run here", "Run tools for protein and sequence design on your own Modal account"],
       ["proto_hosted", "Proto, hosted", "The same tools with nothing installed here, signed in to with a Proto account"],
     ]) {
@@ -49,15 +47,32 @@ test.describe("the servers of the library", () => {
       await expect(box(dialog, name, title)).not.toBeChecked();
     }
     await expect(row(dialog, "paperclip").getByText("Asks before a call")).toHaveCount(0);
-    for (const name of ["adaptyv", "adaptyv_testing", "proto", "proto_hosted"]) {
+    for (const name of ["proto", "proto_hosted"]) {
       await expect(row(dialog, name).getByText("Asks before a call")).toBeVisible();
     }
     await expect(row(dialog, "proto_hosted").getByText("Signs in", { exact: true })).toBeVisible();
     await expect(row(dialog, "paperclip").getByText("Signs in", { exact: true })).toHaveCount(0);
     await expect(row(dialog, "proto").getByText("Runs a program on this computer")).toBeVisible();
     await expect(row(dialog, "paperclip").getByText("Reached over HTTP")).toBeVisible();
+    // Adaptyv is not offered until it is ready to be used from here
+    await expect(row(dialog, "adaptyv")).toHaveCount(0);
+    await expect(row(dialog, "adaptyv_testing")).toHaveCount(0);
     // The library's servers are not removed, only turned on or off
     await expect(dialog.getByRole("button", { name: /^Remove (paperclip|proto)/ })).toHaveCount(0);
+  });
+
+  test("that are not offered yet are listed all the same once one has been set up, so that it can be turned off", async ({ page }) => {
+    await setUp(page, "adaptyv", { preset: "adaptyv" });
+    const dialog = await openTools(page);
+
+    await expect(row(dialog, "adaptyv")).toContainText("Have proteins made and tested in a lab, which costs money");
+    await expect(box(dialog, "adaptyv", "Adaptyv Foundry")).toBeChecked();
+    await expect(row(dialog, "adaptyv_testing")).toHaveCount(0);
+
+    await box(dialog, "adaptyv", "Adaptyv Foundry").click();
+
+    await expect(box(dialog, "adaptyv", "Adaptyv Foundry")).not.toBeChecked();
+    await expect.poll(async () => (await describeOf(page, "adaptyv")).enabled).toBe(false);
   });
 
   test("are turned on at once, and off, with the page showing it as it is chosen, and are kept", async ({ page }) => {

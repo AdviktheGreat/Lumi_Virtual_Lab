@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Check, KeyRound } from "lucide-react";
 import { Aside, Section } from "@/components/settings-fields";
 import { useServer } from "@/components/server-provider";
@@ -41,7 +41,8 @@ export function KeyForm({
   const [done, setDone] = useState<string | null>(null);
   // What went wrong with the keychain in a change that was made all the same
   const [warning, setWarning] = useState<string | null>(null);
-  const id = `settings-key-${row.name}`;
+  // Another form of the same key may be on the page, as the settings are over the Tools page, so the id is the form's own
+  const id = useId();
   const kept = keychain !== undefined ? describeSource(row.source ?? undefined, keychain) : null;
 
   async function change(action: "save" | "remove") {
@@ -85,7 +86,7 @@ export function KeyForm({
       }}
       className="flex flex-col gap-2 rounded-lg border border-border p-3"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <label htmlFor={id} className="text-sm font-medium">
           {row.provider} key
         </label>
@@ -99,9 +100,10 @@ export function KeyForm({
           {row.set ? "Set" : "Not set"}
         </Badge>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Input
           id={id}
+          className="min-w-36 flex-1"
           type="password"
           value={typed}
           onChange={(event) => {
