@@ -26,6 +26,17 @@ export const DEFAULT_FUNCTIONS = 10;
 // The jobs that work on a run, only one of which is at work on it at a time
 export const WORK_KINDS = ["papers", "functions"];
 
+// The page has two parts, each its own address: the agents, which is the page's own, and the surveys, which are the runs
+// that read many papers for what they share
+export type PaperView = "agents" | "surveys";
+
+export const SURVEYS_ADDRESS = "/papers?view=surveys";
+
+// Which part the address's query asks for, which is the agents unless it says surveys
+export function paperView(view: string | null): PaperView {
+  return view === "surveys" ? "surveys" : "agents";
+}
+
 export const SOURCE_LABELS: Record<PaperSourceKind, string> = {
   files: "Papers I upload",
   folder: "A folder on this machine",

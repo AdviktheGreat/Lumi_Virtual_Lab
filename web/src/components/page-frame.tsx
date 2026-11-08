@@ -3,7 +3,7 @@
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 
-// A page of the lab's own, such as Data or Papers: a large title with what the page is for, or, when one thing on it is
+// A page of the lab's own, such as Data or PaperAgents: a large title with what the page is for, or, when one thing on it is
 // open, the title in the bar over it so that the thing is what the page shows. A page of cards is wide, and may have a
 // button beside its title.
 export function PageFrame({

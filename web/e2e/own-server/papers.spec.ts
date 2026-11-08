@@ -64,8 +64,40 @@ const form = (page: Page, name: string) => page.getByRole("form", { name });
 const readPapers = (page: Page) =>
   page.getByRole("table", { name: "Papers" }).getByTestId("paper-result").filter({ has: page.getByText("Read", { exact: true }) });
 
+test("the page opens on the agents, and its surveys are a part of it that is reached by a link", async ({ page }) => {
+  await page.getByRole("link", { name: "PaperAgents", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "PaperAgents", level: 1 })).toBeVisible();
+  const parts = page.getByRole("navigation", { name: "PaperAgents" });
+  await expect(parts.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
+  await expect(parts.getByRole("link", { name: "Surveys" })).not.toHaveAttribute("aria-current");
+  await expect(page.getByTestId("paper-agents-empty")).toContainText("There are no PaperAgents yet");
+  await expect(page.getByRole("heading", { name: "Make a run" })).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await parts.getByRole("link", { name: "Surveys" }).click();
+  await expect(page).toHaveURL(/\/papers\?view=surveys$/);
+  await expect(parts.getByRole("link", { name: "Surveys" })).toHaveAttribute("aria-current", "page");
+  await expect(parts.getByRole("link", { name: "Agents" })).not.toHaveAttribute("aria-current");
+  await expect(page.getByRole("link", { name: "PaperAgents", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Make a run" })).toBeVisible();
+  await expect(page.getByTestId("paper-agents-empty")).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The link in the empty agents page leads to the same place
+  await parts.getByRole("link", { name: "Agents" }).click();
+  await expect(page).toHaveURL(/\/papers$/);
+  await page.getByTestId("paper-agents-empty").getByRole("link", { name: "Surveys" }).click();
+  await expect(page).toHaveURL(/\/papers\?view=surveys$/);
+
+  // A part that is not one is the agents, as no part is
+  await page.goto("/papers?view=nowhere");
+  await expect(page.getByTestId("paper-agents-empty")).toBeVisible();
+  await expect(parts.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
+});
+
 test("makes a run of papers that are uploaded, uploads them, and reads them with a budget", async ({ page }) => {
-  await page.getByRole("link", { name: "Papers", exact: true }).click();
+  await page.getByRole("link", { name: "PaperAgents", exact: true }).click();
+  await page.getByRole("navigation", { name: "PaperAgents" }).getByRole("link", { name: "Surveys" }).click();
   await expect(page.getByText("No papers have been read yet.")).toBeVisible();
 
   await form(page, "Make a run").getByLabel("Title").fill("Gene papers");
@@ -98,6 +130,7 @@ test("makes a run of papers that are uploaded, uploads them, and reads them with
   expect(await table.text()).toContain(TASK);
 
   await page.getByRole("link", { name: "All runs" }).click();
+  await expect(page).toHaveURL(/\/papers\?view=surveys$/);
   await expect(page.getByTestId("paper-run")).toContainText("Read 2 of 2 papers");
 });
 
@@ -162,7 +195,7 @@ test("says why a paper was not read, and why reading was refused", async ({ page
 });
 
 test("asks for what is wrong with a run, a budget, and the papers uploaded to be put right before they are sent", async ({ page }) => {
-  await page.goto("/papers");
+  await page.goto("/papers?view=surveys");
   const make = form(page, "Make a run");
 
   await make.getByRole("button", { name: "Make the run" }).click();
@@ -200,7 +233,7 @@ test("reads the papers in a folder where they are, which is not copied", async (
   try {
     fs.writeFileSync(path.join(folder, "one.txt"), DESEQ);
     fs.writeFileSync(path.join(folder, "two.txt"), SCANPY);
-    await page.goto("/papers");
+    await page.goto("/papers?view=surveys");
     const make = form(page, "Make a run");
     await make.getByLabel("Title").fill("Folder papers");
     await make.getByRole("radio", { name: "A folder on this machine" }).check();
@@ -266,7 +299,7 @@ test("deletes a run, after asking", async ({ page }) => {
   await page.getByRole("button", { name: "Delete Short lived" }).click();
   await page.getByRole("alertdialog", { name: "Delete Short lived?" }).getByRole("button", { name: "Delete", exact: true }).click();
 
-  await expect(page).toHaveURL(/\/papers$/);
+  await expect(page).toHaveURL(/\/papers\?view=surveys$/);
   await expect(page.getByText("No papers have been read yet.")).toBeVisible();
   expect((await page.request.get(`/api/papers/runs/${id}`)).status()).toBe(404);
 });
@@ -285,7 +318,7 @@ test("has nothing wrong that axe can find, in the runs, or in a run that was rea
   expect(written.status()).toBe(202);
   await expect.poll(async () => (await (await page.request.get(`/api/papers/runs/${id}`)).json()).job, { timeout: 20_000 }).toBeNull();
 
-  await page.goto("/papers");
+  await page.goto("/papers?view=surveys");
   await expect(page.getByTestId("paper-run")).toHaveCount(1);
   expect(await accessibilityProblems(page)).toEqual([]);
 

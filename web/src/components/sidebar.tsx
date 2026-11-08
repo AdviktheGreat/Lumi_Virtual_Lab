@@ -4,10 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
+  BookOpenCheck,
   ChevronRight,
   Container,
   Database,
-  FileText,
   FolderPlus,
   MessagesSquare,
   PanelLeftClose,
@@ -45,7 +45,7 @@ const PAGES: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/data", label: "Data", icon: Database },
   { href: "/skills", label: "Skills", icon: Puzzle },
   { href: "/tools", label: "Tools", icon: Wrench },
-  { href: "/papers", label: "Papers", icon: FileText },
+  { href: "/papers", label: "PaperAgents", icon: BookOpenCheck },
 ];
 
 function Search({ typed, onTyped }: { typed: string; onTyped: (typed: string) => void }) {
