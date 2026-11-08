@@ -192,15 +192,26 @@ The PaperAgents page (`/papers`, which the rail calls PaperAgents) is where the 
 each with an address of its own, which the links under its title go between (`PaperAgentsNav`, a `nav` whose current link
 is `aria-current`):
 
-- **Agents** (`/papers`) is a PaperAgent for each paper made usable. None can be made yet, so it says so, and points to the
-  surveys, which are what can be done now.
+- **Agents** (`/papers`) lists the PaperAgents, the latest first, each with which paper it is of, where its code is, and how
+  many of its steps are done, and makes one: of a DOI, of a link, or of a file that is uploaded afterwards, with where its
+  code is if that is known (checked where it is written, as the server checks it). With none yet, it says so, and points to
+  the surveys. An agent is named in the address's query (`/papers?agent=...`), as a run is.
 - **Surveys** (`/papers?view=surveys`) is where the lab reads many papers, and writes functions from what they share. It
   lists the runs, the latest first, each with where its papers come from and how far its reading has got, and makes one:
   from papers that are uploaded to it afterwards, from a folder on the server's machine, or from bioRxiv (a period, a
   subject, and how many preprints, which are checked where they are written, as the server checks them). A run is named in
   the address's query (`/papers?id=...`), as a conversation is.
 
-`paperView` in `src/lib/papers.ts` reads which part is asked for: the agents, unless the query says `surveys`.
+`paperView` in `src/lib/papers.ts` reads which part is asked for: the agents, unless the query says `surveys`. A survey
+run's `id` is looked for first, then an agent's, then the part.
+
+An agent's page (`/papers?agent=...`, whose link back goes to the agents, `components/paper-agent.tsx`) shows its paper (a DOI
+or a link opens in a new tab), its code, and its five steps with how far each has got. An agent whose paper is a file has its
+paper uploaded there, with how much has been sent and a way to cancel; a file that is not a paper or is too big is said so
+before it is sent, one that another agent has is said so with a link to that agent, and the file may be uploaded again to
+replace it, or removed. The title and where the code is can be said again, and the agent deleted after asking, with the paper
+that was uploaded to it. `src/lib/paperagents.ts` checks what is written before it is sent, as the server does, and keeps the
+words the page uses for the steps and their states.
 
 A survey run's page (`/papers?id=...`, whose link back goes to the surveys) has four parts.
 

@@ -23,6 +23,7 @@ import type {
   Models,
   NewCampaign,
   NewChat,
+  NewPaperAgent,
   NewPaperRun,
   OpenRouterList,
   Own,
@@ -32,6 +33,9 @@ import type {
   Skills,
   SkillsFrom,
   SkillsPutIn,
+  PaperAgent,
+  PaperAgentChange,
+  PaperAgentsList,
   PaperFunction,
   PaperFunctionsOptions,
   PaperReadOptions,
@@ -243,6 +247,24 @@ function uploadPaper(run: string, file: File, options: UploadOptions = {}): Prom
   );
 }
 
+function isPaperAgent(value: unknown): value is PaperAgent {
+  if (typeof value !== "object" || value === null) return false;
+  const { id, paper, steps } = value as Record<string, unknown>;
+
+  return typeof id === "string" && typeof paper === "object" && paper !== null && typeof steps === "object" && steps !== null;
+}
+
+// Gives an agent its paper, kept by the server under the name it has, and the agent is given back as it now is
+function uploadAgentPaper(agent: string, file: File, options: UploadOptions = {}): Promise<PaperAgent> {
+  return sendFile(
+    `/api/paperagents/${encodeURIComponent(agent)}/paper?name=${encodeURIComponent(file.name)}`,
+    file,
+    (parsed) => (isPaperAgent(parsed) ? parsed : undefined),
+    "The server did not say what the agent holds",
+    options,
+  );
+}
+
 // What a request that is not for JSON is answered with, once it is known to have gone well: what went wrong is told in
 // the server's own shape, which is read, and what went well is left for the caller to read
 async function fetchBody(address: string, signal?: AbortSignal): Promise<Response> {
@@ -444,6 +466,17 @@ export const api = {
     request<PaperRun>("DELETE", `/papers/runs/${encodeURIComponent(id)}/functions/${encodeURIComponent(name)}`),
   // Whether the functions of a run are given to the conversations that are made from now on
   giveFunctions: (id: string, given: boolean) => request<PaperRun>("PATCH", `/papers/runs/${encodeURIComponent(id)}`, { given }),
+  // The PaperAgents, and what a new one is asked for
+  paperAgents: (signal?: AbortSignal) => request<PaperAgentsList>("GET", "/paperagents", undefined, signal),
+  makePaperAgent: (agent: NewPaperAgent) => request<PaperAgent>("POST", "/paperagents", agent),
+  paperAgent: (id: string, signal?: AbortSignal) =>
+    request<PaperAgent>("GET", `/paperagents/${encodeURIComponent(id)}`, undefined, signal),
+  changePaperAgent: (id: string, change: PaperAgentChange) =>
+    request<PaperAgent>("PATCH", `/paperagents/${encodeURIComponent(id)}`, change),
+  // Deletes an agent with the paper uploaded to it, and gives back the agents that are left
+  deletePaperAgent: (id: string) => request<PaperAgentsList>("DELETE", `/paperagents/${encodeURIComponent(id)}`),
+  uploadAgentPaper,
+  removeAgentPaper: (id: string) => request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/paper`),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),

@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { Looked } from "@/components/looked";
+import { AgentPage } from "@/components/paper-agent";
 import { Agents, PaperAgentsNav } from "@/components/paper-agents";
 import { NewRun, RunList } from "@/components/paper-runs";
 import { RunPage } from "@/components/paper-run";
@@ -41,16 +42,24 @@ function Runs() {
   );
 }
 
-// The page of PaperAgents: its agents, or its surveys, or one survey, which is named in the address's query as a
-// conversation is
+// The page of PaperAgents: its agents, or its surveys, or one survey or one agent, which is named in the address's query
+// as a conversation is. A survey is named by `id`, which is looked for first, as it was before agents were.
 export function PapersView() {
   const params = useSearchParams();
   const id = params.get("id");
+  const agent = params.get("agent");
 
   if (id) {
     return (
       <PageFrame title="Surveys">
         <RunPage key={id} id={id} />
+      </PageFrame>
+    );
+  }
+  if (agent) {
+    return (
+      <PageFrame title="PaperAgents">
+        <AgentPage key={agent} id={agent} />
       </PageFrame>
     );
   }

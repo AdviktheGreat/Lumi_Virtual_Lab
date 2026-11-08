@@ -66,6 +66,9 @@ CAMPAIGNS_FILE_NAME = "campaigns.json"
 # What the lab was asked to read of papers, a directory for each run
 PAPERS_DIR_NAME = "papers"
 
+# The PaperAgents, a directory for each
+PAPERAGENTS_DIR_NAME = "paperagents"
+
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
 
@@ -329,6 +332,11 @@ class Workspace:
     def papers_dir(self) -> Path:
         """Where the runs that read papers are kept, each in a directory of its own."""
         return self.root / PAPERS_DIR_NAME
+
+    @property
+    def paperagents_dir(self) -> Path:
+        """Where the PaperAgents are kept, each in a directory of its own, which may be missing."""
+        return self.root / PAPERAGENTS_DIR_NAME
 
     @property
     def skills_dir(self) -> Path:

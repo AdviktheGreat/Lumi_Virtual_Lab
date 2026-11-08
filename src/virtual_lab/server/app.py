@@ -39,6 +39,11 @@ and everything else is a request and an answer.
     POST   /api/papers/runs/{id}/functions   write functions for the tasks the papers share, as a job
     GET    /api/papers/runs/{id}/functions/{name}   one function, with its code; DELETE takes it away
     PATCH  /api/papers/runs/{id}        whether its functions are given to the conversations that are made from now on
+    GET    /api/paperagents             the PaperAgents, and what a page needs to make one
+    POST   /api/paperagents             an agent of a paper, given by its DOI, a link, or a file that is uploaded to it
+    GET    /api/paperagents/{id}        one agent; PATCH says what it is called and where its code is; DELETE deletes it
+    POST   /api/paperagents/{id}/paper  the paper of an agent whose paper is a file, as the body, named by ?name=
+    DELETE /api/paperagents/{id}/paper  takes that paper away
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -129,6 +134,7 @@ from virtual_lab.server.mcp import (
 )
 from virtual_lab.server.mcp_catalog import MCP_CATALOG, describe_catalog
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
+from virtual_lab.server.paperagents import MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
 from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_PAPERS, MAX_TITLE_CHARS, Papers
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
 from virtual_lab.server.setup import Setup
@@ -340,6 +346,28 @@ class PapersFunctionsBody(RequestModel):
 
 class PapersGiveBody(RequestModel):
     given: StrictBool
+
+
+class PaperAgentPaperBody(RequestModel):
+    """Which paper an agent is of. Which of these are asked for depends on the kind, and the server says which."""
+
+    kind: str = Field(max_length=20)
+    doi: str | None = Field(None, max_length=MAX_DOI_CHARS * 4)
+    url: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+
+
+class PaperAgentBody(RequestModel):
+    title: str = Field("", max_length=MAX_TITLE_CHARS * 4)
+    paper: PaperAgentPaperBody
+    repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+
+
+class PaperAgentChangeBody(RequestModel):
+    """What to say again of an agent: any of these, and what is not given is left as it is. An empty repo takes the code
+    away."""
+
+    title: str | None = Field(None, max_length=MAX_TITLE_CHARS * 4)
+    repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
 
 
 class McpServerBody(RequestModel):
@@ -559,6 +587,7 @@ def create_app(
         chat_models=chat_models,
         docker_missing=setup.missing_for if check_setup else None,
     )
+    paperagents = PaperAgents(store, max_upload_bytes)
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -1014,6 +1043,55 @@ def create_app(
     @api.get("/papers/runs/{run_id}/tables/{kind}")
     def paper_table(run_id: str, kind: str) -> FileResponse:
         return file_response(papers.summary_file(run_id, kind), download=True)
+
+    @api.get("/paperagents")
+    def get_paperagents() -> dict[str, Any]:
+        return paperagents.describe()
+
+    @api.post("/paperagents", status_code=201)
+    def make_paperagent(body: PaperAgentBody) -> dict[str, Any]:
+        return paperagents.view(paperagents.create(body.title, body.paper.model_dump(exclude_none=True), body.repo))
+
+    @api.get("/paperagents/{agent_id}")
+    def get_paperagent(agent_id: str) -> dict[str, Any]:
+        return paperagents.view(agent_id)
+
+    @api.patch("/paperagents/{agent_id}")
+    def change_paperagent(agent_id: str, body: PaperAgentChangeBody) -> dict[str, Any]:
+        paperagents.change(agent_id, body.title, body.repo)
+
+        return paperagents.view(agent_id)
+
+    @api.delete("/paperagents/{agent_id}")
+    def delete_paperagent(agent_id: str) -> dict[str, Any]:
+        paperagents.delete(agent_id)
+
+        return paperagents.describe()
+
+    @api.post("/paperagents/{agent_id}/paper", status_code=201)
+    async def upload_paperagent_paper(
+        request: Request, agent_id: str, name: str = Query(min_length=1, max_length=1000)
+    ) -> Any:
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > paperagents.max_upload_bytes:
+            raise ApiError(
+                413,
+                "too_large",
+                f"The file is larger than the {paperagents.max_upload_bytes} bytes that can be uploaded",
+            )
+        reader = RequestBodyReader(request, asyncio.get_running_loop())
+        try:
+            await run_in_threadpool(paperagents.put_paper, agent_id, name, cast(BinaryIO, reader))
+        except ClientDisconnect:
+            return Response(status_code=499)
+
+        return await run_in_threadpool(paperagents.view, agent_id)
+
+    @api.delete("/paperagents/{agent_id}/paper")
+    def delete_paperagent_paper(agent_id: str) -> dict[str, Any]:
+        paperagents.remove_paper(agent_id)
+
+        return paperagents.view(agent_id)
 
     @api.get("/mcp")
     def get_mcp() -> dict[str, Any]:
