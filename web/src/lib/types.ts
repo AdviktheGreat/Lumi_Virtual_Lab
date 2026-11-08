@@ -787,3 +787,48 @@ export interface NewPaperRun {
   title: string;
   source: PaperSource;
 }
+
+// Which paper a PaperAgent is of: a DOI, a link, or a file that is uploaded to it, which has not been until it says so
+export type PaperAgentPaper =
+  | { kind: "doi"; doi: string }
+  | { kind: "url"; url: string }
+  | { kind: "file"; file: { name: string; bytes: number; sha256: string } | null };
+
+export type PaperAgentPaperKind = PaperAgentPaper["kind"];
+
+// The steps of making an agent, in the order they are done, and how far each has got
+export type PaperAgentStep = "reading" | "repository" | "environment" | "data" | "tools";
+export type PaperAgentStatus = "pending" | "running" | "done" | "failed" | "skipped";
+
+export interface PaperAgent {
+  id: string;
+  title: string;
+  created_at: string;
+  paper: PaperAgentPaper;
+  // Where the paper's code is, if that is known
+  repo: { url: string } | null;
+  steps: Record<PaperAgentStep, PaperAgentStatus>;
+}
+
+export interface PaperAgentsList {
+  agents: PaperAgent[];
+  max_agents: number;
+  max_paper_bytes: number;
+  // What a paper uploaded may end in, with the dot
+  suffixes: string[];
+  // The hosts the code of a paper may be at
+  repo_hosts: string[];
+}
+
+// What a new agent is asked for: what it is called, which paper, and where the code is, if that is known
+export interface NewPaperAgent {
+  title: string;
+  paper: { kind: "doi"; doi: string } | { kind: "url"; url: string } | { kind: "file" };
+  repo?: string;
+}
+
+// What to say again of an agent: any of these, and an empty repo takes the code away
+export interface PaperAgentChange {
+  title?: string;
+  repo?: string;
+}
