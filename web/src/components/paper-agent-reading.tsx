@@ -62,14 +62,16 @@ function ReadForm({ agent, reading, working, jobs }: Shared & { jobs: JobsData }
   const attempt = useAttempt(report);
   const checked = checkReading(draft);
   const problems = tried ? checked.problems : {};
-  const finished = readThrough(reading, draft.retryFailed);
+  // A box that is not shown, since nothing failed, is not asked for
+  const retry = draft.retryFailed && reading.failed > 0;
+  const finished = readThrough(reading, retry);
   const carrying = hasReading(reading) && !reading.complete;
 
   async function read() {
     setTried(true);
     const options = checked.value;
     if (options === null || finished) return;
-    const job = await attempt.run(() => api.readPaperAgent(agent.id, options));
+    const job = await attempt.run(() => api.readPaperAgent(agent.id, { ...options, retry_failed: retry }));
     if (job) jobs.track(job);
   }
 
@@ -121,9 +123,9 @@ function ReadForm({ agent, reading, working, jobs }: Shared & { jobs: JobsData }
 }
 
 // The words of the paper at a place, with what is around them, and the words of the fact marked
-function Passage({ passage }: { passage: PaperAgentPassage }) {
+function Passage({ id, passage }: { id: string; passage: PaperAgentPassage }) {
   return (
-    <div role="group" aria-label="The paper at this place" className="whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-xs leading-relaxed">
+    <div id={id} role="group" aria-label="The paper at this place" className="whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-xs leading-relaxed">
       <span className="text-muted-foreground">{passage.before}</span>
       <mark className="rounded-sm bg-primary/20 px-0.5 text-foreground">{passage.text}</mark>
       <span className="text-muted-foreground">{passage.after}</span>
@@ -134,6 +136,7 @@ function Passage({ passage }: { passage: PaperAgentPassage }) {
 // A fact, with the paper's own words for it, where they are, and the way to see them in the paper
 function Fact({ agent, line }: { agent: string; line: FactLine }) {
   const { report } = useServer();
+  const id = useId();
   const attempt = useAttempt(report);
   const [passage, setPassage] = useState<PaperAgentPassage | null>(null);
   const { fact, title, tag } = line;
@@ -175,13 +178,14 @@ function Fact({ agent, line }: { agent: string; line: FactLine }) {
           onClick={() => void toggle()}
           disabled={attempt.busy}
           aria-expanded={passage !== null}
+          aria-controls={passage !== null ? `${id}-passage` : undefined}
           aria-label={`${passage !== null ? "Hide" : "Show in the paper"}: ${excerpt}`}
         >
           {passage !== null ? "Hide" : attempt.busy ? "Looking…" : "Show in the paper"}
         </Button>
       </div>
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}
-      {passage !== null && <Passage passage={passage} />}
+      {passage !== null && <Passage id={`${id}-passage`} passage={passage} />}
     </li>
   );
 }

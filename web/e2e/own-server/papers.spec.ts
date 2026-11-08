@@ -680,7 +680,9 @@ test("reads the paper of an agent with a budget, and shows what was found with t
   const shown = claims.getByRole("group", { name: "The paper at this place" });
   await expect(shown.locator("mark")).toHaveText(RESULT);
   await expect(shown).toContainText("Results");
-  await expect(claims.getByRole("button", { name: /^Hide: CellMapper reached/ })).toHaveAttribute("aria-expanded", "true");
+  const hide = claims.getByRole("button", { name: /^Hide: CellMapper reached/ });
+  await expect(hide).toHaveAttribute("aria-expanded", "true");
+  await expect(hide).toHaveAttribute("aria-controls", (await shown.getAttribute("id")) ?? "none");
   expect(await accessibilityProblems(page)).toEqual([]);
   await claims.getByRole("button", { name: /^Hide: / }).click();
   await expect(shown).toHaveCount(0);
