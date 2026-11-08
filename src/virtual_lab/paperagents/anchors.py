@@ -268,11 +268,13 @@ def hyphen_break(text: str, index: int) -> int | None:
     return None
 
 
-def flatten(text: str, join_broken_words: bool = False) -> Flat:
+def flatten(text: str, join_broken_words: bool = False, keep_hyphens: bool = False) -> Flat:
     """A text as quotes are compared: every run of spaces and breaks is one space, curly quotes and dashes are plain,
     letters are as they are written in plain form, and what has no width is gone. The text is not cased.
 
     :param join_broken_words: Whether to join a word that a line ended in the middle of, as 'signif-' and 'icant'.
+    :param keep_hyphens: Whether the hyphen of such a word is kept, for a word that was written with one, as
+        'well-known', which a line may end in the middle of just as 'significant' may be.
     """
     out: list[str] = []
     starts: list[int] = []
@@ -284,6 +286,11 @@ def flatten(text: str, join_broken_words: bool = False) -> Flat:
         if char in INVISIBLE:
             index += 1
         elif join_broken_words and char == "-" and (after := hyphen_break(text, index)) is not None:
+            if keep_hyphens:
+                out.append("-")
+                starts.append(index)
+                ends.append(index + 1)
+                gap = False
             index = after
         elif char.isspace():
             if not gap:
@@ -315,28 +322,86 @@ def flatten(text: str, join_broken_words: bool = False) -> Flat:
     return Flat("".join(out), starts, ends)
 
 
+def bounded(text: str, start: int, end: int) -> bool:
+    """Whether the words from start to end of a text are whole, and not cut out of the middle of a word, a number, or
+    a name: a '5' is not the end of '10.5' or the start of '50', nor an 'R' the end of 'Seurat'."""
+    first, last = text[start], text[end - 1]
+    if first.isalnum() and start > 0:
+        before = text[start - 1]
+        if before.isalnum() or (before in ".," and first.isdigit() and start > 1 and text[start - 2].isdigit()):
+            return False
+    if last.isalnum() and end < len(text):
+        after = text[end]
+        if after.isalnum() or (after in ".," and last.isdigit() and end + 1 < len(text) and text[end + 1].isdigit()):
+            return False
+
+    return True
+
+
+def occurrences(text: str, wanted: str) -> list[int]:
+    """Where a text has what is wanted in it, each place, including those that overlap."""
+    found = []
+    at = text.find(wanted)
+    while at >= 0:
+        found.append(at)
+        at = text.find(wanted, at + 1)
+
+    return found
+
+
 def find_quote(quote: str, flat: Flat) -> tuple[int, int] | None:
-    """Where a quote is in a text, as flatten made it, as the first and last character in the text itself.
+    """Where a quote is in a text, as flatten made it, as the first and last character in the text itself. A quote
+    is only found as whole words and numbers: one that stops in the middle of a number is not found.
 
     :return: The span, or None if the words are not there.
     """
     needle = flatten(quote).text
     if not needle:
         return None
-    found = flat.text.find(needle)
+    for found in occurrences(flat.text, needle):
+        if bounded(flat.text, found, found + len(needle)):
+            return flat.starts[found], flat.ends[found + len(needle) - 1]
 
-    return None if found < 0 else (flat.starts[found], flat.ends[found + len(needle) - 1])
+    return None
+
+
+# What may come before an address and after it, in the words it is in: it is not a part of one if it is one with more
+# of a name before it, or more of a path or a page after it
+ADDRESS_BEFORE = frozenset(" ([{<\"'`,;:=")
+ADDRESS_AFTER = frozenset(" )]}>\"'`")
+ADDRESS_ENDS = frozenset(".,;:!?")
+
+
+def in_address(words: str, wanted: str) -> bool:
+    """Whether an address is the whole of one in some words. A PDF may break a line in the middle of an address, so a
+    space may be anywhere in it, but it must begin and end where an address does, so that one that is cut short, as
+    'github.com/owner/name' from 'github.com/owner/name/tree/main', is not found."""
+    pattern = re.compile(" ?".join(re.escape(char) for char in wanted.replace(" ", "")))
+    for match in pattern.finditer(words):
+        before, after = words[: match.start()], words[match.end() :]
+        starts = not before or before[-1] in ADDRESS_BEFORE or before.endswith("//")
+        ends = (
+            not after
+            or after[0] in ADDRESS_AFTER
+            or (after[0] in ADDRESS_ENDS and (len(after) == 1 or after[1] in ADDRESS_AFTER))
+        )
+        if starts and ends:
+            return True
+
+    return False
 
 
 def contains(quote: str, detail: str, spaced: bool = True) -> bool:
-    """Whether a detail, a name or a number or an address, is in the words it was taken from, apart from case.
+    """Whether a detail, a name or a number or an address, is in the words it was taken from, apart from case, as
+    whole words: '5' is not in '10.5' or '50'.
 
     :param spaced: Whether spaces count. An address is told with none, since a PDF breaks a line in the middle of one.
     """
     wanted = flatten(detail).text.casefold()
     words = flatten(quote).text.casefold()
+    if not wanted.strip():
+        return False
     if not spaced:
-        wanted = wanted.replace(" ", "")
-        words = words.replace(" ", "")
+        return in_address(words, wanted)
 
-    return bool(wanted) and wanted in words
+    return any(bounded(words, at, at + len(wanted)) for at in occurrences(words, wanted))

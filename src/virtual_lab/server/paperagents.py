@@ -278,6 +278,16 @@ def is_agent(value: Any) -> bool:
     return repo is None or (isinstance(repo, dict) and passes(check_repo, repo.get("url")))
 
 
+def made_with() -> dict[str, int]:
+    """What a reading is made with now, which a reading that was kept must have been made with to be shown as this
+    one: the version of what reads, and the sizes the text is cut into chunks of."""
+    return {
+        "version": READING_VERSION,
+        "chunk_size": DEFAULT_PAPER_CHUNK_SIZE,
+        "chunk_overlap": DEFAULT_PAPER_CHUNK_OVERLAP,
+    }
+
+
 def steps_of(agent: dict[str, Any]) -> dict[str, str]:
     """How far each step has got: pending for one the record does not say, and for one it says something else of."""
     steps = agent.get("steps")
@@ -589,7 +599,7 @@ class PaperAgents:
             "has_paper": file is not None,
             "has_text": (directory / PAPER_DIR / kept_reading.TEXT_FILE).is_file(),
             "job": job.snapshot() if job is not None else None,
-            **kept_reading.describe(directory, file["sha256"] if file is not None else None),
+            **kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with()),
         }
 
     def passage(self, agent_id: str, start: Any, end: Any) -> dict[str, Any]:
@@ -637,15 +647,11 @@ class PaperAgents:
         if file is None:
             raise ApiError(
                 422,
-                "invalid",
+                "no_file",
                 "Upload the paper's file first. Only a file is read: a DOI or a link is not fetched.",
             )
-        earlier = kept_reading.describe(directory, file["sha256"])
-        if (
-            earlier["chunks"] is not None
-            and earlier["read"] + earlier["skipped"] + earlier["failed"] >= earlier["chunks"]
-            and not (again and earlier["failed"])
-        ):
+        earlier = kept_reading.describe(directory, file["sha256"], made_with())
+        if earlier["complete"] and not (again and earlier["failed"]):
             raise ApiError(409, "done", "The paper has been read. Clear the reading to read it again.")
 
         work = self.reader(agent_id, file, model, budget, again)
@@ -709,10 +715,8 @@ class PaperAgents:
         chunks = plan_chunks(document, DEFAULT_PAPER_CHUNK_SIZE, DEFAULT_PAPER_CHUNK_OVERLAP)
         run = {
             "schema": kept_reading.SCHEMA,
-            "version": READING_VERSION,
+            **made_with(),
             "file_sha256": file["sha256"],
-            "chunk_size": DEFAULT_PAPER_CHUNK_SIZE,
-            "chunk_overlap": DEFAULT_PAPER_CHUNK_OVERLAP,
             "chunks": len(chunks),
             "characters": len(document.text),
             "truncated_from": document.truncated_from,
@@ -765,7 +769,7 @@ class PaperAgents:
 
     def describe_reading(self, directory: Path, sha256: str, usage: Any) -> str:
         """What a reading found, in a sentence or two."""
-        found = kept_reading.describe(directory, sha256)
+        found = kept_reading.describe(directory, sha256, made_with())
         facts = len(found["claims"]) + sum(
             len(items) for part in ("card", "resources") for items in found[part].values() if isinstance(items, list)
         )

@@ -244,7 +244,7 @@ class TestRefusals:
 
         error = refused(agents.read, agent_id, 5)
 
-        assert (error.status, error.code) == (422, "invalid") and "Upload the paper" in str(error)
+        assert (error.status, error.code) == (422, "no_file") and "Upload the paper" in str(error)
 
     @pytest.mark.parametrize("limit", [None, -1, "5", True, float("nan"), float("inf"), [], {}])
     def test_a_limit_that_is_not_an_amount_is_refused_and_no_limit_is_not_allowed(
@@ -378,7 +378,7 @@ class TestTheLimitAndStopping:
         assert len(fake_client.completions.parse_calls) == 1
         found = agents.reading(agent_id)
         assert found["read"] == 1 and found["cost"] == pytest.approx(one)
-        assert agents.view(agent_id)["steps"]["reading"] == "pending"
+        assert found["complete"] is False and agents.view(agent_id)["steps"]["reading"] == "pending"
         files = directory_of(workspace, agent_id)
         assert json.loads((files / "claims.json").read_text())["schema"] == 1
         assert (files / "method_card.json").is_file() and (files / "resources.json").is_file()
@@ -389,7 +389,9 @@ class TestTheLimitAndStopping:
         job = read(agents, agent_id, max_cost=0)
 
         assert job.message.startswith("Stopped at the limit") and fake_client.completions.parse_calls == []
-        assert agents.reading(agent_id)["read"] == 0 and agents.view(agent_id)["steps"]["reading"] == "pending"
+        found = agents.reading(agent_id)
+        assert (found["read"], found["complete"]) == (0, False)
+        assert agents.view(agent_id)["steps"]["reading"] == "pending"
 
     def test_reading_again_carries_on_from_the_chunk_it_stopped_at(
         self, agents: PaperAgents, fake_client: FakeClient
@@ -601,6 +603,49 @@ class TestWhatChangesThePaper:
 
         assert not stale.exists() or json.loads(stale.read_text()) != {}
         assert agents.reading(agent_id)["read"] == len(answers())
+
+    @pytest.mark.parametrize("change", [("READING_VERSION", 2), ("DEFAULT_PAPER_CHUNK_SIZE", SIZE + 100)])
+    def test_a_reading_made_with_another_version_or_size_of_chunk_is_not_shown_and_is_read_again(
+        self,
+        agents: PaperAgents,
+        workspace: Workspace,
+        fake_client: FakeClient,
+        monkeypatch: pytest.MonkeyPatch,
+        change: tuple[str, int],
+    ) -> None:
+        agent_id = self.read_once(agents, fake_client)
+        files = directory_of(workspace, agent_id)
+        assert agents.reading(agent_id)["complete"] is True
+        assert all((files / name).is_file() for name in ("claims.json", "method_card.json", "resources.json"))
+        monkeypatch.setattr(module, *change)
+
+        found = agents.reading(agent_id)
+        assert (found["chunks"], found["read"], found["claims"], found["complete"]) == (None, 0, [], False)
+        # It is not refused as read, and a reading that finds nothing leaves nothing of the one it replaced
+        job = read(agents, agent_id, max_cost=0)
+        assert job.message.startswith("Stopped at the limit")
+        assert not any((files / name).exists() for name in ("claims.json", "method_card.json", "resources.json"))
+        queue(
+            fake_client,
+            *good_answers(document_from([PAPER], paged=False), change[1] if change[0] != "READING_VERSION" else SIZE),
+        )
+        assert read(agents, agent_id).state == "succeeded"
+        assert agents.reading(agent_id)["complete"] is True
+
+    def test_a_chunk_file_whose_usage_was_edited_into_nonsense_does_not_break_looking_at_the_reading(
+        self, agents: PaperAgents, workspace: Workspace, fake_client: FakeClient
+    ) -> None:
+        agent_id = self.read_once(agents, fake_client)
+        file = directory_of(workspace, agent_id) / "log" / "reading" / "chunks" / "00001.json"
+        record = json.loads(file.read_text())
+        file.write_text(
+            json.dumps({**record, "usage": {"num_calls": "many", "cost": "free"}, "dropped": {"quote": "lots"}})
+        )
+
+        found = agents.reading(agent_id)
+
+        assert found["cost"] is None and isinstance(found["calls"], int)
+        assert all(isinstance(count, int) for count in found["dropped"].values())
 
     def test_a_chunk_file_that_was_edited_into_something_else_is_not_trusted(
         self, agents: PaperAgents, workspace: Workspace, fake_client: FakeClient

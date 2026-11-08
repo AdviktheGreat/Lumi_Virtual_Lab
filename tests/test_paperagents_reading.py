@@ -162,6 +162,77 @@ class TestQuotesAreFoundAsAPersonReadsThem:
         assert contains("code at https://github.com/ex/\nrepo.", "https://github.com/ex/repo", spaced=False)
         assert not contains("anything", "")
 
+    def test_a_hyphen_that_a_line_ended_in_is_kept_for_a_word_that_has_one(self) -> None:
+        flat = flatten("The well-\nknown samples were used in all signif-\nicant tests.", True, keep_hyphens=True)
+
+        assert find_quote("The well-known samples were used", flat) is not None
+        assert find_quote("The wellknown samples were used", flat) is None
+
+    @pytest.mark.parametrize(
+        "quote",
+        ["Only 5 of 5", "nly 5 of 50", "improved from 10", "from 10.5% to 30", "ved from 10.5%"],
+    )
+    def test_a_quote_that_stops_in_the_middle_of_a_number_or_a_word_is_not_found(self, quote: str) -> None:
+        flat = flatten("Accuracy improved from 10.5% to 30.5% in Only 5 of 50 samples.")
+
+        assert find_quote(quote, flat) is None
+
+    def test_a_quote_that_ends_at_the_end_of_a_number_or_a_word_is_found(self) -> None:
+        flat = flatten("Accuracy improved from 10.5% to 30.5% in Only 5 of 50 samples.")
+
+        assert find_quote("improved from 10.5% to 30.5%", flat) is not None
+        assert find_quote("5 of 50 samples.", flat) is not None
+        assert find_quote("Accuracy improved from 10.5", flat) is not None
+
+    @pytest.mark.parametrize(
+        ("detail", "whole"),
+        [
+            ("10.5", True),
+            ("30.5", True),
+            ("0.05", True),
+            ("5", False),
+            ("0", False),
+            ("0.5", False),
+            ("30", False),
+        ],
+    )
+    def test_a_number_is_in_a_quote_only_as_the_whole_of_a_number(self, detail: str, whole: bool) -> None:
+        assert contains("Accuracy improved from 10.5% to 30.5% (p < 0.05).", detail) is whole
+
+    @pytest.mark.parametrize(
+        ("detail", "quote", "whole"),
+        [
+            ("R", "clusters were found with Seurat", False),
+            ("R", "analysed in R and Python", True),
+            ("Seurat", "found with Seurat.", True),
+            ("Seurat", "found with (Seurat)", True),
+            ("GSE12345", "under accession GSE123456.", False),
+            ("GSE123456", "under accession GSE123456.", True),
+            ("4.3", "Seurat 4.3.1", False),
+            ("4.3", "Seurat 4.3.", True),
+            ("4.3", "Seurat 14.3", False),
+        ],
+    )
+    def test_a_name_or_a_version_is_in_a_quote_only_as_a_whole_word(self, detail: str, quote: str, whole: bool) -> None:
+        assert contains(quote, detail) is whole
+
+    @pytest.mark.parametrize(
+        ("address", "quote", "whole"),
+        [
+            ("https://github.com/ex/repo", "Code at https://github.com/ex/repo.", True),
+            ("https://github.com/ex/repo", "(see https://github.com/ex/repo)", True),
+            ("https://github.com/ex/repo", "Code at https://github.com/ex/\nrepo, and data", True),
+            ("github.com/ex/repo", "Code at https://github.com/ex/repo.", True),
+            ("https://github.com/ex/repo", "Code at https://github.com/ex/repo/tree/main.", False),
+            ("https://github.com/ex/repo", "Code at https://github.com/ex/repo.git", False),
+            ("https://github.com/ex/repo", "Code at https://github.com/ex/repository", False),
+            ("github.com/ex/repo", "Code at https://notgithub.com/ex/repo", False),
+            ("github.com/ex/repo", "Code at www.github.com/ex/repo", False),
+        ],
+    )
+    def test_an_address_is_in_a_quote_only_as_the_whole_of_one(self, address: str, quote: str, whole: bool) -> None:
+        assert contains(quote, address, spaced=False) is whole
+
 
 class TestTheLayoutOfAPaper:
     def test_headings_are_found_by_what_they_say_and_by_markdown_and_latex(self) -> None:
@@ -247,6 +318,17 @@ class TestChunks:
         assert all(document.text[chunk.start : chunk.end] == chunk.text for chunk in chunks)
         assert [chunk.number for chunk in chunks] == list(range(1, len(chunks) + 1))
         assert all(later.start >= earlier.start for earlier, later in zip(chunks, chunks[1:], strict=False))
+
+    @pytest.mark.parametrize("copies", [6, 12])
+    def test_a_chunk_that_says_what_an_earlier_one_did_is_placed_where_it_is(self, copies: int) -> None:
+        paragraph = "The reads were aligned to the reference genome and counted with featureCounts for each gene."
+        document = document_from(["\n\n".join([paragraph] * copies)], paged=False)
+
+        chunks = plan_chunks(document, chunk_size=len(paragraph) + 5, chunk_overlap=0)
+
+        assert len(chunks) == copies
+        assert [chunk.start for chunk in chunks] == sorted({chunk.start for chunk in chunks})
+        assert all(document.text[chunk.start : chunk.end] == chunk.text for chunk in chunks)
 
     def test_a_chunk_in_the_references_is_marked_so_that_it_is_not_read(self, document: Document) -> None:
         chunks = plan_chunks(document, chunk_size=120, chunk_overlap=0)
@@ -350,6 +432,44 @@ class TestWhatIsKept:
         found, dropped = kept(document, reading(**{kind: [item]}))
 
         assert found[kind] == [] and dropped == {"quote": 0, "detail": 1}
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            ReadClaim(kind="number", value="0.9", quote=RESULT),
+            ReadClaim(kind="number", value="3", quote=RESULT),
+            ReadSoftware(name="Seura", version="", quote=METHOD),
+            ReadSoftware(name="STAR", version="2.7.1", quote=METHOD),
+            ReadDataset(name="GEO", accession="GSE12345", quote=DATA),
+            ReadLink(url="https://github.com/example", role="code", quote=CODE),
+            ReadLink(url="https://github.com/example/cellmapper/tree/main", role="code", quote=CODE),
+        ],
+    )
+    def test_a_name_a_number_or_an_address_that_is_only_a_part_of_one_in_the_quote_is_dropped(
+        self, document: Document, item: Any
+    ) -> None:
+        kind = {ReadClaim: "claims", ReadSoftware: "software", ReadDataset: "datasets", ReadLink: "links"}[type(item)]
+
+        found, dropped = kept(document, reading(**{kind: [item]}))
+
+        assert found[kind] == [] and dropped == {"quote": 0, "detail": 1}
+
+    def test_a_quote_that_stops_in_the_middle_of_a_number_is_dropped(self, document: Document) -> None:
+        found, dropped = kept(
+            document, reading(claims=[ReadClaim(kind="number", value="0.8", quote="higher than the 0.8")])
+        )
+
+        assert found["claims"] == [] and dropped["quote"] == 1
+
+    def test_a_word_with_a_hyphen_that_a_line_ended_in_is_quoted_with_its_hyphen(self) -> None:
+        text = "The well-\nknown samples were used in all of the assays described here."
+        document = document_from([text], paged=False)
+
+        found, dropped = kept(
+            document, reading(methods=[ReadMethod(name="well-known samples", quote="The well-known samples were used")])
+        )
+
+        assert len(found["methods"]) == 1 and dropped == {"quote": 0, "detail": 0}
 
     def test_a_version_is_found_in_a_quote_with_or_without_its_v(self, document: Document) -> None:
         found, _ = kept(

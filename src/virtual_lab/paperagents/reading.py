@@ -308,13 +308,14 @@ def plan_chunks(
     chunks = []
     cursor = 0
     for chunk in split_text(text, chunk_size, chunk_overlap):
-        # The chunks are cut from the text in order, and each begins no earlier than the one before
+        # The chunks are cut from the text in order, and each begins after the one before, so that a chunk that says
+        # what an earlier one did is placed where it is, and not where the earlier one is
         start = text.find(chunk, cursor)
         if start < 0:
             start = text.find(chunk)
         if start < 0:
             continue
-        cursor = start
+        cursor = start + 1
         end = start + len(chunk)
         inside = any(begin <= start and end <= stop for begin, stop in skipped)
         chunks.append(Chunk(len(chunks) + 1, start, end, chunk, "references" if inside else None))
@@ -334,13 +335,14 @@ class Quoter:
         self.chunk = chunk
         self.plain = flatten(chunk.text)
         self.joined = flatten(chunk.text, join_broken_words=True)
+        self.hyphenated = flatten(chunk.text, join_broken_words=True, keep_hyphens=True)
 
     def find(self, quote: str) -> tuple[int, int] | None:
         """Where a quote is in the paper's text, if it is word for word in the chunk, or None."""
         wanted = flatten(quote).text
         if not MIN_QUOTE_CHARS <= len(wanted) <= MAX_QUOTE_CHARS or not any(char.isalnum() for char in wanted):
             return None
-        for flat in (self.plain, self.joined):
+        for flat in (self.plain, self.joined, self.hyphenated):
             if (span := find_quote(quote, flat)) is not None:
                 return self.chunk.start + span[0], self.chunk.start + span[1]
 
@@ -392,7 +394,8 @@ def check_fact(kind: str, item: BaseModel, quoter: Quoter, document: Document) -
         if name == "url":
             if not contains(quote, trim_url(detail), spaced=False):
                 return "detail"
-        elif not contains(quote, detail):
+        elif not (contains(quote, detail) or (name == "version" and contains(quote, f"v{detail}"))):
+            # A version is whole in the quote, as 4.3 is in 'v4.3', and not as it is in '4.3.1' or '14.3'
             return "detail"
     if kind == "links":
         if (url := clean_url(fact["url"])) is None:

@@ -61,8 +61,15 @@ def load_document(paper_directory: Path) -> Document | None:
     return document_of(text, read_json(paper_directory / LAYOUT_FILE))
 
 
-def saved_run(directory: Path, file_sha256: str | None) -> dict[str, Any] | None:
-    """The record of how a reading was begun, if it is of this file and of this version of what reads."""
+def saved_run(
+    directory: Path, file_sha256: str | None, expected: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """The record of how a reading was begun, if it is of this file and of this version of what reads.
+
+    :param expected: The version and sizes of chunk that a reading is made with now (as `version`, `chunk_size`, and
+        `chunk_overlap`). A reading made with others is not of these chunks, and is not seen, so that it can be made
+        again, as it is when it is begun.
+    """
     run = read_json(reading_dir(directory) / RUN_FILE)
     if (
         isinstance(run, dict)
@@ -72,6 +79,7 @@ def saved_run(directory: Path, file_sha256: str | None) -> dict[str, Any] | None
         and isinstance(run.get("version"), int)
         and isinstance(run.get("chunks"), int)
         and not isinstance(run.get("chunks"), bool)
+        and all(run.get(name) == value for name, value in (expected or {}).items())
     ):
         return run
 
@@ -87,6 +95,8 @@ def begin_run(directory: Path, run: dict[str, Any]) -> None:
     )
     if not same:
         shutil.rmtree(reading_dir(directory), ignore_errors=True)
+        for name in (CLAIMS_FILE, CARD_FILE, RESOURCES_FILE):
+            (directory / name).unlink(missing_ok=True)
     (reading_dir(directory) / CHUNKS_DIR).mkdir(parents=True, exist_ok=True)
     write_atomically(reading_dir(directory) / RUN_FILE, json.dumps(run, indent=4).encode("utf-8"))
 
@@ -139,22 +149,26 @@ def forget(directory: Path) -> None:
         (directory / "paper" / name).unlink(missing_ok=True)
 
 
-def describe(directory: Path, file_sha256: str | None) -> dict[str, Any]:
+def whole(value: Any) -> int:
+    """A count that a record says, or none if what it says is not a whole number, as it may not be if it was edited."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def describe(directory: Path, file_sha256: str | None, expected: dict[str, Any] | None = None) -> dict[str, Any]:
     """What has been read of a paper: how far it has got, what it cost, and the claims, the draft of the method card,
     and the resources, each fact with its quote and where that is. All of it is made from what the chunks came to, so
-    that it never says more than they do."""
-    run = saved_run(directory, file_sha256)
+    that it never says more than they do.
+
+    :param expected: What a reading is made with now, as saved_run takes it.
+    """
+    run = saved_run(directory, file_sha256, expected)
     results = saved_chunks(directory) if run is not None else {}
     counts = {
         status: sum(1 for record in results.values() if record["status"] == status)
         for status in ("read", "skipped", "failed")
     }
     dropped = {
-        reason: sum(
-            record["dropped"].get(reason, 0)
-            for record in results.values()
-            if isinstance(record["dropped"].get(reason, 0), int)
-        )
+        reason: sum(whole(record["dropped"].get(reason, 0)) for record in results.values())
         for reason in ("quote", "detail")
     }
     costs = [record["usage"].get("cost") for record in results.values()]
@@ -165,9 +179,14 @@ def describe(directory: Path, file_sha256: str | None) -> dict[str, Any]:
         "read": counts["read"],
         "skipped": counts["skipped"],
         "failed": counts["failed"],
+        # Whether every chunk has come to something, which is so when the paper has been read through, and is not
+        # when a reading was stopped, or reached its limit, whatever it has found
+        "complete": run is not None and sum(counts.values()) >= run["chunks"],
         "dropped": dropped,
-        "cost": None if any(not isinstance(cost, int | float) for cost in costs) else sum(costs),
-        "calls": sum(record["usage"].get("num_calls", 0) for record in results.values()),
+        "cost": (
+            None if any(isinstance(cost, bool) or not isinstance(cost, int | float) for cost in costs) else sum(costs)
+        ),
+        "calls": sum(whole(record["usage"].get("num_calls")) for record in results.values()),
         "models": sorted({str(record.get("model")) for record in results.values() if record["status"] != "skipped"}),
         "characters": run.get("characters") if run is not None else None,
         "truncated_from": run.get("truncated_from") if run is not None else None,
