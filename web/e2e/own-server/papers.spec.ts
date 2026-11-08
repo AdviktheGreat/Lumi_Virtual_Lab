@@ -146,9 +146,10 @@ test("makes an agent of a DOI, with where its code is, which is then listed and 
   await expect(steps).toHaveCount(5);
   await expect(steps.first()).toContainText("Read the paper");
   await expect(steps.first()).toContainText("Not started");
-  // A DOI is not fetched yet, so the file of the paper is what it is read from, which is uploaded beside it
+  // A DOI is fetched when it is read, and the file of the paper can be uploaded beside it in place of that
   await expect(page.getByRole("heading", { name: "Paper file", level: 2 })).toBeVisible();
-  await expect(page.getByText("No paper is uploaded to this agent yet.")).toBeVisible();
+  await expect(page.getByText("No file is kept yet. The text of the paper is fetched when it is read, and kept here.")).toBeVisible();
+  await expect(page.getByRole("form", { name: "Read the paper" }).getByRole("button", { name: "Fetch and read the paper", exact: true })).toBeVisible();
   expect(await accessibilityProblems(page)).toEqual([]);
 
   await page.getByRole("link", { name: "All agents" }).click();
@@ -711,27 +712,161 @@ test("reads the paper of an agent with a budget, and shows what was found with t
   await expect(page.getByTestId("paper-agent-file")).toContainText("cells.txt");
 });
 
-test("reads the file that is beside a DOI, which a DOI alone is not", async ({ page }) => {
+test("reads the file that is uploaded beside a DOI, which is then not fetched", async ({ page }) => {
   const id = await makeAgent(page, { title: "By DOI", paper: { kind: "doi", doi: "10.1000/beside" } });
   await openAgent(page, id, "By DOI");
   await expect(page.getByRole("heading", { name: "Paper file", level: 2 })).toBeVisible();
-  await expect(page.getByText("a DOI or a link is not fetched yet", { exact: false }).first()).toBeVisible();
-  await expect(page.getByText("Upload the paper's file to have it read.")).toBeVisible();
+  await expect(page.getByText("When a DOI or a link is read, its text is fetched", { exact: false })).toBeVisible();
+  await expect(page.getByText("Upload the paper's file to have it read.")).toHaveCount(0);
+  await expect(fetchAndRead(page)).toBeVisible();
 
   await page.getByLabel("Upload the paper").setInputFiles({ name: "beside.txt", mimeType: "text/plain", buffer: Buffer.from(CELLS) });
   await expect(page.getByTestId("paper-agent-file")).toContainText("beside.txt");
+  await expect(page.getByTestId("paper-agent-source")).toHaveCount(0);
   await expect(page.getByText("DOI 10.1000/beside")).toBeVisible();
   expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).paper).toMatchObject({ kind: "doi", file: { name: "beside.txt" } });
 
-  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  // A paper that has its file is read from it, and is not asked of Europe PMC
+  await expect(fetchAndRead(page)).toHaveCount(0);
+  await reading(page).getByRole("button", { name: "Read the paper", exact: true }).click();
   await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+  await expect(status(page)).toContainText("Reading the paper: By DOI");
   await expect(page.getByRole("list", { name: "What the authors report" })).toContainText("0.93");
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).paper.file.source ?? null).toBeNull();
 
-  // Taking the file away takes away what was read of it
+  // Taking the file away takes away what was read of it, and leaves the paper to be fetched
   await page.getByRole("button", { name: "Remove beside.txt" }).click();
-  await expect(page.getByText("Upload the paper's file to have it read.")).toBeVisible();
+  await expect(fetchAndRead(page)).toBeVisible();
   await expect(page.getByRole("list", { name: "What the authors report" })).toHaveCount(0);
   expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).paper.file ?? null).toBeNull();
+});
+
+const fetchAndRead = (page: Page) => reading(page).getByRole("button", { name: "Fetch and read the paper", exact: true });
+
+test("fetches the paper of a DOI when it is read, keeps the text as the paper's file, and says where it came from", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Open cells", paper: { kind: "doi", doi: "10.1000/open-cells" } });
+  await openAgent(page, id, "Open cells");
+  await expect(page.getByText("No file is kept yet.", { exact: false })).toBeVisible();
+  await expect(reading(page)).toContainText("The paper has no file yet, so its text is fetched first, which costs nothing: from Europe PMC");
+  await expect(page.getByTestId("paper-agent-source")).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await reading(page).getByLabel("Most it may spend, in dollars").fill("2");
+  await fetchAndRead(page).click();
+
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+  await expect(status(page)).toContainText("Fetching and reading the paper: Open cells");
+  await expect(page.getByTestId("paper-agent-file")).toContainText("europepmc-pmc7000001.txt");
+  const source = page.getByTestId("paper-agent-source");
+  await expect(source).toContainText("Fetched from Europe PMC, PMC7000001");
+  await expect(source).toContainText("is not fetched again");
+  const link = source.getByRole("link", { name: /Fetched from Europe PMC, PMC7000001/ });
+  await expect(link).toHaveAttribute("href", "https://europepmc.org/article/PMC/PMC7000001");
+  await expect(link).toHaveAttribute("rel", /noopener/);
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Done");
+  const claims = page.getByRole("list", { name: "What the authors report" });
+  await expect(claims.getByRole("blockquote")).toContainText("AUROC of 0.93");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  const kept = (await (await page.request.get(`/api/paperagents/${id}`)).json()).paper;
+  expect(kept).toMatchObject({ kind: "doi", file: { name: "europepmc-pmc7000001.txt", source: { kind: "europepmc", label: "Europe PMC, PMC7000001" } } });
+
+  // The text that was fetched is the paper from then on, so reading it again is not fetching it again
+  await page.getByRole("button", { name: "Clear the reading" }).click();
+  await page.getByRole("alertdialog", { name: "Clear the reading of Open cells?" }).getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(claims).toHaveCount(0);
+  await expect(fetchAndRead(page)).toHaveCount(0);
+  await expect(reading(page).getByRole("button", { name: "Read the paper", exact: true })).toBeEnabled();
+  await expect(source).toContainText("Fetched from Europe PMC, PMC7000001");
+
+  // Taking the text away leaves the paper to be fetched again
+  await page.getByRole("button", { name: "Remove europepmc-pmc7000001.txt" }).click();
+  await expect(page.getByTestId("paper-agent-file")).toHaveCount(0);
+  await expect(source).toHaveCount(0);
+  await expect(fetchAndRead(page)).toBeEnabled();
+});
+
+test("fetches the paper of a link when it is read, from where the link leads", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Linked cells", paper: { kind: "url", url: "https://example.org/papers/fetched" } });
+  await openAgent(page, id, "Linked cells");
+  await expect(reading(page)).toContainText("from the link, if it leads to the public internet");
+
+  await fetchAndRead(page).click();
+
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+  await expect(page.getByTestId("paper-agent-file")).toContainText("linked-paper.txt");
+  const link = page.getByTestId("paper-agent-source").getByRole("link", { name: /Fetched from The page at example\.org/ });
+  await expect(link).toHaveAttribute("href", "https://example.org/papers/fetched");
+  await expect(page.getByRole("list", { name: "Software" })).toContainText("Seurat");
+});
+
+test("says why a paper could not be fetched, and reads the file that is uploaded in its place", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Closed cells", paper: { kind: "doi", doi: "10.1000/closed-cells" } });
+  await openAgent(page, id, "Closed cells");
+
+  await fetchAndRead(page).click();
+
+  const why = "is not open access, so Europe PMC does not give out its full text. Upload the paper's file to have it read.";
+  await expect(status(page).getByRole("alert")).toContainText(why, { timeout: 15_000 });
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Failed");
+  await expect(page.getByTestId("paper-agent-file")).toHaveCount(0);
+  // It can be asked for again, as a paper that could not be reached may be had later
+  await expect(fetchAndRead(page)).toBeEnabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await page.getByLabel("Upload the paper").setInputFiles({ name: "closed.txt", mimeType: "text/plain", buffer: Buffer.from(CELLS) });
+  await expect(page.getByTestId("paper-agent-file")).toContainText("closed.txt");
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Not started");
+  await reading(page).getByRole("button", { name: "Read the paper", exact: true }).click();
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+  await expect(page.getByRole("list", { name: "What the authors report" })).toContainText("0.93");
+});
+
+test("says why a link could not be read as a paper", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Walled cells", paper: { kind: "url", url: "https://example.org/closed" } });
+  await openAgent(page, id, "Walled cells");
+
+  await fetchAndRead(page).click();
+
+  await expect(status(page).getByRole("alert")).toContainText("too little to be a paper", { timeout: 15_000 });
+  await expect(status(page).getByRole("alert")).toContainText("Upload the paper's file to have it read.");
+  await expect(page.getByTestId("paper-agent-file")).toHaveCount(0);
+});
+
+test("follows the fetching of a paper while it goes on, and keeps nothing if it is stopped", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Slow fetch", paper: { kind: "doi", doi: "10.1000/slow-cells" } });
+  await openAgent(page, id, "Slow fetch");
+
+  await fetchAndRead(page).click();
+
+  await expect(status(page).getByRole("button", { name: "Stop: Fetching and reading the paper: Slow fetch" })).toBeVisible();
+  await expect(reading(page).getByRole("button", { name: "Fetching…" })).toBeDisabled();
+  // Nothing else is done to the agent while its paper is got
+  await expect(page.getByLabel("Upload the paper")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Delete Slow fetch" })).toBeDisabled();
+
+  await status(page).getByRole("button", { name: "Stop: Fetching and reading the paper: Slow fetch" }).click();
+
+  await expect(status(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("paper-agent-file")).toHaveCount(0);
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Not started");
+  await expect(fetchAndRead(page)).toBeEnabled();
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).paper.file ?? null).toBeNull();
+});
+
+test("does not make an agent of a link to this machine or a private network", async ({ page }) => {
+  await page.goto("/papers");
+  const making = form(page, "Make an agent");
+  await making.getByRole("radio", { name: "A link" }).check();
+  await making.getByLabel("Link to the paper").fill("http://192.168.0.7/paper");
+
+  await making.getByRole("button", { name: "Make the agent" }).click();
+
+  const problem = making.getByRole("alert");
+  await expect(problem).toContainText("A link to a paper is to a site on the public internet, which 192.168.0.7 is not.");
+  await expect(problem).toContainText("Upload the paper's file in place of a link to it");
+  await expect(page).toHaveURL(/\/papers$/);
+  expect((await (await page.request.get("/api/paperagents")).json()).agents).toEqual([]);
+  expect(await accessibilityProblems(page)).toEqual([]);
 });
 
 test("follows the reading of a paper while it goes on, stops it, and carries on", async ({ page }) => {
@@ -840,7 +975,7 @@ test("says why a paper could not be read, and why reading was refused", async ({
 test("has nothing wrong that axe can find, in an agent that is being read, or that was", async ({ page }) => {
   const id = await makeAgent(page, { title: "Accessible reading", paper: { kind: "url", url: "https://example.org/accessible" } });
   await openAgent(page, id, "Accessible reading");
-  await expect(page.getByText("Upload the paper's file to have it read.")).toBeVisible();
+  await expect(fetchAndRead(page)).toBeVisible();
   expect(await accessibilityProblems(page)).toEqual([]);
 
   await sendPaper(page, id, "accessible.txt", chunked(2, "slow:"));

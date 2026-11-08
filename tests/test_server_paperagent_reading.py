@@ -1,6 +1,7 @@
-"""Tests of reading a PaperAgent's paper: the job, what it keeps, stopping and carrying on, its limit, and that nothing
-in the paper is taken for an instruction."""
+"""Tests of reading a PaperAgent's paper: the job, what it keeps, stopping and carrying on, its limit, getting the text
+of a paper that is a DOI or a link, and that nothing in the paper is taken for an instruction."""
 
+import hashlib
 import io
 import json
 import threading
@@ -26,6 +27,7 @@ from test_paperagents_reading import (
     reading,
 )
 
+from virtual_lab.paperagents import fetch as fetching
 from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import plan_chunks
 from virtual_lab.server import paperagent_reading as kept_reading
@@ -44,7 +46,11 @@ BEARER = {"Authorization": f"Bearer {TOKEN}"}
 
 LIMIT_BYTES = 100_000
 DOI = "10.1038/s41586-020-2649-2"
+LINK = "https://example.org/papers/cell-mapper"
 SIZE = 400
+FETCHED_AS = "europepmc-pmc7000001.txt"
+SOURCE = {"kind": "europepmc", "label": "Europe PMC, PMC7000001", "url": "https://europepmc.org/article/PMC/PMC7000001"}
+CLOSED = f"The paper {DOI} is not open access, so Europe PMC does not give out its full text. {fetching.UPLOAD}"
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +60,52 @@ def model_client(fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch) -> Fa
     monkeypatch.setattr(module, "DEFAULT_PAPER_CHUNK_OVERLAP", 0)
 
     return fake_client
+
+
+def fetched(text: str = PAPER, name: str = FETCHED_AS, source: dict[str, str] | None = None) -> fetching.FetchedPaper:
+    return fetching.FetchedPaper(text, name, source if source is not None else SOURCE)
+
+
+@pytest.fixture(autouse=True)
+def nothing_is_fetched(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Papers are not fetched from anywhere unless a test says what is."""
+
+    def refuse(*args: Any) -> fetching.FetchedPaper:
+        raise AssertionError("A paper was fetched from the network")
+
+    monkeypatch.setattr(fetching, "europe_pmc_paper", refuse)
+    monkeypatch.setattr(fetching, "linked_paper", refuse)
+
+
+@pytest.fixture
+def served(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Gives the paper for a DOI and for a link, and lists what was asked for."""
+    asked: list[str] = []
+
+    def from_europe_pmc(doi: str) -> fetching.FetchedPaper:
+        asked.append(doi)
+
+        return fetched()
+
+    def from_a_link(url: str) -> fetching.FetchedPaper:
+        asked.append(url)
+
+        return fetched(name="linked-paper.txt", source={"kind": "link", "label": "The page at example.org", "url": url})
+
+    monkeypatch.setattr(fetching, "europe_pmc_paper", from_europe_pmc)
+    monkeypatch.setattr(fetching, "linked_paper", from_a_link)
+
+    return asked
+
+
+@pytest.fixture
+def closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Makes the paper of a DOI one that Europe PMC does not give out."""
+
+    def not_given(doi: str) -> fetching.FetchedPaper:
+        raise fetching.PaperUnavailableError(CLOSED)
+
+    monkeypatch.setattr(fetching, "europe_pmc_paper", not_given)
 
 
 @pytest.fixture
@@ -229,7 +281,6 @@ class TestReadingThePaper:
         self, agents: PaperAgents, fake_client: FakeClient
     ) -> None:
         agent_id = agents.create("", {"kind": "doi", "doi": DOI})
-        assert refused(agents.read, agent_id, 5).status == 422
         agents.put_paper(agent_id, "paper.txt", io.BytesIO(PAPER.encode()))
         queue(fake_client, *answers())
 
@@ -766,6 +817,235 @@ class TestThePassage:
         assert refused(agents.passage, paper_agent(agents), 0, 5).status == 404
 
 
+class TestFetchingThePaper:
+    def agent_of_doi(self, agents: PaperAgents) -> str:
+        return agents.create("", {"kind": "doi", "doi": DOI})
+
+    def test_a_paper_that_is_a_doi_is_fetched_by_the_job_kept_as_its_file_and_read(
+        self, agents: PaperAgents, workspace: Workspace, fake_client: FakeClient, served: list[str]
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+        before = agents.reading(agent_id)
+        assert (before["fetchable"], before["has_paper"], before["source"]) == (True, False, None)
+        queue(fake_client, *answers())
+
+        started = agents.read(agent_id, 5)
+        assert started.title == f"Fetching and reading the paper: {DOI}"
+        job = finish(started)
+
+        assert job.state == "succeeded" and job.message.startswith("Read ")
+        assert served == [DOI]
+        assert any("Fetched " in line and "Europe PMC, PMC7000001" in line for line in job.snapshot(0)["log"]["lines"])
+        content = PAPER.encode("utf-8")
+        assert agents.view(agent_id)["paper"]["file"] == {
+            "name": FETCHED_AS,
+            "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "source": SOURCE,
+        }
+        found = agents.reading(agent_id)
+        assert (found["fetchable"], found["has_paper"], found["source"]) == (False, True, SOURCE)
+        assert agents.view(agent_id)["steps"]["reading"] == "done"
+        assert found["read"] == len(answers()) and [claim["value"] for claim in found["claims"]] == ["0.93"]
+        paper = directory_of(workspace, agent_id) / PAPER_DIR
+        assert sorted(path.name for path in paper.iterdir()) == [FETCHED_AS, "layout.json", "text.txt"]
+        assert (paper / FETCHED_AS).read_bytes() == content
+
+    def test_a_paper_that_is_a_link_is_fetched_from_the_link(
+        self, agents: PaperAgents, fake_client: FakeClient, served: list[str]
+    ) -> None:
+        agent_id = agents.create("Cell mapper", {"kind": "url", "url": LINK})
+        queue(fake_client, *answers())
+
+        job = read(agents, agent_id)
+
+        assert job.state == "succeeded" and served == [LINK]
+        file = agents.view(agent_id)["paper"]["file"]
+        assert file["name"] == "linked-paper.txt" and file["source"] == {
+            "kind": "link",
+            "label": "The page at example.org",
+            "url": LINK,
+        }
+
+    def test_the_paper_that_was_fetched_is_not_fetched_again_to_read_it_again(
+        self, agents: PaperAgents, fake_client: FakeClient, served: list[str]
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+        queue(fake_client, *answers(), *answers())
+        read(agents, agent_id)
+
+        assert refused(agents.read, agent_id, 5).code == "done"
+        agents.clear_reading(agent_id)
+        started = agents.read(agent_id, 5)
+        assert started.title == f"Reading the paper: {DOI}"
+
+        assert finish(started).state == "succeeded" and served == [DOI]
+
+    @pytest.mark.usefixtures("closed")
+    def test_a_paper_that_cannot_be_had_fails_the_job_with_why_and_asks_for_the_file(
+        self, agents: PaperAgents, fake_client: FakeClient
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+
+        job = read(agents, agent_id)
+
+        assert job.state == "failed" and job.error == CLOSED
+        assert fake_client.completions.parse_calls == []
+        assert agents.view(agent_id)["steps"]["reading"] == "failed"
+        assert agents.view(agent_id)["paper"].get("file") is None
+        found = agents.reading(agent_id)
+        assert (found["fetchable"], found["has_paper"], found["chunks"]) == (True, False, None)
+
+    @pytest.mark.usefixtures("closed")
+    def test_the_file_of_a_paper_that_could_not_be_fetched_is_read_when_it_is_uploaded(
+        self, agents: PaperAgents, fake_client: FakeClient
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+        assert read(agents, agent_id).state == "failed"
+
+        agents.put_paper(agent_id, "paper.txt", io.BytesIO(PAPER.encode()))
+        assert agents.view(agent_id)["steps"]["reading"] == "pending"
+        queue(fake_client, *answers())
+
+        job = read(agents, agent_id)
+
+        assert job.state == "succeeded"
+        assert agents.view(agent_id)["paper"]["file"]["name"] == "paper.txt"
+        assert "source" not in agents.view(agent_id)["paper"]["file"]
+        assert agents.reading(agent_id)["source"] is None
+
+    def test_a_paper_whose_file_is_not_uploaded_is_not_fetched(self, agents: PaperAgents, served: list[str]) -> None:
+        error = refused(agents.read, agents.create("A paper", {"kind": "file"}), 5)
+
+        assert (error.status, error.code) == (422, "no_file") and served == []
+
+    def test_a_request_to_stop_while_the_paper_is_fetched_keeps_nothing(
+        self, agents: PaperAgents, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+        asked, release = threading.Event(), threading.Event()
+
+        def slow(doi: str) -> fetching.FetchedPaper:
+            asked.set()
+            assert release.wait(20)
+
+            return fetched()
+
+        monkeypatch.setattr(fetching, "europe_pmc_paper", slow)
+        job = agents.read(agent_id, 5)
+        assert asked.wait(20)
+        job.request_stop()
+        release.set()
+        finish(job)
+
+        assert job.state == "stopped" and fake_client.completions.parse_calls == []
+        assert agents.view(agent_id)["paper"].get("file") is None
+        assert not (directory_of(agents.workspace, agent_id) / PAPER_DIR).exists()
+        assert agents.view(agent_id)["steps"]["reading"] == "pending"
+
+    def test_the_paper_cannot_be_changed_while_it_is_fetched(
+        self, agents: PaperAgents, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+        asked, release = threading.Event(), threading.Event()
+
+        def slow(doi: str) -> fetching.FetchedPaper:
+            asked.set()
+            assert release.wait(20)
+
+            return fetched()
+
+        monkeypatch.setattr(fetching, "europe_pmc_paper", slow)
+        queue(fake_client, *answers())
+        job = agents.read(agent_id, 5)
+        assert asked.wait(20)
+        try:
+            assert agents.view(agent_id)["steps"]["reading"] == "running"
+            for call in (
+                lambda: agents.put_paper(agent_id, "b.txt", io.BytesIO(b"Another paper.")),
+                lambda: agents.delete(agent_id),
+                lambda: agents.clear_reading(agent_id),
+                lambda: agents.read(agent_id, 5),
+            ):
+                error = refused(call)
+                assert (error.status, error.code) == (409, "busy")
+        finally:
+            release.set()
+        assert finish(job).state == "succeeded"
+
+    def test_a_paper_that_another_agent_has_is_not_kept_twice(
+        self, agents: PaperAgents, fake_client: FakeClient, served: list[str]
+    ) -> None:
+        paper_agent(agents, title="The first")
+        agent_id = self.agent_of_doi(agents)
+
+        job = read(agents, agent_id)
+
+        assert job.state == "failed" and "There is a PaperAgent for that paper already, The first." in (job.error or "")
+        assert (job.error or "").endswith("Open that PaperAgent in place of making another.")
+        assert agents.view(agent_id)["paper"].get("file") is None
+
+    def test_text_that_is_too_large_is_not_kept(
+        self, agents: PaperAgents, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(fetching, "europe_pmc_paper", lambda doi: fetched("A long paper. " * 10_000))
+        agent_id = self.agent_of_doi(agents)
+
+        job = read(agents, agent_id)
+
+        assert job.state == "failed" and "more than the 97.7 KB" in (job.error or "")
+        assert agents.view(agent_id)["paper"].get("file") is None
+
+    def test_a_file_that_is_uploaded_takes_the_place_of_the_one_that_was_fetched(
+        self, agents: PaperAgents, fake_client: FakeClient, served: list[str]
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+        queue(fake_client, *answers())
+        read(agents, agent_id)
+
+        agents.put_paper(agent_id, "mine.txt", io.BytesIO(b"My own copy of the paper."))
+
+        assert agents.view(agent_id)["paper"]["file"]["name"] == "mine.txt"
+        assert agents.reading(agent_id)["source"] is None and agents.reading(agent_id)["fetchable"] is False
+
+    def test_taking_away_the_file_that_was_fetched_leaves_the_paper_to_be_fetched_again(
+        self, agents: PaperAgents, fake_client: FakeClient, served: list[str]
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+        queue(fake_client, *answers(), *answers())
+        read(agents, agent_id)
+
+        agents.remove_paper(agent_id)
+
+        assert agents.reading(agent_id)["fetchable"] is True
+        assert read(agents, agent_id).state == "succeeded" and served == [DOI, DOI]
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            {"kind": "pubmed", "label": "PubMed", "url": "https://pubmed.ncbi.nlm.nih.gov/1"},
+            {"kind": "link", "label": "A page", "url": "javascript:alert(1)"},
+            {"kind": "link", "label": "A page", "url": "/relative"},
+            {"kind": "link", "label": "", "url": "https://example.org/a"},
+            {"kind": "link", "label": "x" * 301, "url": "https://example.org/a"},
+            {"kind": "link", "url": "https://example.org/a"},
+            "https://example.org/a",
+            [],
+        ],
+    )
+    def test_a_source_that_is_not_one_is_not_what_an_agent_is_made_of(
+        self, agents: PaperAgents, workspace: Workspace, served: list[str], source: Any
+    ) -> None:
+        agent_id = self.agent_of_doi(agents)
+        agents.put_paper(agent_id, "paper.txt", io.BytesIO(PAPER.encode()))
+        record = json.loads((directory_of(workspace, agent_id) / AGENT_FILE).read_text())
+        assert is_agent(record)
+
+        record["paper"]["file"]["source"] = source
+
+        assert not is_agent(record)
+
+
 class TestTheApi:
     def upload(self, client: TestClient, agent_id: str, text: str = PAPER) -> None:
         sent = client.post(
@@ -807,6 +1087,36 @@ class TestTheApi:
         assert passage.status_code == 200 and passage.json()["text"].replace("\n", " ") == found["claims"][0]["quote"]
         cleared = client.delete(f"/api/paperagents/{agent_id}/reading")
         assert cleared.status_code == 200 and cleared.json()["read"] == 0 and cleared.json()["claims"] == []
+
+    def test_a_paper_that_is_a_doi_is_fetched_and_one_that_cannot_be_had_says_why(
+        self, client: TestClient, fake_client: FakeClient, served: list[str], request: pytest.FixtureRequest
+    ) -> None:
+        def wait_for(job: dict[str, Any]) -> dict[str, Any]:
+            deadline = time.monotonic() + 20
+            while (state := client.get(f"/api/setup/jobs/{job['id']}").json())["state"] == "running":
+                assert time.monotonic() < deadline
+                time.sleep(0.02)
+
+            return dict(state)
+
+        made = client.post("/api/paperagents", json={"title": "", "paper": {"kind": "doi", "doi": DOI}}).json()["id"]
+        before = client.get(f"/api/paperagents/{made}/reading").json()
+        assert (before["fetchable"], before["has_paper"], before["source"]) == (True, False, None)
+        queue(fake_client, *answers())
+
+        started = client.post(f"/api/paperagents/{made}/reading", json={"max_cost": 5})
+
+        assert started.status_code == 202 and started.json()["title"].startswith("Fetching and reading")
+        assert wait_for(started.json())["state"] == "succeeded"
+        after = client.get(f"/api/paperagents/{made}/reading").json()
+        assert (after["fetchable"], after["has_paper"], after["source"]) == (False, True, SOURCE)
+        assert client.get(f"/api/paperagents/{made}").json()["paper"]["file"]["source"] == SOURCE
+
+        request.getfixturevalue("closed")
+        other = client.post("/api/paperagents", json={"title": "", "paper": {"kind": "doi", "doi": "10.1000/closed"}})
+        refusal = client.post(f"/api/paperagents/{other.json()['id']}/reading", json={"max_cost": 5})
+        assert refusal.status_code == 202
+        assert wait_for(refusal.json())["error"] == CLOSED
 
     @pytest.mark.parametrize(
         "body",

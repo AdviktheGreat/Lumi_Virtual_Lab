@@ -90,6 +90,15 @@ function ReadForm({ agent, reading, working, jobs }: Shared & { jobs: JobsData }
         the paper is thrown away. It costs what that model charges, so say the most it may spend. A reading that stopped carries on from
         where it was.
       </p>
+      {reading.fetchable && (
+        <p className="text-sm text-muted-foreground">
+          The paper has no file yet, so its text is fetched first, which costs nothing:{" "}
+          {agent.paper.kind === "doi"
+            ? "from Europe PMC, which has the full text of the papers that are open access and no others"
+            : "from the link, if it leads to the public internet"}
+          . If it cannot be had, this says why, and the paper can be read from its file instead.
+        </p>
+      )}
       <Field id={`${id}-budget`} label="Most it may spend, in dollars" problem={problems.budget}>
         <Input
           id={`${id}-budget`}
@@ -112,7 +121,17 @@ function ReadForm({ agent, reading, working, jobs }: Shared & { jobs: JobsData }
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={working || attempt.busy || finished}>
           <BookOpen />
-          {attempt.busy ? "Starting…" : working ? "Reading…" : carrying ? "Carry on reading" : "Read the paper"}
+          {attempt.busy
+            ? "Starting…"
+            : working
+              ? reading.fetchable
+                ? "Fetching…"
+                : "Reading…"
+              : carrying
+                ? "Carry on reading"
+                : reading.fetchable
+                  ? "Fetch and read the paper"
+                  : "Read the paper"}
         </Button>
         {finished && !working && (
           <span className="text-xs text-muted-foreground">The paper has been read. Clear the reading to read it again.</span>
@@ -311,12 +330,8 @@ export function ReadingSection({
   jobs,
   onCleared,
 }: Shared & { jobs: JobsData; onCleared: (reading: PaperAgentReading) => void }) {
-  if (!reading.has_paper) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Upload the paper&apos;s file to have it read. Only a file is read for now: a DOI or a link is not fetched.
-      </p>
-    );
+  if (!reading.has_paper && !reading.fetchable) {
+    return <p className="text-sm text-muted-foreground">Upload the paper&apos;s file to have it read.</p>;
   }
 
   return (

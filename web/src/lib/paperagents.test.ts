@@ -8,6 +8,7 @@ import {
   describeLeftOut,
   describeLength,
   describePaper,
+  describeSource,
   describeReading,
   describeSteps,
   doiOf,
@@ -205,6 +206,15 @@ describe("an agent in words", () => {
     expect(paperLink({ kind: "url", url: "javascript:alert(1)" })).toBeNull();
   });
 
+  it("says where the text of the paper was fetched from", () => {
+    const source = { kind: "europepmc", label: "Europe PMC, PMC3258128", url: "https://europepmc.org/article/MED/21937511" } as const;
+
+    expect(describeSource(source)).toBe("Fetched from Europe PMC, PMC3258128");
+    expect(describeSource({ kind: "link", label: "The page at example.org", url: "https://example.org/p" })).toBe(
+      "Fetched from The page at example.org",
+    );
+  });
+
   it("says how far it has got", () => {
     expect(describeSteps(agent())).toBe("Nothing has been done to it yet");
     expect(describeSteps(agent({ reading: "done", repository: "done" }))).toBe("2 of 5 steps done");
@@ -237,6 +247,8 @@ function reading(changes: Partial<PaperAgentReading> = {}): PaperAgentReading {
     id: "cells",
     has_paper: true,
     has_text: true,
+    fetchable: false,
+    source: null,
     job: null,
     chunks: 12,
     read: 9,
@@ -280,6 +292,9 @@ describe("the file of a paper", () => {
 
     expect(paperFile({ kind: "file", file })).toEqual(file);
     expect(paperFile({ kind: "doi", doi: "10.1/a", file })).toEqual(file);
+    // The file that was fetched says where from
+    const fetched = { ...file, source: { kind: "europepmc", label: "Europe PMC, PMC1", url: "https://europepmc.org/article/PMC/PMC1" } } as const;
+    expect(paperFile({ kind: "doi", doi: "10.1/a", file: fetched })?.source?.kind).toBe("europepmc");
     expect(paperFile({ kind: "url", url: "https://example.org/p", file: null })).toBeNull();
   });
 
