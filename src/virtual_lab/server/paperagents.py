@@ -6,11 +6,14 @@ known, and how far each step of making it has got. The steps are added one at a 
 which is a job that keeps what it finds in the agent's directory.
 
 The paper is how an agent is told from others: one paper is one agent, so a DOI, a link, or a file already in an agent
-is refused, with the agent it is in. A paper that is a DOI or a link can have its file put beside it too, since the text
-that is read is the file's, and nothing here fetches a paper.
+is refused, with the agent it is in. What is read is the text of a file, which a paper that is a DOI or a link can have
+put beside it, or, if it has none when it is read, gets by the job that reads it fetching the text: a DOI from Europe
+PMC, which holds the papers that are open access, and a link from the public internet. The text that is fetched is kept
+as the file, with where it came from, so that the paper is the same to read again and is not fetched twice.
 """
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -32,6 +35,7 @@ from virtual_lab.constants import (
 )
 from virtual_lab.environment import StoppedError
 from virtual_lab.llm import ModelSource
+from virtual_lab.paperagents import fetch as fetching
 from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_structure
 from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
@@ -52,6 +56,7 @@ from virtual_lab.server.papers import (
 )
 from virtual_lab.server.workspace import Workspace, claim_directory, has_control_character, read_json
 from virtual_lab.utils import write_atomically
+from virtual_lab.webpages import is_public_address
 
 # What an agent is, and where the paper uploaded to it is kept
 AGENT_FILE = "agent.json"
@@ -66,6 +71,7 @@ READING_JOB = "paperagent-reading"
 MAX_AGENTS = 200
 MAX_URL_CHARS = 2000
 MAX_DOI_CHARS = 200
+MAX_SOURCE_CHARS = 300
 
 # The steps of making an agent, in order, and what each can be. Only pending is used until the steps exist
 STEPS = ("reading", "repository", "environment", "data", "tools")
@@ -84,6 +90,10 @@ PAPERS = {
 DOI = re.compile(r"10\.[0-9]{4,9}/\S+")
 DOI_PREFIX = re.compile(r"^(?:doi:\s*|https?://(?:dx\.)?doi\.org/)", re.IGNORECASE)
 DOI_HOSTS = ("doi.org", "dx.doi.org")
+# The endings of names that are for a network of one's own, which a paper is not at
+LOCAL_NAME_ENDINGS = (".local", ".localhost", ".localdomain", ".internal", ".intranet", ".lan", ".home.arpa")
+# Where a paper that was fetched came from, which is what its source says
+SOURCE_KINDS = ("europepmc", "link")
 REPO_SEGMENT = re.compile(r"[A-Za-z0-9_.-]+")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -145,6 +155,19 @@ def check_url(text: Any) -> str:
     return urlunsplit((scheme, netloc, path, query, ""))
 
 
+def is_local_host(host: str) -> bool:
+    """Whether a host is plainly this machine's or a private network's: an address that is not on the public internet,
+    a name with no dot in it, or one that ends as the names of a network of one's own do. A name that leads to such an
+    address by the DNS is not told by this, and is refused when the page is fetched."""
+    name = host.rstrip(".")
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return "." not in name or name.endswith(LOCAL_NAME_ENDINGS)
+
+    return not is_public_address(name)
+
+
 def check_repo(text: Any) -> str:
     """The address of a paper's code as it is kept: https, at a host that holds code, to the project and no further.
 
@@ -204,6 +227,13 @@ def check_paper(paper: dict[str, Any]) -> dict[str, Any]:
     host = urlsplit(url).hostname or ""
     if host in DOI_HOSTS:
         return {"kind": "doi", "doi": check_doi(unquote(urlsplit(url).path.lstrip("/")))}
+    if is_local_host(host):
+        raise ApiError(
+            422,
+            "invalid",
+            f"A link to a paper is to a site on the public internet, which {host} is not. "
+            "Upload the paper's file in place of a link to it",
+        )
 
     return {"kind": "url", "url": url}
 
@@ -246,6 +276,30 @@ def passes(check: Callable[[Any], Any], value: Any) -> bool:
     return True
 
 
+def is_source(value: Any) -> bool:
+    """Whether what a paper's file says of where it came from, which is nothing for a file that was uploaded, is a
+    source: what kind it is, how to say it, and the link to it."""
+    return value is None or (
+        isinstance(value, dict)
+        and value.get("kind") in SOURCE_KINDS
+        and isinstance(label := value.get("label"), str)
+        and 0 < len(label) <= MAX_SOURCE_CHARS
+        and passes(check_url, value.get("url"))
+    )
+
+
+def kept_source(source: dict[str, str], asked: str) -> dict[str, str]:
+    """Where fetched text came from, as an agent's record can hold it.
+
+    The address that a page was at after its redirects, or the one Europe PMC gives, may be one that is not kept (a site
+    can send a link on to one that is too long), and the address that was asked for is given in its place, so that the
+    agent is never one that cannot be read back.
+    """
+    source = {**source, "label": source["label"][:MAX_SOURCE_CHARS]}
+
+    return source if is_source(source) else {**source, "url": asked}
+
+
 def is_agent(value: Any) -> bool:
     """Whether what an agent's file holds is an agent's: a title, when it was made, and which paper it is of, with the
     DOI, link, and address of code that a page is given made sure of again, since the file may have been edited."""
@@ -271,6 +325,7 @@ def is_agent(value: Any) -> bool:
         and not isinstance(file["bytes"], bool)
         and isinstance(file.get("sha256"), str)
         and SHA256.fullmatch(file["sha256"])
+        and is_source(file.get("source"))
     ):
         return False
     repo = value.get("repo")
@@ -597,6 +652,8 @@ class PaperAgents:
         return {
             "id": agent_id,
             "has_paper": file is not None,
+            "fetchable": file is None and agent["paper"]["kind"] != "file",
+            "source": file.get("source") if file is not None else None,
             "has_text": (directory / PAPER_DIR / kept_reading.TEXT_FILE).is_file(),
             "job": job.snapshot() if job is not None else None,
             **kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with()),
@@ -637,35 +694,32 @@ class PaperAgents:
         :param max_cost: The most the reading may spend, in USD, which is always said.
         :param retry_failed: Whether to read again the chunks that an earlier reading could not.
         :raises ApiError: If there is no agent with this id, the limit is not an amount, a key or a price is missing,
-            the paper has no file, it has been read, or it is being read.
+            the paper is a file that was not uploaded, it has been read, or it is being read.
         """
         directory, agent = self.lookup(agent_id)
         budget = check_budget(max_cost, "The most it may spend", required=True)
         again = check_flag(retry_failed, "retry_failed")
         model = self.usable_model()
         file = agent["paper"].get("file")
-        if file is None:
-            raise ApiError(
-                422,
-                "no_file",
-                "Upload the paper's file first. Only a file is read: a DOI or a link is not fetched.",
-            )
-        earlier = kept_reading.describe(directory, file["sha256"], made_with())
-        if earlier["complete"] and not (again and earlier["failed"]):
-            raise ApiError(409, "done", "The paper has been read. Clear the reading to read it again.")
+        if file is None and agent["paper"]["kind"] == "file":
+            raise ApiError(422, "no_file", "Upload the paper's file first.")
+        if file is not None:
+            earlier = kept_reading.describe(directory, file["sha256"], made_with())
+            if earlier["complete"] and not (again and earlier["failed"]):
+                raise ApiError(409, "done", "The paper has been read. Clear the reading to read it again.")
 
         work = self.reader(agent_id, file, model, budget, again)
         with self._lock:
             # Looked for again, as an agent that was deleted, or whose paper was changed, while the checks above were
             # made has nothing to read, or another paper
             _, current = self.lookup(agent_id)
-            if (current["paper"].get("file") or {}).get("sha256") != file["sha256"]:
+            if (current["paper"].get("file") or {}).get("sha256") != (file["sha256"] if file is not None else None):
                 raise ApiError(409, "changed", "The paper was changed. Read it again")
             try:
                 return self.jobs.start(
                     READING_JOB,
                     agent_id,
-                    f"Reading the paper: {agent['title']}",
+                    f"{'Reading' if file is not None else 'Fetching and reading'} the paper: {agent['title']}",
                     work,
                     exclusive=f"paperagent:{agent_id}",
                 )
@@ -675,15 +729,17 @@ class PaperAgents:
                 ) from error
 
     def reader(
-        self, agent_id: str, file: dict[str, Any], model: str, max_cost: float, retry_failed: bool
+        self, agent_id: str, file: dict[str, Any] | None, model: str, max_cost: float, retry_failed: bool
     ) -> Callable[[Job], str | None]:
-        """What a job does to read a paper: reads the file, reads each chunk of its text, and keeps what it shows."""
+        """What a job does to read a paper: gets its text if there is no file, reads the file, reads each chunk of its
+        text, and keeps what it shows."""
 
         def work(job: Job) -> str | None:
             directory = self.workspace.paperagents_dir / agent_id
             state: dict[str, Any] = {"run": None, "error": False}
             try:
-                return self.read_paper(job, directory, file, model, max_cost, retry_failed, state)
+                kept = file if file is not None else self.fetch_paper(job, agent_id)
+                return self.read_paper(job, directory, kept, model, max_cost, retry_failed, state)
             except StoppedError:
                 raise
             except BaseException:
@@ -693,6 +749,53 @@ class PaperAgents:
                 self.settle(agent_id, directory, state["run"], state["error"])
 
         return work
+
+    def fetch_paper(self, job: Job, agent_id: str) -> dict[str, Any]:
+        """Gets the text of a paper that is a DOI or a link, and keeps it as the agent's file, with where it came from.
+
+        :raises PaperUnavailableError: If the paper cannot be had, which says why and asks for its file.
+        :return: The file, as the agent's record has it.
+        """
+        job.update("Fetching the paper")
+        _, agent = self.lookup(agent_id)
+        paper = agent["paper"]
+        if paper["kind"] == "doi":
+            asked = f"https://doi.org/{paper['doi']}"
+            fetched = fetching.europe_pmc_paper(paper["doi"])
+        else:
+            asked = paper["url"]
+            fetched = fetching.linked_paper(paper["url"])
+        if job.stop.is_set():
+            raise StoppedError("Stopped before any of the paper was read.")
+        content = fetched.text.encode("utf-8")
+        if len(content) > self.max_upload_bytes:
+            raise fetching.PaperUnavailableError(
+                f"The text of the paper is {describe_size(len(content))}, which is more than the "
+                f"{describe_size(self.max_upload_bytes)} that is read. {fetching.UPLOAD}"
+            )
+        file = {
+            "name": fetched.name,
+            "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "source": kept_source(fetched.source, asked),
+        }
+        with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
+            temporary = Path(scratch) / "fetched"
+            temporary.write_bytes(content)
+            with self._lock:
+                directory, agent = self.lookup(agent_id)
+                kept = {**agent["paper"], "file": file}
+                try:
+                    self.check_unique(kept, besides=agent_id)
+                except ApiError as error:
+                    raise fetching.PaperUnavailableError(
+                        f"{error.message} Open that PaperAgent in place of making another."
+                    ) from None
+                self.swap_paper(directory, self.unread(agent, kept), temporary, file["name"])
+                kept_reading.forget(directory)
+        job.log(f"Fetched {describe_size(len(content))} of text from {fetched.source['label']}")
+
+        return file
 
     def read_paper(
         self,

@@ -32,6 +32,7 @@ import {
   agentAddress,
   AGENTS_ADDRESS,
   describePaper,
+  describeSource,
   describeSteps,
   existingOf,
   isLink,
@@ -50,7 +51,7 @@ import {
 } from "@/lib/paperagents";
 import { uploadProblem } from "@/lib/papers";
 import { tidy } from "@/lib/scientists";
-import type { PaperAgent, PaperAgentReading, PaperAgentsList } from "@/lib/types";
+import type { PaperAgent, PaperAgentReading, PaperAgentsList, PaperAgentSource } from "@/lib/types";
 import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
 import { usePaperAgent, usePaperAgentReading, usePaperAgentsList } from "@/lib/use-paperagents";
@@ -238,7 +239,26 @@ function Details({ agent, list, onChanged }: Shared) {
   );
 }
 
-// The paper of an agent whose paper is a file: what has been uploaded, and the way to upload it again or take it away
+// Where the text of a paper was fetched from, with the way to see it there
+function Source({ source }: { source: PaperAgentSource }) {
+  return (
+    <p className="break-words text-xs text-muted-foreground" data-testid="paper-agent-source">
+      {isLink(source.url) ? (
+        <a href={source.url} target="_blank" rel="noreferrer noopener" className={cn("inline-flex items-center gap-1", LINK)}>
+          {describeSource(source)}
+          <ExternalLink className="size-3" aria-hidden />
+          <span className="sr-only">(opens in a new tab)</span>
+        </a>
+      ) : (
+        describeSource(source)
+      )}
+      . It is kept as the paper, and is not fetched again.
+    </p>
+  );
+}
+
+// The file the paper is read from: what has been uploaded, or what was fetched and from where, and the way to upload it
+// or take it away
 function PaperFile({ agent, list, working, onChanged }: Shared) {
   const { report } = useServer();
   const id = useId();
@@ -296,20 +316,27 @@ function PaperFile({ agent, list, working, onChanged }: Shared) {
   return (
     <div className="flex flex-col gap-3">
       {file === null ? (
-        <p className="text-sm text-muted-foreground">No paper is uploaded to this agent yet.</p>
+        <p className="text-sm text-muted-foreground">
+          {agent.paper.kind === "file"
+            ? "No paper is uploaded to this agent yet."
+            : "No file is kept yet. The text of the paper is fetched when it is read, and kept here."}
+        </p>
       ) : (
-        <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5" data-testid="paper-agent-file">
-          <code className="min-w-0 flex-1 break-all text-sm">{file.name}</code>
-          <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(file.bytes)}</span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => void remove()}
-            disabled={working || attempt.busy || sending !== null}
-            aria-label={`Remove ${file.name}`}
-          >
-            <Trash2 />
-          </Button>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5" data-testid="paper-agent-file">
+            <code className="min-w-0 flex-1 break-all text-sm">{file.name}</code>
+            <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(file.bytes)}</span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void remove()}
+              disabled={working || attempt.busy || sending !== null}
+              aria-label={`Remove ${file.name}`}
+            >
+              <Trash2 />
+            </Button>
+          </div>
+          {file.source != null && <Source source={file.source} />}
         </div>
       )}
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}
@@ -388,7 +415,7 @@ function Agent({
         intro={
           own
             ? "The paper of this agent is a file, which is uploaded here."
-            : "The paper is read from a file. A DOI or a link is not fetched yet, so upload the file of the paper here to have it read."
+            : "The paper is read from a file. When a DOI or a link is read, its text is fetched and kept here as the file. A paper that cannot be fetched is read from a file uploaded here."
         }
       >
         <PaperFile

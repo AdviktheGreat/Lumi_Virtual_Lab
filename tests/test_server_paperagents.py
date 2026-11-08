@@ -198,6 +198,42 @@ class TestPapers:
         }
 
     @pytest.mark.parametrize(
+        "link",
+        [
+            "http://localhost/paper",
+            "http://LOCALHOST:8000/paper",
+            "http://127.0.0.1/paper",
+            "http://127.1.2.3:8765/paper",
+            "http://10.0.0.5/paper",
+            "http://172.16.4.1/paper",
+            "http://192.168.1.20/paper",
+            "http://169.254.169.254/latest/meta-data",
+            "http://0.0.0.0/paper",
+            "http://[::1]/paper",
+            "http://[fe80::1]/paper",
+            "http://[::ffff:127.0.0.1]/paper",
+            "http://2130706433/paper",
+            "http://intranet/paper",
+            "http://nas.local/paper",
+            "http://paper.internal/paper",
+            "http://printer.lan/paper",
+            "http://localhost./paper",
+        ],
+    )
+    def test_a_link_to_this_machine_or_a_private_network_is_refused_and_the_file_is_asked_for(self, link: str) -> None:
+        error = refused(check_paper, {"kind": "url", "url": link})
+
+        assert (error.status, error.code) == (422, "invalid")
+        assert "public internet" in error.message and "Upload the paper's file" in error.message
+
+    @pytest.mark.parametrize(
+        "link",
+        ["https://example.org/paper", "https://www.biorxiv.org/content/10.1101/2020.01.01v1", "http://93.184.216.34/p"],
+    )
+    def test_a_link_to_a_site_on_the_public_internet_is_kept(self, link: str) -> None:
+        assert check_paper({"kind": "url", "url": link})["kind"] == "url"
+
+    @pytest.mark.parametrize(
         "paper",
         [
             {},
@@ -405,6 +441,13 @@ class TestListing:
             {"paper": {"kind": "doi", "doi": "not a doi"}},
             {"paper": {"kind": "file", "file": {"name": "../x.txt", "bytes": 1, "sha256": "0" * 64}}},
             {"paper": {"kind": "file", "file": {"name": "a.txt", "bytes": True, "sha256": "0" * 64}}},
+            {
+                "paper": {
+                    "kind": "doi",
+                    "doi": DOI,
+                    "file": {"name": "a.txt", "bytes": 1, "sha256": "0" * 64, "source": 4},
+                }
+            },
             {"repo": {"url": "javascript:alert(1)"}},
             {"repo": {"url": "https://example.org/owner/name"}},
             {"repo": {"url": 4}},
@@ -731,6 +774,12 @@ class TestTheApi:
             client.post("/api/paperagents", json={"paper": {"kind": "doi", "doi": DOI, "extra": 1}}).status_code == 422
         )
         assert client.post("/api/paperagents", json={}).status_code == 422
+        assert client.get("/api/paperagents").json()["agents"] == []
+
+    def test_a_link_to_a_private_host_is_refused(self, client: TestClient) -> None:
+        refused = client.post("/api/paperagents", json={"paper": {"kind": "url", "url": "http://192.168.0.7/paper"}})
+
+        assert refused.status_code == 422 and "public internet" in refused.json()["error"]["message"]
         assert client.get("/api/paperagents").json()["agents"] == []
 
     def test_the_title_and_the_code_are_said_again(self, client: TestClient) -> None:

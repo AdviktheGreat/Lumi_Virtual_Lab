@@ -790,15 +790,26 @@ export interface NewPaperRun {
   source: PaperSource;
 }
 
-// The file of a paper that was uploaded to an agent
+// Where the text of a paper was fetched from, which a file that was uploaded does not say: Europe PMC, or a link
+export interface PaperAgentSource {
+  kind: "europepmc" | "link";
+  // How to say it, such as "Europe PMC, PMC3258128"
+  label: string;
+  // Where to see it
+  url: string;
+}
+
+// The file of a paper that was uploaded to an agent, or the text of it that was fetched, which says where from
 export interface PaperAgentFile {
   name: string;
   bytes: number;
   sha256: string;
+  source?: PaperAgentSource | null;
 }
 
 // Which paper a PaperAgent is of: a DOI, a link, or a file that is uploaded to it, which has not been until it says so.
-// A DOI or a link may have the file beside it, which is what is read, and has none until one is uploaded.
+// A DOI or a link may have the file beside it, which is what is read: uploaded, or the text that was fetched when the paper
+// was first read. It has none until one of those.
 export type PaperAgentPaper =
   | { kind: "doi"; doi: string; file?: PaperAgentFile | null }
   | { kind: "url"; url: string; file?: PaperAgentFile | null }
@@ -887,9 +898,13 @@ export interface ReadLicense extends ReadFact {
 // What has been read of an agent's paper, as far as it has been: how far it has got, what it cost, and what it found
 export interface PaperAgentReading {
   id: string;
-  // Whether a file is uploaded, which is all that is read, and whether the text that was read of it is kept
+  // Whether the paper has a file, which is what is read, and whether the text that was read of it is kept
   has_paper: boolean;
   has_text: boolean;
+  // Whether the paper is a DOI or a link that has no file, so that reading it fetches its text first
+  fetchable: boolean;
+  // Where the text was fetched from, if the file is that
+  source: PaperAgentSource | null;
   // The reading that is at work, if one is
   job: Job | null;
   // How many chunks the paper is cut into, or null if it has not been read

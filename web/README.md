@@ -207,14 +207,19 @@ run's `id` is looked for first, then an agent's, then the part.
 
 An agent's page (`/papers?agent=...`, whose link back goes to the agents, `components/paper-agent.tsx`) shows its paper (a DOI
 or a link opens in a new tab), its code, and its five steps with how far each has got. Every agent has its paper's file uploaded
-there, which is what is read (a DOI or a link is not fetched yet, so the file goes beside it), with how much has been sent and a
-way to cancel; a file that is not a paper or is too big is said so before it is sent, one that another agent has is said so with
-a link to that agent, and the file may be uploaded again to replace it, or removed. The title and where the code is can be said
+there, which is what is read: one that is uploaded, with how much has been sent and a way to cancel, or, for a DOI or a link
+that has none, the text that was fetched when it was first read, with where it came from and a link there (`Source`). A file
+that is not a paper or is too big is said so before it is sent, one that another agent has is said so with a link to that
+agent, and the file may be uploaded again to replace it (which takes the source away), or removed (which leaves a DOI or a
+link to be fetched again). The title and where the code is can be said
 again, and the agent deleted after asking, with the paper that was uploaded to it. `src/lib/paperagents.ts` checks what is
 written before it is sent, as the server does, and keeps the words the page uses for the steps and their states.
 
 The Reading part of the page (`components/paper-agent-reading.tsx`) reads the file. It asks for the most the reading may spend,
-which is always said (the form is not there until a file is), and a reading that stopped carries on from where it was; the
+which is always said (the form is not there until there is a file to read, or, for a DOI or a link, something to fetch it
+from: the button then says "Fetch and read the paper", and the form says where the text is fetched from and that fetching
+costs nothing). A paper that cannot be fetched is said so by the job, with why and that its file can be uploaded instead,
+and can be asked for again. A reading that stopped carries on from where it was; the
 parts that could not be read are read again only if that is asked for, and a paper that has been read is not read again until
 its reading is cleared, after asking. The reading is a job (`paperagent-reading`), so its progress and the way to stop it are
 at the top of the agent and in the setup's jobs; nothing else is done to the agent while it goes on, and the page looks at

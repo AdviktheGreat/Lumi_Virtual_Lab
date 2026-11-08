@@ -41,6 +41,9 @@ from a script: no key is needed, and every run says the same. What it says depen
   github.com is a link to code, "only tested on mouse" is a limitation and a species, each with its sentence as its
   quote. "fabricate:" in a chunk adds a claim whose quote is not in the paper, which is thrown away, "slow:" makes
   reading it take a while, "refuse:" has the model refuse it, and "fail:" makes it fail.
+- The text of a PaperAgent whose paper is a DOI or a link is given by stand-ins for Europe PMC and the web, which give a
+  paper that says what the one above does, under the DOI or the link. "closed" in a DOI or a link makes it a paper that
+  cannot be had, as one is that is not open access or is behind a login, and "slow" makes it take a while to be got.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -96,6 +99,7 @@ from virtual_lab.constants import MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab import openrouter  # noqa: E402
+from virtual_lab.paperagents import fetch as fetching  # noqa: E402
 from virtual_lab.paperagents.reading import (  # noqa: E402
     ChunkReading,
     ReadClaim,
@@ -504,6 +508,54 @@ def chunk_reading(text: str) -> ChunkReading:
     )
 
 
+# How long a paper that is "slow" takes to be fetched, which is long enough for the work to be followed and stopped
+FETCH_DELAY = 2.0
+
+# What a paper that is fetched says, which is what the scripted model reads a fact from; the title is where it is from,
+# so that no two papers fetched are the same file
+FETCHED_PAPER = (
+    "# CellMapper: mapping cell types ({where})\n\n## Results\n\n"
+    "CellMapper reached an AUROC of 0.93 on held-out mouse hippocampus nuclei, higher than the 0.88 of Seurat label "
+    "transfer.\n\n## Methods\n\nClusters were found with Seurat v4.3 after the reads were aligned.\n\n"
+    "## Data availability\n\nRaw sequencing data are available in GEO under accession GSE123456.\n\n"
+    "## Code availability\n\nCode is available at https://github.com/example/cellmapper under the MIT license."
+)
+
+
+def stand_in_europe_pmc(doi: str) -> fetching.FetchedPaper:
+    """The paper Europe PMC gives for a DOI, or why it cannot be had."""
+    if "closed" in doi:
+        raise fetching.PaperUnavailableError(
+            f"The paper {doi} is not open access, so Europe PMC does not give out its full text. {fetching.UPLOAD}"
+        )
+    if "slow" in doi:
+        time.sleep(FETCH_DELAY)
+
+    return fetching.FetchedPaper(
+        FETCHED_PAPER.format(where=doi),
+        "europepmc-pmc7000001.txt",
+        {"kind": "europepmc", "label": "Europe PMC, PMC7000001", "url": "https://europepmc.org/article/PMC/PMC7000001"},
+    )
+
+
+def stand_in_linked_paper(url: str) -> fetching.FetchedPaper:
+    """The paper a link leads to, or why it cannot be had."""
+    if "closed" in url:
+        raise fetching.PaperUnavailableError(
+            "The page holds 84 characters of text, which is too little to be a paper. It may ask for a login or a "
+            f"payment, or be made by scripts that are not run here. {fetching.UPLOAD}"
+        )
+    if "slow" in url:
+        time.sleep(FETCH_DELAY)
+    host = url.split("//", 1)[-1].split("/", 1)[0]
+
+    return fetching.FetchedPaper(
+        FETCHED_PAPER.format(where=url),
+        "linked-paper.txt",
+        {"kind": "link", "label": f"The page at {host}", "url": url},
+    )
+
+
 def function_named(kwargs: dict[str, Any]) -> str | None:
     """The name of the function a request asks the model to write, if it asks for one."""
     system = next((message["content"] for message in kwargs["messages"] if message["role"] == "system"), "")
@@ -888,6 +940,8 @@ def main() -> None:
     options = parser.parse_args()
 
     server_app.make_pdf = stand_in_pdf
+    fetching.europe_pmc_paper = stand_in_europe_pmc
+    fetching.linked_paper = stand_in_linked_paper
     openrouter.fetch_models = stand_in_openrouter_models
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened

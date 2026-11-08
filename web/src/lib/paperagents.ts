@@ -13,6 +13,7 @@ import type {
   PaperAgentPaperKind,
   PaperAgentReadOptions,
   PaperAgentReading,
+  PaperAgentSource,
   PaperAgentStatus,
   PaperAgentStep,
   ReadAnchor,
@@ -176,6 +177,11 @@ export function describePaper(paper: PaperAgentPaper): string {
   if (paper.kind === "url") return paper.url;
 
   return paper.file === null ? "A file that has not been uploaded yet" : `${paper.file.name}, ${formatBytes(paper.file.bytes)}`;
+}
+
+// Where the text of a paper was fetched from, in a few words
+export function describeSource(source: PaperAgentSource): string {
+  return `Fetched from ${source.label}`;
 }
 
 // Where the paper can be opened, if it is anywhere. A link is only given if it leads somewhere by http or https, as the
