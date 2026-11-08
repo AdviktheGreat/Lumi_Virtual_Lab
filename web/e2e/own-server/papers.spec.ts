@@ -15,9 +15,13 @@ const TASK = "RNA-seq differential expression with DESeq2";
 
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
+  const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
+  for (const job of jobs.filter((job: { kind: string; state: string }) => job.kind === "paperagent-reading" && job.state === "running")) {
+    await page.request.post(`/api/setup/jobs/${job.id}/stop`);
+  }
   const { agents } = await (await page.request.get("/api/paperagents")).json();
   for (const agent of agents) {
-    expect((await page.request.delete(`/api/paperagents/${agent.id}`)).status()).toBe(200);
+    await expect.poll(async () => (await page.request.delete(`/api/paperagents/${agent.id}`)).status(), { timeout: 20_000 }).toBe(200);
   }
   const { runs } = await (await page.request.get("/api/papers")).json();
   for (const run of runs) {
@@ -142,7 +146,9 @@ test("makes an agent of a DOI, with where its code is, which is then listed and 
   await expect(steps).toHaveCount(5);
   await expect(steps.first()).toContainText("Read the paper");
   await expect(steps.first()).toContainText("Not started");
-  await expect(page.getByText("No paper is uploaded to this agent yet.")).toHaveCount(0);
+  // A DOI is not fetched yet, so the file of the paper is what it is read from, which is uploaded beside it
+  await expect(page.getByRole("heading", { name: "Paper file", level: 2 })).toBeVisible();
+  await expect(page.getByText("No paper is uploaded to this agent yet.")).toBeVisible();
   expect(await accessibilityProblems(page)).toEqual([]);
 
   await page.getByRole("link", { name: "All agents" }).click();
@@ -581,5 +587,276 @@ test("has nothing wrong that axe can find, in the runs, or in a run that was rea
   await expect(page.getByTestId("paper-function").first()).toBeVisible();
   await page.getByRole("button", { name: /^Show the code of / }).first().click();
   await expect(page.getByLabel(/^Code of /)).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+// A paper of a few sentences, each of which the scripted model reads a fact from, and of one chunk
+const RESULT = "CellMapper reached an AUROC of 0.93 on held-out mouse hippocampus nuclei, higher than the 0.88 of Seurat label transfer.";
+const METHOD = "Clusters were found with Seurat v4.3 after the reads were aligned.";
+const DATA = "Raw sequencing data are available in GEO under accession GSE123456.";
+const CODE = "Code is available at https://github.com/example/cellmapper under the MIT license.";
+const LIMIT = "CellMapper was only tested on mouse brain tissue, and it assumes at least 500 nuclei in each sample.";
+const CELLS = [
+  "CellMapper: mapping cell types",
+  "Abstract",
+  "fabricate: We present CellMapper, a method for mapping cell types.",
+  "Results",
+  RESULT,
+  "Methods",
+  METHOD,
+  "Data availability",
+  DATA,
+  "Code availability",
+  CODE,
+  "Limitations",
+  LIMIT,
+  "References",
+  "1. Doe J. et al. A method for cells. Nature 2020.",
+].join("\n\n");
+
+// A paper of a few chunks, each a paragraph that is too long to share a chunk with another, and says what to do to read it
+function chunked(chunks: number, mark: string): string {
+  const filler = "The reads were aligned to the genome and counted for each gene in each of the samples. ".repeat(40);
+
+  return Array.from({ length: chunks }, (_, number) => `${mark} Part ${number + 1}. ${filler}`).join("\n\n");
+}
+
+async function sendPaper(page: Page, id: string, name: string, text: string) {
+  const sent = await page.request.post(`/api/paperagents/${id}/paper?name=${encodeURIComponent(name)}`, {
+    data: Buffer.from(text),
+    headers: { "Content-Type": "application/octet-stream" },
+  });
+  expect(sent.status()).toBe(201);
+}
+
+const reading = (page: Page) => form(page, "Read the paper");
+const status = (page: Page) => page.getByRole("region", { name: "What is being done" });
+const summary = (page: Page) => page.getByTestId("paper-reading-summary");
+
+test("reads the paper of an agent with a budget, and shows what was found with the paper's own words", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Cell mapper", paper: { kind: "file" } });
+  await openAgent(page, id, "Cell mapper");
+  await expect(page.getByText("Upload the paper's file to have it read.")).toBeVisible();
+  await expect(reading(page)).toHaveCount(0);
+
+  await page.getByLabel("Upload the paper").setInputFiles({ name: "cells.txt", mimeType: "text/plain", buffer: Buffer.from(CELLS) });
+  await expect(page.getByTestId("paper-agent-file")).toContainText("cells.txt");
+  await expect(reading(page)).toBeVisible();
+  await expect(summary(page)).toHaveCount(0);
+
+  await reading(page).getByLabel("Most it may spend, in dollars").fill("2");
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+  await expect(status(page)).toContainText("Reading the paper: Cell mapper");
+  await expect(status(page)).toContainText("Read 1 of 1 chunks");
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Done");
+
+  // Each fact is with the words of the paper, which are in it
+  const claims = page.getByRole("list", { name: "What the authors report" });
+  await expect(claims.getByTestId("paper-fact")).toHaveCount(1);
+  await expect(claims).toContainText("0.93");
+  await expect(claims).toContainText("A number");
+  await expect(claims.getByRole("blockquote")).toHaveText(RESULT);
+  await expect(claims).toContainText("Results");
+  await expect(page.getByRole("list", { name: "Software" })).toContainText("Seurat");
+  await expect(page.getByRole("list", { name: "Software" })).toContainText("Version 4.3");
+  await expect(page.getByRole("list", { name: "Data used" })).toContainText("GSE123456");
+  await expect(page.getByRole("list", { name: "What the method was tested on" })).toContainText("Species");
+  await expect(page.getByRole("list", { name: "Where the authors say it falls short" }).getByRole("blockquote")).toHaveText(LIMIT);
+  const link = page.getByRole("list", { name: "Links" }).getByRole("link", { name: /github\.com\/example\/cellmapper/ });
+  await expect(link).toHaveAttribute("href", "https://github.com/example/cellmapper");
+  await expect(link).toHaveAttribute("rel", /noopener/);
+
+  // What the model gave that the paper does not bear out is said to have been left out, and is not shown
+  await expect(page.getByText("1 fact the model gave was left out, because the paper does not bear it out.")).toBeVisible();
+  await expect(page.getByText("This method works on every species.")).toHaveCount(0);
+  await expect(page.getByText(/a draft that nobody has checked/)).toBeVisible();
+
+  // The place of a fact is shown in the paper, with what is around it
+  const show = claims.getByRole("button", { name: /^Show in the paper: CellMapper reached/ });
+  await expect(show).toHaveAttribute("aria-expanded", "false");
+  await show.click();
+  const shown = claims.getByRole("group", { name: "The paper at this place" });
+  await expect(shown.locator("mark")).toHaveText(RESULT);
+  await expect(shown).toContainText("Results");
+  const hide = claims.getByRole("button", { name: /^Hide: CellMapper reached/ });
+  await expect(hide).toHaveAttribute("aria-expanded", "true");
+  await expect(hide).toHaveAttribute("aria-controls", (await shown.getAttribute("id")) ?? "none");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await claims.getByRole("button", { name: /^Hide: / }).click();
+  await expect(shown).toHaveCount(0);
+
+  // A paper that has been read through is not read again until the reading is cleared
+  await expect(reading(page).getByRole("button", { name: "Read the paper" })).toBeDisabled();
+  await expect(reading(page)).toContainText("The paper has been read. Clear the reading to read it again.");
+  const kept = await (await page.request.get(`/api/paperagents/${id}/reading`)).json();
+  expect(kept).toMatchObject({ chunks: 1, read: 1, complete: true });
+  expect(kept.claims).toHaveLength(1);
+
+  await page.getByRole("button", { name: "Clear the reading" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Clear the reading of Cell mapper?" });
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  await expect(claims).toBeVisible();
+  await page.getByRole("button", { name: "Clear the reading" }).click();
+  await page.getByRole("alertdialog", { name: "Clear the reading of Cell mapper?" }).getByRole("button", { name: "Clear", exact: true }).click();
+
+  await expect(claims).toHaveCount(0);
+  await expect(summary(page)).toHaveCount(0);
+  await expect(reading(page).getByRole("button", { name: "Read the paper" })).toBeEnabled();
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Not started");
+  expect((await (await page.request.get(`/api/paperagents/${id}/reading`)).json()).chunks).toBeNull();
+  // The paper is kept
+  await expect(page.getByTestId("paper-agent-file")).toContainText("cells.txt");
+});
+
+test("reads the file that is beside a DOI, which a DOI alone is not", async ({ page }) => {
+  const id = await makeAgent(page, { title: "By DOI", paper: { kind: "doi", doi: "10.1000/beside" } });
+  await openAgent(page, id, "By DOI");
+  await expect(page.getByRole("heading", { name: "Paper file", level: 2 })).toBeVisible();
+  await expect(page.getByText("a DOI or a link is not fetched yet", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("Upload the paper's file to have it read.")).toBeVisible();
+
+  await page.getByLabel("Upload the paper").setInputFiles({ name: "beside.txt", mimeType: "text/plain", buffer: Buffer.from(CELLS) });
+  await expect(page.getByTestId("paper-agent-file")).toContainText("beside.txt");
+  await expect(page.getByText("DOI 10.1000/beside")).toBeVisible();
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).paper).toMatchObject({ kind: "doi", file: { name: "beside.txt" } });
+
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+  await expect(page.getByRole("list", { name: "What the authors report" })).toContainText("0.93");
+
+  // Taking the file away takes away what was read of it
+  await page.getByRole("button", { name: "Remove beside.txt" }).click();
+  await expect(page.getByText("Upload the paper's file to have it read.")).toBeVisible();
+  await expect(page.getByRole("list", { name: "What the authors report" })).toHaveCount(0);
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).paper.file ?? null).toBeNull();
+});
+
+test("follows the reading of a paper while it goes on, stops it, and carries on", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Slow cells", paper: { kind: "file" } });
+  await sendPaper(page, id, "slow.txt", chunked(3, "slow:"));
+  await openAgent(page, id, "Slow cells");
+
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+
+  await expect(status(page).getByRole("progressbar", { name: "Progress: Reading the paper: Slow cells" })).toBeVisible();
+  await expect(status(page).getByText("0 of 3 chunks")).toBeVisible();
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Going on");
+  // Nothing else is done to the agent while its paper is read
+  await expect(reading(page).getByRole("button", { name: "Reading…" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Remove slow.txt" })).toBeDisabled();
+  await expect(page.getByLabel("Upload it again")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Delete Slow cells" })).toBeDisabled();
+
+  await expect(status(page).getByText("1 of 3 chunks")).toBeVisible({ timeout: 10_000 });
+  await status(page).getByRole("button", { name: "Stop: Reading the paper: Slow cells" }).click();
+  await expect(status(page).getByRole("button", { name: "Stopping: Reading the paper: Slow cells" })).toBeDisabled();
+
+  await expect(status(page).getByRole("progressbar")).toHaveCount(0, { timeout: 15_000 });
+  await expect(status(page).getByText("Stopped", { exact: true })).toBeVisible();
+  // What was read is kept, and the rest is left for the next time
+  await expect(summary(page)).toContainText(/Read [12] of 3 chunks/);
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Not started");
+  const carry = reading(page).getByRole("button", { name: "Carry on reading" });
+  await expect(carry).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Delete Slow cells" })).toBeEnabled();
+
+  await carry.click();
+  await expect(summary(page)).toContainText("Read 3 of 3 chunks", { timeout: 20_000 });
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Done");
+  await expect(reading(page).getByRole("button", { name: "Read the paper" })).toBeDisabled();
+});
+
+test("stops reading at the limit, keeps what was read, and says what is wrong with a limit before it is sent", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Limited cells", paper: { kind: "file" } });
+  await sendPaper(page, id, "limited.txt", chunked(3, "plain:"));
+  await openAgent(page, id, "Limited cells");
+
+  // The limit is always said, and is an amount
+  await reading(page).getByLabel("Most it may spend, in dollars").fill("");
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(reading(page).getByText("Say the most it may spend.", { exact: true })).toBeVisible();
+  await reading(page).getByLabel("Most it may spend, in dollars").fill("lots");
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(reading(page).getByText(/is an amount in dollars/)).toBeVisible();
+  expect((await (await page.request.get(`/api/paperagents/${id}/reading`)).json()).chunks).toBeNull();
+
+  // A reading that costs more than the limit is stopped after the chunk that went over it
+  await reading(page).getByLabel("Most it may spend, in dollars").fill("0.0004");
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(status(page)).toContainText("Stopped at the limit", { timeout: 15_000 });
+  await expect(summary(page)).toContainText("Read 1 of 3 chunks");
+  await expect(reading(page).getByRole("button", { name: "Carry on reading" })).toBeEnabled();
+  expect((await (await page.request.get(`/api/paperagents/${id}/reading`)).json())).toMatchObject({ read: 1, complete: false });
+});
+
+test("says which parts of a paper could not be read, and reads them again only when asked", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Refused cells", paper: { kind: "file" } });
+  await sendPaper(page, id, "refused.txt", `${chunked(1, "plain:")}\n\n${chunked(1, "refuse:")}`);
+  await openAgent(page, id, "Refused cells");
+
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+
+  await expect(summary(page)).toContainText("1 could not be read", { timeout: 15_000 });
+  await expect(summary(page)).toContainText("Read 1 of 2 chunks");
+  const again = reading(page).getByLabel("Read again the parts that could not be read");
+  await expect(again).toBeVisible();
+  // The paper has been dealt with, so it is read again only if the parts that failed are asked for
+  await expect(reading(page).getByRole("button", { name: "Read the paper" })).toBeDisabled();
+  await again.check();
+  await expect(reading(page).getByRole("button", { name: "Read the paper" })).toBeEnabled();
+});
+
+test("says why a paper could not be read, and why reading was refused", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Failing cells", paper: { kind: "file" } });
+  await sendPaper(page, id, "failing.txt", chunked(1, "fail:"));
+  await openAgent(page, id, "Failing cells");
+
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+
+  await expect(status(page).getByRole("alert")).toContainText("The scripted model failed to read the paper", { timeout: 15_000 });
+  await expect(page.getByTestId("paper-agent-step").filter({ hasText: "Read the paper" })).toContainText("Failed");
+
+  await page.route("**/api/paperagents/*/reading", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { code: "missing_keys", message: "gpt-5.2 needs OPENAI_API_KEY, which is not set. Add it in the settings.", missing: ["OPENAI_API_KEY"] },
+          }),
+        })
+      : route.fallback(),
+  );
+  await reading(page).getByRole("button", { name: /^(Read the paper|Carry on reading)$/ }).click();
+
+  const problem = reading(page).getByRole("alert");
+  await expect(problem).toContainText("gpt-5.2 needs OPENAI_API_KEY");
+  await expect(problem.getByRole("button", { name: "Add the key" })).toBeVisible();
+});
+
+test("has nothing wrong that axe can find, in an agent that is being read, or that was", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Accessible reading", paper: { kind: "url", url: "https://example.org/accessible" } });
+  await openAgent(page, id, "Accessible reading");
+  await expect(page.getByText("Upload the paper's file to have it read.")).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await sendPaper(page, id, "accessible.txt", chunked(2, "slow:"));
+  await page.reload();
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(status(page).getByRole("progressbar")).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await status(page).getByRole("button", { name: /^Stop: / }).click();
+  await expect(status(page).getByRole("progressbar")).toHaveCount(0, { timeout: 15_000 });
+
+  await page.request.delete(`/api/paperagents/${id}/reading`);
+  await page.request.delete(`/api/paperagents/${id}/paper`);
+  await sendPaper(page, id, "cells.txt", CELLS);
+  await page.reload();
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
   expect(await accessibilityProblems(page)).toEqual([]);
 });

@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { api } from "./api";
-import type { PaperAgent, PaperAgentsList } from "./types";
+import type { PaperAgent, PaperAgentReading, PaperAgentsList } from "./types";
 import { useLooked, type Looked } from "./use-looked";
 
 // The PaperAgents, with what a page needs to make one
@@ -15,6 +15,13 @@ export function usePaperAgentsList(report: (error: unknown) => void, again: stri
 // One agent
 export function usePaperAgent(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgent> {
   const look = useCallback(() => api.paperAgent(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+// What has been read of an agent's paper, looked at again when what it is made from may have changed
+export function usePaperAgentReading(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentReading> {
+  const look = useCallback(() => api.paperAgentReading(id), [id]);
 
   return useLooked(look, report, again);
 }

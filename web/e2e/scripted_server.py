@@ -36,6 +36,11 @@ from a script: no key is needed, and every run says the same. What it says depen
   DESeq2 is found to use RNA-seq differential expression, one that names Scanpy single-cell clustering, and one that
   names neither the first. "slow:" in a paper's text makes reading it take a while, so that the work can be followed or
   stopped, and "fail:" makes reading it fail. A function asked for is written, whatever it is for.
+- The paper of a PaperAgent is read a chunk at a time, and what a chunk is answered with is what its sentences say: a
+  number after "AUROC of" is a claim, "Seurat v4.3" is software, "GSE" and digits is a dataset of GEO, an address at
+  github.com is a link to code, "only tested on mouse" is a limitation and a species, each with its sentence as its
+  quote. "fabricate:" in a chunk adds a claim whose quote is not in the paper, which is thrown away, "slow:" makes
+  reading it take a while, "refuse:" has the model refuse it, and "fail:" makes it fail.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -91,6 +96,15 @@ from virtual_lab.constants import MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab import openrouter  # noqa: E402
+from virtual_lab.paperagents.reading import (  # noqa: E402
+    ChunkReading,
+    ReadClaim,
+    ReadDataset,
+    ReadLimitation,
+    ReadLink,
+    ReadScope,
+    ReadSoftware,
+)
 from virtual_lab.papers import PaperFindings  # noqa: E402
 from virtual_lab.prompts import result_check_prompt  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
@@ -456,6 +470,40 @@ def paper_findings(text: str) -> PaperFindings:
     return findings([task(name) for name in names], [database("GEO")], [package("STAR")])
 
 
+def chunk_reading(text: str) -> ChunkReading:
+    """What a chunk of a paper is read as, from its sentences and headings, each of which is its own quote."""
+    start = text.find("<paper_chunk>")
+    body = text[start + len("<paper_chunk>") : text.rfind("</paper_chunk>")] if start >= 0 else text
+    kinds = ("claims", "datasets", "software", "links", "scope", "limitations")
+    facts: dict[str, list[Any]] = {kind: [] for kind in kinds}
+    for sentence in (part.strip() for part in re.split(r"(?<=[.!?])\s+|\n\s*\n", body)):
+        if found := re.search(r"AUROC of (\d+(?:\.\d+)?)", sentence):
+            facts["claims"].append(ReadClaim(kind="number", value=found.group(1), quote=sentence))
+        if found := re.search(r"(Seurat) v(\d+(?:\.\d+)*)", sentence):
+            facts["software"].append(ReadSoftware(name=found.group(1), version=found.group(2), quote=sentence))
+        if found := re.search(r"\bGSE\d+\b", sentence):
+            facts["datasets"].append(ReadDataset(name="GEO", accession=found.group(0), quote=sentence))
+        if found := re.search(r"https://github\.com/[\w./-]*\w", sentence):
+            facts["links"].append(ReadLink(url=found.group(0), role="code", quote=sentence))
+        if "only tested on mouse" in sentence:
+            facts["scope"].append(ReadScope(aspect="species", value="mouse", quote=sentence))
+            facts["limitations"].append(ReadLimitation(quote=sentence))
+    if "fabricate:" in body:
+        facts["claims"].append(ReadClaim(kind="qualitative", value="", quote="This method works on every species."))
+
+    return ChunkReading(
+        claims=facts["claims"],
+        methods=[],
+        datasets=facts["datasets"],
+        software=facts["software"],
+        links=facts["links"],
+        availability=[],
+        licenses=[],
+        scope=facts["scope"],
+        limitations=facts["limitations"],
+    )
+
+
 def function_named(kwargs: dict[str, Any]) -> str | None:
     """The name of the function a request asks the model to write, if it asks for one."""
     system = next((message["content"] for message in kwargs["messages"] if message["role"] == "system"), "")
@@ -605,9 +653,18 @@ class ScriptedCompletions(FakeCompletions):
 
     def parse(self, **kwargs: Any) -> Any:
         schema = kwargs["response_format"]
-        if schema is not PaperFindings:
+        if schema is not PaperFindings and schema is not ChunkReading:
             return super().parse(**kwargs)
         text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")
+        if schema is ChunkReading:
+            if "slow:" in text:
+                time.sleep(PAPER_DELAY)
+            if "fail:" in text:
+                raise RuntimeError("The scripted model failed to read the paper, as it was asked to")
+            if "refuse:" in text:
+                return parsed_response(None, refusal="The scripted model would not read this part of the paper")
+
+            return parsed_response(chunk_reading(text))
         if "slow:" in text:
             time.sleep(PAPER_DELAY)
         if "fail:" in text:
