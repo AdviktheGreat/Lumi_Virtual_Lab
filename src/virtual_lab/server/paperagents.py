@@ -288,6 +288,18 @@ def is_source(value: Any) -> bool:
     )
 
 
+def kept_source(source: dict[str, str], asked: str) -> dict[str, str]:
+    """Where fetched text came from, as an agent's record can hold it.
+
+    The address that a page was at after its redirects, or the one Europe PMC gives, may be one that is not kept (a site
+    can send a link on to one that is too long), and the address that was asked for is given in its place, so that the
+    agent is never one that cannot be read back.
+    """
+    source = {**source, "label": source["label"][:MAX_SOURCE_CHARS]}
+
+    return source if is_source(source) else {**source, "url": asked}
+
+
 def is_agent(value: Any) -> bool:
     """Whether what an agent's file holds is an agent's: a title, when it was made, and which paper it is of, with the
     DOI, link, and address of code that a page is given made sure of again, since the file may have been edited."""
@@ -748,8 +760,10 @@ class PaperAgents:
         _, agent = self.lookup(agent_id)
         paper = agent["paper"]
         if paper["kind"] == "doi":
+            asked = f"https://doi.org/{paper['doi']}"
             fetched = fetching.europe_pmc_paper(paper["doi"])
         else:
+            asked = paper["url"]
             fetched = fetching.linked_paper(paper["url"])
         if job.stop.is_set():
             raise StoppedError("Stopped before any of the paper was read.")
@@ -763,7 +777,7 @@ class PaperAgents:
             "name": fetched.name,
             "bytes": len(content),
             "sha256": hashlib.sha256(content).hexdigest(),
-            "source": fetched.source,
+            "source": kept_source(fetched.source, asked),
         }
         with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
             temporary = Path(scratch) / "fetched"

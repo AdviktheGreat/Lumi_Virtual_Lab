@@ -163,6 +163,14 @@ class TestAPaperThatCannotBeHad:
 
         assert f"Europe PMC has no article with the DOI {DOI}" in message and message.endswith(UPLOAD)
 
+    def test_an_article_that_does_not_say_its_doi_is_not_known_to_be_the_paper(
+        self, web_transport: FakeTransport
+    ) -> None:
+        serve(web_transport, full_text(), {key: value for key, value in ARTICLE_RECORD.items() if key != "doi"})
+
+        assert "has no article with the DOI" in unavailable(europe_pmc_paper, DOI)
+        assert len(web_transport.requests) == 1
+
     def test_an_article_with_another_doi_is_not_the_paper(self, web_transport: FakeTransport) -> None:
         serve(web_transport, full_text(), {**ARTICLE_RECORD, "doi": "10.1000/someone-else"})
 
@@ -296,6 +304,15 @@ class TestAPaperFromALink:
             "label": "The page at www.example.org",
             "url": "https://www.example.org/final/paper",
         }
+
+    def test_the_site_is_named_by_its_host_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            fetching,
+            "fetch_page",
+            lambda url: page(sentences("results", 100), url="https://reader@www.example.org:8443/a/b?c=d#e"),
+        )
+
+        assert linked_paper("https://example.org/paper").source["label"] == "The page at www.example.org"
 
     def test_a_pdf_is_named_as_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(fetching, "fetch_page", lambda url: page(sentences("a pdf", 100), title="", kind=PDF_TYPE))

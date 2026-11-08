@@ -1021,6 +1021,53 @@ class TestFetchingThePaper:
         assert read(agents, agent_id).state == "succeeded" and served == [DOI, DOI]
 
     @pytest.mark.parametrize(
+        "address",
+        [
+            "https://example.org/" + "a" * 2001,
+            "https://example.org/a b",
+            "https://example.org/a\x07b",
+            "ftp://example.org/a",
+        ],
+    )
+    def test_a_page_that_ended_at_an_address_that_cannot_be_kept_does_not_make_the_agent_unreadable(
+        self, agents: PaperAgents, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch, address: str
+    ) -> None:
+        # A site can send a link on to an address of any length, which the agent's record must still be able to hold
+        monkeypatch.setattr(
+            fetching,
+            "linked_paper",
+            lambda url: fetched(
+                name="linked-paper.txt", source={"kind": "link", "label": "The page at example.org", "url": address}
+            ),
+        )
+        agent_id = agents.create("Redirected", {"kind": "url", "url": LINK})
+        queue(fake_client, *answers())
+
+        job = read(agents, agent_id)
+
+        assert job.state == "succeeded"
+        assert [agent["id"] for agent in agents.describe()["agents"]] == [agent_id]
+        assert agents.view(agent_id)["paper"]["file"]["source"] == {
+            "kind": "link",
+            "label": "The page at example.org",
+            "url": LINK,
+        }
+        assert agents.reading(agent_id)["source"]["url"] == LINK
+
+    def test_a_label_that_is_too_long_is_cut_to_what_can_be_kept(
+        self, agents: PaperAgents, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        long = {"kind": "europepmc", "label": "Europe PMC " + "x" * 400, "url": "https://europepmc.org/article/MED/1"}
+        monkeypatch.setattr(fetching, "europe_pmc_paper", lambda doi: fetched(source=long))
+        agent_id = self.agent_of_doi(agents)
+        queue(fake_client, *answers())
+
+        assert read(agents, agent_id).state == "succeeded"
+
+        source = agents.view(agent_id)["paper"]["file"]["source"]
+        assert len(source["label"]) == 300 and source["url"] == long["url"]
+
+    @pytest.mark.parametrize(
         "source",
         [
             {"kind": "pubmed", "label": "PubMed", "url": "https://pubmed.ncbi.nlm.nih.gov/1"},

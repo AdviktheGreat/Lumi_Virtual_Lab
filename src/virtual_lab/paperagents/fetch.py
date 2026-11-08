@@ -14,6 +14,7 @@ nor what thanks people or says who paid.
 import re
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from virtual_lab.literature import EUROPE_PMC_BASE, collapse, field, get_article, section_text
 from virtual_lab.records import RecordNotFoundError, parse_xml
@@ -123,7 +124,7 @@ def europe_pmc_paper(doi: str) -> FetchedPaper:
     """
     try:
         article = get_article(doi)
-        if article.doi and article.doi.lower() != doi.lower():
+        if not article.doi or article.doi.lower() != doi.lower():
             raise RecordNotFoundError(f"Europe PMC answered with another article than {doi}")
     except (RecordNotFoundError, ValueError):
         raise PaperUnavailableError(f"Europe PMC has no article with the DOI {doi}. {UPLOAD}") from None
@@ -180,7 +181,7 @@ def linked_paper(url: str) -> FetchedPaper:
             f"The page holds {len(text):,} characters of text, which is too little to be a paper. It may ask for a "
             f"login or a payment, or be made by scripts that are not run here. {UPLOAD}"
         )
-    host = re.sub(r"^https?://", "", page.url).split("/", 1)[0]
+    host = urlsplit(page.url).hostname or page.url
 
     return FetchedPaper(
         text,
