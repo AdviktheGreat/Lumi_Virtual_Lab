@@ -13,7 +13,7 @@ const VIEWS: { view: PaperView; label: string; href: string }[] = [
 // The two parts of the page, each reached by an address of its own, as the pages of the rail are
 export function PaperAgentsNav({ view }: { view: PaperView }) {
   return (
-    <nav aria-label="PaperAgents" className="-mb-6 flex gap-1 border-b border-border">
+    <nav aria-label="PaperAgents" className="flex gap-1 border-b border-border">
       {VIEWS.map((part) => {
         const current = part.view === view;
 

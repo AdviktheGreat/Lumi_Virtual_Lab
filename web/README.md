@@ -200,8 +200,9 @@ is `aria-current`):
   subject, and how many preprints, which are checked where they are written, as the server checks them). A run is named in
   the address's query (`/papers?id=...`), as a conversation is.
 
-`paperView` in `src/lib/papers.ts` reads which part is asked for: the agents, unless the query says `surveys`. A run's page
-has four parts.
+`paperView` in `src/lib/papers.ts` reads which part is asked for: the agents, unless the query says `surveys`.
+
+A survey run's page (`/papers?id=...`, whose link back goes to the surveys) has four parts.
 
 - **Papers** is where they are from. A run whose papers are uploaded shows them, with the means to remove one and to add
   more (several at once, each with how much of it has been sent, and one that is not a paper, is too big, or has a name that

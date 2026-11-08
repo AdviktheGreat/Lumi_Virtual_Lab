@@ -77,14 +77,22 @@ test("the page opens on the agents, and its surveys are a part of it that is rea
   await parts.getByRole("link", { name: "Surveys" }).click();
   await expect(page).toHaveURL(/\/papers\?view=surveys$/);
   await expect(parts.getByRole("link", { name: "Surveys" })).toHaveAttribute("aria-current", "page");
+  await expect(parts.getByRole("link", { name: "Agents" })).not.toHaveAttribute("aria-current");
+  await expect(page.getByRole("link", { name: "PaperAgents", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Make a run" })).toBeVisible();
   await expect(page.getByTestId("paper-agents-empty")).toHaveCount(0);
   expect(await accessibilityProblems(page)).toEqual([]);
 
   // The link in the empty agents page leads to the same place
   await parts.getByRole("link", { name: "Agents" }).click();
+  await expect(page).toHaveURL(/\/papers$/);
   await page.getByTestId("paper-agents-empty").getByRole("link", { name: "Surveys" }).click();
   await expect(page).toHaveURL(/\/papers\?view=surveys$/);
+
+  // A part that is not one is the agents, as no part is
+  await page.goto("/papers?view=nowhere");
+  await expect(page.getByTestId("paper-agents-empty")).toBeVisible();
+  await expect(parts.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
 });
 
 test("makes a run of papers that are uploaded, uploads them, and reads them with a budget", async ({ page }) => {
@@ -122,6 +130,7 @@ test("makes a run of papers that are uploaded, uploads them, and reads them with
   expect(await table.text()).toContain(TASK);
 
   await page.getByRole("link", { name: "All runs" }).click();
+  await expect(page).toHaveURL(/\/papers\?view=surveys$/);
   await expect(page.getByTestId("paper-run")).toContainText("Read 2 of 2 papers");
 });
 

@@ -59,8 +59,10 @@ export function PapersView() {
 
   return (
     <PageFrame title="PaperAgents" intro={INTRO}>
-      <PaperAgentsNav view={view} />
-      {view === "surveys" ? <Runs /> : <Agents />}
+      <div className="flex flex-col gap-6">
+        <PaperAgentsNav view={view} />
+        <div className="flex flex-col gap-12">{view === "surveys" ? <Runs /> : <Agents />}</div>
+      </div>
     </PageFrame>
   );
 }
