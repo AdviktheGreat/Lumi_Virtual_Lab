@@ -31,6 +31,7 @@ import {
   describePaper,
   describeSteps,
   existingOf,
+  isLink,
   MAX_AGENT_TITLE,
   paperLink,
   repoName,
@@ -88,11 +89,15 @@ function AgentHeader({ agent }: { agent: PaperAgent }) {
           {agent.repo !== null && (
             <p className="break-all text-sm text-muted-foreground">
               Code:{" "}
-              <a href={agent.repo.url} target="_blank" rel="noreferrer noopener" className={cn("inline-flex items-center gap-1", LINK)}>
-                {repoName(agent.repo.url)}
-                <ExternalLink className="size-3" aria-hidden />
-                <span className="sr-only">(opens in a new tab)</span>
-              </a>
+              {isLink(agent.repo.url) ? (
+                <a href={agent.repo.url} target="_blank" rel="noreferrer noopener" className={cn("inline-flex items-center gap-1", LINK)}>
+                  {repoName(agent.repo.url)}
+                  <ExternalLink className="size-3" aria-hidden />
+                  <span className="sr-only">(opens in a new tab)</span>
+                </a>
+              ) : (
+                agent.repo.url
+              )}
             </p>
           )}
           <p className="text-sm text-muted-foreground">{describeSteps(agent)}</p>
@@ -344,7 +349,7 @@ function Agent({ agent, list, onChanged }: Shared) {
       <AgentHeader agent={agent} />
       {agent.paper.kind === "file" && (
         <PageSection title="Paper" intro="The paper of this agent is a file, which is uploaded here.">
-          <PaperFile agent={agent} list={list} onChanged={onChanged} />
+          <PaperFile key={agent.id} agent={agent} list={list} onChanged={onChanged} />
         </PageSection>
       )}
       <PageSection title="Steps" intro="What is done to make the paper usable. A step is added to the lab as it is built.">

@@ -246,7 +246,7 @@ test("makes an agent of a file, which is uploaded, uploaded again, and taken awa
     data: Buffer.from(DESEQ),
     headers: { "Content-Type": "application/octet-stream" },
   });
-  expect(sent.status()).toBe(200);
+  expect(sent.status()).toBe(201);
   await page.getByLabel("Upload the paper").setInputFiles({ name: "d.txt", mimeType: "text/plain", buffer: Buffer.from(DESEQ) });
   await expect(page.getByRole("alert").filter({ hasText: "There is a PaperAgent for that paper already" })).toContainText("Another");
   await page.getByRole("link", { name: "Open that PaperAgent" }).click();

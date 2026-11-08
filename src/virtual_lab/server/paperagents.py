@@ -16,6 +16,7 @@ import re
 import shutil
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -53,7 +54,7 @@ PAPERS = {
     "file": ("a file that is uploaded", set()),
 }
 
-DOI = re.compile(r"10\.\d{4,9}/\S+")
+DOI = re.compile(r"10\.[0-9]{4,9}/\S+")
 DOI_PREFIX = re.compile(r"^(?:doi:\s*|https?://(?:dx\.)?doi\.org/)", re.IGNORECASE)
 DOI_HOSTS = ("doi.org", "dx.doi.org")
 REPO_SEGMENT = re.compile(r"[A-Za-z0-9_.-]+")
@@ -79,12 +80,13 @@ def split_url(text: Any, what: str) -> tuple[str, str, str, str]:
     :raises ApiError: If it is not one.
     """
     given = text.strip() if isinstance(text, str) else ""
+    parts = urlsplit("")
     try:
         parts = urlsplit(given)
         host = parts.hostname
-        parts.port  # noqa: B018  Read only to find out if it is a number, which raises if it is not
+        port = parts.port
     except ValueError:
-        host = None
+        host = port = None
     problem = None
     if not given or len(given) > MAX_URL_CHARS or has_control_character(given) or re.search(r"\s", given):
         problem = (
@@ -97,11 +99,16 @@ def split_url(text: Any, what: str) -> tuple[str, str, str, str]:
     if problem is not None:
         raise ApiError(422, "invalid", problem)
 
-    return parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query
+    scheme, netloc = parts.scheme.lower(), parts.netloc.lower()
+    if port == {"http": 80, "https": 443}[scheme]:
+        netloc = netloc.removesuffix(f":{port}")
+
+    return scheme, netloc, parts.path, parts.query
 
 
 def check_url(text: Any) -> str:
-    """A link to a paper as it is kept: its host in lower case, without a part after #, and without a slash at the end.
+    """A link to a paper as it is kept: its host in lower case, without a part after #, without the port that its scheme
+    has by itself, and without a slash at the end.
 
     :raises ApiError: If it is not a web address.
     """
@@ -138,6 +145,11 @@ def check_repo(text: Any) -> str:
         )
 
     return f"https://{host}/{'/'.join(segments)}"
+
+
+def is_blank(text: Any) -> bool:
+    """Whether the address of code that was given says there is none: it is left out, or is nothing but space."""
+    return text is None or (isinstance(text, str) and not text.strip())
 
 
 def check_paper(paper: dict[str, Any]) -> dict[str, Any]:
@@ -192,8 +204,24 @@ def check_title(title: Any, paper: dict[str, Any] | None = None) -> str:
     return named
 
 
+def is_real_directory(path: Path) -> bool:
+    """Whether a path is a directory of its own, and not a link to one, which is not followed out of the workspace."""
+    return path.is_dir() and not path.is_symlink()
+
+
+def passes(check: Callable[[Any], Any], value: Any) -> bool:
+    """Whether a value is fit by one of the checks above, which is how what was kept is told from what was edited."""
+    try:
+        check(value)
+    except ApiError:
+        return False
+
+    return True
+
+
 def is_agent(value: Any) -> bool:
-    """Whether what an agent's file holds is an agent's: a title, when it was made, and which paper it is of."""
+    """Whether what an agent's file holds is an agent's: a title, when it was made, and which paper it is of, with the
+    DOI, link, and address of code that a page is given made sure of again, since the file may have been edited."""
     if not (
         isinstance(value, dict)
         and isinstance(value.get("schema"), int)
@@ -203,23 +231,25 @@ def is_agent(value: Any) -> bool:
         and paper.get("kind") in PAPERS
     ):
         return False
-    if paper["kind"] == "doi" and not isinstance(paper.get("doi"), str):
+    if paper["kind"] == "doi" and not passes(check_doi, paper.get("doi")):
         return False
-    if paper["kind"] == "url" and not isinstance(paper.get("url"), str):
+    if paper["kind"] == "url" and not passes(check_url, paper.get("url")):
         return False
     if paper["kind"] == "file":
         file = paper.get("file")
         if file is not None and not (
             isinstance(file, dict)
             and isinstance(file.get("name"), str)
+            and safe_filename(file["name"]) == file["name"]
             and isinstance(file.get("bytes"), int)
+            and not isinstance(file["bytes"], bool)
             and isinstance(file.get("sha256"), str)
             and SHA256.fullmatch(file["sha256"])
         ):
             return False
     repo = value.get("repo")
 
-    return repo is None or (isinstance(repo, dict) and isinstance(repo.get("url"), str))
+    return repo is None or (isinstance(repo, dict) and passes(check_repo, repo.get("url")))
 
 
 def steps_of(agent: dict[str, Any]) -> dict[str, str]:
@@ -275,7 +305,7 @@ class PaperAgents:
         if root.is_dir():
             for directory in root.iterdir():
                 agent = read_json(directory / AGENT_FILE)
-                if RUN_ID.fullmatch(directory.name) and directory.is_dir() and is_agent(agent):
+                if RUN_ID.fullmatch(directory.name) and is_real_directory(directory) and is_agent(agent):
                     found.append((directory, agent))
 
         return found
@@ -297,7 +327,9 @@ class PaperAgents:
         :raises ApiError: If there is no agent with this id.
         """
         directory = self.workspace.paperagents_dir / agent_id
-        agent = read_json(directory / AGENT_FILE) if RUN_ID.fullmatch(agent_id) else None
+        agent = (
+            read_json(directory / AGENT_FILE) if RUN_ID.fullmatch(agent_id) and is_real_directory(directory) else None
+        )
         if not is_agent(agent):
             raise not_found("PaperAgent with that id")
 
@@ -336,13 +368,13 @@ class PaperAgents:
         """
         kept = check_paper(paper)
         named = check_title(title, kept)
-        code = check_repo(repo) if repo not in (None, "") else None
+        code = check_repo(repo) if not is_blank(repo) else None
         root = self.workspace.paperagents_dir
         root.mkdir(parents=True, exist_ok=True)
 
         with self._lock:
             self.check_unique(kept)
-            if sum(1 for path in root.iterdir() if path.is_dir()) >= MAX_AGENTS:
+            if len(self.kept()) >= MAX_AGENTS:
                 raise ApiError(409, "too_many", f"No more than {MAX_AGENTS} PaperAgents can be kept. Delete some first")
             directory = claim_directory(root, named)
             try:
@@ -377,7 +409,7 @@ class PaperAgents:
             if title is not None:
                 agent = {**agent, "title": check_title(title)}
             if repo is not None:
-                agent = {**agent, "repo": {"url": check_repo(repo)} if repo != "" else None}
+                agent = {**agent, "repo": None if is_blank(repo) else {"url": check_repo(repo)}}
             self.save(directory, agent)
 
     def delete(self, agent_id: str) -> None:
@@ -424,15 +456,35 @@ class PaperAgents:
                 directory, agent = self.lookup(agent_id)
                 paper = {**agent["paper"], "file": kept}
                 self.check_unique(paper, besides=agent_id)
-                folder = directory / PAPER_DIR
+                self.swap_paper(directory, {**agent, "paper": paper}, temporary, filename)
+
+    def swap_paper(self, directory: Path, agent: dict[str, Any], uploaded: Path, filename: str) -> None:
+        """Puts a paper in place of the one an agent had, and saves the agent that says so. The record never names a
+        file that is not there: the paper that was is kept aside until the record is saved, and is put back if anything
+        fails before then."""
+        folder = directory / PAPER_DIR
+        staged = directory / f"{PAPER_DIR}.new"
+        aside = directory / f"{PAPER_DIR}.old"
+        for leftover in (staged, aside):
+            shutil.rmtree(leftover, ignore_errors=True)
+        staged.mkdir()
+        moved = placed = False
+        try:
+            os.replace(uploaded, staged / filename)
+            if folder.is_dir():
+                os.replace(folder, aside)
+                moved = True
+            os.replace(staged, folder)
+            placed = True
+            self.save(directory, agent)
+        except BaseException:
+            shutil.rmtree(staged, ignore_errors=True)
+            if placed:
                 shutil.rmtree(folder, ignore_errors=True)
-                folder.mkdir()
-                try:
-                    os.replace(temporary, folder / filename)
-                    self.save(directory, {**agent, "paper": paper})
-                except BaseException:
-                    shutil.rmtree(folder, ignore_errors=True)
-                    raise
+            if moved:
+                os.replace(aside, folder)
+            raise
+        shutil.rmtree(aside, ignore_errors=True)
 
     def remove_paper(self, agent_id: str) -> None:
         """Takes away the paper that was uploaded to an agent.

@@ -1068,7 +1068,7 @@ def create_app(
 
         return paperagents.describe()
 
-    @api.post("/paperagents/{agent_id}/paper")
+    @api.post("/paperagents/{agent_id}/paper", status_code=201)
     async def upload_paperagent_paper(
         request: Request, agent_id: str, name: str = Query(min_length=1, max_length=1000)
     ) -> Any:

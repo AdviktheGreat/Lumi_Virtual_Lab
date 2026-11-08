@@ -50,7 +50,18 @@ describe("a link that is typed", () => {
   it("leads somewhere by http or https, with no name and password in it", () => {
     expect(isLink("https://example.org/paper.pdf")).toBe(true);
     expect(isLink(" http://example.org ")).toBe(true);
-    for (const text of ["", "example.org", "ftp://example.org", "javascript:alert(1)", "https://u:p@example.org", "https://a b.org", "https://"]) {
+    // `new URL` takes http:/host and http:host, which the server does not
+    for (const text of [
+      "",
+      "example.org",
+      "ftp://example.org",
+      "javascript:alert(1)",
+      "https://u:p@example.org",
+      "https://a b.org",
+      "https://",
+      "http:/example.org",
+      "http:example.org",
+    ]) {
       expect(isLink(text)).toBe(false);
     }
     expect(isLink(`https://example.org/${"a".repeat(2000)}`)).toBe(false);
@@ -68,6 +79,23 @@ describe("the address of code that is typed", () => {
       "https://github.com/owner/../name",
       "https://example.org/owner/name",
       "github.com/owner/name",
+    ]) {
+      expect(isRepo(text)).toBe(false);
+    }
+  });
+
+  it("is cut to the project as the server cuts it, and is refused for what the server refuses", () => {
+    expect(isRepo("https://gitlab.com/group/sub/name/-/tree/main")).toBe(true);
+    expect(isRepo("https://github.com/owner/name.git")).toBe(true);
+    expect(isRepo("https://github.com/owner/name/tree/main/src")).toBe(true);
+    for (const text of [
+      "https://gitlab.com/-/name/page",
+      "https://gitlab.com/group/-/page",
+      "https://github.com/owner/na%2Fme",
+      "https://github.com/owner/na@me",
+      "https://github.com/owner/na%ZZ",
+      "https://github.com/owner/.git",
+      "https://github.com:443@evil.example/owner/name",
     ]) {
       expect(isRepo(text)).toBe(false);
     }
@@ -119,6 +147,13 @@ describe("an agent that is asked for", () => {
     });
   });
 
+  it("is told of a link to doi.org that holds no DOI, which the server refuses", () => {
+    expect(checkAgent(draft({ kind: "url", url: "https://doi.org/nothing" })).problems.url).toContain("no DOI");
+    expect(checkAgent(draft({ kind: "url", url: "https://dx.doi.org/" })).problems.url).toContain("no DOI");
+    expect(checkAgent(draft({ kind: "url", url: "https://doi.org/10.1038/ABC" })).problems).toEqual({});
+    expect(checkAgent(draft({ kind: "url", url: "https://doi.org.example.org/p" })).problems).toEqual({});
+  });
+
   it("is of a file, which is uploaded afterward, and is then given a title", () => {
     expect(checkAgent(draft({ kind: "file", title: "Mine" })).value).toEqual({ title: "Mine", paper: { kind: "file" } });
     expect(checkAgent(draft({ kind: "file" })).problems.title).toBeDefined();
@@ -152,6 +187,8 @@ describe("an agent in words", () => {
     expect(paperLink({ kind: "doi", doi: "10.1/x" })).toBe("https://doi.org/10.1/x");
     expect(paperLink({ kind: "url", url: "https://example.org/p" })).toBe("https://example.org/p");
     expect(paperLink({ kind: "file", file: null })).toBeNull();
+    // A record that was edited by hand does not send the page anywhere but by http or https
+    expect(paperLink({ kind: "url", url: "javascript:alert(1)" })).toBeNull();
   });
 
   it("says how far it has got", () => {

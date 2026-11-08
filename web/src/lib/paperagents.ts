@@ -64,7 +64,8 @@ export function doiOf(text: string): string | null {
 // Whether text is a web address that leads somewhere by http or https, with no name and password in it
 export function isLink(text: string): boolean {
   const typed = text.trim();
-  if (typed === "" || typed.length > MAX_LINK_CHARS || /\s/.test(typed)) return false;
+  // `new URL` takes http:/host and http:host, which the server does not, so the two slashes are asked for
+  if (!/^https?:\/\//i.test(typed) || typed.length > MAX_LINK_CHARS || /\s/.test(typed)) return false;
   try {
     const link = new URL(typed);
 
@@ -80,9 +81,24 @@ export function isRepo(text: string, hosts: readonly string[] = REPO_HOSTS): boo
   if (!isLink(typed)) return false;
   const link = new URL(typed);
   const host = link.hostname.toLowerCase().replace(/^www\./, "");
-  const segments = link.pathname.split("/").filter(Boolean);
+  if (link.protocol !== "https:" || !hosts.includes(host)) return false;
+  let segments: string[];
+  try {
+    segments = link.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return false;
+  }
+  // As the server cuts it: a GitLab project may be in groups, and what follows /-/ is a page of the project, and at the
+  // other hosts the project is the first two parts
+  if (host === "gitlab.com") {
+    const page = segments.indexOf("-");
+    if (page >= 0) segments = segments.slice(0, page);
+  } else {
+    segments = segments.slice(0, 2);
+  }
+  if (segments.length > 0) segments[segments.length - 1] = segments[segments.length - 1].replace(/\.git$/, "");
 
-  return link.protocol === "https:" && hosts.includes(host) && segments.length >= 2 && !segments.some((part) => part === "." || part === "..");
+  return segments.length >= 2 && segments.every((part) => /^[A-Za-z0-9_.-]+$/.test(part) && part !== "." && part !== "..");
 }
 
 export interface AgentDraft {
@@ -128,6 +144,10 @@ export function checkAgent(draft: AgentDraft, hosts: readonly string[] = REPO_HO
   } else if (draft.kind === "url") {
     const url = draft.url.trim();
     if (!isLink(url)) problems.url = "Give the link, which begins with http:// or https://.";
+    // The server keeps a link to doi.org as the DOI in it, and refuses one that holds none
+    else if (/^https?:\/\/(?:dx\.)?doi\.org(?:[/?#:]|$)/i.test(url) && doiOf(url) === null) {
+      problems.url = "That link is to doi.org but has no DOI in it, such as 10.1038/s41586-020-2649-2.";
+    }
     paper = { kind: "url", url };
   }
   const repo = draft.repo.trim();
@@ -144,11 +164,12 @@ export function describePaper(paper: PaperAgentPaper): string {
   return paper.file === null ? "A file that has not been uploaded yet" : `${paper.file.name}, ${formatBytes(paper.file.bytes)}`;
 }
 
-// Where the paper can be opened, if it is anywhere
+// Where the paper can be opened, if it is anywhere. A link is only given if it leads somewhere by http or https, as the
+// server holds it, so that a record that was edited by hand cannot send the page elsewhere.
 export function paperLink(paper: PaperAgentPaper): string | null {
   if (paper.kind === "doi") return `https://doi.org/${paper.doi}`;
 
-  return paper.kind === "url" ? paper.url : null;
+  return paper.kind === "url" && isLink(paper.url) ? paper.url : null;
 }
 
 // The owner and name of a project, from its address

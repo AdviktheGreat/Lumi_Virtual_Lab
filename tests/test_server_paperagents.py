@@ -91,6 +91,9 @@ class TestDois:
     def test_one_too_long_is_refused(self) -> None:
         assert refused(check_doi, "10.1038/" + "a" * 300).status == 422
 
+    def test_one_with_digits_that_are_not_ascii_is_refused(self) -> None:
+        assert refused(check_doi, "10.\u0661\u0660\u0663\u0668/abc").status == 422
+
 
 class TestUrls:
     def test_a_link_is_kept_with_its_host_in_lower_case_and_without_a_fragment_or_a_slash_at_the_end(self) -> None:
@@ -125,6 +128,17 @@ class TestUrls:
 
     def test_a_link_that_is_too_long_is_refused(self) -> None:
         assert refused(check_url, "https://example.org/" + "a" * MAX_URL_CHARS).status == 422
+
+    def test_the_port_a_scheme_has_by_itself_is_not_part_of_which_link_it_is(self) -> None:
+        assert check_url("https://example.org:443/p") == "https://example.org/p"
+        assert check_url("http://Example.org:80/p/") == "http://example.org/p"
+        assert check_url("https://example.org:8443/p") == "https://example.org:8443/p"
+        assert check_url("http://example.org:443/p") == "http://example.org:443/p"
+        assert check_repo("https://github.com:443/owner/name") == "https://github.com/owner/name"
+
+    @pytest.mark.parametrize("given", ["http://[abc", "http://host:99999", "http://host:abc", "https://:443/p"])
+    def test_an_address_that_cannot_be_read_is_refused_rather_than_failing(self, given: str) -> None:
+        assert refused(check_url, given).status == 422
 
 
 class TestRepos:
@@ -301,6 +315,28 @@ class TestMakingAnAgent:
         assert all(result.code == "exists" for result in results if isinstance(result, ApiError))
         assert len(agents.describe()["agents"]) == 1
 
+    def test_code_that_is_only_space_is_taken_for_none(self, agents: PaperAgents) -> None:
+        made = agents.create("Cells", {"kind": "doi", "doi": DOI}, repo="   ")
+        assert agents.view(made)["repo"] is None
+
+        agents.change(made, repo="https://github.com/owner/name")
+        agents.change(made, repo="  \n ")
+
+        assert agents.view(made)["repo"] is None
+
+    def test_what_is_not_an_agent_is_not_counted_towards_the_most_that_can_be_kept(
+        self, agents: PaperAgents, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(module, "MAX_AGENTS", 2)
+        file_agent(agents, "One")
+        for name in ("broken", "empty", "stray"):
+            (workspace.paperagents_dir / name).mkdir()
+
+        file_agent(agents, "Two")
+
+        assert len(agents.describe()["agents"]) == 2
+        assert refused(file_agent, agents, "Three").code == "too_many"
+
     def test_there_is_a_most_that_can_be_kept(self, agents: PaperAgents, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(module, "MAX_AGENTS", 2)
         file_agent(agents, "One")
@@ -346,6 +382,43 @@ class TestListing:
         assert refused(agents.view, "broken").status == 404
         assert refused(agents.view, "Not A Name").status == 404
         assert refused(agents.view, "../paperagents").status == 404
+
+    def test_a_link_to_a_directory_is_not_followed(self, agents: PaperAgents, workspace: Workspace) -> None:
+        kept = file_agent(agents, "Kept")
+        outside = workspace.root / "outside"
+        outside.mkdir()
+        (outside / AGENT_FILE).write_text((workspace.paperagents_dir / kept / AGENT_FILE).read_text())
+        (workspace.paperagents_dir / "linked").symlink_to(outside, target_is_directory=True)
+
+        assert [agent["id"] for agent in agents.describe()["agents"]] == [kept]
+        assert refused(agents.view, "linked").status == 404
+        assert refused(agents.put_paper, "linked", "a.txt", io.BytesIO(TEXT)).status == 404
+        assert refused(agents.delete, "linked").status == 404
+        assert (outside / AGENT_FILE).is_file()
+        assert not (outside / PAPER_DIR).exists()
+
+    @pytest.mark.parametrize(
+        ("change"),
+        [
+            {"paper": {"kind": "url", "url": "javascript:alert(1)"}},
+            {"paper": {"kind": "url", "url": "https://user:secret@example.org/p"}},
+            {"paper": {"kind": "doi", "doi": "not a doi"}},
+            {"paper": {"kind": "file", "file": {"name": "../x.txt", "bytes": 1, "sha256": "0" * 64}}},
+            {"paper": {"kind": "file", "file": {"name": "a.txt", "bytes": True, "sha256": "0" * 64}}},
+            {"repo": {"url": "javascript:alert(1)"}},
+            {"repo": {"url": "https://example.org/owner/name"}},
+            {"repo": {"url": 4}},
+        ],
+    )
+    def test_an_agent_whose_file_was_edited_to_hold_what_is_not_fit_is_left_out(
+        self, agents: PaperAgents, workspace: Workspace, change: dict[str, Any]
+    ) -> None:
+        made = doi_agent(agents)
+        path = workspace.paperagents_dir / made / AGENT_FILE
+        path.write_text(json.dumps({**json.loads(path.read_text()), **change}))
+
+        assert agents.describe()["agents"] == []
+        assert refused(agents.view, made).status == 404
 
     def test_an_unknown_agent_is_not_found(self, agents: PaperAgents) -> None:
         assert refused(agents.view, "nothing").status == 404
@@ -500,6 +573,57 @@ class TestKeepingAPaper:
         assert (workspace.paperagents_dir / agent_id / PAPER_DIR / "a.txt").read_bytes() == TEXT
         assert not any(path.name.startswith("paperagent.") for path in workspace.root.iterdir())
 
+    def test_a_paper_that_cannot_be_kept_leaves_the_one_before_and_what_says_so(
+        self, agents: PaperAgents, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent_id = file_agent(agents)
+        agents.put_paper(agent_id, "a.txt", io.BytesIO(TEXT))
+        folder = workspace.paperagents_dir / agent_id
+        before = (folder / AGENT_FILE).read_bytes()
+
+        def fail(directory: Path, agent: dict[str, Any]) -> None:
+            raise OSError("the disk is full")
+
+        monkeypatch.setattr(agents, "save", fail)
+        with pytest.raises(OSError):
+            agents.put_paper(agent_id, "b.md", io.BytesIO(b"Another paper."))
+        monkeypatch.undo()
+
+        assert (folder / AGENT_FILE).read_bytes() == before
+        assert [path.name for path in (folder / PAPER_DIR).iterdir()] == ["a.txt"]
+        assert (folder / PAPER_DIR / "a.txt").read_bytes() == TEXT
+        assert sorted(path.name for path in folder.iterdir()) == [AGENT_FILE, PAPER_DIR]
+        assert agents.view(agent_id)["paper"]["file"]["name"] == "a.txt"
+
+    def test_a_first_paper_that_cannot_be_kept_leaves_no_paper(
+        self, agents: PaperAgents, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent_id = file_agent(agents)
+
+        def fail(directory: Path, agent: dict[str, Any]) -> None:
+            raise OSError("the disk is full")
+
+        monkeypatch.setattr(agents, "save", fail)
+        with pytest.raises(OSError):
+            agents.put_paper(agent_id, "a.txt", io.BytesIO(TEXT))
+        monkeypatch.undo()
+
+        assert sorted(path.name for path in (workspace.paperagents_dir / agent_id).iterdir()) == [AGENT_FILE]
+        assert agents.view(agent_id)["paper"]["file"] is None
+
+    def test_what_is_left_of_a_stopped_swap_is_cleared_by_the_next(
+        self, agents: PaperAgents, workspace: Workspace
+    ) -> None:
+        agent_id = file_agent(agents)
+        folder = workspace.paperagents_dir / agent_id
+        for leftover in (f"{PAPER_DIR}.new", f"{PAPER_DIR}.old"):
+            (folder / leftover).mkdir()
+            (folder / leftover / "stale.txt").write_text("stale")
+
+        agents.put_paper(agent_id, "a.txt", io.BytesIO(TEXT))
+
+        assert sorted(path.name for path in folder.iterdir()) == [AGENT_FILE, PAPER_DIR]
+
     def test_what_is_not_a_paper_is_refused(self, agents: PaperAgents) -> None:
         agent_id = file_agent(agents)
 
@@ -606,7 +730,7 @@ class TestTheApi:
         client.post("/api/paperagents", json={"title": "Upload", "paper": {"kind": "file"}})
 
         put = client.post("/api/paperagents/upload/paper?name=a.txt", content=TEXT)
-        assert put.status_code == 200
+        assert put.status_code == 201
         assert put.json()["paper"]["file"] == {
             "name": "a.txt",
             "bytes": len(TEXT),
