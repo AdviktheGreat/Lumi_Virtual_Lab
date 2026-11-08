@@ -44,6 +44,10 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}        one agent; PATCH says what it is called and where its code is; DELETE deletes it
     POST   /api/paperagents/{id}/paper  the paper of an agent whose paper is a file, as the body, named by ?name=
     DELETE /api/paperagents/{id}/paper  takes that paper away
+    POST   /api/paperagents/{id}/reading  starts reading the paper, within the limit on spending in the body, as a job
+    GET    /api/paperagents/{id}/reading  what was read: claims, the method card, resources, each with a quote
+    DELETE /api/paperagents/{id}/reading  takes away what was read, so that the paper can be read again
+    GET    /api/paperagents/{id}/passage  the paper's words from ?start= to ?end=, with what is around them
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -348,6 +352,14 @@ class PapersGiveBody(RequestModel):
     given: StrictBool
 
 
+class PaperAgentReadBody(RequestModel):
+    """How much reading an agent's paper may cost, which is always said, and whether to read again the chunks that
+    could not be read."""
+
+    max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
+    retry_failed: StrictBool = False
+
+
 class PaperAgentPaperBody(RequestModel):
     """Which paper an agent is of. Which of these are asked for depends on the kind, and the server says which."""
 
@@ -587,7 +599,14 @@ def create_app(
         chat_models=chat_models,
         docker_missing=setup.missing_for if check_setup else None,
     )
-    paperagents = PaperAgents(store, max_upload_bytes)
+    paperagents = PaperAgents(
+        store,
+        max_upload_bytes,
+        setup.jobs,
+        conversations.missing_keys_for,
+        client=client,
+        chat_models=chat_models,
+    )
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -1092,6 +1111,24 @@ def create_app(
         paperagents.remove_paper(agent_id)
 
         return paperagents.view(agent_id)
+
+    @api.post("/paperagents/{agent_id}/reading", status_code=202)
+    def read_paperagent(agent_id: str, body: PaperAgentReadBody) -> dict[str, Any]:
+        return paperagents.read(agent_id, body.max_cost, body.retry_failed).snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/reading")
+    def get_paperagent_reading(agent_id: str) -> dict[str, Any]:
+        return paperagents.reading(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/reading")
+    def delete_paperagent_reading(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_reading(agent_id)
+
+        return paperagents.reading(agent_id)
+
+    @api.get("/paperagents/{agent_id}/passage")
+    def get_paperagent_passage(agent_id: str, start: int = Query(ge=0), end: int = Query(ge=0)) -> dict[str, Any]:
+        return paperagents.passage(agent_id, start, end)
 
     @api.get("/mcp")
     def get_mcp() -> dict[str, Any]:
