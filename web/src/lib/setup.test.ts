@@ -169,6 +169,15 @@ describe("what a job has counted", () => {
     expect(jobCounts(counted)).toBe("3 of 76 files · 2.0 MB fetched · 1.0 KB of 4.0 KB of this file");
   });
 
+  it("is the chunks of a paper that have been read, of how many there are", () => {
+    const reading = job({ kind: "paperagent-reading", progress: { chunks: 12, finished: 3 } });
+
+    expect(jobCounts(reading)).toBe("3 of 12 chunks");
+    expect(jobFraction(reading)).toBe(0.25);
+    expect(jobCounts(job({ kind: "paperagent-reading", progress: { chunks: 1, finished: 0 } }))).toBe("0 of 1 chunk");
+    expect(jobFraction(job({ kind: "paperagent-reading", progress: {} }))).toBeNull();
+  });
+
   it("says file for one file, and says nothing of bytes before any are fetched", () => {
     expect(jobCounts(job({ progress: { done: 0, total: 1, fetched: 0 } }))).toBe("0 of 1 file");
   });

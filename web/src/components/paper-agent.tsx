@@ -7,7 +7,10 @@ import { ArrowLeft, ExternalLink, Trash2, X } from "lucide-react";
 import { Looked } from "@/components/looked";
 import { ProblemNotice } from "@/components/messages";
 import { PageSection } from "@/components/page-section";
+import { ReadingSection } from "@/components/paper-agent-reading";
 import { useServer } from "@/components/server-provider";
+import { useSetupJobs } from "@/components/setup-provider";
+import { WorkStatus } from "@/components/work-status";
 import { describedBy, Field } from "@/components/settings-fields";
 import {
   AlertDialog,
@@ -32,8 +35,12 @@ import {
   describeSteps,
   existingOf,
   isLink,
+  lastReadingJob,
   MAX_AGENT_TITLE,
+  paperFile,
   paperLink,
+  readingJob,
+  readingKey,
   repoName,
   repoProblem,
   STATUS_LABELS,
@@ -43,9 +50,10 @@ import {
 } from "@/lib/paperagents";
 import { uploadProblem } from "@/lib/papers";
 import { tidy } from "@/lib/scientists";
-import type { PaperAgent, PaperAgentsList } from "@/lib/types";
+import type { PaperAgent, PaperAgentReading, PaperAgentsList } from "@/lib/types";
+import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
-import { usePaperAgent, usePaperAgentsList } from "@/lib/use-paperagents";
+import { usePaperAgent, usePaperAgentReading, usePaperAgentsList } from "@/lib/use-paperagents";
 import { cn } from "@/lib/utils";
 
 const LINK = "rounded-sm underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
@@ -53,12 +61,14 @@ const LINK = "rounded-sm underline underline-offset-2 outline-none focus-visible
 interface Shared {
   agent: PaperAgent;
   list: PaperAgentsList;
+  // Whether the paper is being read, which nothing is done to the agent or its paper in the meantime
+  working: boolean;
   // Shows the agent as it now is, as what changed it gives it back
   onChanged: LookedAt<PaperAgent>["set"];
 }
 
 // An agent, with its title, which paper it is of, and the way to delete it
-function AgentHeader({ agent }: { agent: PaperAgent }) {
+function AgentHeader({ agent, working }: { agent: PaperAgent; working: boolean }) {
   const { report } = useServer();
   const router = useRouter();
   const attempt = useAttempt(report);
@@ -102,7 +112,13 @@ function AgentHeader({ agent }: { agent: PaperAgent }) {
           )}
           <p className="text-sm text-muted-foreground">{describeSteps(agent)}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setAsking(true)} disabled={attempt.busy} aria-label={`Delete ${agent.title}`}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setAsking(true)}
+          disabled={working || attempt.busy}
+          aria-label={`Delete ${agent.title}`}
+        >
           <Trash2 />
           Delete
         </Button>
@@ -223,7 +239,7 @@ function Details({ agent, list, onChanged }: Shared) {
 }
 
 // The paper of an agent whose paper is a file: what has been uploaded, and the way to upload it again or take it away
-function PaperFile({ agent, list, onChanged }: Shared) {
+function PaperFile({ agent, list, working, onChanged }: Shared) {
   const { report } = useServer();
   const id = useId();
   const attempt = useAttempt(report);
@@ -233,7 +249,7 @@ function PaperFile({ agent, list, onChanged }: Shared) {
   // A file chosen cannot be taken out of its input, so the input is made again to empty it
   const [inputs, setInputs] = useState(0);
   const controller = useRef<AbortController | null>(null);
-  const file = agent.paper.kind === "file" ? agent.paper.file : null;
+  const file = paperFile(agent.paper);
 
   useEffect(() => () => controller.current?.abort(), []);
 
@@ -289,7 +305,7 @@ function PaperFile({ agent, list, onChanged }: Shared) {
             variant="ghost"
             size="icon-sm"
             onClick={() => void remove()}
-            disabled={attempt.busy || sending !== null}
+            disabled={working || attempt.busy || sending !== null}
             aria-label={`Remove ${file.name}`}
           >
             <Trash2 />
@@ -309,7 +325,7 @@ function PaperFile({ agent, list, onChanged }: Shared) {
           id={`${id}-file`}
           type="file"
           accept={list.suffixes.join(",")}
-          disabled={attempt.busy || sending !== null}
+          disabled={working || attempt.busy || sending !== null}
           onChange={(event) => void upload(event.target.files?.[0])}
           aria-describedby={describedBy(`${id}-file`, { hint: true })}
           className="h-auto cursor-pointer py-1 file:mr-3 file:cursor-pointer file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground"
@@ -343,29 +359,88 @@ function PaperFile({ agent, list, onChanged }: Shared) {
   );
 }
 
-function Agent({ agent, list, onChanged }: Shared) {
+function Agent({
+  agent,
+  list,
+  jobs,
+  reading,
+  onChanged,
+  onReload,
+}: Pick<Shared, "agent" | "list" | "onChanged"> & {
+  jobs: JobsData;
+  reading: LookedAt<PaperAgentReading>;
+  // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
+  onReload: () => void;
+}) {
+  const all = jobs.jobs ?? [];
+  const job = readingJob(all, agent.id);
+  // The agent says that its paper is being read before the jobs have been looked at, as they are when the page opens
+  const working = job !== undefined || agent.steps.reading === "running";
+  const shared = { agent, list, working, onChanged };
+  const own = agent.paper.kind === "file";
+
   return (
     <>
-      <AgentHeader agent={agent} />
-      {agent.paper.kind === "file" && (
-        <PageSection title="Paper" intro="The paper of this agent is a file, which is uploaded here.">
-          <PaperFile key={agent.id} agent={agent} list={list} onChanged={onChanged} />
-        </PageSection>
-      )}
+      <AgentHeader agent={agent} working={working} />
+      <WorkStatus job={job} last={lastReadingJob(all, agent.id)} jobs={jobs} />
+      <PageSection
+        title={own ? "Paper" : "Paper file"}
+        intro={
+          own
+            ? "The paper of this agent is a file, which is uploaded here."
+            : "The paper is read from a file. A DOI or a link is not fetched yet, so upload the file of the paper here to have it read."
+        }
+      >
+        <PaperFile
+          key={agent.id}
+          {...shared}
+          onChanged={(next) => {
+            onChanged(next);
+            // Whether the paper can be read, and what was read of it, are changed by the file that is kept
+            reading.reload();
+          }}
+        />
+      </PageSection>
+      <PageSection title="Reading" intro="What the paper says it found, what it did, what it was done with, and where it falls short.">
+        <Looked
+          state={reading.value}
+          label="Looking at what was read"
+          failure="What was read could not be looked at."
+          onRetry={reading.reload}
+        >
+          {(value) => (
+            <ReadingSection
+              agent={agent}
+              reading={value}
+              working={working}
+              jobs={jobs}
+              onCleared={(cleared) => {
+                reading.set(cleared);
+                onReload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
       <PageSection title="Steps" intro="What is done to make the paper usable. A step is added to the lab as it is built.">
         <Steps agent={agent} />
       </PageSection>
       <PageSection title="Details">
-        <Details key={agent.id} agent={agent} list={list} onChanged={onChanged} />
+        <Details key={agent.id} {...shared} />
       </PageSection>
     </>
   );
 }
 
-// One agent: its paper, how far it has got, and the way to say again what it is called and where its code is
+// One agent: its paper, how far it has got, what was read of it, and the way to say again what it is called and where its
+// code is
 export function AgentPage({ id }: { id: string }) {
   const { report } = useServer();
-  const agent = usePaperAgent(id, report, "");
+  const jobs = useSetupJobs();
+  // What is shown of the agent and its reading is looked at again as the reading goes on, and when it ends
+  const again = readingKey(jobs.jobs, jobs.finished, id);
+  const agent = usePaperAgent(id, report, again);
+  const reading = usePaperAgentReading(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -385,7 +460,9 @@ export function AgentPage({ id }: { id: string }) {
             failure="What an agent takes could not be looked at."
             onRetry={list.reload}
           >
-            {(limits) => <Agent agent={value} list={limits} onChanged={agent.set} />}
+            {(limits) => (
+              <Agent agent={value} list={limits} jobs={jobs} reading={reading} onChanged={agent.set} onReload={agent.reload} />
+            )}
           </Looked>
         )}
       </Looked>

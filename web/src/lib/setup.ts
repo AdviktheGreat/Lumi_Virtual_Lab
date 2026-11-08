@@ -70,15 +70,17 @@ export function stageLabel(target: string): string {
 }
 
 // What a job counts, if it counts anything: the files of a fetch, the papers that are read, or the functions that are
-// written, of how many there are
+// written, or the chunks of a paper that are read, of how many there are
 function counted(job: Job): { done: number; total: number; noun: string } | null {
-  const { done, total, finished, papers, functions } = job.progress;
+  const { done, total, finished, papers, functions, chunks } = job.progress;
   const found =
     job.kind === "papers"
       ? { done: finished, total: papers, noun: "paper" }
       : job.kind === "functions"
         ? { done: finished, total: functions, noun: "function" }
-        : { done, total, noun: "file" };
+        : job.kind === "paperagent-reading"
+          ? { done: finished, total: chunks, noun: "chunk" }
+          : { done, total, noun: "file" };
 
   return typeof found.done === "number" && typeof found.total === "number" && found.total > 0
     ? { done: found.done, total: found.total, noun: found.noun }

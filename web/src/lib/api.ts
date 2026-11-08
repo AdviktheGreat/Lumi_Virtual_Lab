@@ -35,6 +35,9 @@ import type {
   SkillsPutIn,
   PaperAgent,
   PaperAgentChange,
+  PaperAgentPassage,
+  PaperAgentReadOptions,
+  PaperAgentReading,
   PaperAgentsList,
   PaperFunction,
   PaperFunctionsOptions,
@@ -477,6 +480,15 @@ export const api = {
   deletePaperAgent: (id: string) => request<PaperAgentsList>("DELETE", `/paperagents/${encodeURIComponent(id)}`),
   uploadAgentPaper,
   removeAgentPaper: (id: string) => request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/paper`),
+  // What has been read of an agent's paper, starting to read it, which goes on as a job, taking away what was read, and
+  // the paper's words at a place in it
+  paperAgentReading: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentReading>("GET", `/paperagents/${encodeURIComponent(id)}/reading`, undefined, signal),
+  readPaperAgent: (id: string, options: PaperAgentReadOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/reading`, options),
+  clearPaperAgentReading: (id: string) => request<PaperAgentReading>("DELETE", `/paperagents/${encodeURIComponent(id)}/reading`),
+  paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
+    request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
   chat: (id: string, signal?: AbortSignal) => request<ChatInfo>("GET", `/chats/${encodeURIComponent(id)}`, undefined, signal),
   createChat: (chat: NewChat = {}) => request<ChatInfo>("POST", "/chats", chat),

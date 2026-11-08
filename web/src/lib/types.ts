@@ -471,9 +471,11 @@ export type JobState = "running" | "stopping" | "succeeded" | "failed" | "stoppe
 export interface JobProgress {
   done?: number;
   total?: number;
-  // What reading papers, or writing functions, counts: how many there are, and how many have been dealt with
+  // What reading papers, or writing functions, counts: how many there are, and how many have been dealt with. Reading
+  // one paper counts the chunks it is cut into.
   papers?: number;
   functions?: number;
+  chunks?: number;
   finished?: number;
   current?: string | null;
   bytes?: number;
@@ -788,11 +790,19 @@ export interface NewPaperRun {
   source: PaperSource;
 }
 
-// Which paper a PaperAgent is of: a DOI, a link, or a file that is uploaded to it, which has not been until it says so
+// The file of a paper that was uploaded to an agent
+export interface PaperAgentFile {
+  name: string;
+  bytes: number;
+  sha256: string;
+}
+
+// Which paper a PaperAgent is of: a DOI, a link, or a file that is uploaded to it, which has not been until it says so.
+// A DOI or a link may have the file beside it, which is what is read, and has none until one is uploaded.
 export type PaperAgentPaper =
-  | { kind: "doi"; doi: string }
-  | { kind: "url"; url: string }
-  | { kind: "file"; file: { name: string; bytes: number; sha256: string } | null };
+  | { kind: "doi"; doi: string; file?: PaperAgentFile | null }
+  | { kind: "url"; url: string; file?: PaperAgentFile | null }
+  | { kind: "file"; file: PaperAgentFile | null };
 
 export type PaperAgentPaperKind = PaperAgentPaper["kind"];
 
@@ -818,6 +828,116 @@ export interface PaperAgentsList {
   suffixes: string[];
   // The hosts the code of a paper may be at
   repo_hosts: string[];
+}
+
+// Where a fact was found in the paper: the characters it is from and to in the text that was read, and the page of a PDF
+// and the section it begins in, where those are known
+export interface ReadAnchor {
+  start: number;
+  end: number;
+  page: number | null;
+  section: string | null;
+}
+
+// A fact that was read in a paper, with the paper's own words for it, which are in the paper, and where
+export interface ReadFact {
+  id: string;
+  quote: string;
+  anchor: ReadAnchor;
+}
+
+export interface ReadClaim extends ReadFact {
+  kind: "number" | "comparison" | "qualitative";
+  value: string;
+}
+
+export interface ReadMethod extends ReadFact {
+  name: string;
+}
+
+export interface ReadDataset extends ReadFact {
+  name: string;
+  accession: string;
+}
+
+export interface ReadScope extends ReadFact {
+  aspect: "species" | "tissue" | "assay" | "sample size" | "input" | "other";
+  value: string;
+}
+
+export interface ReadSoftware extends ReadFact {
+  name: string;
+  version: string;
+}
+
+export interface ReadLink extends ReadFact {
+  url: string;
+  role: "code" | "data" | "other";
+}
+
+export interface ReadAvailability extends ReadFact {
+  kind: "data" | "code";
+}
+
+export interface ReadLicense extends ReadFact {
+  name: string;
+  covers: "code" | "data" | "paper" | "unknown";
+}
+
+// What has been read of an agent's paper, as far as it has been: how far it has got, what it cost, and what it found
+export interface PaperAgentReading {
+  id: string;
+  // Whether a file is uploaded, which is all that is read, and whether the text that was read of it is kept
+  has_paper: boolean;
+  has_text: boolean;
+  // The reading that is at work, if one is
+  job: Job | null;
+  // How many chunks the paper is cut into, or null if it has not been read
+  chunks: number | null;
+  read: number;
+  skipped: number;
+  failed: number;
+  // Whether every chunk has come to something, which it has not if the reading was stopped or reached its limit
+  complete: boolean;
+  // How many facts were left out, because their quote was not in the paper, or something they say was not in the quote
+  dropped: { quote: number; detail: number };
+  // What the reading has cost, which is null if that cannot be told
+  cost: number | null;
+  calls: number;
+  models: string[];
+  characters: number | null;
+  // How long the paper was, if only the first of it was read
+  truncated_from: number | null;
+  finished_at: string | null;
+  claims: ReadClaim[];
+  // A draft of what the method was done with and tested on, which nobody has checked
+  card: {
+    status: "draft";
+    methods: ReadMethod[];
+    datasets: ReadDataset[];
+    scope: ReadScope[];
+    limitations: ReadFact[];
+  };
+  resources: {
+    software: ReadSoftware[];
+    links: ReadLink[];
+    availability: ReadAvailability[];
+    licenses: ReadLicense[];
+  };
+}
+
+// What to say of reading a paper: the most it may spend, which is always said, and whether to read again the chunks that
+// could not be read
+export interface PaperAgentReadOptions {
+  max_cost: number;
+  retry_failed: boolean;
+}
+
+// The words of the paper at a place, with some of what is around them
+export interface PaperAgentPassage extends ReadAnchor {
+  before: string;
+  text: string;
+  after: string;
 }
 
 // What a new agent is asked for: what it is called, which paper, and where the code is, if that is known

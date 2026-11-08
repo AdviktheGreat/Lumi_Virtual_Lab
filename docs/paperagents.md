@@ -20,7 +20,7 @@ An agent is called by its title. For a DOI or a link the title may be left out, 
 
 One paper is one agent. A DOI or a link that an agent has already, or a file with the contents of one an agent has (which is told by its SHA-256, whatever the other agent was made from), is refused with the agent that has it (`exists`, 409), and the page links to it. At most 200 agents can be kept. Two links are one paper only if they are the same once written as above, so `http` and `https` addresses, or the same query in another order, are two links.
 
-An agent's page (`/papers?agent=...`) shows its paper (a DOI or a link opens in a new tab), its code, and how far each step has got. It says again what the agent is called and where its code is, uploads or removes the paper file, and deletes the agent, after asking, with the paper that was uploaded to it.
+An agent's page (`/papers?agent=...`) shows its paper (a DOI or a link opens in a new tab), its code, and how far each step has got. It says again what the agent is called and where its code is, uploads or removes the paper file (for an agent of a DOI or a link too), and deletes the agent, after asking, with the paper that was uploaded to it. Its Reading part asks for the most the reading may spend and reads the paper, follows the job and can stop it, and shows what was found: each claim, method, dataset, piece of software, link, license, scope, and limitation, with the paper's words for it, and the paper at that place on asking. It can read again the parts that failed, and clear the reading, after asking.
 
 ## What is kept
 

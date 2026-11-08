@@ -206,12 +206,23 @@ is `aria-current`):
 run's `id` is looked for first, then an agent's, then the part.
 
 An agent's page (`/papers?agent=...`, whose link back goes to the agents, `components/paper-agent.tsx`) shows its paper (a DOI
-or a link opens in a new tab), its code, and its five steps with how far each has got. An agent whose paper is a file has its
-paper uploaded there, with how much has been sent and a way to cancel; a file that is not a paper or is too big is said so
-before it is sent, one that another agent has is said so with a link to that agent, and the file may be uploaded again to
-replace it, or removed. The title and where the code is can be said again, and the agent deleted after asking, with the paper
-that was uploaded to it. `src/lib/paperagents.ts` checks what is written before it is sent, as the server does, and keeps the
-words the page uses for the steps and their states.
+or a link opens in a new tab), its code, and its five steps with how far each has got. Every agent has its paper's file uploaded
+there, which is what is read (a DOI or a link is not fetched yet, so the file goes beside it), with how much has been sent and a
+way to cancel; a file that is not a paper or is too big is said so before it is sent, one that another agent has is said so with
+a link to that agent, and the file may be uploaded again to replace it, or removed. The title and where the code is can be said
+again, and the agent deleted after asking, with the paper that was uploaded to it. `src/lib/paperagents.ts` checks what is
+written before it is sent, as the server does, and keeps the words the page uses for the steps and their states.
+
+The Reading part of the page (`components/paper-agent-reading.tsx`) reads the file. It asks for the most the reading may spend,
+which is always said (the form is not there until a file is), and a reading that stopped carries on from where it was; the
+parts that could not be read are read again only if that is asked for, and a paper that has been read is not read again until
+its reading is cleared, after asking. The reading is a job (`paperagent-reading`), so its progress and the way to stop it are
+at the top of the agent and in the setup's jobs; nothing else is done to the agent while it goes on, and the page looks at
+the reading again as it goes and when it ends. What was read is shown as the claims, the method, the data, the software with
+its versions, the links, the licenses, and what the method was tested on and where it falls short, with how many facts were left
+out because their words are not in the paper. Each fact is with its quote, and "Show in the paper" opens the paper's words at
+the place, with the fact's own words marked (`GET /api/paperagents/{id}/passage`). A group of more than ten facts shows the
+first ten and the rest on asking. The method card is said to be a draft.
 
 A survey run's page (`/papers?id=...`, whose link back goes to the surveys) has four parts.
 
