@@ -631,12 +631,37 @@ class TestKeepingAPaper:
         assert refused(agents.put_paper, agent_id, "noextension", io.BytesIO(b"a")).status == 422
         assert agents.view(agent_id)["paper"]["file"] is None
 
-    def test_a_paper_is_uploaded_only_to_an_agent_whose_paper_is_a_file(self, agents: PaperAgents) -> None:
+    def test_an_agent_whose_paper_is_a_doi_keeps_the_paper_file_beside_it_and_gives_it_up(
+        self, agents: PaperAgents, workspace: Workspace
+    ) -> None:
         agent_id = doi_agent(agents)
 
-        error = refused(agents.put_paper, agent_id, "a.txt", io.BytesIO(TEXT))
+        agents.put_paper(agent_id, "a.txt", io.BytesIO(TEXT))
 
-        assert (error.status, error.code) == (409, "invalid")
+        file = {"name": "a.txt", "bytes": len(TEXT), "sha256": hashlib.sha256(TEXT).hexdigest()}
+        assert agents.view(agent_id)["paper"] == {"kind": "doi", "doi": DOI, "file": file}
+        assert (workspace.paperagents_dir / agent_id / PAPER_DIR / "a.txt").read_bytes() == TEXT
+        agents.remove_paper(agent_id)
+        assert agents.view(agent_id)["paper"] == {"kind": "doi", "doi": DOI}
+        assert not (workspace.paperagents_dir / agent_id / PAPER_DIR).exists()
+
+    def test_a_file_is_the_same_paper_in_two_agents_whatever_each_was_made_from(self, agents: PaperAgents) -> None:
+        by_file = file_agent(agents, "By file")
+        by_doi = doi_agent(agents)
+        by_link = agents.create("", {"kind": "url", "url": "https://example.org/paper"})
+        agents.put_paper(by_file, "a.txt", io.BytesIO(TEXT))
+
+        for other in (by_doi, by_link):
+            error = refused(agents.put_paper, other, "copy.txt", io.BytesIO(TEXT))
+            assert (error.status, error.code) == (409, "exists") and error.details["existing"] == by_file
+        assert "file" not in agents.view(by_doi)["paper"]
+
+    def test_a_record_with_a_file_that_is_not_one_is_not_an_agent_of_any_kind_of_paper(self) -> None:
+        good = {"schema": 1, "title": "T", "created_at": "now", "paper": {"kind": "doi", "doi": DOI}}
+
+        assert is_agent(good)
+        assert is_agent({**good, "paper": {**good["paper"], "file": None}})
+        assert not is_agent({**good, "paper": {**good["paper"], "file": {"name": "../a.txt"}}})
 
     def test_an_agent_that_is_not_there_is_not_found(self, agents: PaperAgents) -> None:
         assert refused(agents.put_paper, "nothing", "a.txt", io.BytesIO(TEXT)).status == 404

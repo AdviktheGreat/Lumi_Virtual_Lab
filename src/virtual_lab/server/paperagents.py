@@ -2,11 +2,12 @@
 
 An agent is kept in a directory of its own in the workspace's paperagents/. Its agent.json says which paper it is of
 (a DOI, a link, or a file the person uploaded, which is kept beside it in paper/), where the paper's code is, if that is
-known, and how far each step of making it has got. The steps are added one at a time, so for now every step is pending
-and an agent is the record of what it is to be made from.
+known, and how far each step of making it has got. The steps are added one at a time: so far the paper can be read,
+which is a job that keeps what it finds in the agent's directory.
 
 The paper is how an agent is told from others: one paper is one agent, so a DOI, a link, or a file already in an agent
-is refused, with the agent it is in.
+is refused, with the agent it is in. A paper that is a DOI or a link can have its file put beside it too, since the text
+that is read is the file's, and nothing here fetches a paper.
 """
 
 import hashlib
@@ -22,10 +23,33 @@ from typing import Any, BinaryIO
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from virtual_lab.chat import describe_size, safe_filename
-from virtual_lab.constants import MAX_PAPER_FILE_BYTES
+from virtual_lab.constants import (
+    CONSISTENT_TEMPERATURE,
+    DEFAULT_PAPER_CHUNK_OVERLAP,
+    DEFAULT_PAPER_CHUNK_SIZE,
+    MAX_PAPER_CHARS,
+    MAX_PAPER_FILE_BYTES,
+)
+from virtual_lab.environment import StoppedError
+from virtual_lab.llm import ModelSource
+from virtual_lab.paperagents.anchors import document_from
+from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_structure
+from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
 from virtual_lab.provenance import utc_timestamp
+from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server.errors import ApiError, not_found
-from virtual_lab.server.papers import MAX_TITLE_CHARS, PAPER_KINDS, PAPER_SUFFIXES, RUN_ID
+from virtual_lab.server.jobs import Job, JobConflictError, Jobs
+from virtual_lab.server.papers import (
+    MAX_TITLE_CHARS,
+    PAPER_KINDS,
+    PAPER_SUFFIXES,
+    RUN_ID,
+    StopWork,
+    check_budget,
+    check_flag,
+    check_model,
+    money,
+)
 from virtual_lab.server.workspace import Workspace, claim_directory, has_control_character, read_json
 from virtual_lab.utils import write_atomically
 
@@ -35,6 +59,9 @@ PAPER_DIR = "paper"
 
 # What an agent's record says of how it is kept, so that a later version can read what an earlier one wrote
 SCHEMA = 1
+
+# The job that reads a paper, only one of which is done to an agent at a time
+READING_JOB = "paperagent-reading"
 
 MAX_AGENTS = 200
 MAX_URL_CHARS = 2000
@@ -235,18 +262,17 @@ def is_agent(value: Any) -> bool:
         return False
     if paper["kind"] == "url" and not passes(check_url, paper.get("url")):
         return False
-    if paper["kind"] == "file":
-        file = paper.get("file")
-        if file is not None and not (
-            isinstance(file, dict)
-            and isinstance(file.get("name"), str)
-            and safe_filename(file["name"]) == file["name"]
-            and isinstance(file.get("bytes"), int)
-            and not isinstance(file["bytes"], bool)
-            and isinstance(file.get("sha256"), str)
-            and SHA256.fullmatch(file["sha256"])
-        ):
-            return False
+    file = paper.get("file")
+    if file is not None and not (
+        isinstance(file, dict)
+        and isinstance(file.get("name"), str)
+        and safe_filename(file["name"]) == file["name"]
+        and isinstance(file.get("bytes"), int)
+        and not isinstance(file["bytes"], bool)
+        and isinstance(file.get("sha256"), str)
+        and SHA256.fullmatch(file["sha256"])
+    ):
+        return False
     repo = value.get("repo")
 
     return repo is None or (isinstance(repo, dict) and passes(check_repo, repo.get("url")))
@@ -261,13 +287,13 @@ def steps_of(agent: dict[str, Any]) -> dict[str, str]:
 
 
 def same_paper(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    """Whether two agents are of one paper, which is told by the DOI, the link, or the contents of the file."""
-    if left["kind"] != right["kind"]:
+    """Whether two agents are of one paper, which is told by the contents of the file, if both have one, and by the DOI
+    or the link."""
+    first, second = left.get("file"), right.get("file")
+    if first is not None and second is not None and first["sha256"] == second["sha256"]:
+        return True
+    if left["kind"] != right["kind"] or left["kind"] == "file":
         return False
-    if left["kind"] == "file":
-        return (
-            left["file"] is not None and right["file"] is not None and left["file"]["sha256"] == right["file"]["sha256"]
-        )
 
     return bool(left[left["kind"]] == right[right["kind"]])
 
@@ -277,11 +303,27 @@ class PaperAgents:
 
     :param workspace: Where they are kept.
     :param max_upload_bytes: The most bytes of a paper that may be uploaded.
+    :param jobs: Where a paper is read, which a page follows. Papers are not read without it.
+    :param missing_keys: Says which variables a model's provider needs that are not set.
+    :param client: An OpenAI client to read with, which is for tests.
+    :param chat_models: The chat models to read with, which is for tests.
     """
 
-    def __init__(self, workspace: Workspace, max_upload_bytes: int) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        max_upload_bytes: int,
+        jobs: Jobs | None = None,
+        missing_keys: Callable[[str], list[str]] | None = None,
+        client: Any = None,
+        chat_models: ModelSource | None = None,
+    ) -> None:
         self.workspace = workspace
         self.max_upload_bytes = min(max_upload_bytes, MAX_PAPER_FILE_BYTES)
+        self.jobs = jobs if jobs is not None else Jobs()
+        self.missing_keys = missing_keys if missing_keys is not None else (lambda model: [])
+        self.client = client
+        self.chat_models = chat_models
         # Held from looking for an agent of a paper to keeping the one that is made, so that of two of one paper only
         # one is made, and while a file is put in, an agent is changed, or one is removed
         self._lock = threading.Lock()
@@ -311,15 +353,30 @@ class PaperAgents:
         return found
 
     def entry(self, agent_id: str, agent: dict[str, Any]) -> dict[str, Any]:
-        """An agent as a page shows it."""
+        """An agent as a page shows it, with the step that is being done said to be running."""
+        steps = steps_of(agent)
+        if self.running(agent_id) is not None:
+            steps["reading"] = "running"
+
         return {
             "id": agent_id,
             "title": agent["title"],
             "created_at": agent["created_at"],
             "paper": agent["paper"],
             "repo": agent.get("repo"),
-            "steps": steps_of(agent),
+            "steps": steps,
         }
+
+    def running(self, agent_id: str) -> Job | None:
+        """The job that is reading an agent's paper, if one is."""
+        return next((job for job in self.jobs.active(READING_JOB) if job.subject == agent_id), None)
+
+    def check_idle(self, agent_id: str) -> None:
+        """
+        :raises ApiError: If the agent's paper is being read, which what is done to the paper must wait for.
+        """
+        if (job := self.running(agent_id)) is not None:
+            raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
 
     def lookup(self, agent_id: str) -> tuple[Path, dict[str, Any]]:
         """Where an agent is kept, and what it is.
@@ -415,22 +472,23 @@ class PaperAgents:
     def delete(self, agent_id: str) -> None:
         """Deletes an agent with the paper that was uploaded to it.
 
-        :raises ApiError: If there is no agent with this id.
+        :raises ApiError: If there is no agent with this id, or its paper is being read.
         """
+        # With the lock that starting a reading takes, so that one cannot begin in a directory that is being removed
         with self._lock:
             directory, _ = self.lookup(agent_id)
+            self.check_idle(agent_id)
             shutil.rmtree(directory)
 
     def put_paper(self, agent_id: str, name: str, content: BinaryIO) -> None:
-        """Keeps the paper that was uploaded to an agent, in place of one that was. What is in it is read as it arrives.
+        """Keeps the paper that was uploaded to an agent, in place of one that was, with what was read of it taken away.
+        What is in it is read as it arrives. An agent whose paper is a DOI or a link keeps the file beside it.
 
         :param name: What it was called, which may have a path, as a browser sends it.
-        :raises ApiError: If there is no agent with this id, its paper is not a file, the file is not a paper, it is
-            too big, or another agent has it.
+        :raises ApiError: If there is no agent with this id, the file is not a paper, it is too big, another agent has
+            it, or the paper is being read.
         """
-        _, agent = self.lookup(agent_id)
-        if agent["paper"]["kind"] != "file":
-            raise ApiError(409, "invalid", "A paper is uploaded only to a PaperAgent whose paper is a file")
+        self.lookup(agent_id)
         filename = safe_filename(name)
         if not filename or Path(filename).suffix.lower() not in PAPER_SUFFIXES:
             raise ApiError(422, "invalid", f"{filename or name!r} is not a paper this reads: give {PAPER_KINDS}")
@@ -454,9 +512,11 @@ class PaperAgents:
             kept = {"name": filename, "bytes": size, "sha256": digest.hexdigest()}
             with self._lock:
                 directory, agent = self.lookup(agent_id)
+                self.check_idle(agent_id)
                 paper = {**agent["paper"], "file": kept}
                 self.check_unique(paper, besides=agent_id)
-                self.swap_paper(directory, {**agent, "paper": paper}, temporary, filename)
+                self.swap_paper(directory, self.unread(agent, paper), temporary, filename)
+                kept_reading.forget(directory)
 
     def swap_paper(self, directory: Path, agent: dict[str, Any], uploaded: Path, filename: str) -> None:
         """Puts a paper in place of the one an agent had, and saves the agent that says so. The record never names a
@@ -487,13 +547,259 @@ class PaperAgents:
         shutil.rmtree(aside, ignore_errors=True)
 
     def remove_paper(self, agent_id: str) -> None:
-        """Takes away the paper that was uploaded to an agent.
+        """Takes away the paper that was uploaded to an agent, with what was read of it.
 
-        :raises ApiError: If there is no agent with this id, or it has no paper uploaded.
+        :raises ApiError: If there is no agent with this id, it has no paper uploaded, or the paper is being read.
         """
         with self._lock:
             directory, agent = self.lookup(agent_id)
-            if agent["paper"]["kind"] != "file" or agent["paper"]["file"] is None:
+            if agent["paper"].get("file") is None:
                 raise not_found("paper uploaded to that PaperAgent")
-            self.save(directory, {**agent, "paper": {**agent["paper"], "file": None}})
+            self.check_idle(agent_id)
+            paper = {key: value for key, value in agent["paper"].items() if key != "file"}
+            self.save(directory, self.unread(agent, {**paper, "file": None} if paper["kind"] == "file" else paper))
             shutil.rmtree(directory / PAPER_DIR, ignore_errors=True)
+            kept_reading.forget(directory)
+
+    def unread(self, agent: dict[str, Any], paper: dict[str, Any]) -> dict[str, Any]:
+        """An agent with another paper, and the step of reading it not done."""
+        return {**agent, "paper": paper, "steps": {**steps_of(agent), "reading": "pending"}}
+
+    # Reading
+
+    def usable_model(self) -> str:
+        """The model in the settings, if what is done with it can be paid for and its spending limited.
+
+        :raises ApiError: If a key it needs is not set, or its price is not known.
+        """
+        return check_model(self.workspace.load_settings().model, self.missing_keys)
+
+    def reading(self, agent_id: str) -> dict[str, Any]:
+        """What has been read of an agent's paper: how far it has got, what it cost, and the claims, the draft of the
+        method card, and the resources, each fact with its quote and where in the paper that is.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        file = agent["paper"].get("file")
+        job = self.running(agent_id)
+
+        return {
+            "id": agent_id,
+            "has_paper": file is not None,
+            "has_text": (directory / PAPER_DIR / kept_reading.TEXT_FILE).is_file(),
+            "job": job.snapshot() if job is not None else None,
+            **kept_reading.describe(directory, file["sha256"] if file is not None else None),
+        }
+
+    def passage(self, agent_id: str, start: Any, end: Any) -> dict[str, Any]:
+        """The words of the paper at a place, with some of what is around them.
+
+        :raises ApiError: If there is no agent with this id, its text has not been read, or the place is not in it.
+        """
+        directory, _ = self.lookup(agent_id)
+        document = kept_reading.load_document(directory / PAPER_DIR)
+        if document is None:
+            raise not_found("text of that PaperAgent's paper. Read the paper first")
+        if any(isinstance(place, bool) or not isinstance(place, int) for place in (start, end)):
+            raise ApiError(422, "invalid", "A place in the paper is from one character to another, as whole numbers")
+        try:
+            return kept_reading.passage(document, start, end)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+
+    def clear_reading(self, agent_id: str) -> None:
+        """Takes away what was read of an agent's paper, so that it can be read again from the start.
+
+        :raises ApiError: If there is no agent with this id, or its paper is being read.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            kept_reading.forget(directory)
+            self.save(directory, self.unread(agent, agent["paper"]))
+
+    def read(self, agent_id: str, max_cost: Any, retry_failed: Any = False) -> Job:
+        """Starts reading an agent's paper, for the claims in it, the methods and data and software it names, what the
+        authors say the method was tested on and where it falls short, and where its code and data are. A reading that
+        was stopped carries on from the chunk it stopped at.
+
+        :param max_cost: The most the reading may spend, in USD, which is always said.
+        :param retry_failed: Whether to read again the chunks that an earlier reading could not.
+        :raises ApiError: If there is no agent with this id, the limit is not an amount, a key or a price is missing,
+            the paper has no file, it has been read, or it is being read.
+        """
+        directory, agent = self.lookup(agent_id)
+        budget = check_budget(max_cost, "The most it may spend", required=True)
+        again = check_flag(retry_failed, "retry_failed")
+        model = self.usable_model()
+        file = agent["paper"].get("file")
+        if file is None:
+            raise ApiError(
+                422,
+                "invalid",
+                "Upload the paper's file first. Only a file is read: a DOI or a link is not fetched.",
+            )
+        earlier = kept_reading.describe(directory, file["sha256"])
+        if (
+            earlier["chunks"] is not None
+            and earlier["read"] + earlier["skipped"] + earlier["failed"] >= earlier["chunks"]
+            and not (again and earlier["failed"])
+        ):
+            raise ApiError(409, "done", "The paper has been read. Clear the reading to read it again.")
+
+        work = self.reader(agent_id, file, model, budget, again)
+        with self._lock:
+            # Looked for again, as an agent that was deleted, or whose paper was changed, while the checks above were
+            # made has nothing to read, or another paper
+            _, current = self.lookup(agent_id)
+            if (current["paper"].get("file") or {}).get("sha256") != file["sha256"]:
+                raise ApiError(409, "changed", "The paper was changed. Read it again")
+            try:
+                return self.jobs.start(
+                    READING_JOB,
+                    agent_id,
+                    f"Reading the paper: {agent['title']}",
+                    work,
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def reader(
+        self, agent_id: str, file: dict[str, Any], model: str, max_cost: float, retry_failed: bool
+    ) -> Callable[[Job], str | None]:
+        """What a job does to read a paper: reads the file, reads each chunk of its text, and keeps what it shows."""
+
+        def work(job: Job) -> str | None:
+            directory = self.workspace.paperagents_dir / agent_id
+            state: dict[str, Any] = {"run": None, "error": False}
+            try:
+                return self.read_paper(job, directory, file, model, max_cost, retry_failed, state)
+            except StoppedError:
+                raise
+            except BaseException:
+                state["error"] = True
+                raise
+            finally:
+                self.settle(agent_id, directory, state["run"], state["error"])
+
+        return work
+
+    def read_paper(
+        self,
+        job: Job,
+        directory: Path,
+        file: dict[str, Any],
+        model: str,
+        max_cost: float,
+        retry_failed: bool,
+        state: dict[str, Any],
+    ) -> str:
+        if job.stop.is_set():
+            raise StoppedError("Stopped before any of the paper was read.")
+        job.update("Reading the file")
+        pages, paged = read_paper_pages(directory / PAPER_DIR / file["name"])
+        document = document_from(pages, paged, MAX_PAPER_CHARS)
+        if not document.text.strip():
+            raise ValueError("There is no text in the paper to read. A paper that is a scan of pages has none.")
+        kept_reading.save_text(directory / PAPER_DIR, document)
+        chunks = plan_chunks(document, DEFAULT_PAPER_CHUNK_SIZE, DEFAULT_PAPER_CHUNK_OVERLAP)
+        run = {
+            "schema": kept_reading.SCHEMA,
+            "version": READING_VERSION,
+            "file_sha256": file["sha256"],
+            "chunk_size": DEFAULT_PAPER_CHUNK_SIZE,
+            "chunk_overlap": DEFAULT_PAPER_CHUNK_OVERLAP,
+            "chunks": len(chunks),
+            "characters": len(document.text),
+            "truncated_from": document.truncated_from,
+            "started_at": utc_timestamp(),
+            "finished_at": None,
+        }
+        kept_reading.begin_run(directory, run)
+        state["run"] = run
+        saved = kept_reading.saved_chunks(directory)
+        job.update("Reading the paper", chunks=len(chunks), finished=len(saved))
+
+        def before(number: int, total: int) -> None:
+            if job.stop.is_set():
+                raise StopWork
+            line = f"Reading chunk {number} of {total}"
+            job.log(line)
+            job.update(line)
+
+        def keep(record: dict[str, Any]) -> None:
+            kept_reading.save_chunk(directory, record)
+            job.update(finished=len(kept_reading.saved_chunks(directory)))
+
+        try:
+            reading = read_structure(
+                document,
+                model,
+                saved=saved,
+                on_chunk=keep,
+                before_chunk=before,
+                chunk_size=DEFAULT_PAPER_CHUNK_SIZE,
+                chunk_overlap=DEFAULT_PAPER_CHUNK_OVERLAP,
+                temperature=CONSISTENT_TEMPERATURE,
+                max_cost=max_cost,
+                chat_models=self.chat_models,
+                client=self.client,
+                retry_failed=retry_failed,
+            )
+        except StopWork:
+            raise StoppedError("Stopped. What was read is kept, and reading again carries on from there.") from None
+        except PaperBudgetExceededError as error:
+            done = len(kept_reading.saved_chunks(directory))
+
+            return (
+                f"Stopped at the limit: reading has cost {money(error.spent)} of the {money(error.limit)} allowed, "
+                f"with {done} of {len(chunks)} chunks read. What was read is kept, and reading again carries on "
+                "from there."
+            )
+
+        return self.describe_reading(directory, file["sha256"], reading.usage)
+
+    def describe_reading(self, directory: Path, sha256: str, usage: Any) -> str:
+        """What a reading found, in a sentence or two."""
+        found = kept_reading.describe(directory, sha256)
+        facts = len(found["claims"]) + sum(
+            len(items) for part in ("card", "resources") for items in found[part].values() if isinstance(items, list)
+        )
+        try:
+            spent: float | None = usage.compute_cost()
+        except ValueError:
+            spent = None
+        line = f"Read {found['read']} of {found['chunks']} chunks and kept {facts} facts, spending {money(spent)}."
+        if found["failed"]:
+            line += f" {found['failed']} chunks could not be read."
+        left_out = found["dropped"]["quote"] + found["dropped"]["detail"]
+        if left_out:
+            line += f" {left_out} facts were left out because the paper does not bear them out."
+
+        return line
+
+    def settle(self, agent_id: str, directory: Path, run: dict[str, Any] | None, error: bool) -> None:
+        """Keeps what a reading found, as the files of the claims, the method card, and the resources, whether it read
+        the paper through or not, and says how far the step has got: done if every chunk was read, failed if none could
+        be, and pending if it stopped part way and can carry on."""
+        results = kept_reading.saved_chunks(directory) if run is not None else {}
+        if run is not None and directory.is_dir():
+            if results:
+                kept_reading.write_files(directory, results)
+            kept_reading.end_run(directory, run)
+        read = sum(1 for record in results.values() if record["status"] == "read")
+        failed = sum(1 for record in results.values() if record["status"] == "failed")
+        if run is not None and len(results) >= run["chunks"]:
+            status = "failed" if read == 0 and failed else "done"
+        else:
+            status = "failed" if error and read == 0 else "pending"
+        with self._lock:
+            try:
+                saved, agent = self.lookup(agent_id)
+            except ApiError:
+                return
+            self.save(saved, {**agent, "steps": {**steps_of(agent), "reading": status}})

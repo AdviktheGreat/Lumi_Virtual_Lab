@@ -423,6 +423,20 @@ def read_paper(path: Path | str) -> str:
     :raises ImportError: If it is a PDF and pypdf is not installed.
     :return: The text.
     """
+    pages, _ = read_paper_pages(path)
+
+    return "\n\n".join(pages)
+
+
+def read_paper_pages(path: Path | str) -> tuple[list[str], bool]:
+    """The text of a paper in a file, a page at a time if it is a PDF.
+
+    :param path: The file, as read_paper takes it.
+    :raises FileNotFoundError: If there is no such file.
+    :raises ValueError: As read_paper does.
+    :raises ImportError: If it is a PDF and pypdf is not installed.
+    :return: The pages, and whether they are the pages of a PDF. A text file is one piece, and is not.
+    """
     path = Path(path)
     suffix = path.suffix.lower()
 
@@ -435,13 +449,18 @@ def read_paper(path: Path | str) -> str:
 
     data = path.read_bytes()
     if suffix == ".pdf":
-        return pdf_text(data, path.name)
+        return pdf_pages(data, path.name), True
 
-    return data.decode("utf-8", errors="replace")
+    return [data.decode("utf-8", errors="replace")], False
 
 
 def pdf_text(data: bytes, name: str = "the PDF") -> str:
     """The text of a PDF, page by page, with a blank line between pages."""
+    return "\n\n".join(pdf_pages(data, name))
+
+
+def pdf_pages(data: bytes, name: str = "the PDF") -> list[str]:
+    """The text of each page of a PDF."""
     try:
         from pypdf import PdfReader
     except ImportError as error:
@@ -472,7 +491,7 @@ def pdf_text(data: bytes, name: str = "the PDF") -> str:
         raise ValueError(f"{name} has {pages:,} pages, more than the {MAX_PAPER_PAGES} a paper may have")
 
     try:
-        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        return [page.extract_text() or "" for page in reader.pages]
     except Exception as error:
         raise ValueError(f"{name} could not be read as a PDF: {error}") from error
 
