@@ -35,9 +35,11 @@ import type {
   SkillsPutIn,
   PaperAgent,
   PaperAgentChange,
+  PaperAgentFetchOptions,
   PaperAgentPassage,
   PaperAgentReadOptions,
   PaperAgentReading,
+  PaperAgentRepository,
   PaperAgentsList,
   PaperFunction,
   PaperFunctionsOptions,
@@ -487,6 +489,13 @@ export const api = {
   readPaperAgent: (id: string, options: PaperAgentReadOptions) =>
     request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/reading`, options),
   clearPaperAgentReading: (id: string) => request<PaperAgentReading>("DELETE", `/paperagents/${encodeURIComponent(id)}/reading`),
+  // What there is of an agent's code, fetching it, which goes on as a job, and taking away what was fetched
+  paperAgentRepository: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentRepository>("GET", `/paperagents/${encodeURIComponent(id)}/repository`, undefined, signal),
+  fetchPaperAgentRepository: (id: string, options: PaperAgentFetchOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/repository`, options),
+  clearPaperAgentRepository: (id: string) =>
+    request<PaperAgentRepository>("DELETE", `/paperagents/${encodeURIComponent(id)}/repository`),
   paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
     request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,

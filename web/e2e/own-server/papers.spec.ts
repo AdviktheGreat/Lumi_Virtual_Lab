@@ -16,7 +16,8 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  for (const job of jobs.filter((job: { kind: string; state: string }) => job.kind === "paperagent-reading" && job.state === "running")) {
+  const working = ["paperagent-reading", "paperagent-repository"];
+  for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
   const { agents } = await (await page.request.get("/api/paperagents")).json();
@@ -994,4 +995,271 @@ test("has nothing wrong that axe can find, in an agent that is being read, or th
   await reading(page).getByRole("button", { name: "Read the paper" }).click();
   await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
   expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+// What the page says of an agent's code, which is fetched by a stand-in for Git that writes a small project for any address
+const CODE_ADDRESS = "https://github.com/example/cellmapper";
+const codeForm = (page: Page) => form(page, "Fetch the code");
+const fetching = (page: Page) => page.getByRole("region", { name: "Fetching the code" });
+const stock = (page: Page) => page.getByTestId("code-stock");
+const stockRow = (page: Page, label: string) => stock(page).getByTestId("code-stock-row").filter({ has: page.locator(`xpath=preceding-sibling::dt[normalize-space()="${label}"]`) });
+const header = (page: Page) => page.locator("p", { hasText: /^Code: example\/cellmapper/ });
+const step = (page: Page, name: string) => page.getByTestId("paper-agent-step").filter({ hasText: name });
+
+// Reads the paper of an agent through the server, and waits until that is done
+async function readTheAgent(page: Page, id: string) {
+  const started = await page.request.post(`/api/paperagents/${id}/reading`, { data: { max_cost: 2 } });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await (await page.request.get(`/api/paperagents/${id}/reading`)).json()).job, { timeout: 20_000 }).toBeNull();
+}
+
+// Fetches the code of an agent through the server, and waits until that is done
+async function fetchTheCode(page: Page, id: string, data: Record<string, unknown> = {}) {
+  const started = await page.request.post(`/api/paperagents/${id}/repository`, { data });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await (await page.request.get(`/api/paperagents/${id}/repository`)).json()).job, { timeout: 20_000 }).toBeNull();
+}
+
+test("offers the code that the paper points to, and fetches it at a commit, shows what was found and whether to go on, and takes it away", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Code mapper", paper: { kind: "file" } });
+  await sendPaper(page, id, "cells.txt", CELLS);
+  await openAgent(page, id, "Code mapper");
+  const section = page.getByRole("heading", { name: "Code", level: 2, exact: true });
+  await expect(section).toBeVisible();
+  // Until the paper is read, and where its code is is not said, there is nothing to fetch or to choose from
+  await expect(page.getByText("Say where the code is, under Details below, or read the paper, which may say where it is.")).toBeVisible();
+  await expect(codeForm(page)).toHaveCount(0);
+
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+
+  // The project that the paper's link leads to is offered with the words that say it, and is not fetched
+  const candidate = page.getByTestId("code-candidate");
+  await expect(candidate).toHaveCount(1);
+  await expect(candidate).toContainText("example/cellmapper");
+  await expect(candidate).toContainText("The paper says it is the code");
+  await expect(candidate.getByRole("blockquote")).toHaveText(CODE);
+  await expect(candidate).toContainText("Code availability");
+  await expect(codeForm(page)).toHaveCount(0);
+  expect((await (await page.request.get(`/api/paperagents/${id}/repository`)).json())).toMatchObject({ repo: null, cloned: false });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await candidate.getByRole("button", { name: "Use example/cellmapper as the code" }).click();
+
+  await expect(candidate).toContainText("The code of this agent");
+  await expect(candidate.getByRole("button", { name: /^Use / })).toHaveCount(0);
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).repo).toEqual({ url: CODE_ADDRESS });
+  await expect(codeForm(page)).toBeVisible();
+  await expect(step(page, "Take stock of its code")).toContainText("Not started");
+
+  // What is asked for is said before it is sent
+  await codeForm(page).getByLabel("Branch, tag, or commit").fill("--upload-pack=x");
+  await codeForm(page).getByLabel("Most to fetch, in megabytes").fill("5");
+  await codeForm(page).getByRole("button", { name: "Fetch the code" }).click();
+  await expect(codeForm(page).getByText("That is not the name of a branch or a tag, or a commit.")).toBeVisible();
+  await expect(codeForm(page).getByText(/is a whole number from 10 to 1000/)).toBeVisible();
+  expect((await (await page.request.get(`/api/paperagents/${id}/repository`)).json()).cloned).toBe(false);
+
+  await codeForm(page).getByLabel("Branch, tag, or commit").fill("v1.2");
+  await codeForm(page).getByLabel("Most to fetch, in megabytes").fill("50");
+  await codeForm(page).getByRole("button", { name: "Fetch the code" }).click();
+
+  await expect(page.getByTestId("code-commit")).toContainText("example/cellmapper at ", { timeout: 15_000 });
+  await expect(page.getByTestId("code-commit")).toContainText("(v1.2)");
+  await expect(fetching(page)).toContainText("Fetching the code and taking stock of it: Code mapper");
+  await expect(fetching(page)).toContainText("Fetched ");
+  await expect(codeForm(page)).toHaveCount(0);
+  await expect(step(page, "Take stock of its code")).toContainText("Done");
+  const kept = await (await page.request.get(`/api/paperagents/${id}/repository`)).json();
+  expect(kept).toMatchObject({ cloned: true, intake: { url: CODE_ADDRESS, ref: "v1.2", limit_bytes: 50 * 1024 * 1024 } });
+  await expect(page.getByTestId("code-commit")).toContainText(kept.intake.commit.slice(0, 12));
+  // The commit is on the agent, so that it is the same code later
+  await expect(header(page)).toContainText(`at commit ${kept.intake.commit.slice(0, 12)}`);
+
+  // What was found, as rows
+  await expect(stockRow(page, "Languages")).toContainText("Python (4 files)");
+  await expect(stockRow(page, "Tutorials")).toContainText("1, of which 1 notebook");
+  await expect(stockRow(page, "Tutorials")).toContainText("tutorials/quickstart.ipynb");
+  await expect(stockRow(page, "Tests")).toContainText("1");
+  await expect(stockRow(page, "What to install")).toContainText("requirements.txt (versions given)");
+  await expect(stockRow(page, "License")).toContainText("MIT (permissive)");
+  await expect(stockRow(page, "GPU")).toContainText("Used if there is one, and not needed");
+
+  // Whether to go on, with each thing that was looked at, which says that nothing was run
+  const verdict = page.getByTestId("code-preflight");
+  await expect(page.getByTestId("code-verdict")).toHaveText("Go on");
+  await expect(page.getByTestId("code-verdict-summary")).toContainText("Go:");
+  await expect(verdict.getByTestId("code-check").filter({ hasText: /GPU/ })).toHaveAttribute("data-status", "note");
+  await expect(verdict).toContainText("Nothing was run, so it does not say whether the code works");
+  expect(kept.preflight.verdict).toBe("go");
+  await expect(page.getByText("none of it was run", { exact: false })).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The commit is the same one if it is fetched again, and the fetching is one that the agent's step says is done
+  await page.reload();
+  await expect(page.getByTestId("code-commit")).toContainText(kept.intake.commit.slice(0, 12));
+
+  // Taking the code away asks first, and leaves the address
+  await page.getByRole("button", { name: "Take the code away" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Take away the code of Code mapper?" });
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  await expect(stock(page)).toBeVisible();
+  await page.getByRole("button", { name: "Take the code away" }).click();
+  await page.getByRole("alertdialog", { name: "Take away the code of Code mapper?" }).getByRole("button", { name: "Take away" }).click();
+
+  await expect(stock(page)).toHaveCount(0);
+  await expect(codeForm(page)).toBeVisible();
+  await expect(page.getByTestId("code-preflight")).toHaveCount(0);
+  await expect(fetching(page)).toHaveCount(0);
+  await expect(step(page, "Take stock of its code")).toContainText("Not started");
+  await expect(header(page)).not.toContainText("at commit");
+  expect((await (await page.request.get(`/api/paperagents/${id}/repository`)).json())).toMatchObject({ cloned: false, intake: null, repo: { url: CODE_ADDRESS } });
+  // What the paper was read as is kept
+  await expect(page.getByRole("list", { name: "What the authors report" })).toContainText("0.93");
+});
+
+test("takes away the code that was fetched when its address is changed, and asks first when a project that the paper points to is used instead", async ({
+  page,
+}) => {
+  const OLD = "https://github.com/example/oldmapper";
+  const text = `${CODE}\n\nAn older version is at ${OLD} under the same license.`;
+  const id = await makeAgent(page, { title: "Two projects", paper: { kind: "file" }, repo: OLD });
+  await sendPaper(page, id, "two.txt", text);
+  await readTheAgent(page, id);
+  await fetchTheCode(page, id);
+  await openAgent(page, id, "Two projects");
+  await expect(page.getByTestId("code-commit")).toContainText("example/oldmapper at ");
+
+  // Both are offered, with where each is from, and the one that is the code is said to be
+  const candidates = page.getByTestId("code-candidate");
+  await expect(candidates).toHaveCount(2);
+  await expect(candidates.filter({ hasText: "example/oldmapper" })).toContainText("The code of this agent");
+  await expect(candidates.filter({ hasText: "example/oldmapper" }).getByRole("button", { name: /^Use / })).toHaveCount(0);
+
+  // Using the other takes away what was fetched, so it is asked
+  await candidates.filter({ hasText: "example/cellmapper" }).getByRole("button", { name: "Use example/cellmapper as the code" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Use example/cellmapper as the code?" });
+  await expect(asking).toContainText("This takes away the code that was fetched from example/oldmapper");
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).repo.url).toBe(OLD);
+  await expect(page.getByTestId("code-commit")).toBeVisible();
+
+  await candidates.filter({ hasText: "example/cellmapper" }).getByRole("button", { name: "Use example/cellmapper as the code" }).click();
+  await page.getByRole("alertdialog", { name: "Use example/cellmapper as the code?" }).getByRole("button", { name: "Use it" }).click();
+
+  await expect(page.getByTestId("code-commit")).toHaveCount(0);
+  await expect(codeForm(page)).toBeVisible();
+  await expect(candidates.filter({ hasText: "example/cellmapper" })).toContainText("The code of this agent");
+  await expect(step(page, "Take stock of its code")).toContainText("Not started");
+  expect(await (await page.request.get(`/api/paperagents/${id}/repository`)).json()).toMatchObject({ cloned: false, repo: { url: CODE_ADDRESS } });
+
+  // Saying another address under Details does the same
+  await fetchTheCode(page, id);
+  await page.reload();
+  await expect(page.getByTestId("code-commit")).toContainText("example/cellmapper at ");
+  await expect(page.getByText("Changing it takes away the code that was fetched from the old address.")).toBeVisible();
+  await page.getByLabel("Where its code is").fill(OLD);
+  await form(page, "What the agent is").getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByTestId("code-commit")).toHaveCount(0);
+  await expect(codeForm(page)).toBeVisible();
+});
+
+test("follows the fetching of code while it goes on, and keeps nothing if it is stopped, and says why code could not be fetched", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Slow code", paper: { kind: "doi", doi: "10.1000/slow-code" }, repo: "https://github.com/example/slow-code" });
+  await openAgent(page, id, "Slow code");
+  await codeForm(page).getByRole("button", { name: "Fetch the code" }).click();
+
+  await expect(fetching(page).getByRole("button", { name: "Stop: Fetching the code and taking stock of it: Slow code" })).toBeVisible();
+  await expect(step(page, "Take stock of its code")).toContainText("Going on");
+  await expect(codeForm(page).getByRole("button", { name: "Fetching…" })).toBeDisabled();
+  // Nothing else is done to the agent while its code is fetched, and its paper is not read
+  await expect(fetchAndRead(page)).toBeDisabled();
+  await expect(reading(page)).toContainText("The code is being fetched. Reading waits for that.");
+  await expect(page.getByRole("button", { name: "Delete Slow code" })).toBeDisabled();
+  await expect(page.getByLabel("Upload the paper")).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await fetching(page).getByRole("button", { name: "Stop: Fetching the code and taking stock of it: Slow code" }).click();
+
+  await expect(fetching(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(stock(page)).toHaveCount(0);
+  await expect(step(page, "Take stock of its code")).toContainText("Not started");
+  await expect(codeForm(page).getByRole("button", { name: "Fetch the code" })).toBeEnabled();
+  await expect(fetchAndRead(page)).toBeEnabled();
+  expect((await (await page.request.get(`/api/paperagents/${id}/repository`)).json())).toMatchObject({ cloned: false, intake: null, job: null });
+
+  // A project that is not there, and one that is more than what was asked to be fetched, are said so, with what to do
+  for (const [name, address, words] of [
+    ["Missing code", "https://github.com/example/missing-code", "was not found, or it is not public"],
+    ["Huge code", "https://github.com/example/huge-code", "is bigger than the 50 megabytes that were asked to be fetched"],
+  ]) {
+    const other = await makeAgent(page, { title: name, paper: { kind: "file" }, repo: address });
+    await openAgent(page, other, name);
+    await codeForm(page).getByLabel("Most to fetch, in megabytes").fill("50");
+    await codeForm(page).getByRole("button", { name: "Fetch the code" }).click();
+
+    await expect(fetching(page).getByRole("alert")).toContainText(words, { timeout: 15_000 });
+    await expect(step(page, "Take stock of its code")).toContainText("Failed");
+    await expect(codeForm(page).getByRole("button", { name: "Fetch the code" })).toBeEnabled();
+    expect(await accessibilityProblems(page)).toEqual([]);
+  }
+});
+
+test("says why code was not fetched when the server refuses, and that Git is not installed when it is not", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Refused code", paper: { kind: "file" }, repo: CODE_ADDRESS });
+  await openAgent(page, id, "Refused code");
+  await page.route("**/api/paperagents/*/repository", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "git_missing", message: "Git is not installed on this machine, and fetching code takes it." } }),
+        })
+      : route.fallback(),
+  );
+  await codeForm(page).getByRole("button", { name: "Fetch the code" }).click();
+  await expect(codeForm(page).getByRole("alert")).toContainText("Git is not installed on this machine");
+  await page.unroute("**/api/paperagents/*/repository");
+
+  await page.route("**/api/paperagents/*/repository", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+
+    return route.fulfill({ response, json: { ...(await response.json()), git: false } });
+  });
+  await page.reload();
+  await expect(page.getByText("Git is not installed on this machine, and fetching code takes it. Install it to fetch the code.")).toBeVisible();
+  await expect(codeForm(page).getByRole("button", { name: "Fetch the code" })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("says that code needs a GPU and may not be used for money, which is advice that stops short of deciding, and has nothing wrong that axe can find", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Gpu code", paper: { kind: "file" }, repo: "https://github.com/example/gpu-mapper" });
+  await fetchTheCode(page, id);
+  await openAgent(page, id, "Gpu code");
+
+  await expect(page.getByTestId("code-verdict")).toHaveText("Do not go on");
+  await expect(page.getByTestId("code-verdict-summary")).toContainText("It needs a GPU");
+  const checks = page.getByTestId("code-check");
+  // What stops it is first, and each check says how it came out in words and not only by its icon
+  await expect(checks.first()).toHaveAttribute("data-status", "block");
+  await expect(checks.first()).toContainText("(Stops it)");
+  await expect(page.locator("[data-testid=code-check][data-status=block]")).toHaveCount(1);
+  await expect(stockRow(page, "GPU")).toContainText("Needed");
+  await expect(stockRow(page, "License")).toContainText("non-commercial");
+  await expect(stockRow(page, "Tutorials")).toContainText("None");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The advice is in the agent's own words, from its files, for the person who decides
+  await expect(page.getByTestId("code-preflight")).toContainText("You decide.");
+  const fetched = await (await page.request.get(`/api/paperagents/${id}/repository`)).json();
+  expect(fetched.preflight.verdict).toBe("no-go");
 });

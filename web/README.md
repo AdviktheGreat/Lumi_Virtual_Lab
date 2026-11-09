@@ -229,6 +229,25 @@ out because their words are not in the paper. Each fact is with its quote, and "
 the place, with the fact's own words marked (`GET /api/paperagents/{id}/passage`). A group of more than ten facts shows the
 first ten and the rest on asking. The method card is said to be a draft.
 
+The Code part (`components/paper-agent-code.tsx`) is where the agent's code is fetched and looked at, and nothing in it is run.
+Once the paper is read it lists the projects the paper's links lead to (`candidates`), each with the paper's words that give it
+and a button to use it as the agent's code, which asks first if that takes away code that was fetched from another address. An
+agent that has an address and no fetched code gets a form that asks for a branch, a tag, or a commit (left blank for the
+project's default, and checked where it is written, as the server checks it) and the most to fetch, in megabytes, which is
+always said. Fetching is a job (`paperagent-repository`), so its progress and the way to stop it are above the form, in a
+region of their own ("Fetching the code") apart from the reading's, and while it goes on nothing else is done to the agent and
+its paper is not read. A fetching that fails says why, and the code can be asked for again. Once the code is fetched the part
+shows the commit (which is also at the top of the agent), what was found in the files (languages, tutorials, tests, what to
+install and whether the versions are given, the license, whether a GPU is needed, the data and where it is, submodules, and
+examples that read from someone's computer) as rows, and whether it is worth going on with: a verdict (go on, ask first, or do
+not go on), each check that it is made of with how it came out in words as well as by its icon, the ones that stop it first,
+and a guess at what making tools from the tutorials would cost, with a line that it is advice from the files alone that does
+not say whether the code works. The code can be taken away, after asking, and the address stays. If Git is not installed the
+part says so and does not offer to fetch. Changing the agent in any way looks at the code again, since changing its address
+takes the fetched code away. `src/lib/paperagents.ts` has the words the part uses (`stockRows`, `orderedChecks`,
+`describeEstimate`, and the rest), and `src/lib/use-paperagents.ts` its `usePaperAgentRepository`, which is looked at again as
+a fetching goes on and ends (`readingKey`).
+
 A survey run's page (`/papers?id=...`, whose link back goes to the surveys) has four parts.
 
 - **Papers** is where they are from. A run whose papers are uploaded shows them, with the means to remove one and to add
