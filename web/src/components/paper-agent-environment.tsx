@@ -324,7 +324,7 @@ function Failed({
   const id = useId();
   const { failure } = failed;
   const step = stepTitle(failed.recipe, failure.step);
-  const suggested = suggestion(failure, draft, environment.limits, environment.python_versions);
+  const suggested = suggestion(failure, draft, environment.limits, environment.python_versions, environment.recipe?.python != null);
 
   return (
     <section

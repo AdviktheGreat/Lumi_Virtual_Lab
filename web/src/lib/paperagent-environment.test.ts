@@ -105,49 +105,56 @@ describe("what building is asked for", () => {
 
 describe("what a failure suggests", () => {
   it("is to install the package it names, added to what was typed and not in place of it", () => {
-    const next = suggestion(failure(), draft({ packages: "pkg-config" }), limits, environment.python_versions);
+    const next = suggestion(failure(), draft({ packages: "pkg-config" }), limits, environment.python_versions, true);
 
     expect(next?.draft.packages).toBe("pkg-config zlib1g-dev");
     expect(next?.words).toBe("install zlib1g-dev");
   });
 
   it("is nothing if the draft already says it", () => {
-    expect(suggestion(failure(), draft({ packages: "zlib1g-dev" }), limits, environment.python_versions)).toBeNull();
-    expect(suggestion(failure({ system_packages: [] }), draft(), limits, environment.python_versions)).toBeNull();
+    expect(suggestion(failure(), draft({ packages: "zlib1g-dev" }), limits, environment.python_versions, true)).toBeNull();
+    expect(suggestion(failure({ system_packages: [] }), draft(), limits, environment.python_versions, true)).toBeNull();
   });
 
   it("is the Python it points to, if that is one that is offered and is not the one already said", () => {
     const wrong = failure({ kind: "python_mismatch", system_packages: [], python: "3.9" });
 
-    expect(suggestion(wrong, draft(), limits, environment.python_versions)).toMatchObject({ draft: { python: "3.9" }, words: "use Python 3.9" });
-    expect(suggestion(wrong, draft({ python: "3.9" }), limits, environment.python_versions)).toBeNull();
-    expect(suggestion({ ...wrong, python: "2.7" }, draft(), limits, environment.python_versions)).toBeNull();
+    expect(suggestion(wrong, draft(), limits, environment.python_versions, true)).toMatchObject({ draft: { python: "3.9" }, words: "use Python 3.9" });
+    expect(suggestion(wrong, draft({ python: "3.9" }), limits, environment.python_versions, true)).toBeNull();
+    expect(suggestion({ ...wrong, python: "2.7" }, draft(), limits, environment.python_versions, true)).toBeNull();
+  });
+
+  it("is no Python when the form does not offer one, as for a conda file that says its own", () => {
+    const wrong = failure({ kind: "python_mismatch", system_packages: [], python: "3.9" });
+
+    expect(suggestion(wrong, draft(), limits, environment.python_versions, false)).toBeNull();
+    expect(suggestion(failure({ python: "3.10" }), draft(), limits, environment.python_versions, false)?.words).toBe("install zlib1g-dev");
   });
 
   it("is both, when it says both", () => {
     const both = failure({ python: "3.10" });
 
-    expect(suggestion(both, draft(), limits, environment.python_versions)?.words).toBe("install zlib1g-dev and use Python 3.10");
+    expect(suggestion(both, draft(), limits, environment.python_versions, true)?.words).toBe("install zlib1g-dev and use Python 3.10");
   });
 
   it("is twice the time, to the most, for a build that took too long", () => {
     const slow = failure({ kind: "timeout", system_packages: [] });
 
-    expect(suggestion(slow, draft(), limits, environment.python_versions)).toMatchObject({ draft: { minutes: "60" }, words: "allow 60 minutes" });
-    expect(suggestion(slow, draft({ minutes: "100" }), limits, environment.python_versions)?.draft.minutes).toBe("180");
-    expect(suggestion(slow, draft({ minutes: "180" }), limits, environment.python_versions)).toBeNull();
+    expect(suggestion(slow, draft(), limits, environment.python_versions, true)).toMatchObject({ draft: { minutes: "60" }, words: "allow 60 minutes" });
+    expect(suggestion(slow, draft({ minutes: "100" }), limits, environment.python_versions, true)?.draft.minutes).toBe("180");
+    expect(suggestion(slow, draft({ minutes: "180" }), limits, environment.python_versions, true)).toBeNull();
   });
 
   it("is twice the disk, to the most, for a build that wrote too much", () => {
     const big = failure({ kind: "too_big", system_packages: [] });
 
-    expect(suggestion(big, draft(), limits, environment.python_versions)).toMatchObject({ draft: { gigabytes: "12" }, words: "allow 12 gigabytes" });
-    expect(suggestion(big, draft({ gigabytes: "30" }), limits, environment.python_versions)?.draft.gigabytes).toBe("40");
-    expect(suggestion(big, draft({ gigabytes: "40" }), limits, environment.python_versions)).toBeNull();
+    expect(suggestion(big, draft(), limits, environment.python_versions, true)).toMatchObject({ draft: { gigabytes: "12" }, words: "allow 12 gigabytes" });
+    expect(suggestion(big, draft({ gigabytes: "30" }), limits, environment.python_versions, true)?.draft.gigabytes).toBe("40");
+    expect(suggestion(big, draft({ gigabytes: "40" }), limits, environment.python_versions, true)).toBeNull();
   });
 
   it("does not change what the draft says of anything else", () => {
-    const next = suggestion(failure(), draft({ python: "3.8", minutes: "50" }), limits, environment.python_versions);
+    const next = suggestion(failure(), draft({ python: "3.8", minutes: "50" }), limits, environment.python_versions, true);
 
     expect(next?.draft).toMatchObject({ python: "3.8", minutes: "50", gigabytes: "6" });
   });

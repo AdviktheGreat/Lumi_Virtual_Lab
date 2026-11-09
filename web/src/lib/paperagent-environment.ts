@@ -134,6 +134,8 @@ export function suggestion(
   draft: EnvironmentDraft,
   limits: PaperAgentEnvironment["limits"],
   versions: readonly string[],
+  // Whether the form lets a Python be chosen, which it does not for a conda file that says its own, and the server refuses one
+  canChoosePython: boolean,
 ): { draft: EnvironmentDraft; words: string } | null {
   const next = { ...draft };
   const words: string[] = [];
@@ -143,7 +145,7 @@ export function suggestion(
     next.packages = [...named, ...added].join(" ");
     words.push(`install ${added.join(", ")}`);
   }
-  if (failure.python !== null && versions.includes(failure.python) && failure.python !== draft.python) {
+  if (canChoosePython && failure.python !== null && versions.includes(failure.python) && failure.python !== draft.python) {
     next.python = failure.python;
     words.push(`use Python ${failure.python}`);
   }
