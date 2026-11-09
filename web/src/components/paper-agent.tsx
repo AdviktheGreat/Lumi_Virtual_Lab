@@ -507,6 +507,10 @@ function Agent({
                 repository.set(cleared);
                 onReload();
               }}
+              onStale={() => {
+                onReload();
+                repository.reload();
+              }}
             />
           )}
         </Looked>

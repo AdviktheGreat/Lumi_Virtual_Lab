@@ -1227,6 +1227,25 @@ test("says why code was not fetched when the server refuses, and that Git is not
   await expect(codeForm(page).getByRole("alert")).toContainText("Git is not installed on this machine");
   await page.unroute("**/api/paperagents/*/repository");
 
+  // Code that was fetched a moment before the page looked is not a reason to refuse: the page looks again
+  let looked = 0;
+  await page.route("**/api/paperagents/*/repository", (route) => {
+    if (route.request().method() === "GET") looked += 1;
+
+    return route.request().method() === "POST"
+      ? route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "done", message: "The code has been fetched. Remove it to fetch it again." } }),
+        })
+      : route.fallback();
+  });
+  const before = looked;
+  await codeForm(page).getByRole("button", { name: "Fetch the code" }).click();
+  await expect.poll(() => looked).toBeGreaterThan(before);
+  await expect(codeForm(page).getByRole("alert")).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/repository");
+
   await page.route("**/api/paperagents/*/repository", async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     const response = await route.fetch();

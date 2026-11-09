@@ -18,7 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import {
   CHECK_LABELS,
   checkFetch,
@@ -66,9 +66,9 @@ interface Shared {
   busy: boolean;
 }
 
-// The address of a project, as a link to it if it is one
+// The address of a project, as a link to it if it is one, which the server keeps only if it is https
 function Project({ url }: { url: string }) {
-  if (!isLink(url)) return <span className="break-all">{url}</span>;
+  if (!url.startsWith("https://") || !isLink(url)) return <span className="break-all">{url}</span>;
 
   return (
     <a href={url} target="_blank" rel="noreferrer noopener" className={cn("inline-flex min-w-0 items-center gap-1 break-all", LINK)}>
@@ -173,7 +173,7 @@ function Candidates({ candidates, ...shared }: Shared & { candidates: Repository
 }
 
 // Says which commit to fetch and how much, which is always said, and starts fetching
-function FetchForm({ agent, repository, busy, jobs }: Shared & { jobs: JobsData }) {
+function FetchForm({ agent, repository, busy, jobs, onStale }: Shared & { jobs: JobsData; onStale: () => void }) {
   const { report } = useServer();
   const id = useId();
   const attempt = useAttempt(report);
@@ -187,7 +187,19 @@ function FetchForm({ agent, repository, busy, jobs }: Shared & { jobs: JobsData 
     setTried(true);
     const options = checked.value;
     if (options === null) return;
-    const job = await attempt.run(() => api.fetchPaperAgentRepository(agent.id, options));
+    const job = await attempt.run(async () => {
+      try {
+        return await api.fetchPaperAgentRepository(agent.id, options);
+      } catch (error) {
+        // A fetching that ended has been kept before the page has looked again, which it does now, rather than say so
+        if (error instanceof ApiError && error.code === "done") {
+          onStale();
+
+          return undefined;
+        }
+        throw error;
+      }
+    });
     if (job) jobs.track(job);
   }
 
@@ -404,10 +416,13 @@ export function CodeSection({
   jobs,
   onChanged,
   onCleared,
+  onStale,
 }: Shared & {
   jobs: JobsData;
   onChanged: (agent: PaperAgent) => void;
   onCleared: (repository: PaperAgentRepository) => void;
+  // Looks at the agent and its code again, as is done when the server says what the page shows is out of date
+  onStale: () => void;
 }) {
   const shared = { agent, repository, busy };
   const candidates = repository.candidates;
@@ -424,7 +439,7 @@ export function CodeSection({
           Say where the code is, under Details below, or read the paper, which may say where it is.
         </p>
       )}
-      {hasCode && !repository.cloned && <FetchForm {...shared} jobs={jobs} />}
+      {hasCode && !repository.cloned && <FetchForm {...shared} jobs={jobs} onStale={onStale} />}
       {repository.cloned && <Fetched {...shared} onCleared={onCleared} />}
     </div>
   );
