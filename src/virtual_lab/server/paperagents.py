@@ -10,6 +10,12 @@ is refused, with the agent it is in. What is read is the text of a file, which a
 put beside it, or, if it has none when it is read, gets by the job that reads it fetching the text: a DOI from Europe
 PMC, which holds the papers that are open access, and a link from the public internet. The text that is fetched is kept
 as the file, with where it came from, so that the paper is the same to read again and is not fetched twice.
+
+The code of the paper is fetched when the person asks, from the address the agent has for it. The paper's text only
+suggests where it is: the person says which, and nothing is fetched from a link in a paper that they have not. It is
+fetched at one commit, never run, and taken stock of, and a check says whether it is worth going on with. The check is
+worked out again from what was kept each time it is asked for, so that it uses what the paper has been read to say
+since.
 """
 
 import hashlib
@@ -36,11 +42,15 @@ from virtual_lab.constants import (
 from virtual_lab.environment import StoppedError
 from virtual_lab.llm import ModelSource
 from virtual_lab.paperagents import fetch as fetching
+from virtual_lab.paperagents import preflight as checking
+from virtual_lab.paperagents import repository as cloning
+from virtual_lab.paperagents import stock as stocking
 from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_structure
 from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
 from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server import paperagent_reading as kept_reading
+from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
 from virtual_lab.server.papers import (
@@ -50,12 +60,13 @@ from virtual_lab.server.papers import (
     RUN_ID,
     StopWork,
     check_budget,
+    check_count,
     check_flag,
     check_model,
     money,
 )
 from virtual_lab.server.workspace import Workspace, claim_directory, has_control_character, read_json
-from virtual_lab.utils import write_atomically
+from virtual_lab.utils import compute_token_cost, write_atomically
 from virtual_lab.webpages import is_public_address
 
 # What an agent is, and where the paper uploaded to it is kept
@@ -67,6 +78,10 @@ SCHEMA = 1
 
 # The job that reads a paper, only one of which is done to an agent at a time
 READING_JOB = "paperagent-reading"
+# The job that fetches the code, which is not done to an agent while its paper is being read, nor twice
+REPOSITORY_JOB = "paperagent-repository"
+# The least that the limit on what is fetched of the code may be set to, in megabytes
+MIN_MEGABYTES = 10
 
 MAX_AGENTS = 200
 MAX_URL_CHARS = 2000
@@ -330,7 +345,24 @@ def is_agent(value: Any) -> bool:
         return False
     repo = value.get("repo")
 
-    return repo is None or (isinstance(repo, dict) and passes(check_repo, repo.get("url")))
+    return repo is None or (isinstance(repo, dict) and passes(check_repo, repo.get("url")) and is_pin(repo))
+
+
+def is_pin(repo: dict[str, Any]) -> bool:
+    """Whether what an agent's code says of the commit that was fetched is fit: the commit, and what was asked for to
+    get it, which are both there or neither."""
+    commit, ref = repo.get("commit"), repo.get("ref")
+    if commit is None and ref is None:
+        return True
+    try:
+        return (
+            isinstance(commit, str)
+            and cloning.COMMIT.fullmatch(commit) is not None
+            and isinstance(ref, str)
+            and cloning.check_ref(ref) == ref
+        )
+    except cloning.RepositoryError:
+        return False
 
 
 def made_with() -> dict[str, int]:
@@ -422,6 +454,8 @@ class PaperAgents:
         steps = steps_of(agent)
         if self.running(agent_id) is not None:
             steps["reading"] = "running"
+        if self.cloning(agent_id) is not None:
+            steps["repository"] = "running"
 
         return {
             "id": agent_id,
@@ -436,11 +470,18 @@ class PaperAgents:
         """The job that is reading an agent's paper, if one is."""
         return next((job for job in self.jobs.active(READING_JOB) if job.subject == agent_id), None)
 
-    def check_idle(self, agent_id: str) -> None:
+    def cloning(self, agent_id: str) -> Job | None:
+        """The job that is fetching an agent's code, if one is."""
+        return next((job for job in self.jobs.active(REPOSITORY_JOB) if job.subject == agent_id), None)
+
+    def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
-        :raises ApiError: If the agent's paper is being read, which what is done to the paper must wait for.
+        :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
+        :raises ApiError: If the agent's paper is being read, or its code fetched, which what is done to them must wait
+            for.
         """
-        if (job := self.running(agent_id)) is not None:
+        job = (self.running(agent_id) if reading else None) or self.cloning(agent_id)
+        if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
 
     def lookup(self, agent_id: str) -> tuple[Path, dict[str, Any]]:
@@ -531,19 +572,29 @@ class PaperAgents:
             if title is not None:
                 agent = {**agent, "title": check_title(title)}
             if repo is not None:
-                agent = {**agent, "repo": None if is_blank(repo) else {"url": check_repo(repo)}}
+                url = None if is_blank(repo) else check_repo(repo)
+                if url != (agent.get("repo") or {}).get("url"):
+                    # The code that was fetched is of the address it was fetched from, and is not another's
+                    self.check_idle(agent_id, reading=False)
+                    kept_repository.forget(directory)
+                    agent = {
+                        **agent,
+                        "repo": {"url": url} if url is not None else None,
+                        "steps": {**steps_of(agent), "repository": "pending"},
+                    }
             self.save(directory, agent)
 
     def delete(self, agent_id: str) -> None:
         """Deletes an agent with the paper that was uploaded to it.
 
-        :raises ApiError: If there is no agent with this id, or its paper is being read.
+        :raises ApiError: If there is no agent with this id, or its paper is being read, or its code fetched.
         """
         # With the lock that starting a reading takes, so that one cannot begin in a directory that is being removed
         with self._lock:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
-            shutil.rmtree(directory)
+            # The code that was fetched is read only, which a platform may not remove without being mended first
+            kept_repository.remove_tree(directory)
 
     def put_paper(self, agent_id: str, name: str, content: BinaryIO) -> None:
         """Keeps the paper that was uploaded to an agent, in place of one that was, with what was read of it taken away.
@@ -910,3 +961,202 @@ class PaperAgents:
             except ApiError:
                 return
             self.save(saved, {**agent, "steps": {**steps_of(agent), "reading": status}})
+
+    # The code of the paper
+
+    def as_repo(self, address: str) -> str | None:
+        """The project that a link in the paper is to, as an agent keeps one, or None if it is to none, or to a page of
+        the host that is at an address like a project's."""
+        text = re.sub(r"^http://", "https://", address.strip().rstrip(".,;"), flags=re.IGNORECASE)
+        try:
+            url = check_repo(text if "://" in text else f"https://{text}")
+        except ApiError:
+            return None
+
+        return url if kept_repository.is_project(urlsplit(url).path.strip("/").split("/")) else None
+
+    def priced(self) -> Callable[[int, int], float]:
+        """Prices tokens at the model in the settings, which raises ValueError if its price is not known."""
+        model = self.workspace.load_settings().model
+
+        return lambda tokens_in, tokens_out: compute_token_cost(model, tokens_in, tokens_out)
+
+    def repository(self, agent_id: str) -> dict[str, Any]:
+        """What there is of an agent's code: where it is said to be, the projects the paper points to for the person to
+        choose from, and, once it is fetched, what was found in it and the check of whether to go on. The check is made
+        again each time, from what was kept and from what the paper has been read to say.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        code = agent.get("repo")
+        url = code["url"] if code is not None else None
+        intake = kept_repository.load(directory, url)
+        file = agent["paper"].get("file")
+        reading = kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with())
+        job = self.cloning(agent_id)
+
+        return {
+            "id": agent_id,
+            "repo": code,
+            "cloned": intake is not None,
+            "intake": (
+                {key: intake[key] for key in ("url", "ref", "commit", "cloned_at", "limit_bytes")}
+                if intake is not None
+                else None
+            ),
+            "stock": intake["stock"] if intake is not None else None,
+            "preflight": (
+                checking.preflight(intake["stock"], kept_repository.facts_of_paper(reading), self.priced())
+                if intake is not None
+                else None
+            ),
+            "candidates": kept_repository.candidates(reading["resources"], url, self.as_repo),
+            "job": job.snapshot() if job is not None else None,
+            "git": shutil.which("git") is not None,
+            "limits": {
+                "default_megabytes": cloning.DEFAULT_MEGABYTES,
+                "min_megabytes": MIN_MEGABYTES,
+                "max_megabytes": cloning.MAX_MEGABYTES,
+            },
+        }
+
+    def fetch_repository(self, agent_id: str, repo: Any = None, ref: Any = None, max_megabytes: Any = None) -> Job:
+        """Starts fetching an agent's code, at one commit and without running any of it, and taking stock of it.
+
+        :param repo: The address of the code, which is what the person chose if the paper only pointed to it. It is
+            kept as the agent's, in place of what the agent had. Left out, the agent's own is fetched.
+        :param ref: A branch, a tag, or a commit to fetch, or none for the project's default branch.
+        :param max_megabytes: The most to fetch, in megabytes, which the code is refused if it is more than.
+        :raises ApiError: If there is no agent with this id, nothing is given or kept to fetch, what is given is not
+            fit, Git is not installed, the code has been fetched, or the agent's paper or code is being worked on.
+        """
+        self.lookup(agent_id)
+        megabytes = check_count(
+            cloning.DEFAULT_MEGABYTES if max_megabytes is None else max_megabytes,
+            "The most that is fetched, in megabytes,",
+            MIN_MEGABYTES,
+            cloning.MAX_MEGABYTES,
+        )
+        try:
+            asked = cloning.check_ref(ref if ref is None or isinstance(ref, str) else str(ref))
+        except cloning.RepositoryError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        named = None if is_blank(repo) else check_repo(repo)
+        if shutil.which("git") is None:
+            raise ApiError(422, "git_missing", "Git is not installed on this machine, and fetching code takes it")
+
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            current = (agent.get("repo") or {}).get("url")
+            url = named or current
+            if url is None:
+                raise ApiError(422, "no_repo", "Say where the code is first")
+            self.check_idle(agent_id)
+            if url != current:
+                kept_repository.forget(directory)
+                agent = {**agent, "repo": {"url": url}, "steps": {**steps_of(agent), "repository": "pending"}}
+                self.save(directory, agent)
+            elif kept_repository.load(directory, url) is not None:
+                raise ApiError(409, "done", "The code has been fetched. Remove it to fetch it again.")
+            try:
+                return self.jobs.start(
+                    REPOSITORY_JOB,
+                    agent_id,
+                    f"Fetching the code and taking stock of it: {agent['title']}",
+                    self.cloner(agent_id, url, asked, megabytes * cloning.MEGABYTE),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def cloner(self, agent_id: str, url: str, ref: str, max_bytes: int) -> Callable[[Job], str | None]:
+        """What a job does to fetch the code: fetches it, takes stock of it, and keeps both."""
+
+        def work(job: Job) -> str | None:
+            failed = False
+            try:
+                return self.take_repository(job, agent_id, url, ref, max_bytes)
+            except StoppedError:
+                raise
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                self.settle_repository(agent_id, failed)
+
+        return work
+
+    def take_repository(self, job: Job, agent_id: str, url: str, ref: str, max_bytes: int) -> str:
+        job.update("Fetching the code")
+        with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
+            fetched = Path(scratch) / kept_repository.REPO_DIR
+            cloned = cloning.clone(url, fetched, ref, max_bytes, should_stop=job.stop.is_set)
+            job.log(f"Fetched {url} at commit {cloned.commit}")
+            job.update("Taking stock of the code")
+            stock = stocking.take_stock(fetched)
+            if job.stop.is_set():
+                raise StoppedError("Stopped before the code was kept.")
+            intake = {
+                "url": url,
+                "ref": cloned.ref,
+                "commit": cloned.commit,
+                "cloned_at": utc_timestamp(),
+                "limit_bytes": max_bytes,
+                "stock": stock,
+            }
+            with self._lock:
+                directory, agent = self.lookup(agent_id)
+                if (agent.get("repo") or {}).get("url") != url:
+                    raise ValueError("The address of the code was changed while it was fetched. Fetch it again.")
+                kept_repository.keep(directory, fetched, intake)
+                self.save(
+                    directory,
+                    {
+                        **agent,
+                        "repo": {"url": url, "ref": cloned.ref, "commit": cloned.commit},
+                        "steps": {**steps_of(agent), "repository": "done"},
+                    },
+                )
+        checked = self.repository(agent_id)["preflight"]
+
+        return (
+            f"Fetched {describe_size(stock['bytes'])} in {stock['files']:,} files, at commit {cloned.commit[:12]}. "
+            f"{checked['summary'] if checked is not None else ''}"
+        ).strip()
+
+    def settle_repository(self, agent_id: str, failed: bool) -> None:
+        """Says how far the step of fetching the code has got: done if code is kept for the agent's address, failed if
+        none is and the fetching failed, and pending if it was only stopped. What was kept before is not lost by a
+        fetching that fails."""
+        with self._lock:
+            try:
+                directory, agent = self.lookup(agent_id)
+            except ApiError:
+                return
+            kept = kept_repository.load(directory, (agent.get("repo") or {}).get("url")) is not None
+            status = "done" if kept else "failed" if failed else "pending"
+            if steps_of(agent)["repository"] != status:
+                self.save(directory, {**agent, "steps": {**steps_of(agent), "repository": status}})
+
+    def clear_repository(self, agent_id: str) -> None:
+        """Takes away the code that was fetched, and what was found in it, so that it can be fetched again. The address
+        stays.
+
+        :raises ApiError: If there is no agent with this id, or its paper is being read, or its code fetched.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            kept_repository.forget(directory)
+            code = agent.get("repo")
+            self.save(
+                directory,
+                {
+                    **agent,
+                    "repo": {"url": code["url"]} if code is not None else None,
+                    "steps": {**steps_of(agent), "repository": "pending"},
+                },
+            )
