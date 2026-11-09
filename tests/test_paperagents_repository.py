@@ -155,17 +155,36 @@ class TestFetching:
         assert not sentinel.exists()
         assert (tmp_path / "out" / "a.txt").read_text() == "text\n"
 
-    def test_nothing_in_the_project_is_run(self, tmp_path: Path) -> None:
+    def test_nothing_in_the_project_is_run_whatever_it_asks_git_to_do(self, tmp_path: Path) -> None:
         sentinel = tmp_path / "RAN"
         program = f"open({str(sentinel)!r}, 'w').close()\n"
+        hook = f"#!/bin/sh\ntouch {sentinel}\n"
         source = make_project(
             tmp_path / "project",
-            {"setup.py": program, "conftest.py": program, "__init__.py": program, "run.sh": f"touch {sentinel}\n"},
+            {
+                "setup.py": program,
+                "conftest.py": program,
+                "__init__.py": program,
+                "run.sh": hook,
+                # What a project can ask of Git, which is nothing that is run: filters and drivers need a program that
+                # only a person's own settings can name, and hooks are not part of what is fetched
+                ".gitattributes": "* filter=sneaky diff=sneaky merge=sneaky\n*.txt export-subst\n",
+                "hooks/post-checkout": hook,
+                ".githooks/post-checkout": hook,
+                ".gitmodules": (
+                    f'[submodule "x"]\n\tpath = x\n\turl = file://{tmp_path}/missing\n\tupdate = !touch {sentinel}\n'
+                ),
+                "a.txt": "text\n",
+            },
         )
+        (source / "hooks" / "post-checkout").chmod(0o755)
+        git(source, "add", "--all")
+        git(source, "commit", "--quiet", "-m", "executable")
 
         fetch(source, tmp_path / "out")
 
         assert not sentinel.exists()
+        assert (tmp_path / "out" / "a.txt").read_text() == "text\n"
 
     def test_only_https_is_fetched_by_default(self, project: Path, tmp_path: Path) -> None:
         with pytest.raises(RepositoryError, match="not fetched by a way that is allowed here"):
@@ -183,6 +202,19 @@ class TestFetching:
     def test_a_project_that_is_not_there_is_said_not_to_be(self, tmp_path: Path) -> None:
         with pytest.raises(RepositoryError, match="Git could not fetch"):
             fetch(tmp_path / "missing", tmp_path / "out")
+
+    def test_what_git_says_does_not_give_the_folders_of_this_machine(self, tmp_path: Path) -> None:
+        with pytest.raises(RepositoryError) as caught:
+            fetch(tmp_path / "missing", tmp_path / "out")
+
+        assert str(tmp_path / "out") not in str(caught.value) and "git-home." not in str(caught.value)
+
+    def test_folders_are_taken_out_of_what_is_said_longest_first(self, tmp_path: Path) -> None:
+        said = f"fatal: {tmp_path}/out/.git is not a repository, and {tmp_path}/out has none"
+
+        assert cloning.scrub(said, tmp_path / "out", tmp_path / "out" / ".git") == (
+            "fatal: <folder> is not a repository, and <folder> has none"
+        )
 
 
 class TestWhatGitIsRunWith:
@@ -223,6 +255,45 @@ class TestSize:
 
         with pytest.raises(RepositoryTooBigError):
             fetch(source, tmp_path / "out", max_bytes=1_000_000)
+
+    def test_what_the_files_would_take_is_told_before_any_is_written(self, tmp_path: Path) -> None:
+        source = make_project(tmp_path / "project", {"zeros.dat": bytes(3_000_000), "a.py": "x = 1\n"})
+
+        with pytest.raises(RepositoryTooBigError) as caught:
+            fetch(source, tmp_path / "out", max_bytes=1_000_000)
+
+        assert caught.value.seen >= 3_000_000 and "had come to 2.9 MB" in str(caught.value)
+        assert not (tmp_path / "out" / "zeros.dat").exists() and not (tmp_path / "out" / "a.py").exists()
+
+    def test_a_project_of_very_many_files_is_refused_before_any_is_written(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cloning, "MAX_TREE_FILES", 5)
+        source = make_project(tmp_path / "project", {f"f{number}.txt": "" for number in range(9)})
+
+        with pytest.raises(RepositoryError, match=r"more than 5 files"):
+            fetch(source, tmp_path / "out")
+
+        assert not (tmp_path / "out" / "f0.txt").exists()
+
+    def test_a_project_with_as_many_files_as_are_kept_is_fetched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cloning, "MAX_TREE_FILES", 9)
+        source = make_project(tmp_path / "project", {f"f{number}.txt": "x" for number in range(9)})
+
+        fetch(source, tmp_path / "out")
+
+        assert len(list((tmp_path / "out").iterdir())) == 9
+
+    def test_a_submodule_and_a_link_are_listed_with_no_size_to_add(self, tmp_path: Path) -> None:
+        source = make_project(tmp_path / "project", {"a.py": "x = 1\n"})
+        git(source, "update-index", "--add", "--cacheinfo", f"160000,{git(source, 'rev-parse', 'HEAD')},deep")
+        git(source, "commit", "--quiet", "-m", "with a submodule")
+
+        got = fetch(source, tmp_path / "out", max_bytes=1_000_000)
+
+        assert got.commit == git(source, "rev-parse", "HEAD")
 
     def test_code_under_the_limit_is_fetched(self, tmp_path: Path) -> None:
         source = make_project(tmp_path / "project", {"small.bin": os.urandom(20_000)})

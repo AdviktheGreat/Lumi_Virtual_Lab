@@ -8,7 +8,9 @@ project keeps in Git LFS are not fetched, and are noticed in what is taken stock
 files: Git's own files are taken away, so that nothing later is run in a folder that Git would act on.
 
 How much is fetched is limited, and it is the limit that is watched while Git works, since a project's size is not known
-before it is fetched. A project over the limit is refused, and says how far it got.
+before it is fetched. A project over the limit is refused, and says how far it got. What the files would take once
+written, and how many there are, is told from Git's list of them before any is written, since a project that packs small
+is not small when written out.
 """
 
 import os
@@ -17,6 +19,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,6 +38,13 @@ DEFAULT_BYTES = DEFAULT_MEGABYTES * MEGABYTE
 # How long Git may take for each of the steps, and how often it is looked at while it works
 GIT_SECONDS = 300
 WATCH_SECONDS = 0.5
+
+# The most files a project may have, which is told from its list of files before any is written, since a project of
+# very many small files takes no bytes to speak of and would still fill the disk's list of files
+MAX_TREE_FILES = 100_000
+
+# One entry of Git's list of a commit's files: the mode, the kind, the object, the size ("-" for a submodule), the path
+TREE_ENTRY = re.compile(rb"^\d+ \w+ [0-9a-f]+ +(\d+|-)\t")
 
 # What a commit, a tag, or a branch is called that is asked for. It never begins with a dash, which Git would take for
 # an option
@@ -183,6 +193,91 @@ def too_big(seen: int, limit: int) -> RepositoryTooBigError:
     )
 
 
+def check_tree(
+    commit: str,
+    folder: Path,
+    environment: dict[str, str],
+    seconds: float,
+    max_bytes: int,
+    should_stop: Callable[[], bool] | None,
+) -> None:
+    """Refuses a commit whose files would take more than the limit once written, or are more than are kept, from the
+    list of its files and their sizes that Git gives, before any is written. A project that packs small, such as one of
+    zeros, is the size it is only when written, and a project of very many small files is not bytes at all. The list is
+    read as it comes and the reading stops at the limit, so that a list that is huge is not held.
+
+    :raises RepositoryTooBigError: If the files add up to more than max_bytes.
+    :raises RepositoryError: If there are more than MAX_TREE_FILES, or Git cannot list them or takes too long.
+    :raises StoppedError: If should_stop said to stop.
+    """
+    command = [
+        "git",
+        *(part for setting in SAFE_SETTINGS for part in ("-c", setting)),
+        "ls-tree",
+        "-r",
+        "-l",
+        "-z",
+        commit,
+    ]
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=folder,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        raise RepositoryError("Git is not installed on this machine, and fetching code takes it") from None
+    totals = {"files": 0, "bytes": 0}
+
+    def count() -> None:
+        assert process.stdout is not None
+        rest = b""
+        try:
+            while block := process.stdout.read(1 << 16):
+                *entries, rest = (rest + block).split(b"\0")
+                for entry in entries:
+                    found = TREE_ENTRY.match(entry)
+                    totals["files"] += 1
+                    totals["bytes"] += int(found.group(1)) if found is not None and found.group(1) != b"-" else 0
+                if totals["files"] > MAX_TREE_FILES or totals["bytes"] > max_bytes:
+                    return
+        except (OSError, ValueError):
+            return
+
+    reader = threading.Thread(target=count, daemon=True)
+    reader.start()
+    deadline = time.monotonic() + seconds
+    try:
+        while reader.is_alive():
+            reader.join(WATCH_SECONDS)
+            if should_stop is not None and should_stop():
+                raise StoppedError("Stopped before the code was fetched.")
+            if reader.is_alive() and time.monotonic() >= deadline:
+                raise RepositoryError(f"Git did not finish in {seconds:,.0f} seconds")
+    finally:
+        if process.poll() is None:
+            stop_git(process)
+        reader.join(10)
+    if totals["bytes"] > max_bytes:
+        raise too_big(totals["bytes"], max_bytes)
+    if totals["files"] > MAX_TREE_FILES:
+        raise RepositoryError(f"The code has more than {MAX_TREE_FILES:,} files, which is the most that is fetched")
+    if process.returncode != 0:
+        raise RepositoryError("Git could not list the files of the commit")
+
+
+def scrub(said: str, *places: Path | str) -> str:
+    """What Git said, without the folders on this machine that it named, which are not for the person to see."""
+    for place in sorted((str(place) for place in places), key=len, reverse=True):
+        said = said.replace(place, "<folder>")
+
+    return said
+
+
 def run_git(
     arguments: list[str],
     folder: Path,
@@ -297,6 +392,7 @@ def clone(
             ).strip()
             if not COMMIT.fullmatch(commit):
                 raise RepositoryError("Git did not say which commit this is")
+            check_tree(commit, destination, environment, seconds, max_bytes, should_stop)
             run_git(
                 ["checkout", "--quiet", "--detach", commit],
                 destination,
@@ -309,7 +405,7 @@ def clone(
         except RepositoryError as error:
             if isinstance(error, RepositoryTooBigError):
                 raise
-            raise RepositoryError(explain(str(error), url, asked)) from None
+            raise RepositoryError(explain(scrub(str(error), destination, home), url, asked)) from None
         shutil.rmtree(destination / ".git", ignore_errors=True)
 
     return Cloned(commit=commit, ref=asked)

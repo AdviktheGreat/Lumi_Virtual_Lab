@@ -578,6 +578,36 @@ class TestNothingIsRun:
         assert found["complete"] is False
 
 
+class TestFilesThatAreMadeToBreakTheReading:
+    DEPTH = 100_000
+
+    def test_a_file_nested_deeper_than_a_parser_goes_is_not_one_and_does_not_stop_the_stock(
+        self, tmp_path: Path
+    ) -> None:
+        nested = "[" * self.DEPTH + "]" * self.DEPTH
+        found = stock_of(
+            tmp_path,
+            {
+                "analysis.ipynb": nested,
+                "package.json": nested,
+                "pyproject.toml": "a = " + nested,
+                "README.md": "# Readme\n",
+                "run.py": "print(1)\n",
+            },
+        )
+
+        assert is_stock(found)
+        assert found["files"] == 5 and found["license"] is None
+        assert [item["code_cells"] for item in found["notebooks"]["listed"]] == [None]
+
+    def test_a_notebook_nested_in_its_cells_is_skipped_the_same_way(self, tmp_path: Path) -> None:
+        deep = '{"cells": [{"cell_type": "code", "source": ' + "[" * self.DEPTH + "]" * self.DEPTH + "}]}"
+
+        found = stock_of(tmp_path, {"n.ipynb": deep, "run.py": "print(1)\n"})
+
+        assert is_stock(found)
+
+
 class TestTheShapeOfAStock:
     def test_what_is_made_is_a_stock_and_stays_one_through_json(self, tmp_path: Path) -> None:
         found = stock_of(

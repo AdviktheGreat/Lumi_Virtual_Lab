@@ -304,7 +304,8 @@ def manifest_license(root: Path, reader: Reader) -> str | None:
         if name == "pyproject.toml":
             try:
                 project = tomllib.loads(text).get("project", {})
-            except tomllib.TOMLDecodeError:
+            # A file nested deeper than the parser goes raises RecursionError, which is not a ValueError
+            except (tomllib.TOMLDecodeError, RecursionError):
                 project = {}
             value = project.get("license") if isinstance(project, dict) else None
             if isinstance(value, dict):
@@ -316,7 +317,7 @@ def manifest_license(root: Path, reader: Reader) -> str | None:
         elif name == "package.json":
             try:
                 value = json.loads(text).get("license")
-            except (ValueError, AttributeError):
+            except (ValueError, AttributeError, RecursionError):
                 value = None
             found = value if isinstance(value, str) else None
         elif name == "DESCRIPTION":
@@ -436,7 +437,7 @@ def notebook_cells(text: str) -> tuple[str | None, list[tuple[str, str]]] | None
     what is given is not a notebook."""
     try:
         notebook = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(notebook, dict) or not isinstance(notebook.get("cells"), list):
         return None
