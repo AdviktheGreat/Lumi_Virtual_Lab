@@ -51,6 +51,11 @@ and everything else is a request and an answer.
     POST   /api/paperagents/{id}/repository  starts fetching the code, never running it, and taking stock of it
     GET    /api/paperagents/{id}/repository  where the code is, what the paper points to, what was found in it
     DELETE /api/paperagents/{id}/repository  takes away the code that was fetched, so that it can be fetched again
+    POST   /api/paperagents/{id}/environment  starts building what the code runs in, in Docker, with no network after
+    GET    /api/paperagents/{id}/environment  what would be built and how, what was, or why a build failed
+    DELETE /api/paperagents/{id}/environment  takes away the environment and its image, so that it can be built again
+    GET    /api/paperagents/{id}/environment/lock  the exact versions that were installed
+    GET    /api/paperagents/{id}/environment/log  what the last build printed
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -372,6 +377,16 @@ class PaperAgentRepositoryBody(RequestModel):
     max_megabytes: StrictInt | None = None
 
 
+class PaperAgentEnvironmentBody(RequestModel):
+    """What to build the environment with, where the code does not say or what it says is not what is wanted: the
+    version of Python, Debian packages to install first, and the most time in minutes and disk in gigabytes."""
+
+    python: str | None = Field(None, max_length=20)
+    system_packages: list[str] | None = Field(None, max_length=40)
+    minutes: StrictInt | None = None
+    gigabytes: StrictInt | None = None
+
+
 class PaperAgentPaperBody(RequestModel):
     """Which paper an agent is of. Which of these are asked for depends on the kind, and the server says which."""
 
@@ -618,6 +633,7 @@ def create_app(
         conversations.missing_keys_for,
         client=client,
         chat_models=chat_models,
+        docker_command=docker_command,
     )
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
@@ -1151,6 +1167,32 @@ def create_app(
         paperagents.clear_repository(agent_id)
 
         return paperagents.repository(agent_id)
+
+    @api.post("/paperagents/{agent_id}/environment", status_code=202)
+    def build_paperagent_environment(agent_id: str, body: PaperAgentEnvironmentBody) -> dict[str, Any]:
+        job = paperagents.build_environment(agent_id, body.python, body.system_packages, body.minutes, body.gigabytes)
+
+        return job.snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/environment")
+    def get_paperagent_environment(
+        agent_id: str, python: str | None = Query(None, max_length=20), system_packages: list[str] | None = Query(None)
+    ) -> dict[str, Any]:
+        return paperagents.environment(agent_id, python, system_packages)
+
+    @api.delete("/paperagents/{agent_id}/environment")
+    def delete_paperagent_environment(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_environment(agent_id)
+
+        return paperagents.environment(agent_id)
+
+    @api.get("/paperagents/{agent_id}/environment/lock")
+    def get_paperagent_environment_lock(agent_id: str) -> dict[str, str]:
+        return paperagents.environment_lock(agent_id)
+
+    @api.get("/paperagents/{agent_id}/environment/log")
+    def get_paperagent_environment_log(agent_id: str) -> dict[str, Any]:
+        return paperagents.environment_log(agent_id)
 
     @api.get("/paperagents/{agent_id}/passage")
     def get_paperagent_passage(agent_id: str, start: int = Query(ge=0), end: int = Query(ge=0)) -> dict[str, Any]:

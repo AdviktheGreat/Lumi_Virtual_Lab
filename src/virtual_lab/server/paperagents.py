@@ -16,6 +16,10 @@ suggests where it is: the person says which, and nothing is fetched from a link 
 fetched at one commit, never run, and taken stock of, and a check says whether it is worth going on with. The check is
 worked out again from what was kept each time it is asked for, so that it uses what the paper has been read to say
 since.
+
+The environment that the code runs in is built, when the person asks, from the code's own files, in a container that has
+none of this machine in it, and is kept as an image in Docker, which is the same each time it is used. It belongs to the
+commit it was built from: when the code is taken away, or its address is changed, the image goes with it.
 """
 
 import hashlib
@@ -26,7 +30,8 @@ import re
 import shutil
 import tempfile
 import threading
-from collections.abc import Callable
+from collections import deque
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -40,7 +45,9 @@ from virtual_lab.constants import (
     MAX_PAPER_FILE_BYTES,
 )
 from virtual_lab.environment import StoppedError
+from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
+from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import fetch as fetching
 from virtual_lab.paperagents import preflight as checking
 from virtual_lab.paperagents import repository as cloning
@@ -49,6 +56,7 @@ from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_structure
 from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
 from virtual_lab.provenance import utc_timestamp
+from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server.errors import ApiError, not_found
@@ -82,6 +90,8 @@ READING_JOB = "paperagent-reading"
 REPOSITORY_JOB = "paperagent-repository"
 # The least that the limit on what is fetched of the code may be set to, in megabytes
 MIN_MEGABYTES = 10
+# The job that builds the environment, which is not done to an agent while another job is
+ENVIRONMENT_JOB = "paperagent-environment"
 
 MAX_AGENTS = 200
 MAX_URL_CHARS = 2000
@@ -404,6 +414,7 @@ class PaperAgents:
     :param missing_keys: Says which variables a model's provider needs that are not set.
     :param client: An OpenAI client to read with, which is for tests.
     :param chat_models: The chat models to read with, which is for tests.
+    :param docker_command: How Docker is invoked, which environments are built and kept with.
     """
 
     def __init__(
@@ -414,7 +425,9 @@ class PaperAgents:
         missing_keys: Callable[[str], list[str]] | None = None,
         client: Any = None,
         chat_models: ModelSource | None = None,
+        docker_command: Sequence[str] = ("docker",),
     ) -> None:
+        self.docker_command = tuple(docker_command)
         self.workspace = workspace
         self.max_upload_bytes = min(max_upload_bytes, MAX_PAPER_FILE_BYTES)
         self.jobs = jobs if jobs is not None else Jobs()
@@ -456,6 +469,8 @@ class PaperAgents:
             steps["reading"] = "running"
         if self.cloning(agent_id) is not None:
             steps["repository"] = "running"
+        if self.making(agent_id) is not None:
+            steps["environment"] = "running"
 
         return {
             "id": agent_id,
@@ -474,13 +489,17 @@ class PaperAgents:
         """The job that is fetching an agent's code, if one is."""
         return next((job for job in self.jobs.active(REPOSITORY_JOB) if job.subject == agent_id), None)
 
+    def making(self, agent_id: str) -> Job | None:
+        """The job that is building an agent's environment, if one is."""
+        return next((job for job in self.jobs.active(ENVIRONMENT_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
-        :raises ApiError: If the agent's paper is being read, or its code fetched, which what is done to them must wait
-            for.
+        :raises ApiError: If the agent's paper is being read, its code fetched, or its environment built, which what is
+            done to them must wait for.
         """
-        job = (self.running(agent_id) if reading else None) or self.cloning(agent_id)
+        job = (self.running(agent_id) if reading else None) or self.cloning(agent_id) or self.making(agent_id)
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
 
@@ -576,23 +595,27 @@ class PaperAgents:
                 if url != (agent.get("repo") or {}).get("url"):
                     # The code that was fetched is of the address it was fetched from, and is not another's
                     self.check_idle(agent_id, reading=False)
-                    kept_repository.forget(directory)
+                    self.forget_code(directory)
                     agent = {
                         **agent,
                         "repo": {"url": url} if url is not None else None,
-                        "steps": {**steps_of(agent), "repository": "pending"},
+                        "steps": {**steps_of(agent), "repository": "pending", "environment": "pending"},
                     }
             self.save(directory, agent)
 
     def delete(self, agent_id: str) -> None:
-        """Deletes an agent with the paper that was uploaded to it.
+        """Deletes an agent with the paper that was uploaded to it, and the image of its environment.
 
-        :raises ApiError: If there is no agent with this id, or its paper is being read, or its code fetched.
+        :raises ApiError: If there is no agent with this id, its paper is being read, its code fetched, or its
+            environment built, or the image of its environment cannot be removed.
         """
         # With the lock that starting a reading takes, so that one cannot begin in a directory that is being removed
         with self._lock:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
+            self.forget_environment(directory)
+            # A container that a build left when the server was stopped hard, which nothing else would take away
+            building.remove_builds(directory.name, self.docker_command)
             # The code that was fetched is read only, which a platform may not remove without being mended first
             kept_repository.remove_tree(directory)
 
@@ -1054,8 +1077,12 @@ class PaperAgents:
                 raise ApiError(422, "no_repo", "Say where the code is first")
             self.check_idle(agent_id)
             if url != current:
-                kept_repository.forget(directory)
-                agent = {**agent, "repo": {"url": url}, "steps": {**steps_of(agent), "repository": "pending"}}
+                self.forget_code(directory)
+                agent = {
+                    **agent,
+                    "repo": {"url": url},
+                    "steps": {**steps_of(agent), "repository": "pending", "environment": "pending"},
+                }
                 self.save(directory, agent)
             elif kept_repository.load(directory, url) is not None:
                 raise ApiError(409, "done", "The code has been fetched. Remove it to fetch it again.")
@@ -1111,13 +1138,14 @@ class PaperAgents:
                 directory, agent = self.lookup(agent_id)
                 if (agent.get("repo") or {}).get("url") != url:
                     raise ValueError("The address of the code was changed while it was fetched. Fetch it again.")
+                self.forget_environment(directory)
                 kept_repository.keep(directory, fetched, intake)
                 self.save(
                     directory,
                     {
                         **agent,
                         "repo": {"url": url, "ref": cloned.ref, "commit": cloned.commit},
-                        "steps": {**steps_of(agent), "repository": "done"},
+                        "steps": {**steps_of(agent), "repository": "done", "environment": "pending"},
                     },
                 )
         checked = self.repository(agent_id)["preflight"]
@@ -1145,18 +1173,337 @@ class PaperAgents:
         """Takes away the code that was fetched, and what was found in it, so that it can be fetched again. The address
         stays.
 
-        :raises ApiError: If there is no agent with this id, or its paper is being read, or its code fetched.
+        :raises ApiError: If there is no agent with this id, its paper is being read, its code fetched, or its
+            environment built, or the image of its environment cannot be removed.
         """
         with self._lock:
             directory, agent = self.lookup(agent_id)
             self.check_idle(agent_id)
-            kept_repository.forget(directory)
+            self.forget_code(directory)
             code = agent.get("repo")
             self.save(
                 directory,
                 {
                     **agent,
                     "repo": {"url": code["url"]} if code is not None else None,
-                    "steps": {**steps_of(agent), "repository": "pending"},
+                    "steps": {**steps_of(agent), "repository": "pending", "environment": "pending"},
                 },
             )
+
+    # The environment the code is run in
+
+    def forget_code(self, directory: Path) -> None:
+        """Takes away the code that was fetched, and with it what was built from it: the environment is of one commit,
+        and is of no use without the code that says what it is.
+
+        :raises ApiError: If the image of the environment cannot be removed.
+        """
+        self.forget_environment(directory)
+        kept_repository.forget(directory)
+
+    def forget_environment(self, directory: Path) -> None:
+        """Takes away an agent's environment: its image in Docker, and the account of it. The image is named from the
+        agent and the commit, and not from what the file says, so that a file that was edited cannot point at another.
+        Every image that was built for the agent goes, by the label it carries, so that one is not left behind when the
+        account of it is missing or cannot be read, as it is if the server stopped between making the image and
+        writing the account.
+
+        :raises ApiError: If an image cannot be removed, which is when Docker does not answer or will not let it go.
+            The account is kept, so that an image is never left in Docker with nothing to say it is there.
+        """
+        record = kept_environment.stored(directory)
+        gone = True
+        if record is not None:
+            gone = building.remove_image(building.tag_of(directory.name, record["commit"]), self.docker_command)
+        if not (building.remove_images(directory.name, self.docker_command) and gone):
+            raise ApiError(
+                409,
+                "docker",
+                "The image of the environment could not be removed. Docker did not answer, or would not let it go, as "
+                "something may be using it. Start Docker, stop what uses the image, and try again.",
+            )
+        kept_environment.forget(directory)
+
+    def environment(self, agent_id: str, python: Any = None, system_packages: Any = None) -> dict[str, Any]:
+        """What there is of an agent's environment: what would be built from its code and how, if it can be, why not
+        if it cannot, what was built and whether the image is still in Docker, and why the last build failed, if it did.
+
+        :param python: A version of Python to plan for, in place of what the code says, to see what it would do.
+        :param system_packages: Debian packages to plan to install first.
+        :raises ApiError: If there is no agent with this id, or what is asked to be planned is not fit.
+        """
+        directory, agent = self.lookup(agent_id)
+        try:
+            version = building.check_python(python)
+            packages = building.check_system_packages(system_packages)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        code = agent.get("repo")
+        intake = kept_repository.load(directory, code["url"] if code is not None else None)
+        commit = intake["commit"] if intake is not None else None
+        usable, problem = building.ready(self.docker_command)
+        recipe: dict[str, Any] | None = None
+        unsupported: dict[str, str] | None = None
+        if intake is not None:
+            try:
+                recipe = building.plan(
+                    kept_repository.repo_path(directory), intake["stock"], version, packages
+                ).to_dict()
+            except building.EnvironmentUnsupportedError as error:
+                unsupported = {"kind": error.kind, "message": str(error)}
+            except ValueError as error:
+                raise ApiError(422, "invalid", str(error)) from error
+        built = kept_environment.load(directory, commit)
+        present = None
+        if built is not None and usable:
+            present = (
+                building.image_id_of(building.tag_of(agent_id, built["commit"]), self.docker_command)
+                == (built["image"]["id"])
+            )
+        failure = kept_environment.load_failure(directory, commit)
+        job = self.making(agent_id)
+
+        return {
+            "id": agent_id,
+            "docker": {"ready": usable, "message": problem},
+            "commit": commit,
+            "recipe": recipe,
+            "unsupported": unsupported,
+            "built": {**built, "image_present": present} if built is not None else None,
+            "failure": failure,
+            "has_log": kept_environment.read_log(directory) is not None,
+            "job": job.snapshot() if job is not None else None,
+            "limits": {
+                "default_minutes": building.DEFAULT_MINUTES,
+                "max_minutes": building.MAX_MINUTES,
+                "default_gigabytes": building.DEFAULT_GIGABYTES,
+                "max_gigabytes": building.MAX_GIGABYTES,
+                "memory": building.MEMORY,
+                "cpus": building.CPUS,
+                "pids": building.PIDS,
+            },
+            "python_versions": list(building.PYTHON_VERSIONS),
+            "max_system_packages": building.MAX_SYSTEM_PACKAGES,
+        }
+
+    def build_environment(
+        self, agent_id: str, python: Any = None, system_packages: Any = None, minutes: Any = None, gigabytes: Any = None
+    ) -> Job:
+        """Starts building the environment of an agent's code, from the code's own files, in a container that has none
+        of this machine in it, within the time and the disk it is given.
+
+        :param python: A version of Python to build for, in place of what the code says.
+        :param system_packages: Debian packages to install first, which a failed build may have said it needs.
+        :param minutes: The most time the build may take.
+        :param gigabytes: The most disk the build may write.
+        :raises ApiError: If there is no agent with this id, what is given is not fit, Docker is not running, the code
+            has not been fetched or is not one that is built here, there is an environment already, or the agent's
+            paper or code or environment is being worked on.
+        """
+        self.lookup(agent_id)
+        try:
+            version = building.check_python(python)
+            packages = building.check_system_packages(system_packages)
+            limits = building.check_limits(minutes, gigabytes)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        usable, problem = building.ready(self.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and building takes it")
+
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            code = agent.get("repo")
+            intake = kept_repository.load(directory, code["url"] if code is not None else None)
+            if intake is None:
+                raise ApiError(422, "no_code", "Fetch the code first")
+            self.check_idle(agent_id)
+            if kept_environment.load(directory, intake["commit"]) is not None:
+                raise ApiError(409, "done", "The environment has been built. Remove it to build it again.")
+            try:
+                recipe = building.plan(kept_repository.repo_path(directory), intake["stock"], version, packages)
+            except building.EnvironmentUnsupportedError as error:
+                raise ApiError(422, "unsupported", str(error), reason=error.kind) from error
+            except ValueError as error:
+                raise ApiError(422, "invalid", str(error)) from error
+            try:
+                return self.jobs.start(
+                    ENVIRONMENT_JOB,
+                    agent_id,
+                    f"Building the environment: {agent['title']}",
+                    self.maker(agent_id, recipe, limits, intake["commit"], intake["url"]),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def maker(
+        self, agent_id: str, recipe: building.Recipe, limits: building.Limits, commit: str, url: str
+    ) -> Callable[[Job], str | None]:
+        """What a job does to build an environment: builds it, checks that it runs with no network, and keeps it, or
+        keeps why it did not come to one."""
+
+        def work(job: Job) -> str | None:
+            failed = False
+            try:
+                return self.make_environment(job, agent_id, recipe, limits, commit, url)
+            except StoppedError:
+                raise
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                self.settle_environment(agent_id, failed)
+
+        return work
+
+    def make_environment(
+        self, job: Job, agent_id: str, recipe: building.Recipe, limits: building.Limits, commit: str, url: str
+    ) -> str:
+        directory = self.workspace.paperagents_dir / agent_id
+        tag = building.tag_of(agent_id, commit)
+        lines: deque[str] = deque(maxlen=building.KEPT_LOG_LINES)
+
+        def output(line: str) -> None:
+            lines.append(line)
+            job.log(line)
+
+        job.update("Building the environment")
+        # What an earlier build left of itself, which is not an environment that anything says is there
+        building.remove_builds(agent_id, self.docker_command)
+        building.remove_images(agent_id, self.docker_command)
+        try:
+            with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
+                built = building.build_environment(
+                    kept_repository.repo_path(directory),
+                    recipe,
+                    tag,
+                    limits,
+                    Path(scratch),
+                    self.docker_command,
+                    output,
+                    job.stop,
+                    label=agent_id,
+                )
+        except (building.EnvironmentBuildError, DockerUnavailableError) as error:
+            failure = (
+                error.failure
+                if isinstance(error, building.EnvironmentBuildError)
+                else building.Failure(
+                    "docker",
+                    "Docker did not do what the build needed",
+                    f"{str(error).rstrip('.')}. The build can be asked for again.",
+                )
+            )
+            with self._lock:
+                try:
+                    saved, _ = self.lookup(agent_id)
+                except ApiError:
+                    saved = None
+                if saved is not None:
+                    kept_environment.keep_failure(
+                        saved,
+                        {
+                            "schema": kept_environment.SCHEMA,
+                            "commit": commit,
+                            "failed_at": utc_timestamp(),
+                            "recipe": recipe.to_dict(),
+                            "limits": limits.to_dict(),
+                            "failure": failure.to_dict(),
+                        },
+                        list(lines),
+                    )
+            raise
+        record = {
+            "schema": kept_environment.SCHEMA,
+            "commit": commit,
+            "url": url,
+            "built_at": utc_timestamp(),
+            "recipe": recipe.to_dict(),
+            "limits": limits.to_dict(),
+            "image": {
+                "tag": built.tag,
+                "id": built.image_id,
+                "base_id": built.base_id,
+                "base_digests": list(built.base_digests),
+                "architecture": built.architecture,
+                "size_bytes": built.size_bytes,
+                "added_bytes": built.added_bytes,
+            },
+            "python": built.python,
+            "lock": {"name": built.lock_name, "packages": built.packages},
+            "pip_check": built.pip_check,
+            "steps": list(built.steps),
+            "duration": built.duration,
+        }
+        with self._lock:
+            try:
+                saved, agent = self.lookup(agent_id)
+                intake = kept_repository.load(saved, (agent.get("repo") or {}).get("url"))
+                if intake is None or intake["commit"] != commit:
+                    raise ValueError("The code was changed while the environment was built. Build it again.")
+                kept_environment.keep(saved, record, built.lock, list(lines))
+            except BaseException:
+                building.remove_image(tag, self.docker_command)
+                raise
+
+        return (
+            f"Built the environment with Python {built.python}: {built.packages} packages in "
+            f"{describe_size(built.size_bytes)}, as the image {built.image_id[7:19]}."
+        )
+
+    def settle_environment(self, agent_id: str, failed: bool) -> None:
+        """Says how far the step of building the environment has got: done if one is kept for the code, failed if
+        none is and the build failed, and pending if it was only stopped."""
+        with self._lock:
+            try:
+                directory, agent = self.lookup(agent_id)
+            except ApiError:
+                return
+            intake = kept_repository.load(directory, (agent.get("repo") or {}).get("url"))
+            kept = intake is not None and kept_environment.load(directory, intake["commit"]) is not None
+            status = "done" if kept else "failed" if failed else "pending"
+            if steps_of(agent)["environment"] != status:
+                self.save(directory, {**agent, "steps": {**steps_of(agent), "environment": status}})
+
+    def clear_environment(self, agent_id: str) -> None:
+        """Takes away an agent's environment, with its image, so that it can be built again, and what was kept of a
+        build that failed.
+
+        :raises ApiError: If there is no agent with this id, its paper is being read, its code fetched, or its
+            environment built, or the image cannot be removed.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            self.forget_environment(directory)
+            if steps_of(agent)["environment"] != "pending":
+                self.save(directory, {**agent, "steps": {**steps_of(agent), "environment": "pending"}})
+
+    def environment_lock(self, agent_id: str) -> dict[str, str]:
+        """The exact versions that were installed in an agent's environment, as the text of a file.
+
+        :raises ApiError: If there is no agent with this id, or it has no environment.
+        """
+        directory, agent = self.lookup(agent_id)
+        code = agent.get("repo")
+        intake = kept_repository.load(directory, code["url"] if code is not None else None)
+        record = kept_environment.load(directory, intake["commit"] if intake is not None else None)
+        if record is None:
+            raise not_found("environment of that PaperAgent")
+
+        return {"name": record["lock"]["name"], "text": kept_environment.read_lock(directory, record)}
+
+    def environment_log(self, agent_id: str) -> dict[str, Any]:
+        """What the last build of an agent's environment printed, which is kept whether it worked or not.
+
+        :raises ApiError: If there is no agent with this id, or no build has been kept.
+        """
+        directory, _ = self.lookup(agent_id)
+        lines = kept_environment.read_log(directory)
+        if lines is None:
+            raise not_found("build of that PaperAgent's environment")
+
+        return {"lines": lines}
