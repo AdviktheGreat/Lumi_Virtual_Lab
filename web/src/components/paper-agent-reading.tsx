@@ -52,7 +52,8 @@ interface Shared {
   // Whether the paper is being read, which nothing else is done to the agent in the meantime
   working: boolean;
   // Whether the agent's code is being fetched, which the paper is not read in the meantime
-  blocked: boolean;
+  // Why reading waits, in a sentence, or null if it does not
+  blocked: string | null;
 }
 
 // Says how much reading may cost, which is always said, and starts it
@@ -121,7 +122,7 @@ function ReadForm({ agent, reading, working, blocked, jobs }: Shared & { jobs: J
       )}
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" disabled={working || blocked || attempt.busy || finished}>
+        <Button type="submit" disabled={working || blocked !== null || attempt.busy || finished}>
           <BookOpen />
           {attempt.busy
             ? "Starting…"
@@ -138,7 +139,7 @@ function ReadForm({ agent, reading, working, blocked, jobs }: Shared & { jobs: J
         {finished && !working && (
           <span className="text-xs text-muted-foreground">The paper has been read. Clear the reading to read it again.</span>
         )}
-        {blocked && !working && <span className="text-xs text-muted-foreground">The code is being fetched. Reading waits for that.</span>}
+        {blocked !== null && !working && <span className="text-xs text-muted-foreground">{blocked}</span>}
       </div>
     </form>
   );
@@ -345,7 +346,7 @@ export function ReadingSection({
       {hasReading(reading) && (
         <>
           <Facts agent={agent.id} reading={reading} />
-          <ClearReading agent={agent} working={working || blocked} onCleared={onCleared} />
+          <ClearReading agent={agent} working={working || blocked !== null} onCleared={onCleared} />
         </>
       )}
     </div>

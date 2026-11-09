@@ -8,6 +8,7 @@ import { Looked } from "@/components/looked";
 import { ProblemNotice } from "@/components/messages";
 import { PageSection } from "@/components/page-section";
 import { CodeSection } from "@/components/paper-agent-code";
+import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { useServer } from "@/components/server-provider";
 import { useSetupJobs } from "@/components/setup-provider";
@@ -35,8 +36,10 @@ import {
   describePaper,
   describeSource,
   describeSteps,
+  environmentJob,
   existingOf,
   isLink,
+  lastEnvironmentJob,
   lastReadingJob,
   lastRepositoryJob,
   MAX_AGENT_TITLE,
@@ -54,10 +57,23 @@ import {
 } from "@/lib/paperagents";
 import { uploadProblem } from "@/lib/papers";
 import { tidy } from "@/lib/scientists";
-import type { PaperAgent, PaperAgentReading, PaperAgentRepository, PaperAgentsList, PaperAgentSource } from "@/lib/types";
+import type {
+  PaperAgent,
+  PaperAgentEnvironment,
+  PaperAgentReading,
+  PaperAgentRepository,
+  PaperAgentsList,
+  PaperAgentSource,
+} from "@/lib/types";
 import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
-import { usePaperAgent, usePaperAgentReading, usePaperAgentRepository, usePaperAgentsList } from "@/lib/use-paperagents";
+import {
+  usePaperAgent,
+  usePaperAgentEnvironment,
+  usePaperAgentReading,
+  usePaperAgentRepository,
+  usePaperAgentsList,
+} from "@/lib/use-paperagents";
 import { cn } from "@/lib/utils";
 
 const LINK = "rounded-sm underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
@@ -405,12 +421,14 @@ function Agent({
   jobs,
   reading,
   repository,
+  environment,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
   jobs: JobsData;
   reading: LookedAt<PaperAgentReading>;
   repository: LookedAt<PaperAgentRepository>;
+  environment: LookedAt<PaperAgentEnvironment>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -425,18 +443,31 @@ function Agent({
   // been taken away
   const lastFetch = lastRepositoryJob(all, agent.id);
   const kept = repository.value.kind === "ready" && repository.value.value.cloned;
+  // The same of the environment, which is built from the code, and not while anything else is done to the agent
+  const making = environmentJob(all, agent.id);
+  const makingEnvironment = making !== undefined || agent.steps.environment === "running";
+  const lastMake = lastEnvironmentJob(all, agent.id);
+  const made = environment.value.kind === "ready" ? environment.value.value : null;
+  // How the last building ended is said if it was stopped, or failed with nothing to say why beside it, and while what it built
+  // is kept
+  const lastMakeShown =
+    lastMake !== undefined && (lastMake.state === "succeeded" ? made?.built != null : !(lastMake.state === "failed" && made?.failure != null))
+      ? lastMake
+      : undefined;
+  const idle = !working && !fetchingCode && !makingEnvironment;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
-  // its paper, so the code is looked at again
+  // its paper, so the code is looked at again, and the environment, which is of the code
   const changed = (next: PaperAgent) => {
     onChanged(next);
     repository.reload();
+    environment.reload();
   };
-  const shared = { agent, list, working: working || fetchingCode, onChanged: changed };
+  const shared = { agent, list, working: !idle, onChanged: changed };
   const own = agent.paper.kind === "file";
 
   return (
     <>
-      <AgentHeader agent={agent} working={working || fetchingCode} />
+      <AgentHeader agent={agent} working={!idle} />
       <WorkStatus job={job} last={lastReadingJob(all, agent.id)} jobs={jobs} />
       <PageSection
         title={own ? "Paper" : "Paper file"}
@@ -468,7 +499,13 @@ function Agent({
               agent={agent}
               reading={value}
               working={working}
-              blocked={fetchingCode}
+              blocked={
+                fetchingCode
+                  ? "The code is being fetched. Reading waits for that."
+                  : makingEnvironment
+                    ? "The environment is being built. Reading waits for that."
+                    : null
+              }
               jobs={jobs}
               onCleared={(cleared) => {
                 reading.set(cleared);
@@ -500,16 +537,49 @@ function Agent({
             <CodeSection
               agent={agent}
               repository={value}
-              busy={working || fetchingCode}
+              busy={!idle}
               jobs={jobs}
               onChanged={changed}
               onCleared={(cleared) => {
                 repository.set(cleared);
+                environment.reload();
                 onReload();
               }}
               onStale={() => {
                 onReload();
                 repository.reload();
+                environment.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Environment"
+        intro="What the code needs, installed in a container that has none of this machine in it and kept as an image that runs with no network. The code itself is not run."
+      >
+        <WorkStatus job={making} last={lastMakeShown} jobs={jobs} label="Building the environment" />
+        <Looked
+          state={environment.value}
+          label="Looking at the environment"
+          failure="The environment could not be looked at."
+          onRetry={environment.reload}
+        >
+          {(value) => (
+            <EnvironmentSection
+              key={agent.id}
+              agent={agent}
+              environment={value}
+              busy={!idle}
+              building={making}
+              jobs={jobs}
+              onCleared={(cleared) => {
+                environment.set(cleared);
+                onReload();
+              }}
+              onStale={() => {
+                onReload();
+                environment.reload();
               }}
             />
           )}
@@ -535,6 +605,7 @@ export function AgentPage({ id }: { id: string }) {
   const agent = usePaperAgent(id, report, again);
   const reading = usePaperAgentReading(id, report, again);
   const repository = usePaperAgentRepository(id, report, again);
+  const environment = usePaperAgentEnvironment(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -561,6 +632,7 @@ export function AgentPage({ id }: { id: string }) {
                 jobs={jobs}
                 reading={reading}
                 repository={repository}
+                environment={environment}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />

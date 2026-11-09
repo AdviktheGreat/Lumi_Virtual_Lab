@@ -1073,3 +1073,127 @@ export interface PaperAgentFetchOptions {
   ref?: string;
   max_megabytes?: number;
 }
+
+// What an environment is built from and how, which is from the code's own files and what a person asked for
+export interface EnvironmentRecipe {
+  kind: "pip" | "conda";
+  // The version of Python, or null for a conda file that says its own
+  python: string | null;
+  python_from: string;
+  base_image: string;
+  files: string[];
+  system_packages: string[];
+  steps: { id: string; title: string; command: string[] }[];
+  notes: string[];
+}
+
+// What a build is allowed
+export interface EnvironmentLimits {
+  minutes: number;
+  gigabytes: number;
+  memory: string;
+  cpus: string;
+  pids: number;
+}
+
+export type EnvironmentFailureKind =
+  | "missing_system_library"
+  | "version_conflict"
+  | "python_mismatch"
+  | "not_found"
+  | "network"
+  | "private_dependency"
+  | "build_failed"
+  | "out_of_memory"
+  | "too_big"
+  | "timeout"
+  | "does_not_run"
+  | "docker"
+  | "failed";
+
+// Why a build did not come to an environment, as far as its output says
+export interface EnvironmentFailure {
+  kind: EnvironmentFailureKind;
+  title: string;
+  detail: string;
+  // The step it was at, by its id
+  step: string | null;
+  package: string | null;
+  // Debian packages that would most likely mend it, and a Python to try, which a person may ask for
+  system_packages: string[];
+  python: string | null;
+  // The last lines of the step's output
+  tail: string[];
+}
+
+// An environment that was built, of the code at one commit
+export interface EnvironmentBuilt {
+  commit: string;
+  url: string;
+  built_at: string;
+  recipe: EnvironmentRecipe;
+  limits: EnvironmentLimits;
+  image: {
+    tag: string;
+    // What the image is, as Docker says it: the hash of its contents, which is the pin
+    id: string;
+    base_id: string;
+    base_digests: string[];
+    architecture: string;
+    size_bytes: number;
+    added_bytes: number;
+  };
+  python: string;
+  lock: { name: string; packages: number };
+  pip_check: { ok: boolean; problems: string[] };
+  steps: { id: string; title: string; seconds: number; exit_code: number }[];
+  duration: number;
+  // Whether Docker still has the image, or null if Docker could not be asked
+  image_present: boolean | null;
+}
+
+// The last build of the code at one commit, which did not come to an environment
+export interface EnvironmentFailed {
+  commit: string;
+  failed_at: string;
+  recipe: EnvironmentRecipe;
+  limits: EnvironmentLimits;
+  failure: EnvironmentFailure;
+}
+
+// What there is of an agent's environment: what would be built from its code and how, or why it cannot be, what was built,
+// and why the last build failed
+export interface PaperAgentEnvironment {
+  id: string;
+  docker: { ready: boolean; message: string | null };
+  commit: string | null;
+  recipe: EnvironmentRecipe | null;
+  // Why the code is not one that is built here: no_environment, r, julia, docker, pipfile, or python_mismatch
+  unsupported: { kind: string; message: string } | null;
+  built: EnvironmentBuilt | null;
+  failure: EnvironmentFailed | null;
+  // Whether the output of the last build is kept
+  has_log: boolean;
+  // The build that is at work, if one is
+  job: Job | null;
+  limits: {
+    default_minutes: number;
+    max_minutes: number;
+    default_gigabytes: number;
+    max_gigabytes: number;
+    memory: string;
+    cpus: string;
+    pids: number;
+  };
+  python_versions: string[];
+  max_system_packages: number;
+}
+
+// What to say of building an environment: which Python in place of what the code says, which Debian packages to install
+// first, and the most time and disk it may take
+export interface PaperAgentBuildOptions {
+  python?: string;
+  system_packages?: string[];
+  minutes?: number;
+  gigabytes?: number;
+}

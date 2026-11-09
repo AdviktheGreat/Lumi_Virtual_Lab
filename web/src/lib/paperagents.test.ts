@@ -21,12 +21,14 @@ import {
   emptyFetch,
   EMPTY_AGENT,
   EMPTY_READING,
+  environmentJob,
   existingOf,
   factCount,
   factGroups,
   hasReading,
   isLink,
   isRepo,
+  lastEnvironmentJob,
   lastReadingJob,
   lastRepositoryJob,
   orderedChecks,
@@ -353,6 +355,32 @@ describe("the job that reads a paper", () => {
     expect(readingKey([fetching], 0, "cells")).not.toBe(readingKey([], 0, "cells"));
     expect(readingKey([{ ...fetching, subject: "dogs" }], 0, "cells")).toBe("0|");
     expect(readingKey([{ ...fetching, state: "succeeded" }], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the job that builds the environment of an agent", () => {
+  const building = (changes: Partial<Job> = {}) => job({ id: "b1", kind: "paperagent-environment", ...changes });
+
+  it("is the one at work on that agent, and not the one that fetches its code or another agent's", () => {
+    const jobs = [job({ id: "reading" }), building({ id: "other", subject: "dogs" }), building({ id: "old", state: "failed" }), building()];
+
+    expect(environmentJob(jobs, "cells")?.id).toBe("b1");
+    expect(environmentJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(environmentJob([job({ kind: "paperagent-repository" })], "cells")).toBeUndefined();
+  });
+
+  it("is, when none is at work, the latest that is over", () => {
+    const jobs = [building({ id: "new", state: "stopped" }), building({ id: "old", state: "failed" }), job({ state: "failed" })];
+
+    expect(lastEnvironmentJob(jobs, "cells")?.id).toBe("new");
+    expect(lastEnvironmentJob([building()], "cells")).toBeUndefined();
+  });
+
+  it("changes the key that the page looks again by, and says nothing of another agent's", () => {
+    expect(readingKey([building()], 0, "cells")).not.toBe(readingKey([], 0, "cells"));
+    expect(readingKey([building()], 0, "cells")).not.toBe(readingKey([job({ id: "b1", kind: "paperagent-repository" })], 0, "cells"));
+    expect(readingKey([building({ subject: "dogs" })], 0, "cells")).toBe("0|");
+    expect(readingKey([building({ state: "succeeded" })], 0, "cells")).toBe("0|");
   });
 });
 

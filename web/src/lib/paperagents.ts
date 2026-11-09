@@ -238,16 +238,17 @@ export function lastReadingJob(jobs: readonly Job[], agent: string): Job | undef
   return jobs.find((job) => !isActive(job) && job.kind === READING_JOB && job.subject === agent);
 }
 
-// What changes as a paper is read or its code is fetched, so that what a page shows of the agent, its reading, and its code
-// is looked at again when it does: which reading is at work, how many chunks it has done, which fetching is, and how many
-// jobs have ended
+// What changes as a paper is read, its code is fetched, or an environment is built, so that what a page shows of the agent, its
+// reading, its code, and its environment is looked at again when it does: which reading is at work, how many chunks it has
+// done, which fetching and which building are, and how many jobs have ended
 export function readingKey(jobs: readonly Job[] | null, ended: number, agent: string): string {
   const at = (jobs ?? [])
     .filter((job) => isActive(job) && job.kind === READING_JOB && job.subject === agent)
     .map((job) => `${job.id}:${job.progress.finished ?? ""}`);
   const fetching = (jobs ?? []).filter((job) => isActive(job) && job.kind === REPOSITORY_JOB && job.subject === agent).map((job) => job.id);
+  const building = (jobs ?? []).filter((job) => isActive(job) && job.kind === ENVIRONMENT_JOB && job.subject === agent).map((job) => job.id);
 
-  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}`;
+  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}`;
 }
 
 // The job that fetches the code of an agent, which the server runs with the agent's id as its subject
@@ -261,6 +262,19 @@ export function repositoryJob(jobs: readonly Job[], agent: string): Job | undefi
 // The latest fetching of an agent's code that is over, whose outcome is what it was last done with
 export function lastRepositoryJob(jobs: readonly Job[], agent: string): Job | undefined {
   return jobs.find((job) => !isActive(job) && job.kind === REPOSITORY_JOB && job.subject === agent);
+}
+
+// The job that builds the environment of an agent's code, which the server runs with the agent's id as its subject
+export const ENVIRONMENT_JOB = "paperagent-environment";
+
+// The job at work building an agent's environment, which nothing else is done to the agent in the meantime
+export function environmentJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === ENVIRONMENT_JOB && job.subject === agent);
+}
+
+// The latest building of an agent's environment that is over, whose outcome is what it was last done with
+export function lastEnvironmentJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => !isActive(job) && job.kind === ENVIRONMENT_JOB && job.subject === agent);
 }
 
 export interface ReadingDraft {

@@ -11,7 +11,7 @@ import type { Job } from "@/lib/types";
 import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import type { JobActions } from "@/lib/use-setup-actions";
 
-function Log({ job, log }: { job: Job; log: JobLog }) {
+export function Log({ job, log }: { job: Job; log: JobLog }) {
   const { scroller, onScroll } = useStickToBottom<HTMLDivElement>(logEnd(log));
 
   return (

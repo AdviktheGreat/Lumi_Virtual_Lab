@@ -48,7 +48,13 @@ from a script: no key is needed, and every run says the same. What it says depen
   that is the same for the same address and ref: one with a README that shows how it is used, an MIT license, pinned
   requirements, a tutorial, and a test, which a GPU is used by if there is one. "gpu" in the address makes it one that
   needs a GPU and has a license for non-commercial use only, and no tutorial, "slow" makes fetching it take a while,
-  "missing" makes it a project that is not there, and "huge" makes it more than the most that was asked to be fetched.
+  "missing" makes it a project that is not there, and "huge" makes it more than the most that was asked to be fetched,
+  and "bare" makes it a project that no file says how to install.
+- The environment of a PaperAgent's code is built by a stand-in for Docker, which says what the build prints and keeps
+  the images there are by their names. What it does is from the agent's id, which is made of its title: "slow" makes
+  building take a while, so that it can be followed and stopped, "zlib" makes it fail for want of the system package
+  zlib1g-dev until that is asked to be installed, "oldpython" makes it fail for a Python that is too new until Python
+  3.9 is asked for, and "broken" makes it fail with nothing to say why.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -106,6 +112,7 @@ from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab import openrouter  # noqa: E402
 from virtual_lab.environment import StoppedError  # noqa: E402
+from virtual_lab.paperagents import environment as building  # noqa: E402
 from virtual_lab.paperagents import fetch as fetching  # noqa: E402
 from virtual_lab.paperagents import repository as cloning  # noqa: E402
 from virtual_lab.paperagents.reading import (  # noqa: E402
@@ -617,6 +624,10 @@ def stand_in_clone(
                 raise StoppedError("Stopped while the code was fetched.")
             time.sleep(0.1)
     needs_gpu = "gpu" in url
+    if "bare" in url:
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "README.md").write_text("# cellmapper\n\nMaps cells.\n")
+        return cloning.Cloned(commit=hashlib.sha1(f"{url}@{asked}".encode()).hexdigest(), ref=asked)
     files = {
         "README.md": "# cellmapper\n\nMaps cells.\n"
         + ("" if needs_gpu else "\n## Usage\n\nRun `cellmapper sample.h5ad`.\n"),
@@ -637,6 +648,99 @@ def stand_in_clone(
         (destination / name).write_text(text)
 
     return cloning.Cloned(commit=hashlib.sha1(f"{url}@{asked}".encode()).hexdigest(), ref=asked)
+
+
+# How long a build that is "slow" takes, which is long enough for it to be followed and stopped
+BUILD_DELAY = 6.0
+
+# The images that the stand-in for Docker has, by name
+IMAGES: dict[str, str] = {}
+
+ZLIB_OUTPUT = (
+    "Collecting speedy\nsrc/_speed.c:1:10: fatal error: zlib.h: No such file or directory\n"
+    "error: subprocess-exited-with-error"
+)
+OLD_PYTHON_OUTPUT = "ERROR: Package 'oldlib' requires a different Python: 3.11.9 not in '<3.10,>=3.8'"
+
+
+def stand_in_ready(docker_command: Any = ("docker",)) -> tuple[bool, str | None]:
+    return True, None
+
+
+def stand_in_build(
+    repo: Path,
+    recipe: building.Recipe,
+    tag: str,
+    limits: building.Limits,
+    scratch: Path,
+    docker_command: Any = ("docker",),
+    on_output: Any = None,
+    stop: threading.Event | None = None,
+    label: str = "",
+) -> building.Built:
+    """What building does for an agent of this id: what it prints, and an image kept by its name, or why not."""
+
+    def say(line: str) -> None:
+        if on_output is not None:
+            on_output(line)
+
+    say(f"Starting from {recipe.base_image}")
+    for step in recipe.steps:
+        say(f"== {step.title}")
+        if "slow" in label:
+            for number in range(int(BUILD_DELAY * 10)):
+                if stop is not None and stop.is_set():
+                    raise StoppedError("The build was stopped.")
+                if number % 10 == 0:
+                    say(f"Collecting package-{number // 10}")
+                time.sleep(0.1)
+    if "zlib" in label and "zlib1g-dev" not in recipe.system_packages:
+        raise building.EnvironmentBuildError(building.classify(ZLIB_OUTPUT, "project", 1, recipe.python))
+    if "oldpython" in label and recipe.python != "3.9":
+        raise building.EnvironmentBuildError(building.classify(OLD_PYTHON_OUTPUT, "requirements", 1, recipe.python))
+    if "broken" in label:
+        raise building.EnvironmentBuildError(building.classify("Something odd happened", "project", 2, recipe.python))
+    image = "sha256:" + hashlib.sha256(f"{tag}:{recipe.python}:{recipe.system_packages}".encode()).hexdigest()
+    IMAGES[tag] = image
+
+    return building.Built(
+        tag=tag,
+        image_id=image,
+        base_id="sha256:" + "b" * 64,
+        base_digests=("python@sha256:" + "c" * 64,),
+        architecture="arm64",
+        size_bytes=180_000_000,
+        added_bytes=130_000_000,
+        python=f"{recipe.python or '3.11'}.9",
+        lock="numpy==1.26.4\nscanpy==1.9.3\n",
+        lock_name="conda-explicit.txt" if recipe.kind == "conda" else "pip-freeze.txt",
+        packages=2,
+        pip_check={"ok": True, "problems": []},
+        steps=tuple({"id": step.id, "title": step.title, "seconds": 1.5, "exit_code": 0} for step in recipe.steps),
+        duration=4.0,
+        log="",
+    )
+
+
+def stand_in_image_id_of(tag: str, docker_command: Any = ("docker",)) -> str | None:
+    return IMAGES.get(tag)
+
+
+def stand_in_remove_image(tag: str, docker_command: Any = ("docker",)) -> bool:
+    IMAGES.pop(tag, None)
+
+    return True
+
+
+def stand_in_remove_images(label: str, docker_command: Any = ("docker",)) -> bool:
+    for tag in [name for name in IMAGES if name.split(":", 1)[1].rsplit("-", 1)[0] == label]:
+        del IMAGES[tag]
+
+    return True
+
+
+def stand_in_remove_builds(label: str, docker_command: Any = ("docker",)) -> int:
+    return 0
 
 
 def function_named(kwargs: dict[str, Any]) -> str | None:
@@ -1026,6 +1130,12 @@ def main() -> None:
     fetching.europe_pmc_paper = stand_in_europe_pmc
     fetching.linked_paper = stand_in_linked_paper
     cloning.clone = stand_in_clone
+    building.ready = stand_in_ready
+    building.build_environment = stand_in_build
+    building.image_id_of = stand_in_image_id_of
+    building.remove_image = stand_in_remove_image
+    building.remove_images = stand_in_remove_images
+    building.remove_builds = stand_in_remove_builds
     openrouter.fetch_models = stand_in_openrouter_models
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened

@@ -16,7 +16,7 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  const working = ["paperagent-reading", "paperagent-repository"];
+  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment"];
   for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
@@ -1281,4 +1281,283 @@ test("says that code needs a GPU and may not be used for money, which is advice 
   await expect(page.getByTestId("code-preflight")).toContainText("You decide.");
   const fetched = await (await page.request.get(`/api/paperagents/${id}/repository`)).json();
   expect(fetched.preflight.verdict).toBe("no-go");
+});
+
+// What the page says of the environment of an agent's code, which is built by a stand-in for Docker that keeps images by their names
+const environmentForm = (page: Page) => form(page, "Build the environment");
+const building = (page: Page) => page.getByRole("region", { name: "Building the environment" });
+const plan = (page: Page) => page.getByTestId("environment-plan");
+const built = (page: Page) => page.getByTestId("environment-built");
+const failure = (page: Page) => page.getByTestId("environment-failure");
+const environmentOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/environment`)).json();
+
+// Makes an agent whose code is fetched, so that what a test is about is its environment, and opens it
+async function agentWithCode(page: Page, title: string, repo = CODE_ADDRESS, paper: Record<string, unknown> = { kind: "file" }): Promise<string> {
+  const id = await makeAgent(page, { title, paper, repo });
+  await fetchTheCode(page, id);
+  await openAgent(page, id, title);
+
+  return id;
+}
+
+test("says what would be built from the code, asks for what is wrong with the asking to be put right, builds it, and shows what was built and how far that is known", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Plain env", paper: { kind: "file" }, repo: CODE_ADDRESS });
+  await openAgent(page, id, "Plain env");
+  const section = page.getByRole("heading", { name: "Environment", level: 2, exact: true });
+  await expect(section).toBeVisible();
+  // Until the code is fetched, there are no files to build from
+  await expect(page.getByText("Fetch the code first. The environment is built from the files in it.")).toBeVisible();
+  await expect(environmentForm(page)).toHaveCount(0);
+  await expect(step(page, "Build what the code needs")).toContainText("Not started");
+
+  await fetchTheCode(page, id);
+  await page.reload();
+  await expect(plan(page)).toBeVisible();
+  await expect(plan(page)).toContainText("pip, from requirements.txt");
+  await expect(plan(page)).toContainText("Starting from");
+  await expect(plan(page).getByRole("list", { name: "Steps of the build" })).toContainText("requirements.txt");
+  await expect(plan(page)).toContainText("none of this machine in it");
+  await expect(page.getByTestId("environment-python")).toContainText(/^\d+\.\d+, as /);
+  expect((await environmentOf(page, id)).built).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What is asked for is said before it is sent
+  await environmentForm(page).getByLabel("System packages to install first").fill("Not_A_Package libhdf5-dev");
+  await environmentForm(page).getByLabel("Most time, in minutes").fill("0");
+  await environmentForm(page).getByLabel("Most disk, in gigabytes").fill("500");
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+  await expect(environmentForm(page).getByText('"Not_A_Package" is not the name of a Debian package')).toBeVisible();
+  await expect(environmentForm(page).getByText(/is a whole number from 1 to 180/)).toBeVisible();
+  await expect(environmentForm(page).getByText(/is a whole number from 1 to 40/)).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await environmentOf(page, id)).built).toBeNull();
+
+  await environmentForm(page).getByLabel("System packages to install first").fill("libhdf5-dev, pkg-config");
+  await environmentForm(page).getByLabel("Most time, in minutes").fill("20");
+  await environmentForm(page).getByLabel("Most disk, in gigabytes").fill("8");
+  await environmentForm(page).getByLabel("Python").selectOption("3.10");
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+
+  await expect(built(page)).toBeVisible({ timeout: 20_000 });
+  await expect(plan(page)).toHaveCount(0);
+  await expect(environmentForm(page)).toHaveCount(0);
+  await expect(page.getByTestId("environment-built-python")).toHaveText("3.10.9");
+  await expect(page.getByTestId("environment-built-packages")).toContainText("2, listed with their exact versions (pip freeze)");
+  await expect(page.getByTestId("environment-built-image")).toContainText("which is the hash of what is in it");
+  await expect(page.getByTestId("environment-built-check")).toContainText("pip check finds nothing wrong");
+  await expect(built(page)).toContainText("libhdf5-dev, pkg-config");
+  await expect(built(page)).toContainText("20 minutes and 8 GB of disk");
+  await expect(page.getByTestId("environment-built-when")).toContainText("Built ");
+  await expect(step(page, "Build what the code needs")).toContainText("Done");
+  // It says what is not known, which is that the code runs
+  await expect(built(page)).toContainText("All that is known is that this was built and starts. It does not say that the code runs");
+  const kept = await environmentOf(page, id);
+  expect(kept).toMatchObject({
+    built: { python: "3.10.9", recipe: { python: "3.10", system_packages: ["libhdf5-dev", "pkg-config"] }, limits: { minutes: 20, gigabytes: 8 }, image_present: true },
+    failure: null,
+    job: null,
+  });
+  await expect(page.getByTestId("environment-built-image")).toContainText(kept.built.image.id.replace("sha256:", "").slice(0, 12));
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The exact versions, and what the build printed, are looked at when they are asked for
+  await built(page).getByRole("button", { name: "Show the exact versions" }).click();
+  await expect(page.getByRole("region", { name: "the exact versions" })).toContainText("scanpy==1.9.3");
+  await expect(built(page)).toContainText("Kept as pip-freeze.txt.");
+  await built(page).getByRole("button", { name: "Show what the build printed" }).click();
+  await expect(page.getByRole("region", { name: "what the build printed" })).toContainText("Starting from python:3.10-slim");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await built(page).getByRole("button", { name: "Hide the exact versions" }).click();
+  await expect(page.getByRole("region", { name: "the exact versions" })).toHaveCount(0);
+
+  // It is the same environment after the page is looked at again, and cannot be built a second time on top of itself
+  await page.reload();
+  await expect(built(page)).toBeVisible();
+  await expect(page.getByTestId("environment-built-image")).toContainText(kept.built.image.id.replace("sha256:", "").slice(0, 12));
+  const again = await page.request.post(`/api/paperagents/${id}/environment`, { data: {} });
+  expect(again.status()).toBe(409);
+
+  // Taking it away asks first, takes the image away, and leaves the code
+  await built(page).getByRole("button", { name: "Take the environment away" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Take away the environment of Plain env?" });
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  await expect(built(page)).toBeVisible();
+  await built(page).getByRole("button", { name: "Take the environment away" }).click();
+  await page.getByRole("alertdialog", { name: "Take away the environment of Plain env?" }).getByRole("button", { name: "Take away" }).click();
+
+  await expect(built(page)).toHaveCount(0);
+  await expect(plan(page)).toBeVisible();
+  await expect(environmentForm(page)).toBeVisible();
+  await expect(step(page, "Build what the code needs")).toContainText("Not started");
+  expect(await environmentOf(page, id)).toMatchObject({ built: null, failure: null });
+  await expect(page.getByTestId("code-commit")).toBeVisible();
+});
+
+test("follows a build while it goes on, waits for it before anything else is done to the agent, and keeps nothing if it is stopped", async ({
+  page,
+}) => {
+  const id = await agentWithCode(page, "Slow env", CODE_ADDRESS, { kind: "doi", doi: "10.1000/env-paper" });
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+
+  const stop = building(page).getByRole("button", { name: "Stop: Building the environment: Slow env" });
+  await expect(stop).toBeVisible();
+  await expect(step(page, "Build what the code needs")).toContainText("Going on");
+  await expect(environmentForm(page).getByRole("button", { name: "Building…" })).toBeDisabled();
+  // What it prints is shown as it goes
+  const printed = page.getByRole("log", { name: "What this printed: Building the environment: Slow env" });
+  await expect(printed).toContainText("Collecting package-0", { timeout: 10_000 });
+  await expect(printed).toContainText("Starting from python:");
+  // Nothing else is done to the agent while it goes on, and its paper is not read
+  await expect(fetchAndRead(page)).toBeDisabled();
+  await expect(reading(page)).toContainText("The environment is being built. Reading waits for that.");
+  await expect(page.getByRole("button", { name: "Delete Slow env" })).toBeDisabled();
+  await expect(page.getByLabel("Upload the paper")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Take the code away" })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await stop.click();
+
+  await expect(building(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(built(page)).toHaveCount(0);
+  await expect(failure(page)).toHaveCount(0);
+  await expect(step(page, "Build what the code needs")).toContainText("Not started");
+  await expect(environmentForm(page).getByRole("button", { name: "Build the environment" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Take the code away" })).toBeEnabled();
+  await expect(fetchAndRead(page)).toBeEnabled();
+  expect(await environmentOf(page, id)).toMatchObject({ built: null, failure: null, job: null });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A build that is begun again, and is left to end, is the one that is kept
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+  await expect(built(page)).toBeVisible({ timeout: 25_000 });
+  await expect(building(page).getByText("Stopped", { exact: true })).toHaveCount(0);
+});
+
+test("says why a build failed, in what it printed, suggests what to ask for, and builds when that is asked", async ({ page }) => {
+  const id = await agentWithCode(page, "Zlib env");
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+
+  await expect(failure(page)).toBeVisible({ timeout: 20_000 });
+  await expect(failure(page)).toHaveAttribute("data-kind", "missing_system_library");
+  await expect(page.getByTestId("environment-failure-detail")).toContainText("zlib.h");
+  await expect(failure(page)).toContainText("It was at the step");
+  await expect(failure(page)).toContainText("This is the likeliest reason");
+  await expect(step(page, "Build what the code needs")).toContainText("Failed");
+  await expect(page.getByRole("region", { name: "The end of what the step printed" })).toContainText("fatal error: zlib.h: No such file or directory");
+  // The form is there to try again, and the plan, which is what would be built
+  await expect(environmentForm(page)).toBeVisible();
+  await expect(plan(page)).toBeVisible();
+  await expect(built(page)).toHaveCount(0);
+  const stored = await environmentOf(page, id);
+  expect(stored.built).toBeNull();
+  expect(stored.failure.failure).toMatchObject({ kind: "missing_system_library", system_packages: ["zlib1g-dev"] });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Everything that was printed is kept, and is looked at when asked
+  await failure(page).getByRole("button", { name: "Show everything the build printed" }).click();
+  await expect(page.getByRole("region", { name: "everything the build printed" })).toContainText("Starting from python:");
+
+  // The suggestion fills in the form, and does not send it
+  await expect(environmentForm(page).getByLabel("System packages to install first")).toHaveValue("");
+  await failure(page).getByRole("button", { name: "Fill in the form to install zlib1g-dev" }).click();
+  await expect(environmentForm(page).getByLabel("System packages to install first")).toHaveValue("zlib1g-dev");
+  await expect(failure(page).getByRole("button", { name: /^Fill in the form/ })).toHaveCount(0);
+  expect((await environmentOf(page, id)).job).toBeNull();
+
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+
+  await expect(built(page)).toBeVisible({ timeout: 20_000 });
+  await expect(failure(page)).toHaveCount(0);
+  await expect(built(page)).toContainText("zlib1g-dev");
+  await expect(step(page, "Build what the code needs")).toContainText("Done");
+  expect((await environmentOf(page, id)).failure).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("suggests another Python for a build that failed for the one it used, and says plainly when it has nothing to say of why", async ({ page }) => {
+  const id = await agentWithCode(page, "Oldpython env");
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+
+  await expect(failure(page)).toHaveAttribute("data-kind", "python_mismatch", { timeout: 20_000 });
+  await failure(page).getByRole("button", { name: "Fill in the form to use Python 3.9" }).click();
+  await expect(environmentForm(page).getByLabel("Python")).toHaveValue("3.9");
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+  await expect(page.getByTestId("environment-built-python")).toHaveText("3.9.9", { timeout: 20_000 });
+  expect((await environmentOf(page, id)).built.recipe.python).toBe("3.9");
+
+  const other = await agentWithCode(page, "Broken env");
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+  await expect(failure(page)).toHaveAttribute("data-kind", "failed", { timeout: 20_000 });
+  await expect(failure(page).getByRole("button", { name: /^Fill in the form/ })).toHaveCount(0);
+  await expect(failure(page)).toContainText("The output says more.");
+  await expect(environmentForm(page)).toBeVisible();
+  expect((await environmentOf(page, other)).failure.failure.kind).toBe("failed");
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("says that code is not built here when no file says how, and that Docker is not running when it is not", async ({ page }) => {
+  const id = await agentWithCode(page, "Bare env", "https://github.com/example/bare-mapper");
+
+  await expect(page.getByTestId("environment-unsupported")).toHaveAttribute("data-kind", "no_environment");
+  await expect(page.getByTestId("environment-unsupported")).toContainText("It is not built here");
+  await expect(page.getByTestId("environment-unsupported")).toContainText("Nothing is guessed from the README.");
+  await expect(environmentForm(page)).toHaveCount(0);
+  await expect(plan(page)).toHaveCount(0);
+  const refused = await page.request.post(`/api/paperagents/${id}/environment`, { data: {} });
+  expect(refused.status()).toBe(422);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  const other = await agentWithCode(page, "Stopped docker");
+  await page.route("**/api/paperagents/*/environment", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+
+    return route.fulfill({ response, json: { ...body, docker: { ready: false, message: "Docker is installed but is not running." } } });
+  });
+  await page.reload();
+  await expect(page.getByText("Docker is installed but is not running. Building takes it.")).toBeVisible();
+  await expect(plan(page)).toBeVisible();
+  await expect(environmentForm(page).getByRole("button", { name: "Build the environment" })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await environmentOf(page, other)).docker).toBeDefined();
+});
+
+test("says why the server refused to build, and looks again when what the page shows is out of date", async ({ page }) => {
+  const id = await agentWithCode(page, "Refused env");
+  await page.route("**/api/paperagents/*/environment", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "docker_missing", message: "Docker is not installed on this machine, and building takes it." } }),
+        })
+      : route.fallback(),
+  );
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+  await expect(environmentForm(page).getByRole("alert")).toContainText("Docker is not installed on this machine");
+  await page.unroute("**/api/paperagents/*/environment");
+
+  // An environment that was built a moment before the page looked is not a reason to refuse: the page looks again
+  let looked = 0;
+  await page.route("**/api/paperagents/*/environment", (route) => {
+    if (route.request().method() === "GET") looked += 1;
+
+    return route.request().method() === "POST"
+      ? route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "done", message: "The environment has been built. Take it away to build it again." } }),
+        })
+      : route.fallback();
+  });
+  const before = looked;
+  await environmentForm(page).getByRole("button", { name: "Build the environment" }).click();
+  await expect.poll(() => looked).toBeGreaterThan(before);
+  await expect(environmentForm(page).getByRole("alert")).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/environment");
+  expect((await environmentOf(page, id)).built).toBeNull();
 });
