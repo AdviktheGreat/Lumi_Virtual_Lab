@@ -45,6 +45,7 @@ from virtual_lab.constants import (
     MAX_PAPER_FILE_BYTES,
 )
 from virtual_lab.environment import StoppedError
+from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import fetch as fetching
@@ -613,6 +614,8 @@ class PaperAgents:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
             self.forget_environment(directory)
+            # A container that a build left when the server was stopped hard, which nothing else would take away
+            building.remove_builds(directory.name, self.docker_command)
             # The code that was fetched is read only, which a platform may not remove without being mended first
             kept_repository.remove_tree(directory)
 
@@ -1201,20 +1204,24 @@ class PaperAgents:
     def forget_environment(self, directory: Path) -> None:
         """Takes away an agent's environment: its image in Docker, and the account of it. The image is named from the
         agent and the commit, and not from what the file says, so that a file that was edited cannot point at another.
+        Every image that was built for the agent goes, by the label it carries, so that one is not left behind when the
+        account of it is missing or cannot be read, as it is if the server stopped between making the image and
+        writing the account.
 
-        :raises ApiError: If the image cannot be removed, which is when Docker does not answer. The account is kept,
-            so that an image is never left in Docker with nothing to say it is there.
+        :raises ApiError: If an image cannot be removed, which is when Docker does not answer or will not let it go.
+            The account is kept, so that an image is never left in Docker with nothing to say it is there.
         """
         record = kept_environment.stored(directory)
+        gone = True
         if record is not None:
-            tag = building.tag_of(directory.name, record["commit"])
-            if not building.remove_image(tag, self.docker_command):
-                raise ApiError(
-                    409,
-                    "docker",
-                    "The image of the environment could not be removed, as Docker did not answer. Start Docker and try "
-                    "again.",
-                )
+            gone = building.remove_image(building.tag_of(directory.name, record["commit"]), self.docker_command)
+        if not (building.remove_images(directory.name, self.docker_command) and gone):
+            raise ApiError(
+                409,
+                "docker",
+                "The image of the environment could not be removed. Docker did not answer, or would not let it go, as "
+                "something may be using it. Start Docker, stop what uses the image, and try again.",
+            )
         kept_environment.forget(directory)
 
     def environment(self, agent_id: str, python: Any = None, system_packages: Any = None) -> dict[str, Any]:
@@ -1366,7 +1373,7 @@ class PaperAgents:
         job.update("Building the environment")
         # What an earlier build left of itself, which is not an environment that anything says is there
         building.remove_builds(agent_id, self.docker_command)
-        building.remove_image(tag, self.docker_command)
+        building.remove_images(agent_id, self.docker_command)
         try:
             with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
                 built = building.build_environment(
@@ -1380,7 +1387,16 @@ class PaperAgents:
                     job.stop,
                     label=agent_id,
                 )
-        except building.EnvironmentBuildError as error:
+        except (building.EnvironmentBuildError, DockerUnavailableError) as error:
+            failure = (
+                error.failure
+                if isinstance(error, building.EnvironmentBuildError)
+                else building.Failure(
+                    "docker",
+                    "Docker did not do what the build needed",
+                    f"{str(error).rstrip('.')}. The build can be asked for again.",
+                )
+            )
             with self._lock:
                 try:
                     saved, _ = self.lookup(agent_id)
@@ -1395,7 +1411,7 @@ class PaperAgents:
                             "failed_at": utc_timestamp(),
                             "recipe": recipe.to_dict(),
                             "limits": limits.to_dict(),
-                            "failure": error.failure.to_dict(),
+                            "failure": failure.to_dict(),
                         },
                         list(lines),
                     )

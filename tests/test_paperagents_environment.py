@@ -502,11 +502,46 @@ class TestContainer:
         assert arguments[arguments.index("--cpus") + 1] == env.CPUS
         assert "--tmpfs" in arguments
 
+    def test_the_processors_it_may_use_are_what_it_is_told_and_no_more_than_the_most(self) -> None:
+        arguments = list(env.create_arguments("a-build", "python:3.11-slim", cpus="2"))
+        assert arguments[arguments.index("--cpus") + 1] == "2"
+
+    def test_it_says_whose_it_is_when_it_is_told(self) -> None:
+        arguments = list(env.create_arguments("a-build", "python:3.11-slim", "my-agent"))
+        assert arguments[arguments.index("--label") + 1] == f"{env.AGENT_LABEL}=my-agent"
+        assert "--label" not in self.arguments()
+
     def test_it_has_the_network_and_the_project_is_copied_in_not_mounted(self) -> None:
         arguments = self.arguments()
         assert arguments[arguments.index("--network") + 1] == "bridge"
         assert arguments[-3:] == ["python:3.11-slim", "sleep", "infinity"]
         assert arguments[0] == "create"
+
+
+def asking(tmp_path: Path, output: str, code: int = 0) -> list[str]:
+    """A stand-in for the docker command, which prints what it is given and ends with the code it is given."""
+    script = tmp_path / "docker"
+    script.write_text(f"#!/bin/sh\nprintf '%s' '{output}'\nexit {code}\n")
+    script.chmod(0o755)
+
+    return [str(script)]
+
+
+class TestProcessors:
+    """A container that asks for more processors than Docker has is refused, and so the most is no more than it has."""
+
+    def test_it_is_given_the_most_when_docker_has_that_many_or_more(self, tmp_path: Path) -> None:
+        assert env.cpus_for(asking(tmp_path, "18")) == env.CPUS
+        assert env.cpus_for(asking(tmp_path, str(env.CPUS))) == env.CPUS
+
+    def test_it_is_given_what_docker_has_when_that_is_fewer(self, tmp_path: Path) -> None:
+        assert env.cpus_for(asking(tmp_path, "2")) == "2"
+        assert env.cpus_for(asking(tmp_path, "1")) == "1"
+
+    def test_it_is_given_one_when_docker_does_not_say(self, tmp_path: Path) -> None:
+        for command in (asking(tmp_path, "", 1), asking(tmp_path, "many"), asking(tmp_path, "0"), ["/no/such/docker"]):
+            assert env.host_cpus(command) is None
+            assert env.cpus_for(command) == "1"
 
 
 class Watched(env.Builder):
@@ -574,6 +609,49 @@ class TestWatching:
                 env.Builder(tmp_path, recipe, "t:t", env.Limits(), label=bad)
 
 
+class TestNeeding:
+    """What the build cannot go on without is not run once the build was stopped or is out of time."""
+
+    def test_nothing_is_run_after_a_stop(self, tmp_path: Path) -> None:
+        marker = tmp_path / "ran"
+        script = tmp_path / "docker"
+        script.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
+        script.chmod(0o755)
+        stop = threading.Event()
+        watched = builder(tmp_path, stop=stop, docker_command=[str(script)])
+        assert watched.need("copy the code in", "cp") == ""
+        marker.unlink()
+        stop.set()
+        with pytest.raises(StoppedError):
+            watched.need("copy the code in", "cp")
+        assert not marker.exists()
+
+    def test_nothing_is_run_after_the_time_is_over(self, tmp_path: Path) -> None:
+        watched = builder(tmp_path, docker_command=asking(tmp_path, ""))
+        watched.deadline = time.monotonic() - 1
+        with pytest.raises(EnvironmentBuildError) as caught:
+            watched.need("keep the image", "commit")
+        assert caught.value.failure.kind == "timeout"
+
+    def test_a_command_is_not_given_longer_than_what_is_left_of_the_time(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        given: list[float] = []
+
+        def run(command: Any, *arguments: str, timeout: float = 0) -> Any:
+            given.append(timeout)
+            return subprocess.CompletedProcess([], 0, "", "")
+
+        monkeypatch.setattr(env, "docker_run", run)
+        watched = builder(tmp_path)
+        watched.deadline = time.monotonic() + 100
+        watched.need("copy the code in", "cp")
+        assert 30 <= given[0] <= 100
+        watched.deadline = time.monotonic() + 5
+        watched.need("copy the code in", "cp")
+        assert given[1] == 30
+
+
 PYTHON = ["python3", "-u", "-c"]
 
 
@@ -603,6 +681,39 @@ class TestStreaming:
         assert len(lines) == env.KEPT_LOG_LINES
         assert lines[-1] == str(total - 1)
         assert len(watched.log) == env.KEPT_LOG_LINES
+
+    def test_a_line_that_is_too_long_is_cut_and_the_ones_after_it_are_kept(self, tmp_path: Path) -> None:
+        watched = builder(tmp_path)
+        code, output = watched.stream(
+            [*PYTHON, f"import sys; sys.stdout.write('x' * {50 * env.LINE_CHARS} + chr(10) + 'after' + chr(10))"]
+        )
+        first, last = output.splitlines()
+        assert code == 0 and last == "after"
+        assert first.startswith("x" * env.LINE_CHARS) and len(first) < env.LINE_CHARS + 100
+        assert first.endswith("[the rest of the line is cut]")
+        assert all(len(line) < env.LINE_CHARS + 100 for line in watched.log)
+
+    def test_a_line_that_is_exactly_as_long_as_the_most_is_not_cut(self, tmp_path: Path) -> None:
+        _, output = builder(tmp_path).stream([*PYTHON, f"print('y' * {env.LINE_CHARS - 1})"])
+        assert output == "y" * (env.LINE_CHARS - 1)
+
+    def test_output_that_never_has_a_line_end_is_not_piled_up_and_the_time_is_still_kept_to(
+        self, tmp_path: Path
+    ) -> None:
+        watched = builder(tmp_path)
+        watched.deadline = time.monotonic() + 2
+        began = time.monotonic()
+        with pytest.raises(EnvironmentBuildError) as caught:
+            watched.stream([*PYTHON, "while True: print('z' * 100000, end='')"], "requirements")
+        assert caught.value.failure.kind == "timeout"
+        assert time.monotonic() - began < 15
+        assert all(len(line) < env.LINE_CHARS + 100 for line in watched.log)
+
+    def test_a_great_many_short_lines_wait_in_the_pipe_and_do_not_pile_up(self, tmp_path: Path) -> None:
+        total = 20000
+        watched = builder(tmp_path)
+        code, output = watched.stream([*PYTHON, f"[print(n) for n in range({total})]"])
+        assert code == 0 and output.splitlines()[-1] == str(total - 1)
 
     def test_a_stop_is_seen_while_output_never_stops_coming(self, tmp_path: Path) -> None:
         stop = threading.Event()
@@ -773,7 +884,10 @@ class TestIsolation:
         (workspace / "notes.txt").write_text(secret)
         name = f"{env.BUILD_PREFIX}isolation-{time.time_ns()}"
         created = subprocess.run(
-            ["docker", *env.create_arguments(name, "python:3.12-slim")], capture_output=True, text=True, check=False
+            ["docker", *env.create_arguments(name, "python:3.12-slim", "isolation", env.cpus_for())],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert created.returncode == 0, created.stderr
         try:
@@ -794,6 +908,8 @@ class TestIsolation:
             host = inspected(name, "{{.HostConfig.Privileged}} {{json .HostConfig.CapDrop}} {{.HostConfig.PidsLimit}}")
             assert host == f'false ["ALL"] {env.PIDS}'
             assert inspected(name, "{{.HostConfig.Memory}}") == str(8 * 1024**3)
+            assert inspected(name, "{{.HostConfig.NanoCpus}}") == str(int(env.cpus_for()) * 10**9)
+            assert inspected(name, '{{index .Config.Labels "virtual-lab.paperagent"}}') == "isolation"
             assert inspected(name, "{{json .HostConfig.SecurityOpt}}") == '["no-new-privileges"]'
             effective = inside("sh", "-c", "grep CapEff /proc/self/status").stdout.split()[-1]
             wanted = sum(1 << bit for bit in (0, 1, 3, 6, 7))
@@ -872,16 +988,50 @@ class TestLimits:
         assert containers() == []
 
     def test_a_container_that_was_left_behind_is_found_by_whose_it_was(self, tmp_path: Path) -> None:
-        names = [f"{env.BUILD_PREFIX}left-over-{number}" for number in range(2)]
-        other = f"{env.BUILD_PREFIX}someone-else-1"
-        for name in (*names, other):
+        stamp = time.time_ns()
+        wanted = f"left-over-{stamp}"
+        made = {f"{env.BUILD_PREFIX}{wanted}-{number:012d}": wanted for number in range(2)}
+        # An agent whose id starts with another's, which a match on the name would take for the other's
+        made[f"{env.BUILD_PREFIX}{wanted}-more-{0:012d}"] = f"{wanted}-more"
+        made[f"{env.BUILD_PREFIX}someone-else-{stamp}"] = f"someone-else-{stamp}"
+        for name, label in made.items():
             subprocess.run(
-                ["docker", "create", "--name", name, "python:3.12-slim", "true"], capture_output=True, check=True
+                ["docker", *env.create_arguments(name, "python:3.12-slim", label, env.cpus_for())],
+                capture_output=True,
+                check=True,
             )
         try:
-            assert env.remove_builds("left-over") == 2
-            remaining = containers()
-            assert other in remaining and not set(names) & set(remaining)
+            assert env.remove_builds(wanted) == 2
+            remaining = set(containers())
+            assert {name for name in made if made[name] == wanted}.isdisjoint(remaining)
+            assert {name for name in made if made[name] != wanted} <= remaining
             assert env.remove_builds("") == 0
         finally:
-            subprocess.run(["docker", "rm", "--force", *names, other], capture_output=True, check=False)
+            subprocess.run(["docker", "rm", "--force", *made], capture_output=True, check=False)
+
+    def test_the_images_built_for_an_agent_are_found_by_the_label_they_carry(self, tmp_path: Path) -> None:
+        stamp = time.time_ns()
+        wanted = f"images-{stamp}"
+        tags = {
+            f"{env.IMAGE_REPOSITORY}:{wanted}-{'a' * 12}": wanted,
+            f"{env.IMAGE_REPOSITORY}:{wanted}-more-{'b' * 12}": f"{wanted}-more",
+        }
+        for tagged, label in tags.items():
+            name = f"{env.BUILD_PREFIX}{label}-{stamp}"
+            subprocess.run(
+                ["docker", *env.create_arguments(name, "python:3.12-slim", label, env.cpus_for())],
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(["docker", "commit", name, tagged], capture_output=True, check=True)
+            subprocess.run(["docker", "rm", "--force", name], capture_output=True, check=False)
+        try:
+            assert env.remove_images(wanted) is True
+            gone, kept = list(tags)
+            assert env.image_id_of(gone) is None
+            assert env.image_id_of(kept) is not None
+            assert env.remove_images(wanted) is True
+            assert env.remove_images("") is True
+        finally:
+            for tagged in tags:
+                env.remove_image(tagged)

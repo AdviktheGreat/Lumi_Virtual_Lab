@@ -31,6 +31,7 @@ from test_server_paperagent_repository import (
 )
 
 from virtual_lab.environment import StoppedError
+from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import repository as cloning
 from virtual_lab.server import paperagent_repository as kept_repository
@@ -50,6 +51,7 @@ class Docker:
         self.images: dict[str, str] = {}
         self.builds: list[dict[str, Any]] = []
         self.removed: list[str] = []
+        self.swept: list[str] = []
         self.cleaned: list[str] = []
         self.usable: tuple[bool, str | None] = (True, None)
         self.error: BaseException | None = None
@@ -130,6 +132,17 @@ class Docker:
 
         return True
 
+    def remove_images(self, label: str, docker_command: Any = ("docker",)) -> bool:
+        """Takes away the images that carry the label, which are named from the agent and a commit."""
+        self.swept.append(label)
+        ours = [tag for tag in self.images if tag.split(":", 1)[1].rsplit("-", 1)[0] == label]
+        if self.refuses and ours:
+            return False
+        for tag in ours:
+            del self.images[tag]
+
+        return True
+
     def remove_builds(self, label: str, docker_command: Any = ("docker",)) -> int:
         self.cleaned.append(label)
 
@@ -143,6 +156,7 @@ def docker(monkeypatch: pytest.MonkeyPatch) -> Docker:
     monkeypatch.setattr(building, "build_environment", stand_in.build)
     monkeypatch.setattr(building, "image_id_of", stand_in.image_id_of)
     monkeypatch.setattr(building, "remove_image", stand_in.remove_image)
+    monkeypatch.setattr(building, "remove_images", stand_in.remove_images)
     monkeypatch.setattr(building, "remove_builds", stand_in.remove_builds)
 
     return stand_in
@@ -289,6 +303,7 @@ class TestBuilding:
     def test_the_environment_is_built_as_a_job_and_what_was_built_is_kept(
         self, agents: PaperAgents, workspace: Workspace, fetched: str, docker: Docker
     ) -> None:
+        docker.swept.clear()
         started = agents.build_environment(fetched, minutes=12, gigabytes=3)
         assert (started.kind, started.subject) == (ENVIRONMENT_JOB, fetched)
         assert started.title == "Building the environment: CellMapper"
@@ -301,7 +316,7 @@ class TestBuilding:
         assert made["tag"] == tag_of(fetched) and made["label"] == fetched
         assert made["limits"] == building.Limits(12, 3)
         assert made["scratch_is_empty"] is True and made["stop"] is started.stop
-        assert docker.cleaned == [fetched] and tag_of(fetched) in docker.removed
+        assert docker.cleaned == [fetched] and docker.swept == [fetched]
         found = agents.environment(fetched)
         record = found["built"]
         assert record["commit"] == COMMIT and record["url"] == URL
@@ -476,6 +491,37 @@ class TestFailing:
         assert job.state == "failed" and "no space left" in job.error
         assert agents.environment(fetched)["failure"] is None
         assert step_of(agents, fetched) == "failed"
+
+    def test_docker_failing_in_the_middle_of_a_build_is_kept_as_a_failure_that_says_so(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        docker.error = DockerUnavailableError("Docker could not copy the code in: no space left on device")
+
+        job = build(agents, fetched)
+
+        assert job.state == "failed" and "no space left" in job.error
+        found = agents.environment(fetched)
+        assert found["built"] is None and found["has_log"] is True
+        failure = found["failure"]["failure"]
+        assert failure["kind"] == "docker"
+        assert (
+            failure["detail"]
+            == "Docker could not copy the code in: no space left on device. The build can be asked for again."
+        )
+        assert step_of(agents, fetched) == "failed"
+
+    def test_an_image_that_a_build_left_with_no_account_is_taken_away_before_the_next(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        left = f"virtual-lab-paperagent:{fetched}-{'a' * 12}"
+        other = "virtual-lab-paperagent:someone-else-" + "b" * 12
+        docker.images[left] = "sha256:" + "1" * 64
+        docker.images[other] = "sha256:" + "2" * 64
+
+        build(agents, fetched)
+
+        assert left not in docker.images and other in docker.images
+        assert docker.swept[-1] == fetched
 
     def test_a_build_that_is_stopped_keeps_nothing(
         self, agents: PaperAgents, fetched: str, docker: Docker, jobs: Jobs
@@ -682,6 +728,39 @@ class TestRemoving:
         agents.clear_environment(fetched)
         assert agents.environment(fetched)["built"] is None
 
+    def test_an_image_whose_account_cannot_be_read_is_still_taken_away(
+        self, agents: PaperAgents, workspace: Workspace, fetched: str, docker: Docker
+    ) -> None:
+        build(agents, fetched)
+        (directory_of(workspace, fetched) / "env" / "environment.json").write_text("{not json")
+
+        agents.clear_environment(fetched)
+
+        assert docker.images == {}
+        assert not (directory_of(workspace, fetched) / "env").exists()
+
+    def test_the_agents_images_go_and_those_of_an_agent_whose_name_starts_the_same_do_not(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        build(agents, fetched)
+        longer = f"virtual-lab-paperagent:{fetched}-more-{'c' * 12}"
+        docker.images[longer] = "sha256:" + "3" * 64
+
+        agents.clear_environment(fetched)
+
+        assert list(docker.images) == [longer]
+
+    def test_the_refusal_says_that_the_image_could_not_be_removed_and_why_that_may_be(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        build(agents, fetched)
+        docker.refuses = True
+
+        error = refused(agents.clear_environment, fetched)
+
+        assert error.message.startswith("The image of the environment could not be removed.")
+        assert "something may be using it" in error.message
+
     def test_clearing_where_there_is_none_is_not_an_error(
         self, agents: PaperAgents, fetched: str, docker: Docker
     ) -> None:
@@ -741,6 +820,15 @@ class TestRemoving:
 
         assert docker.images == {}
         assert not directory_of(workspace, fetched).exists()
+
+    def test_deleting_the_agent_takes_away_a_container_that_a_build_left(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        docker.cleaned.clear()
+
+        agents.delete(fetched)
+
+        assert docker.cleaned == [fetched]
 
     def test_an_agent_whose_image_cannot_be_removed_is_not_deleted(
         self, agents: PaperAgents, workspace: Workspace, fetched: str, docker: Docker

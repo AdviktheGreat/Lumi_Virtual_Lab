@@ -50,6 +50,9 @@ CONDA_IMAGE = "condaforge/miniforge3:25.3.1-0"
 IMAGE_REPOSITORY = "virtual-lab-paperagent"
 # What the containers that builds are run in are called, so that one left by a server that was stopped can be found
 BUILD_PREFIX = "virtual-lab-build-"
+# Put on the container of a build, which an image committed from it keeps, to say whose it is. It is the whole of the
+# agent's id and not the start of it, as one agent's id can be the start of another's.
+AGENT_LABEL = "virtual-lab.paperagent"
 BUILD_LABEL = re.compile(r"[a-z0-9-]*")
 
 # What a build is allowed, by default and at most
@@ -58,6 +61,7 @@ MAX_MINUTES = 180
 DEFAULT_GIGABYTES = 6
 MAX_GIGABYTES = 40
 MEMORY = "8g"
+# The most processors, which is fewer when Docker has fewer, as it will not make a container that asks for more
 CPUS = "4"
 PIDS = 1024
 BUILD_TMPFS = "1g"
@@ -66,10 +70,11 @@ BUILD_TMPFS = "1g"
 CAPABILITIES = ("CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID")
 
 # How often the disk a build writes is looked at, how long docker's own commands may take, and how much of a build's
-# output is kept
+# output is kept: so many lines, of so many characters at most, as a project's own code writes what it likes
 SIZE_SECONDS = 10.0
 DOCKER_SECONDS = 600
 KEPT_LOG_LINES = 4000
+LINE_CHARS = 4000
 TAIL_LINES = 40
 
 # How many system packages may be asked for, and what a Debian package is called
@@ -92,6 +97,7 @@ FAILURE_KINDS = (
     "too_big",
     "timeout",
     "does_not_run",
+    "docker",
     "failed",
 )
 
@@ -917,9 +923,34 @@ def docker_run(
         raise DockerUnavailableError(f"Docker did not answer {arguments[0]} in {int(timeout)} seconds.") from None
 
 
-def create_arguments(container: str, image: str) -> tuple[str, ...]:
+def host_cpus(docker_command: Sequence[str] = ("docker",)) -> int | None:
+    """How many processors Docker has, or None if it does not say."""
+    try:
+        result = docker_run(docker_command, "info", "--format", "{{.NCPU}}", timeout=60)
+    except DockerUnavailableError:
+        return None
+    try:
+        count = int(result.stdout.strip())
+    except ValueError:
+        return None
+
+    return count if result.returncode == 0 and count > 0 else None
+
+
+def cpus_for(docker_command: Sequence[str] = ("docker",)) -> str:
+    """How many processors a build is given: the most it is ever given, or all that Docker has if that is fewer, or one
+    if Docker does not say, which it always has."""
+    count = host_cpus(docker_command)
+
+    return str(min(int(CPUS), count)) if count is not None else "1"
+
+
+def create_arguments(container: str, image: str, label: str = "", cpus: str = CPUS) -> tuple[str, ...]:
     """The arguments of the `docker create` that makes the container a build is run in, which is the whole of what it
     is given.
+
+    :param label: Whose the container is, if that is to be said.
+    :param cpus: How many processors it may use, which is no more than Docker has.
 
     It is given no mount, and no variable of this process's, since docker passes none that is not named. It has the
     network, since that is how packages are fetched, and has the capabilities that apt and pip need to install. Its
@@ -939,7 +970,7 @@ def create_arguments(container: str, image: str) -> tuple[str, ...]:
         "--memory-swap",
         MEMORY,
         "--cpus",
-        CPUS,
+        cpus,
         "--pids-limit",
         str(PIDS),
         "--cap-drop",
@@ -949,6 +980,7 @@ def create_arguments(container: str, image: str) -> tuple[str, ...]:
         "no-new-privileges",
         "--log-driver",
         "none",
+        *(("--label", f"{AGENT_LABEL}={label}") if label else ()),
         "--tmpfs",
         f"/tmp:rw,exec,size={BUILD_TMPFS},mode=1777",
         "--env",
@@ -990,6 +1022,7 @@ class Builder:
         self.tag = tag
         self.limits = limits
         self.docker = tuple(docker_command)
+        self.label = label
         self.on_output = on_output
         self.stop = stop if stop is not None else threading.Event()
         self.container = f"{BUILD_PREFIX}{label + '-' if label else ''}{uuid4().hex[:12]}"
@@ -1008,8 +1041,13 @@ class Builder:
         """Runs one of docker's commands that the build cannot go on without, and gives what it printed.
 
         :raises DockerUnavailableError: If it did not work, with what Docker said.
+        :raises StoppedError: If whoever started the build asked to stop it before this.
+        :raises EnvironmentBuildError: If the build is over its time before this.
         """
-        result = docker_run(self.docker, *arguments)
+        self.watch((), None)
+        result = docker_run(
+            self.docker, *arguments, timeout=max(30.0, min(DOCKER_SECONDS, self.deadline - time.monotonic()))
+        )
         if result.returncode != 0:
             raise DockerUnavailableError(f"Docker could not {what}: {result.stderr.strip()[:300]}")
 
@@ -1070,13 +1108,33 @@ class Builder:
             text=True,
             errors="replace",
         )
-        lines: queue.Queue[str | None] = queue.Queue()
+        # Bounded, so that what is written faster than it is read waits in the pipe, and does not pile up here
+        lines: queue.Queue[str | None] = queue.Queue(maxsize=1000)
+        over = threading.Event()
+
+        def offer(item: str | None) -> None:
+            while not over.is_set():
+                try:
+                    lines.put(item, timeout=0.5)
+                    return
+                except queue.Full:
+                    continue
 
         def read() -> None:
             assert process.stdout is not None
-            for line in process.stdout:
-                lines.put(line.rstrip("\r\n"))
-            lines.put(None)
+            while True:
+                line = process.stdout.readline(LINE_CHARS)
+                if not line:
+                    break
+                if len(line) == LINE_CHARS and not line.endswith("\n"):
+                    # A line that is too long is cut, and the rest of it is taken off the pipe and not kept
+                    while True:
+                        rest = process.stdout.readline(LINE_CHARS)
+                        if not rest or rest.endswith("\n"):
+                            break
+                    line += " [the rest of the line is cut]"
+                offer(line.rstrip("\r\n"))
+            offer(None)
 
         reader = threading.Thread(target=read, name="virtual-lab-build-output", daemon=True)
         reader.start()
@@ -1096,6 +1154,7 @@ class Builder:
                 self.watch(output, step)
             return process.wait(), "\n".join(output)
         finally:
+            over.set()
             if process.poll() is None:
                 process.kill()
                 process.wait()
@@ -1152,7 +1211,10 @@ class Builder:
             if code != 0:
                 raise EnvironmentBuildError(classify(output, "pull", code, recipe.python))
         base = self.base_image()
-        self.need("make the container", *create_arguments(self.container, recipe.base_image))
+        self.need(
+            "make the container",
+            *create_arguments(self.container, recipe.base_image, self.label, cpus_for(self.docker)),
+        )
         self.need("start the container", "start", self.container)
         self.need("copy the code in", "cp", f"{self.repo}{os.sep}.", f"{self.container}:{REPO_PATH}")
         done: list[dict[str, Any]] = []
@@ -1286,6 +1348,37 @@ def smoke(tag: str, scratch: Path, docker_command: Sequence[str] = ("docker",)) 
     )
 
 
+def remove_images(label: str, docker_command: Sequence[str] = ("docker",)) -> bool:
+    """Takes away every image that was built for one agent, by the label that its build put on it, so that one that no
+    record names is taken too, as one is when the server stopped between the image and its record.
+
+    :return: Whether they are all gone: false if Docker did not answer, or would not remove one.
+    """
+    if not label or BUILD_LABEL.fullmatch(label) is None:
+        return True
+    try:
+        listed = docker_run(
+            docker_command,
+            "image",
+            "ls",
+            "--filter",
+            f"label={AGENT_LABEL}={label}",
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+            timeout=60,
+        )
+    except DockerUnavailableError:
+        return False
+    if listed.returncode != 0:
+        return False
+    gone = True
+    for name in listed.stdout.split():
+        if name.startswith(f"{IMAGE_REPOSITORY}:") and not remove_image(name, docker_command):
+            gone = False
+
+    return gone
+
+
 def remove_builds(label: str, docker_command: Sequence[str] = ("docker",)) -> int:
     """Removes the containers of builds that were left behind, as a build is not left by anything but a server that was
     stopped hard. Those of one label only, which is of an agent that has no build going.
@@ -1300,12 +1393,12 @@ def remove_builds(label: str, docker_command: Sequence[str] = ("docker",)) -> in
             "ps",
             "--all",
             "--filter",
-            f"name=^/{BUILD_PREFIX}{label}-",
+            f"label={AGENT_LABEL}={label}",
             "--format",
             "{{.Names}}",
             timeout=60,
         )
-        names = [name for name in listed.stdout.split() if name.startswith(f"{BUILD_PREFIX}{label}-")]
+        names = [name for name in listed.stdout.split() if name.startswith(BUILD_PREFIX)]
         if listed.returncode != 0 or not names:
             return 0
         docker_run(docker_command, "rm", "--force", "--volumes", *names, timeout=300)
