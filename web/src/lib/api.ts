@@ -34,7 +34,9 @@ import type {
   SkillsFrom,
   SkillsPutIn,
   PaperAgent,
+  PaperAgentBuildOptions,
   PaperAgentChange,
+  PaperAgentEnvironment,
   PaperAgentFetchOptions,
   PaperAgentPassage,
   PaperAgentReadOptions,
@@ -496,6 +498,18 @@ export const api = {
     request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/repository`, options),
   clearPaperAgentRepository: (id: string) =>
     request<PaperAgentRepository>("DELETE", `/paperagents/${encodeURIComponent(id)}/repository`),
+  // What there is of an agent's environment, building it, which goes on as a job, taking it away, and what it was made of and
+  // what it printed
+  paperAgentEnvironment: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentEnvironment>("GET", `/paperagents/${encodeURIComponent(id)}/environment`, undefined, signal),
+  buildPaperAgentEnvironment: (id: string, options: PaperAgentBuildOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/environment`, options),
+  clearPaperAgentEnvironment: (id: string) =>
+    request<PaperAgentEnvironment>("DELETE", `/paperagents/${encodeURIComponent(id)}/environment`),
+  paperAgentEnvironmentLock: (id: string, signal?: AbortSignal) =>
+    request<{ name: string; text: string }>("GET", `/paperagents/${encodeURIComponent(id)}/environment/lock`, undefined, signal),
+  paperAgentEnvironmentLog: (id: string, signal?: AbortSignal) =>
+    request<{ lines: string[] }>("GET", `/paperagents/${encodeURIComponent(id)}/environment/log`, undefined, signal),
   paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
     request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
