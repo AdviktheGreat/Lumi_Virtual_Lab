@@ -96,7 +96,7 @@ with LocalSession(Path("work")) as session:
 | [Repairing code and running steps within one budget](docs/projects.md) | Fixing code that fails, and many meetings within one budget |
 | [Conversations, the server, and the chat interface](docs/chat-and-server.md) | The lead, its limits, the server's API, and building the pages |
 | [Growing the toolset from papers](docs/papers-and-functions.md) | Reading papers, and writing a function for each task |
-| [PaperAgents](docs/paperagents.md) | Making an agent of one paper and its code, getting the paper from its DOI or link, reading it into claims that each have a quote, and what an agent keeps |
+| [PaperAgents](docs/paperagents.md) | Making an agent of one paper and its code, getting the paper from its DOI or link, reading it into claims that each have a quote, fetching its code at one commit without running it and checking whether to go on, and what an agent keeps |
 | [Benchmarks](docs/benchmarks.md) | Measuring an agent or a team on Biomni's benchmarks |
 | [Tools, data, skills, and MCP servers](docs/tools-and-skills.md) | Databases, the web, your own tools, data, and software, skills, MCP |
 

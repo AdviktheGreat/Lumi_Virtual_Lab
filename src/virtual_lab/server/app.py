@@ -48,6 +48,9 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}/reading  what was read: claims, the method card, resources, each with a quote
     DELETE /api/paperagents/{id}/reading  takes away what was read, so that the paper can be read again
     GET    /api/paperagents/{id}/passage  the paper's words from ?start= to ?end=, with what is around them
+    POST   /api/paperagents/{id}/repository  starts fetching the code, never running it, and taking stock of it
+    GET    /api/paperagents/{id}/repository  where the code is, what the paper points to, what was found in it
+    DELETE /api/paperagents/{id}/repository  takes away the code that was fetched, so that it can be fetched again
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -358,6 +361,15 @@ class PaperAgentReadBody(RequestModel):
 
     max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
     retry_failed: StrictBool = False
+
+
+class PaperAgentRepositoryBody(RequestModel):
+    """Which code to fetch, if it is not what the agent has already, at which branch, tag, or commit, and the most of it
+    to fetch, in megabytes."""
+
+    repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+    ref: str | None = Field(None, max_length=400)
+    max_megabytes: StrictInt | None = None
 
 
 class PaperAgentPaperBody(RequestModel):
@@ -1125,6 +1137,20 @@ def create_app(
         paperagents.clear_reading(agent_id)
 
         return paperagents.reading(agent_id)
+
+    @api.post("/paperagents/{agent_id}/repository", status_code=202)
+    def fetch_paperagent_repository(agent_id: str, body: PaperAgentRepositoryBody) -> dict[str, Any]:
+        return paperagents.fetch_repository(agent_id, body.repo, body.ref, body.max_megabytes).snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/repository")
+    def get_paperagent_repository(agent_id: str) -> dict[str, Any]:
+        return paperagents.repository(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/repository")
+    def delete_paperagent_repository(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_repository(agent_id)
+
+        return paperagents.repository(agent_id)
 
     @api.get("/paperagents/{agent_id}/passage")
     def get_paperagent_passage(agent_id: str, start: int = Query(ge=0), end: int = Query(ge=0)) -> dict[str, Any]:
