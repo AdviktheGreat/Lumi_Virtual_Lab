@@ -51,10 +51,12 @@ interface Shared {
   reading: PaperAgentReading;
   // Whether the paper is being read, which nothing else is done to the agent in the meantime
   working: boolean;
+  // Whether the agent's code is being fetched, which the paper is not read in the meantime
+  blocked: boolean;
 }
 
 // Says how much reading may cost, which is always said, and starts it
-function ReadForm({ agent, reading, working, jobs }: Shared & { jobs: JobsData }) {
+function ReadForm({ agent, reading, working, blocked, jobs }: Shared & { jobs: JobsData }) {
   const { report } = useServer();
   const id = useId();
   const [draft, setDraft] = useState(EMPTY_READING);
@@ -119,7 +121,7 @@ function ReadForm({ agent, reading, working, jobs }: Shared & { jobs: JobsData }
       )}
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" disabled={working || attempt.busy || finished}>
+        <Button type="submit" disabled={working || blocked || attempt.busy || finished}>
           <BookOpen />
           {attempt.busy
             ? "Starting…"
@@ -136,6 +138,7 @@ function ReadForm({ agent, reading, working, jobs }: Shared & { jobs: JobsData }
         {finished && !working && (
           <span className="text-xs text-muted-foreground">The paper has been read. Clear the reading to read it again.</span>
         )}
+        {blocked && !working && <span className="text-xs text-muted-foreground">The code is being fetched. Reading waits for that.</span>}
       </div>
     </form>
   );
@@ -280,6 +283,7 @@ function ClearReading({
   onCleared,
 }: {
   agent: PaperAgent;
+  // Whether anything is being done to the agent
   working: boolean;
   onCleared: (reading: PaperAgentReading) => void;
 }) {
@@ -327,6 +331,7 @@ export function ReadingSection({
   agent,
   reading,
   working,
+  blocked,
   jobs,
   onCleared,
 }: Shared & { jobs: JobsData; onCleared: (reading: PaperAgentReading) => void }) {
@@ -336,11 +341,11 @@ export function ReadingSection({
 
   return (
     <div className="flex flex-col gap-4">
-      <ReadForm agent={agent} reading={reading} working={working} jobs={jobs} />
+      <ReadForm agent={agent} reading={reading} working={working} blocked={blocked} jobs={jobs} />
       {hasReading(reading) && (
         <>
           <Facts agent={agent.id} reading={reading} />
-          <ClearReading agent={agent} working={working} onCleared={onCleared} />
+          <ClearReading agent={agent} working={working || blocked} onCleared={onCleared} />
         </>
       )}
     </div>

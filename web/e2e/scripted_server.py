@@ -44,6 +44,11 @@ from a script: no key is needed, and every run says the same. What it says depen
 - The text of a PaperAgent whose paper is a DOI or a link is given by stand-ins for Europe PMC and the web, which give a
   paper that says what the one above does, under the DOI or the link. "closed" in a DOI or a link makes it a paper that
   cannot be had, as one is that is not open access or is behind a login, and "slow" makes it take a while to be got.
+- The code of a PaperAgent is given by a stand-in for Git, which writes a small project for any address, at a commit
+  that is the same for the same address and ref: one with a README that shows how it is used, an MIT license, pinned
+  requirements, a tutorial, and a test, which a GPU is used by if there is one. "gpu" in the address makes it one that
+  needs a GPU and has a license for non-commercial use only, and no tutorial, "slow" makes fetching it take a while,
+  "missing" makes it a project that is not there, and "huge" makes it more than the most that was asked to be fetched.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -60,6 +65,7 @@ machine's own is never touched. --no-keychain has the server keep none, as one o
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -99,7 +105,9 @@ from virtual_lab.constants import MCP_AUTH_DIRECTORY_VARIABLE  # noqa: E402
 from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab import openrouter  # noqa: E402
+from virtual_lab.environment import StoppedError  # noqa: E402
 from virtual_lab.paperagents import fetch as fetching  # noqa: E402
+from virtual_lab.paperagents import repository as cloning  # noqa: E402
 from virtual_lab.paperagents.reading import (  # noqa: E402
     ChunkReading,
     ReadClaim,
@@ -556,6 +564,81 @@ def stand_in_linked_paper(url: str) -> fetching.FetchedPaper:
     )
 
 
+MIT_LICENSE = (
+    "MIT License\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software, "
+    "to deal in the Software without restriction.\n\n"
+    'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.\n'
+)
+NONCOMMERCIAL_LICENSE = (
+    "Creative Commons Attribution-NonCommercial 4.0 International\n\nThe work may be used for noncommercial "
+    "purposes only.\n"
+)
+NOTEBOOK = json.dumps(
+    {
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "metadata": {"kernelspec": {"name": "python3", "language": "python"}},
+        "cells": [
+            {"cell_type": "markdown", "metadata": {}, "source": ["# Map the cells of a sample"]},
+            {
+                "cell_type": "code",
+                "metadata": {},
+                "execution_count": None,
+                "outputs": [],
+                "source": ["import cellmapper\n", "cellmapper.map_cells('sample.h5ad')"],
+            },
+        ],
+    }
+)
+
+
+def stand_in_clone(
+    url: str,
+    destination: Path,
+    ref: str | None = None,
+    max_bytes: int = cloning.DEFAULT_BYTES,
+    seconds: float = cloning.GIT_SECONDS,
+    should_stop: Any = None,
+    protocols: str = "https",
+) -> cloning.Cloned:
+    """The project Git gives for an address, written in a folder, or why it cannot be had."""
+    asked = cloning.check_ref(ref)
+    if "missing" in url:
+        raise cloning.RepositoryError(f"{url} was not found, or it is not public.")
+    if "huge" in url:
+        raise cloning.RepositoryTooBigError(
+            f"{url} is bigger than the {max_bytes // cloning.MEGABYTE} megabytes that were asked to be fetched.",
+            max_bytes + 1,
+            max_bytes,
+        )
+    if "slow" in url:
+        for _ in range(int(FETCH_DELAY * 10)):
+            if should_stop is not None and should_stop():
+                raise StoppedError("Stopped while the code was fetched.")
+            time.sleep(0.1)
+    needs_gpu = "gpu" in url
+    files = {
+        "README.md": "# cellmapper\n\nMaps cells.\n"
+        + ("" if needs_gpu else "\n## Usage\n\nRun `cellmapper sample.h5ad`.\n"),
+        "LICENSE": NONCOMMERCIAL_LICENSE if needs_gpu else MIT_LICENSE,
+        "requirements.txt": "cupy-cuda12x==13.0.0\ntorch==2.1.0\n" if needs_gpu else "scanpy==1.9.3\nnumpy==1.26.4\n",
+        "cellmapper/__init__.py": "",
+        "cellmapper/core.py": (
+            "import torch\n\nmodel = torch.nn.Linear(2, 2).cuda()\n"
+            if needs_gpu
+            else 'import torch\n\ndevice = "cuda" if torch.cuda.is_available() else "cpu"\n'
+        ),
+    }
+    if not needs_gpu:
+        files["tutorials/quickstart.ipynb"] = NOTEBOOK
+        files["tests/test_core.py"] = "def test_nothing():\n    assert True\n"
+    for name, text in files.items():
+        (destination / name).parent.mkdir(parents=True, exist_ok=True)
+        (destination / name).write_text(text)
+
+    return cloning.Cloned(commit=hashlib.sha1(f"{url}@{asked}".encode()).hexdigest(), ref=asked)
+
+
 def function_named(kwargs: dict[str, Any]) -> str | None:
     """The name of the function a request asks the model to write, if it asks for one."""
     system = next((message["content"] for message in kwargs["messages"] if message["role"] == "system"), "")
@@ -942,6 +1025,7 @@ def main() -> None:
     server_app.make_pdf = stand_in_pdf
     fetching.europe_pmc_paper = stand_in_europe_pmc
     fetching.linked_paper = stand_in_linked_paper
+    cloning.clone = stand_in_clone
     openrouter.fetch_models = stand_in_openrouter_models
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened

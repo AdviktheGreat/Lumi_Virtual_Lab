@@ -826,9 +826,15 @@ export interface PaperAgent {
   title: string;
   created_at: string;
   paper: PaperAgentPaper;
-  // Where the paper's code is, if that is known
-  repo: { url: string } | null;
+  // Where the paper's code is, if that is known, and once it is fetched the commit that was, with what was asked for to get it
+  repo: PaperAgentRepo | null;
   steps: Record<PaperAgentStep, PaperAgentStatus>;
+}
+
+export interface PaperAgentRepo {
+  url: string;
+  ref?: string;
+  commit?: string;
 }
 
 export interface PaperAgentsList {
@@ -966,4 +972,104 @@ export interface NewPaperAgent {
 export interface PaperAgentChange {
   title?: string;
   repo?: string;
+}
+
+// What was found in a project's files, by looking at them: nothing in it was run
+export interface RepositoryStock {
+  schema: number;
+  files: number;
+  bytes: number;
+  // Whether all of it was looked at, which it was not if it has more files than are looked at
+  complete: boolean;
+  languages: { name: string; files: number; bytes: number }[];
+  notebooks: { count: number; listed: { path: string; bytes: number; code_cells: number | null; language: string | null }[] };
+  // What tools are made from: notebooks, and scripts in a folder of examples or tutorials
+  tutorials: { count: number; characters: number; listed: { path: string; kind: string; bytes: number; characters: number }[] };
+  tests: { count: number; listed: string[] };
+  // The files that say what to install, and whether each gives the versions: "locked", "all", "some", or none
+  environment: { path: string; kind: string; pins: string | null }[];
+  license: { files: string[]; name: string | null; kind: string; from: string } | null;
+  readme: { path: string; example: boolean } | null;
+  gpu: { required: RepositorySignal[]; optional: RepositorySignal[] };
+  data: {
+    count: number;
+    bytes: number;
+    listed: { path: string; bytes: number; kind: string }[];
+    lfs: boolean;
+    lfs_pointers: number;
+    dvc: boolean;
+    links: string[];
+    accessions: string[];
+  };
+  submodules: { path: string; url: string }[];
+  absolute_paths: { count: number; listed: { path: string; example: string }[] };
+}
+
+export interface RepositorySignal {
+  path: string;
+  signal: string;
+  kind: string;
+}
+
+// How a check of whether to go on came out: fine, a thing to know, a thing to weigh, a reason to stop, or not known
+export type PreflightStatus = "ok" | "note" | "warn" | "block" | "unknown";
+
+// Go on, ask first, or do not
+export type PreflightVerdict = "go" | "ask" | "no-go";
+
+export interface PreflightCheck {
+  id: string;
+  title: string;
+  status: PreflightStatus;
+  detail: string;
+}
+
+// A guess at what making tools from the code's tutorials would cost in model requests, which is null if it cannot be told
+export interface PreflightEstimate {
+  low: number | null;
+  high: number | null;
+  tutorials: number;
+  basis: string;
+}
+
+// Whether it is worth going on with a project's code, from its files alone, which is advice
+export interface Preflight {
+  verdict: PreflightVerdict;
+  summary: string;
+  checks: PreflightCheck[];
+  estimate: PreflightEstimate;
+}
+
+// A project that the paper's links lead to, which a person says is the code or is not
+export interface RepositoryCandidate {
+  url: string;
+  // What the paper says the first of its places is: its code, its data, or neither; the code first if any of them says so
+  role: "code" | "data" | "other";
+  // Whether it is where the agent's code is now
+  chosen: boolean;
+  facts: ReadFact[];
+}
+
+// What there is of an agent's code: where it is, the projects the paper points to, and once it is fetched what was found
+export interface PaperAgentRepository {
+  id: string;
+  repo: PaperAgentRepo | null;
+  cloned: boolean;
+  intake: { url: string; ref: string; commit: string; cloned_at: string; limit_bytes: number } | null;
+  stock: RepositoryStock | null;
+  preflight: Preflight | null;
+  candidates: RepositoryCandidate[];
+  // The fetching that is at work, if one is
+  job: Job | null;
+  // Whether Git is installed, which fetching takes
+  git: boolean;
+  limits: { default_megabytes: number; min_megabytes: number; max_megabytes: number };
+}
+
+// What to say of fetching code: where from if it is not what the agent has, which branch, tag, or commit, and the most of
+// it to fetch, in megabytes
+export interface PaperAgentFetchOptions {
+  repo?: string;
+  ref?: string;
+  max_megabytes?: number;
 }

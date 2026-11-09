@@ -3,8 +3,14 @@ import { ApiError } from "./api";
 import {
   agentAddress,
   checkAgent,
+  checkFetch,
   checkReading,
   describeAnchor,
+  describeCommit,
+  describeData,
+  describeEstimate,
+  describeFetched,
+  describeLicense,
   describeLeftOut,
   describeLength,
   describePaper,
@@ -12,6 +18,7 @@ import {
   describeReading,
   describeSteps,
   doiOf,
+  emptyFetch,
   EMPTY_AGENT,
   EMPTY_READING,
   existingOf,
@@ -21,17 +28,23 @@ import {
   isLink,
   isRepo,
   lastReadingJob,
+  lastRepositoryJob,
+  orderedChecks,
   paperFile,
   paperLink,
   readingJob,
   readingKey,
   readThrough,
+  refProblem,
   repoName,
   repoProblem,
+  repositoryJob,
+  stockRows,
+  STOCK_ITEMS_SHOWN,
   titleProblem,
   type AgentDraft,
 } from "./paperagents";
-import type { Job, PaperAgent, PaperAgentReading, ReadAnchor } from "./types";
+import type { Job, PaperAgent, PaperAgentReading, PaperAgentRepository, Preflight, ReadAnchor, RepositoryStock } from "./types";
 
 const draft = (part: Partial<AgentDraft>): AgentDraft => ({ ...EMPTY_AGENT, ...part });
 
@@ -333,6 +346,33 @@ describe("the job that reads a paper", () => {
     expect(readingKey(null, 0, "cells")).toBe("0|");
     expect(readingKey([job({ subject: "dogs" })], 0, "cells")).toBe("0|");
   });
+
+  it("changes as the code is fetched, and says nothing of another agent's", () => {
+    const fetching = job({ id: "f1", kind: "paperagent-repository" });
+
+    expect(readingKey([fetching], 0, "cells")).not.toBe(readingKey([], 0, "cells"));
+    expect(readingKey([{ ...fetching, subject: "dogs" }], 0, "cells")).toBe("0|");
+    expect(readingKey([{ ...fetching, state: "succeeded" }], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the job that fetches the code of an agent", () => {
+  const fetching = (changes: Partial<Job> = {}) => job({ id: "f1", kind: "paperagent-repository", ...changes });
+
+  it("is the one at work on that agent, and not the one that reads its paper or another agent's", () => {
+    const jobs = [job({ id: "reading" }), fetching({ id: "other", subject: "dogs" }), fetching({ id: "old", state: "failed" }), fetching()];
+
+    expect(repositoryJob(jobs, "cells")?.id).toBe("f1");
+    expect(repositoryJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(readingJob(jobs, "cells")?.id).toBe("reading");
+  });
+
+  it("is, when none is at work, the latest that is over", () => {
+    const jobs = [fetching({ id: "new", state: "failed" }), fetching({ id: "old", state: "succeeded" }), job({ state: "failed" })];
+
+    expect(lastRepositoryJob(jobs, "cells")?.id).toBe("new");
+    expect(lastRepositoryJob([fetching()], "cells")).toBeUndefined();
+  });
 });
 
 describe("the limit on what reading may spend", () => {
@@ -438,5 +478,208 @@ describe("the facts of a reading", () => {
   it("are none for a paper that has nothing found in it", () => {
     expect(factGroups(reading())).toEqual([]);
     expect(factCount(reading())).toBe(0);
+  });
+});
+
+const limits: PaperAgentRepository["limits"] = { default_megabytes: 200, min_megabytes: 10, max_megabytes: 1000 };
+
+describe("the name of a branch, a tag, or a commit", () => {
+  it("may be left out, for the project's default", () => {
+    expect(refProblem("")).toBeNull();
+    expect(refProblem("   ")).toBeNull();
+  });
+
+  it("is what Git takes, and not what it could take for an option or a way out of the project", () => {
+    for (const ref of ["main", "v1.2.3", "release/2.0", "feature_x+y", "a".repeat(40), "user@host"]) expect(refProblem(ref)).toBeNull();
+    for (const ref of ["-rf", "--upload-pack=x", "a..b", "a//b", "main.", "main/", "main.lock", ".hidden", "a b", "a:b", "a~1", "a".repeat(201)]) {
+      expect(refProblem(ref)).toMatch(/not the name of a branch/);
+    }
+  });
+});
+
+describe("what fetching the code is asked for", () => {
+  it("is the project's default branch and the usual most, if nothing is said", () => {
+    expect(emptyFetch(limits)).toEqual({ ref: "", megabytes: "200" });
+    expect(checkFetch(emptyFetch(limits), limits)).toEqual({ value: { max_megabytes: 200 }, problems: {} });
+  });
+
+  it("names the ref that was typed, without the space round it", () => {
+    expect(checkFetch({ ref: " v1.0 ", megabytes: "50" }, limits)).toEqual({ value: { ref: "v1.0", max_megabytes: 50 }, problems: {} });
+  });
+
+  it("is refused, each part with its own reason, when the ref is wrong or the most is not a whole number in range", () => {
+    expect(checkFetch({ ref: "-x", megabytes: "200" }, limits).problems.ref).toMatch(/not the name/);
+    for (const megabytes of ["", "5", "1001", "2.5", "lots", "-20"]) {
+      const checked = checkFetch({ ref: "", megabytes }, limits);
+
+      expect(checked.value).toBeNull();
+      expect(checked.problems.megabytes).toMatch(/^The most to fetch, in megabytes, is a whole number from 10 to 1000\./);
+    }
+    expect(Object.keys(checkFetch({ ref: "a..b", megabytes: "0" }, limits).problems).sort()).toEqual(["megabytes", "ref"]);
+  });
+});
+
+function preflight(changes: Partial<Preflight> = {}): Preflight {
+  return {
+    verdict: "ask",
+    summary: "Ask first",
+    checks: [
+      { id: "code", title: "Code", status: "ok", detail: "d" },
+      { id: "license", title: "License", status: "warn", detail: "d" },
+      { id: "tutorials", title: "Tutorials", status: "note", detail: "d" },
+      { id: "gpu", title: "GPU", status: "block", detail: "d" },
+      { id: "data", title: "Data", status: "unknown", detail: "d" },
+      { id: "size", title: "Size", status: "warn", detail: "d" },
+    ],
+    estimate: { low: 0.5, high: 1.5, tutorials: 3, basis: "At about so much each." },
+    ...changes,
+  };
+}
+
+describe("the checks of whether to go on", () => {
+  it("come in the order a person weighs them: what stops it first, and what is fine last, as they were otherwise", () => {
+    expect(orderedChecks(preflight()).map((check) => check.id)).toEqual(["gpu", "license", "size", "data", "tutorials", "code"]);
+  });
+
+  it("are not reordered in the one that is given", () => {
+    const given = preflight();
+    orderedChecks(given);
+
+    expect(given.checks[0].id).toBe("code");
+  });
+});
+
+describe("what making tools from the tutorials is guessed to cost", () => {
+  it("is said as a range, or as one amount if the two are the same", () => {
+    expect(describeEstimate({ low: 0.5, high: 1.5, tutorials: 3, basis: "" })).toBe("Making tools from 3 tutorials is guessed at $0.50 to $1.50 in model requests.");
+    expect(describeEstimate({ low: 0.25, high: 0.25, tutorials: 1, basis: "" })).toBe("Making tools from 1 tutorial is guessed at $0.25 in model requests.");
+  });
+
+  it("is not said when it cannot be told, or there is nothing to make tools from", () => {
+    expect(describeEstimate({ low: null, high: null, tutorials: 3, basis: "" })).toBeNull();
+    expect(describeEstimate({ low: 0, high: 0, tutorials: 0, basis: "" })).toBeNull();
+  });
+});
+
+describe("what was fetched", () => {
+  it("is the project at a short commit and what was asked for", () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+
+    expect(describeCommit("https://github.com/a/b", "HEAD", commit)).toBe("a/b at 0123456789ab (the default branch)");
+    expect(describeCommit("https://github.com/a/b", "v2", commit)).toBe("a/b at 0123456789ab (v2)");
+  });
+
+  it("is dated, and says so even if the date cannot be read", () => {
+    expect(describeFetched("not a date")).toBe("Fetched a while ago");
+    expect(describeFetched(new Date().toISOString())).toMatch(/^Fetched /);
+  });
+});
+
+function stock(changes: Partial<RepositoryStock> = {}): RepositoryStock {
+  return {
+    schema: 1,
+    files: 120,
+    bytes: 2_500_000,
+    complete: true,
+    languages: [
+      { name: "Python", files: 80, bytes: 1 },
+      { name: "R", files: 5, bytes: 1 },
+    ],
+    notebooks: { count: 2, listed: [] },
+    tutorials: { count: 3, characters: 100, listed: [{ path: "tutorials/a.ipynb", kind: "notebook", bytes: 1, characters: 1 }] },
+    tests: { count: 0, listed: [] },
+    environment: [
+      { path: "requirements.txt", kind: "pip", pins: "all" },
+      { path: "setup.py", kind: "setup", pins: null },
+    ],
+    license: { files: ["LICENSE"], name: "MIT", kind: "permissive", from: "text" },
+    readme: { path: "README.md", example: true },
+    gpu: { required: [], optional: [{ path: "a.py", signal: "cuda", kind: "optional" }] },
+    data: { count: 0, bytes: 0, listed: [], lfs: false, lfs_pointers: 0, dvc: false, links: [], accessions: [] },
+    submodules: [],
+    absolute_paths: { count: 0, listed: [] },
+    ...changes,
+  };
+}
+
+describe("what was found in a project", () => {
+  it("is rows of what it is and what was found, with the paths of it", () => {
+    const rows = Object.fromEntries(stockRows(stock()).map((row) => [row.label, row]));
+
+    expect(rows.Size.value).toBe("120 files, 2.4 MB");
+    expect(rows.Languages.value).toBe("Python (80 files), R (5 files)");
+    expect(rows.Tutorials).toMatchObject({ value: "3, of which 2 notebooks", items: ["tutorials/a.ipynb"] });
+    expect(rows.Tests.value).toBe("None");
+    expect(rows["What to install"].value).toBe("requirements.txt (versions given), setup.py");
+    expect(rows.License).toMatchObject({ value: "MIT (permissive)", items: ["LICENSE"] });
+    expect(rows.GPU).toMatchObject({ value: "Used if there is one, and not needed", items: ["cuda (a.py)"] });
+    expect(rows.Data.value).toBe("Nothing says where it is");
+    expect(Object.keys(rows)).not.toContain("Submodules, which are not fetched");
+  });
+
+  it("says that only part of a large project was looked at", () => {
+    expect(stockRows(stock({ complete: false }))[0].value).toMatch(/only part of it was looked at/);
+  });
+
+  it("says what is missing as what is missing", () => {
+    const rows = Object.fromEntries(
+      stockRows(
+        stock({
+          languages: [],
+          environment: [],
+          license: null,
+          tutorials: { count: 0, characters: 0, listed: [] },
+          gpu: { required: [{ path: "m.py", signal: "cuda", kind: "required" }], optional: [] },
+        }),
+      ).map((row) => [row.label, row]),
+    );
+
+    expect(rows.Languages.value).toBe("No code was found");
+    expect(rows["What to install"].value).toBe("No file says");
+    expect(rows.License.value).toBe("None");
+    expect(rows.Tutorials.value).toBe("None, but the README shows how it is used");
+    expect(rows.GPU.value).toBe("Needed");
+  });
+
+  it("adds a row for submodules and for examples that read from someone's computer, only when there are some", () => {
+    const rows = stockRows(
+      stock({
+        submodules: [{ path: "ext/x", url: "https://github.com/a/x" }],
+        absolute_paths: { count: 2, listed: [{ path: "run.py", example: "/home/u/data" }] },
+      }),
+    );
+
+    expect(rows.find((row) => row.label.startsWith("Submodules"))).toMatchObject({ value: "1", items: ["ext/x"] });
+    expect(rows.find((row) => row.label.startsWith("Examples"))).toMatchObject({ value: "2", items: ["/home/u/data (run.py)"] });
+  });
+
+  it("is a limit on the paths that a page lists, which is five", () => {
+    expect(STOCK_ITEMS_SHOWN).toBe(5);
+  });
+});
+
+describe("the license of a project", () => {
+  it("is its name and kind, or the kind alone if the name is not known", () => {
+    expect(describeLicense(stock())).toBe("MIT (permissive)");
+    expect(describeLicense(stock({ license: { files: ["COPYING"], name: null, kind: "copyleft", from: "text" } }))).toBe("Not recognized, copyleft");
+    expect(describeLicense(stock({ license: { files: ["L"], name: "CC-BY-NC-4.0", kind: "noncommercial", from: "text" } }))).toBe(
+      "CC-BY-NC-4.0 (for non-commercial use)",
+    );
+    expect(describeLicense(stock({ license: null }))).toBe("None");
+  });
+});
+
+describe("the data of a project", () => {
+  it("is what is in it and what it points to, and says when nothing does", () => {
+    const data = { count: 2, bytes: 3_000_000, listed: [], lfs: true, lfs_pointers: 4, dvc: true, links: ["https://zenodo.org/x"], accessions: ["GSE1", "GSE2", "GSE3", "GSE4"] };
+    const said = describeData(stock({ data }));
+
+    expect(said).toContain("2 data or model files (2.9 MB)");
+    expect(said).toContain("4 files in Git LFS, which are not fetched");
+    expect(said).toContain("kept with DVC, which is not fetched");
+    expect(said).toContain("1 link to where data is kept");
+    expect(said).toContain("accessions GSE1, GSE2, GSE3");
+    expect(said).not.toContain("GSE4");
+    expect(describeData(stock())).toBe("Nothing says where it is");
   });
 });

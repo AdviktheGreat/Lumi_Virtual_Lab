@@ -1,7 +1,7 @@
 import { ApiError } from "./api";
-import { characters, count, dollars, sentence, type Checked } from "./checks";
+import { characters, count, dollars, sentence, whole, type Checked } from "./checks";
 import { formatBytes } from "./files";
-import { formatCost } from "./format";
+import { formatCost, timeAgo } from "./format";
 import { tidy } from "./scientists";
 import { isActive } from "./setup";
 import type {
@@ -10,14 +10,21 @@ import type {
   PaperAgent,
   PaperAgentFile,
   PaperAgentPaper,
+  PaperAgentFetchOptions,
   PaperAgentPaperKind,
   PaperAgentReadOptions,
   PaperAgentReading,
+  PaperAgentRepository,
   PaperAgentSource,
   PaperAgentStatus,
   PaperAgentStep,
+  Preflight,
+  PreflightEstimate,
+  PreflightStatus,
+  PreflightVerdict,
   ReadAnchor,
   ReadFact,
+  RepositoryStock,
 } from "./types";
 
 // What the server takes of an agent's title, a link, and a DOI
@@ -231,14 +238,29 @@ export function lastReadingJob(jobs: readonly Job[], agent: string): Job | undef
   return jobs.find((job) => !isActive(job) && job.kind === READING_JOB && job.subject === agent);
 }
 
-// What changes as a paper is read, so that what a page shows of the agent and its reading is looked at again when it
-// does: which reading is at work, how many chunks it has done, and how many readings have ended
+// What changes as a paper is read or its code is fetched, so that what a page shows of the agent, its reading, and its code
+// is looked at again when it does: which reading is at work, how many chunks it has done, which fetching is, and how many
+// jobs have ended
 export function readingKey(jobs: readonly Job[] | null, ended: number, agent: string): string {
   const at = (jobs ?? [])
     .filter((job) => isActive(job) && job.kind === READING_JOB && job.subject === agent)
     .map((job) => `${job.id}:${job.progress.finished ?? ""}`);
+  const fetching = (jobs ?? []).filter((job) => isActive(job) && job.kind === REPOSITORY_JOB && job.subject === agent).map((job) => job.id);
 
-  return `${ended}|${at.join(",")}`;
+  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}`;
+}
+
+// The job that fetches the code of an agent, which the server runs with the agent's id as its subject
+export const REPOSITORY_JOB = "paperagent-repository";
+
+// The job at work fetching an agent's code, which nothing else is done to the agent in the meantime
+export function repositoryJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === REPOSITORY_JOB && job.subject === agent);
+}
+
+// The latest fetching of an agent's code that is over, whose outcome is what it was last done with
+export function lastRepositoryJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => !isActive(job) && job.kind === REPOSITORY_JOB && job.subject === agent);
 }
 
 export interface ReadingDraft {
@@ -372,3 +394,196 @@ export function factCount(reading: PaperAgentReading): number {
 
 // How many facts of a sort are shown before the rest are asked for
 export const FACTS_SHOWN = 10;
+
+// What of a branch, a tag, or a commit the server takes: it does not begin with a dash, which could be taken for an option,
+// and has no "..", no "//", and no ending of ".", "/", or ".lock"
+const REF = /^[A-Za-z0-9_][A-Za-z0-9_./@+-]{0,199}$/;
+
+export function refProblem(text: string): string | null {
+  const ref = text.trim();
+  if (ref === "") return null;
+  if (!REF.test(ref) || ref.includes("..") || ref.includes("//") || /(\.|\/|\.lock)$/.test(ref)) {
+    return "That is not the name of a branch or a tag, or a commit.";
+  }
+
+  return null;
+}
+
+export interface FetchDraft {
+  ref: string;
+  megabytes: string;
+}
+
+export function emptyFetch(limits: PaperAgentRepository["limits"]): FetchDraft {
+  return { ref: "", megabytes: String(limits.default_megabytes) };
+}
+
+type FetchKey = "ref" | "megabytes";
+
+// What fetching the code is asked for: which branch, tag, or commit, which is left out for the project's default, and the
+// most to fetch, in megabytes
+export function checkFetch(draft: FetchDraft, limits: PaperAgentRepository["limits"]): Checked<PaperAgentFetchOptions, FetchKey> {
+  const ref = refProblem(draft.ref);
+  const size = whole(draft.megabytes, "The most to fetch, in megabytes,", limits.min_megabytes, limits.max_megabytes);
+  if (ref !== null || size.problem || size.value === null) {
+    return { value: null, problems: { ...(ref !== null ? { ref } : {}), ...(size.problem ? { megabytes: size.problem } : {}) } };
+  }
+  const named = draft.ref.trim();
+
+  return { value: { ...(named !== "" ? { ref: named } : {}), max_megabytes: size.value }, problems: {} };
+}
+
+// What a verdict is called, and what a check that came out as each is called, as a person is told them
+export const VERDICT_LABELS: Record<PreflightVerdict, string> = {
+  go: "Go on",
+  ask: "Ask first",
+  "no-go": "Do not go on",
+};
+
+export const CHECK_LABELS: Record<PreflightStatus, string> = {
+  ok: "Fine",
+  note: "Note",
+  warn: "Weigh this",
+  block: "Stops it",
+  unknown: "Not known",
+};
+
+// The checks in the order a person weighs them: what stops it, what to weigh, what is not known, what to know, and what is
+// fine
+const CHECK_ORDER: PreflightStatus[] = ["block", "warn", "unknown", "note", "ok"];
+
+export function orderedChecks(preflight: Preflight): Preflight["checks"] {
+  return [...preflight.checks].sort((a, b) => CHECK_ORDER.indexOf(a.status) - CHECK_ORDER.indexOf(b.status));
+}
+
+// What making tools from the code's tutorials is guessed to cost, in a few words, or null if it cannot be told
+export function describeEstimate(estimate: PreflightEstimate): string | null {
+  if (estimate.low === null || estimate.high === null || estimate.tutorials === 0) return null;
+  const low = formatCost(estimate.low) || "$0.00";
+  const high = formatCost(estimate.high) || "$0.00";
+
+  return `Making tools from ${count(estimate.tutorials, "tutorial")} is guessed at ${low === high ? low : `${low} to ${high}`} in model requests.`;
+}
+
+// Which commit was fetched, and what was asked for to get it, in a few words
+export function describeCommit(url: string, ref: string, commit: string): string {
+  const asked = ref === "HEAD" ? "the default branch" : ref;
+
+  return `${repoName(url)} at ${commit.slice(0, 12)} (${asked})`;
+}
+
+// When the code was fetched, in a few words
+export function describeFetched(at: string): string {
+  return `Fetched ${timeAgo(at) || "a while ago"}`;
+}
+
+const PINS: Record<string, string> = {
+  locked: "versions locked",
+  all: "versions given",
+  some: "some versions given",
+  none: "no versions given",
+};
+
+// One line of what was found in a project: what it is, what was found, and the paths that it is of, the first of them
+export interface StockRow {
+  label: string;
+  value: string;
+  items: string[];
+}
+
+// How many paths of a row are listed
+export const STOCK_ITEMS_SHOWN = 5;
+
+// What was found in a project, as rows for a person to read, each with what it is and what was found, and where
+export function stockRows(stock: RepositoryStock): StockRow[] {
+  const bigFiles = (found: number, bytes: number) => `${count(found, "file")}, ${formatBytes(bytes)}`;
+  const rows: StockRow[] = [
+    {
+      label: "Size",
+      value: `${bigFiles(stock.files, stock.bytes)}${stock.complete ? "" : ". It is large, and only part of it was looked at"}`,
+      items: [],
+    },
+    {
+      label: "Languages",
+      value:
+        stock.languages.length === 0
+          ? "No code was found"
+          : stock.languages
+              .slice(0, 4)
+              .map((language) => `${language.name} (${count(language.files, "file")})`)
+              .join(", "),
+      items: [],
+    },
+    {
+      label: "Tutorials",
+      value:
+        stock.tutorials.count === 0
+          ? stock.readme?.example
+            ? "None, but the README shows how it is used"
+            : "None"
+          : `${stock.tutorials.count.toLocaleString("en-US")}, of which ${count(stock.notebooks.count, "notebook")}`,
+      items: stock.tutorials.listed.map((item) => item.path),
+    },
+    {
+      label: "Tests",
+      value: stock.tests.count === 0 ? "None" : stock.tests.count.toLocaleString("en-US"),
+      items: stock.tests.listed,
+    },
+    {
+      label: "What to install",
+      value:
+        stock.environment.length === 0
+          ? "No file says"
+          : stock.environment.map((item) => `${item.path}${item.pins !== null && PINS[item.pins] ? ` (${PINS[item.pins]})` : ""}`).join(", "),
+      items: [],
+    },
+    { label: "License", value: describeLicense(stock), items: stock.license?.files ?? [] },
+    {
+      label: "GPU",
+      value:
+        stock.gpu.required.length > 0
+          ? "Needed"
+          : stock.gpu.optional.length > 0
+            ? "Used if there is one, and not needed"
+            : "Not asked for",
+      items: [...stock.gpu.required, ...stock.gpu.optional].map((item) => `${item.signal} (${item.path})`),
+    },
+    { label: "Data", value: describeData(stock), items: stock.data.listed.map((item) => item.path) },
+  ];
+  if (stock.submodules.length > 0) {
+    rows.push({ label: "Submodules, which are not fetched", value: stock.submodules.length.toLocaleString("en-US"), items: stock.submodules.map((item) => item.path) });
+  }
+  if (stock.absolute_paths.count > 0) {
+    rows.push({
+      label: "Examples that read from someone's computer",
+      value: stock.absolute_paths.count.toLocaleString("en-US"),
+      items: stock.absolute_paths.listed.map((item) => `${item.example} (${item.path})`),
+    });
+  }
+
+  return rows;
+}
+
+// What the license is, in a few words
+export function describeLicense(stock: RepositoryStock): string {
+  const found = stock.license;
+  if (found === null) return "None";
+  const kinds: Record<string, string> = { permissive: "permissive", copyleft: "copyleft", noncommercial: "for non-commercial use" };
+  const kind = kinds[found.kind];
+  if (found.name === null) return `Not recognized${kind ? `, ${kind}` : ""}`;
+
+  return `${found.name}${kind ? ` (${kind})` : ""}`;
+}
+
+// What there is of data in the project or pointed to from it, in a few words
+export function describeData(stock: RepositoryStock): string {
+  const { data } = stock;
+  const parts: string[] = [];
+  if (data.count > 0) parts.push(`${count(data.count, "data or model file")} (${formatBytes(data.bytes)})`);
+  if (data.lfs_pointers > 0) parts.push(`${count(data.lfs_pointers, "file")} in Git LFS, which are not fetched`);
+  if (data.dvc) parts.push("kept with DVC, which is not fetched");
+  if (data.links.length > 0) parts.push(`${count(data.links.length, "link")} to where data is kept`);
+  if (data.accessions.length > 0) parts.push(`accessions ${data.accessions.slice(0, 3).join(", ")}`);
+
+  return parts.length > 0 ? parts.join("; ") : "Nothing says where it is";
+}

@@ -11,7 +11,18 @@ import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt } from "@/lib/use-looked";
 
 // What is being done to a run, how far it has got, and the way to stop it; and, when nothing is, how the last of it ended
-export function WorkStatus({ job, last, jobs }: { job: Job | undefined; last: Job | undefined; jobs: JobsData }) {
+export function WorkStatus({
+  job,
+  last,
+  jobs,
+  label = "What is being done",
+}: {
+  job: Job | undefined;
+  last: Job | undefined;
+  jobs: JobsData;
+  // What the part is called, where there is more than one of it on a page
+  label?: string;
+}) {
   const { report } = useServer();
   const attempt = useAttempt(report);
 
@@ -24,7 +35,7 @@ export function WorkStatus({ job, last, jobs }: { job: Job | undefined; last: Jo
   if (shown === undefined) return null;
 
   return (
-    <section aria-label="What is being done" className="flex flex-col gap-2 rounded-lg border border-border p-3">
+    <section aria-label={label} className="flex flex-col gap-2 rounded-lg border border-border p-3">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

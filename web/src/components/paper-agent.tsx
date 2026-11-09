@@ -7,6 +7,7 @@ import { ArrowLeft, ExternalLink, Trash2, X } from "lucide-react";
 import { Looked } from "@/components/looked";
 import { ProblemNotice } from "@/components/messages";
 import { PageSection } from "@/components/page-section";
+import { CodeSection } from "@/components/paper-agent-code";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { useServer } from "@/components/server-provider";
 import { useSetupJobs } from "@/components/setup-provider";
@@ -37,12 +38,14 @@ import {
   existingOf,
   isLink,
   lastReadingJob,
+  lastRepositoryJob,
   MAX_AGENT_TITLE,
   paperFile,
   paperLink,
   readingJob,
   readingKey,
   repoName,
+  repositoryJob,
   repoProblem,
   STATUS_LABELS,
   STEP_LABELS,
@@ -51,10 +54,10 @@ import {
 } from "@/lib/paperagents";
 import { uploadProblem } from "@/lib/papers";
 import { tidy } from "@/lib/scientists";
-import type { PaperAgent, PaperAgentReading, PaperAgentsList, PaperAgentSource } from "@/lib/types";
+import type { PaperAgent, PaperAgentReading, PaperAgentRepository, PaperAgentsList, PaperAgentSource } from "@/lib/types";
 import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
-import { usePaperAgent, usePaperAgentReading, usePaperAgentsList } from "@/lib/use-paperagents";
+import { usePaperAgent, usePaperAgentReading, usePaperAgentRepository, usePaperAgentsList } from "@/lib/use-paperagents";
 import { cn } from "@/lib/utils";
 
 const LINK = "rounded-sm underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
@@ -108,6 +111,12 @@ function AgentHeader({ agent, working }: { agent: PaperAgent; working: boolean }
                 </a>
               ) : (
                 agent.repo.url
+              )}
+              {agent.repo.commit !== undefined && (
+                <>
+                  {" "}
+                  at commit <code className="font-mono text-xs">{agent.repo.commit.slice(0, 12)}</code>
+                </>
               )}
             </p>
           )}
@@ -214,7 +223,11 @@ function Details({ agent, list, onChanged }: Shared) {
       <Field
         id={`${id}-repo`}
         label="Where its code is"
-        hint="Leave it blank if the paper has no code."
+        hint={
+          agent.steps.repository === "done"
+            ? "Leave it blank if the paper has no code. Changing it takes away the code that was fetched from the old address."
+            : "Leave it blank if the paper has no code."
+        }
         problem={tried && wrongRepo !== null ? wrongRepo : undefined}
       >
         <Input
@@ -391,11 +404,13 @@ function Agent({
   list,
   jobs,
   reading,
+  repository,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
   jobs: JobsData;
   reading: LookedAt<PaperAgentReading>;
+  repository: LookedAt<PaperAgentRepository>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -403,12 +418,25 @@ function Agent({
   const job = readingJob(all, agent.id);
   // The agent says that its paper is being read before the jobs have been looked at, as they are when the page opens
   const working = job !== undefined || agent.steps.reading === "running";
-  const shared = { agent, list, working, onChanged };
+  const fetching = repositoryJob(all, agent.id);
+  // The same of the code, which is fetched on its own, but not while the paper is read or the agent is changed
+  const fetchingCode = fetching !== undefined || agent.steps.repository === "running";
+  // How the last fetching ended is said while what it fetched is kept, and if it did not end well, but not after the code has
+  // been taken away
+  const lastFetch = lastRepositoryJob(all, agent.id);
+  const kept = repository.value.kind === "ready" && repository.value.value.cloned;
+  // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
+  // its paper, so the code is looked at again
+  const changed = (next: PaperAgent) => {
+    onChanged(next);
+    repository.reload();
+  };
+  const shared = { agent, list, working: working || fetchingCode, onChanged: changed };
   const own = agent.paper.kind === "file";
 
   return (
     <>
-      <AgentHeader agent={agent} working={working} />
+      <AgentHeader agent={agent} working={working || fetchingCode} />
       <WorkStatus job={job} last={lastReadingJob(all, agent.id)} jobs={jobs} />
       <PageSection
         title={own ? "Paper" : "Paper file"}
@@ -440,10 +468,48 @@ function Agent({
               agent={agent}
               reading={value}
               working={working}
+              blocked={fetchingCode}
               jobs={jobs}
               onCleared={(cleared) => {
                 reading.set(cleared);
                 onReload();
+                // What the paper points to is found from what was read
+                repository.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Code"
+        intro="Where the paper's code is, fetched at one commit, what is in it, and whether it is worth going on with. Nothing in it is run."
+      >
+        <WorkStatus
+          job={fetching}
+          last={lastFetch !== undefined && (lastFetch.state !== "succeeded" || kept) ? lastFetch : undefined}
+          jobs={jobs}
+          label="Fetching the code"
+        />
+        <Looked
+          state={repository.value}
+          label="Looking at the code"
+          failure="The code could not be looked at."
+          onRetry={repository.reload}
+        >
+          {(value) => (
+            <CodeSection
+              agent={agent}
+              repository={value}
+              busy={working || fetchingCode}
+              jobs={jobs}
+              onChanged={changed}
+              onCleared={(cleared) => {
+                repository.set(cleared);
+                onReload();
+              }}
+              onStale={() => {
+                onReload();
+                repository.reload();
               }}
             />
           )}
@@ -468,6 +534,7 @@ export function AgentPage({ id }: { id: string }) {
   const again = readingKey(jobs.jobs, jobs.finished, id);
   const agent = usePaperAgent(id, report, again);
   const reading = usePaperAgentReading(id, report, again);
+  const repository = usePaperAgentRepository(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -488,7 +555,15 @@ export function AgentPage({ id }: { id: string }) {
             onRetry={list.reload}
           >
             {(limits) => (
-              <Agent agent={value} list={limits} jobs={jobs} reading={reading} onChanged={agent.set} onReload={agent.reload} />
+              <Agent
+                agent={value}
+                list={limits}
+                jobs={jobs}
+                reading={reading}
+                repository={repository}
+                onChanged={agent.set}
+                onReload={agent.reload}
+              />
             )}
           </Looked>
         )}
