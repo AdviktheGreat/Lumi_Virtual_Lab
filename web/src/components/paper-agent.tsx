@@ -8,6 +8,7 @@ import { Looked } from "@/components/looked";
 import { ProblemNotice } from "@/components/messages";
 import { PageSection } from "@/components/page-section";
 import { CodeSection } from "@/components/paper-agent-code";
+import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { useServer } from "@/components/server-provider";
@@ -33,12 +34,14 @@ import { formatBytes } from "@/lib/files";
 import {
   agentAddress,
   AGENTS_ADDRESS,
+  dataJob,
   describePaper,
   describeSource,
   describeSteps,
   environmentJob,
   existingOf,
   isLink,
+  lastDataJob,
   lastEnvironmentJob,
   lastReadingJob,
   lastRepositoryJob,
@@ -59,6 +62,7 @@ import { uploadProblem } from "@/lib/papers";
 import { tidy } from "@/lib/scientists";
 import type {
   PaperAgent,
+  PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentReading,
   PaperAgentRepository,
@@ -69,6 +73,7 @@ import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
 import {
   usePaperAgent,
+  usePaperAgentData,
   usePaperAgentEnvironment,
   usePaperAgentReading,
   usePaperAgentRepository,
@@ -422,6 +427,7 @@ function Agent({
   reading,
   repository,
   environment,
+  data,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
@@ -429,6 +435,7 @@ function Agent({
   reading: LookedAt<PaperAgentReading>;
   repository: LookedAt<PaperAgentRepository>;
   environment: LookedAt<PaperAgentEnvironment>;
+  data: LookedAt<PaperAgentData>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -454,13 +461,21 @@ function Agent({
     lastMake !== undefined && (lastMake.state === "succeeded" ? made?.built != null : !(lastMake.state === "failed" && made?.failure != null))
       ? lastMake
       : undefined;
-  const idle = !working && !fetchingCode && !makingEnvironment;
+  // The same of the data, which is fetched on its own, but not while anything else is done to the agent
+  const getting = dataJob(all, agent.id);
+  const fetchingData = getting !== undefined || agent.steps.data === "running";
+  const gotten = data.value.kind === "ready" ? data.value.value : null;
+  const lastGet = lastDataJob(all, agent.id);
+  // How the last fetching ended is said if it did not end well, and while the files it fetched are kept
+  const lastGetShown = lastGet !== undefined && (lastGet.state !== "succeeded" || (gotten?.kept.files ?? 0) > 0) ? lastGet : undefined;
+  const idle = !working && !fetchingCode && !makingEnvironment && !fetchingData;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
   const changed = (next: PaperAgent) => {
     onChanged(next);
     repository.reload();
     environment.reload();
+    data.reload();
   };
   const shared = { agent, list, working: !idle, onChanged: changed };
   const own = agent.paper.kind === "file";
@@ -504,7 +519,9 @@ function Agent({
                   ? "The code is being fetched. Reading waits for that."
                   : makingEnvironment
                     ? "The environment is being built. Reading waits for that."
-                    : null
+                    : fetchingData
+                      ? "The data is being fetched. Reading waits for that."
+                      : null
               }
               jobs={jobs}
               onCleared={(cleared) => {
@@ -512,6 +529,7 @@ function Agent({
                 onReload();
                 // What the paper points to is found from what was read
                 repository.reload();
+                data.reload();
               }}
             />
           )}
@@ -543,12 +561,15 @@ function Agent({
               onCleared={(cleared) => {
                 repository.set(cleared);
                 environment.reload();
+                // What the code names for the data is found from the code
+                data.reload();
                 onReload();
               }}
               onStale={() => {
                 onReload();
                 repository.reload();
                 environment.reload();
+                data.reload();
               }}
             />
           )}
@@ -585,6 +606,28 @@ function Agent({
           )}
         </Looked>
       </PageSection>
+      <PageSection
+        title="Data"
+        intro="Where the data the paper used is, what each place has, and the files you choose to fetch. Nothing is fetched until you have seen the files and agreed to what they come to."
+      >
+        <WorkStatus job={getting} last={lastGetShown} jobs={jobs} label="Fetching the data" />
+        <Looked state={data.value} label="Looking at the data" failure="The data could not be looked at." onRetry={data.reload}>
+          {(value) => (
+            <DataSection
+              key={agent.id}
+              agent={agent}
+              data={value}
+              busy={!idle}
+              fetching={getting}
+              jobs={jobs}
+              onData={(next) => {
+                data.set(next);
+                onReload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
       <PageSection title="Steps" intro="What is done to make the paper usable. A step is added to the lab as it is built.">
         <Steps agent={agent} />
       </PageSection>
@@ -606,6 +649,7 @@ export function AgentPage({ id }: { id: string }) {
   const reading = usePaperAgentReading(id, report, again);
   const repository = usePaperAgentRepository(id, report, again);
   const environment = usePaperAgentEnvironment(id, report, again);
+  const data = usePaperAgentData(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -633,6 +677,7 @@ export function AgentPage({ id }: { id: string }) {
                 reading={reading}
                 repository={repository}
                 environment={environment}
+                data={data}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />

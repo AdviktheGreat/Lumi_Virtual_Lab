@@ -481,6 +481,10 @@ export interface JobProgress {
   bytes?: number;
   bytes_total?: number | null;
   fetched?: number;
+  // What fetching an agent's data counts: the files, and the bytes written so far, of how many there are
+  files_done?: number;
+  files_total?: number;
+  bytes_done?: number;
 }
 
 // A piece of work the server does in the background: building an image, or fetching the data lake
@@ -1196,4 +1200,149 @@ export interface PaperAgentBuildOptions {
   system_packages?: string[];
   minutes?: number;
   gigabytes?: number;
+}
+
+// What a place says a dataset is licensed as, which it may not say
+export interface DataLicense {
+  name: string | null;
+  url: string | null;
+}
+
+// A place that the paper or its code says its data is at: one that data is fetched from, or one that is not and is only shown
+export interface DataCandidate {
+  key: string;
+  // Which place it is, and what names it there, which are null for one that is not fetched from
+  source: string | null;
+  reference: string | null;
+  label: string;
+  // A page where a person can see it
+  url: string | null;
+  supported: boolean;
+  // Why it is not fetched from, if it is not
+  reason: string | null;
+  // Where in the paper it is said, and whether the code names it too
+  facts: ReadFact[];
+  in_code: boolean;
+  // How many of its files are kept
+  fetched: number;
+}
+
+// Some of a person's own data that stands in for a dataset the paper used, as a note of which: nothing is copied
+export interface DataStandIn {
+  key: string;
+  name: string;
+  own: string;
+  set_at: string;
+}
+
+// A person's own data, as the Data page has it
+export interface OwnDataSummary {
+  name: string;
+  description: string;
+  kind: string;
+  bytes: number;
+}
+
+// A dataset the paper names, with the place its accession points to, and what stands in for it
+export interface DataDataset {
+  key: string;
+  name: string;
+  accession: string;
+  quote: string;
+  anchor: ReadAnchor;
+  candidate: string | null;
+  stand_in: DataStandIn | null;
+}
+
+// A file that was fetched and is kept
+export interface KeptDataFile {
+  name: string;
+  // Where it is under the agent's data
+  path: string;
+  bytes: number;
+  sha256: string;
+  // The checksum the place gave, which it matched, or null if the place gave none and only the size was checked
+  checksum: { algorithm: "md5" | "sha256"; value: string } | null;
+  url: string;
+  fetched_at: string;
+  // Whether it is on disk, as big as it was written
+  present: boolean;
+}
+
+// The files fetched from one place, and what the place says of them
+export interface KeptDataSource {
+  key: string;
+  source: string;
+  reference: string;
+  label: string;
+  url: string;
+  title: string;
+  license: DataLicense | null;
+  folder: string;
+  files: KeptDataFile[];
+}
+
+// A place that data is fetched from, and the hosts it is asked at, which are all that data is fetched from
+export interface DataSourceInfo {
+  source: string;
+  name: string;
+  hosts: string[];
+  via: string[];
+  // Whether its files can be fetched without an account
+  downloads: boolean;
+  note: string;
+}
+
+// What there is of an agent's data: what the paper says it used and where, what was fetched, and what stands in
+export interface PaperAgentData {
+  id: string;
+  // Whether the paper has been read to the end, which what it names is found from
+  read: boolean;
+  datasets: DataDataset[];
+  candidates: DataCandidate[];
+  stand_ins: (DataStandIn & { own_data: OwnDataSummary | null })[];
+  own: OwnDataSummary[];
+  kept: { files: number; bytes: number; sources: KeptDataSource[] };
+  sources: DataSourceInfo[];
+  // The fetching that is at work, if one is
+  job: Job | null;
+  limits: { default_megabytes: number; min_megabytes: number; max_megabytes: number; max_kept_megabytes: number; max_files: number };
+}
+
+// A file that a place has, as the place lists it
+export interface DataFileListed {
+  name: string;
+  // How big it is, which is null if the place does not say, and then it is not fetched
+  bytes: number | null;
+  checksum: { algorithm: "md5" | "sha256"; value: string } | null;
+  downloadable: boolean;
+  // Why it is not, if it is not
+  why: string | null;
+  kept: boolean;
+}
+
+// What a place has, asked of the place and not fetched
+export interface DataListing {
+  key: string;
+  source: string;
+  reference: string;
+  label: string;
+  url: string;
+  title: string;
+  license: DataLicense | null;
+  files: DataFileListed[];
+  // How many files it has, of which files are listed
+  total_files: number;
+  truncated: boolean;
+  notes: string[];
+  // Whether its files can be fetched without an account
+  downloads: boolean;
+}
+
+// What to say of fetching: which place, which of its files, what they came to when they were shown, and the most to fetch
+export interface PaperAgentDataFetch {
+  reference: string;
+  files: string[];
+  expected_bytes: number;
+  max_megabytes: number;
 }

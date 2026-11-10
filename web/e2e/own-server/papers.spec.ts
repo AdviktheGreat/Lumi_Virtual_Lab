@@ -16,7 +16,7 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment"];
+  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data"];
   for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
@@ -1560,4 +1560,438 @@ test("says why the server refused to build, and looks again when what the page s
   await expect(environmentForm(page).getByRole("alert")).toHaveCount(0);
   await page.unroute("**/api/paperagents/*/environment");
   expect((await environmentOf(page, id)).built).toBeNull();
+});
+
+// What the page says of the data of an agent's paper, which is listed and fetched by stand-ins for the places it is kept at (see
+// scripted_server.py): Zenodo record 1000001 has a file that is corrupt, one with no checksum, and one that is restricted, 1000002
+// a file that is more than is fetched at first, 1000003 a file that is slow to be sent, and GEO series GSE123456 files with no checksum
+const ZENODO_LINKS = [
+  "The processed counts are at https://zenodo.org/records/1000001.",
+  "A larger atlas is at https://zenodo.org/records/1000002.",
+  "A slow one is at https://zenodo.org/records/1000003.",
+  "More data are kept at https://osf.io/abcde.",
+];
+const DATA_PAPER = CELLS.replace(DATA, [DATA, ...ZENODO_LINKS].join("\n\n"));
+const dataOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/data`)).json();
+const dataHeading = (page: Page) => page.getByRole("heading", { name: "Data", level: 2, exact: true });
+const datasets = (page: Page) => page.getByRole("list", { name: "Datasets the paper names" });
+const places = (page: Page) => page.getByRole("list", { name: "Places the paper names for its data" });
+const placeNamed = (page: Page, label: string) => places(page).getByTestId("data-candidate").filter({ hasText: label });
+const listing = (page: Page) => page.getByTestId("data-files");
+const fileOf = (page: Page, name: string) => listing(page).getByTestId("data-file").filter({ has: page.getByText(name, { exact: true }) });
+const choosing = (page: Page) => form(page, "Fetch the files that are chosen");
+const gettingData = (page: Page) => page.getByRole("region", { name: "Fetching the data" });
+const keptData = (page: Page) => page.getByTestId("data-kept");
+const keptSource = (page: Page, label: string) => page.getByTestId("data-kept-source").filter({ hasText: label });
+
+// Makes an agent whose paper is a file that says where its data is, which is read if it is to be, and opens it
+async function agentWithData(page: Page, title: string, read = true): Promise<string> {
+  const id = await makeAgent(page, { title, paper: { kind: "file" } });
+  await sendPaper(page, id, "cells.txt", DATA_PAPER);
+  if (read) await readTheAgent(page, id);
+  await openAgent(page, id, title);
+
+  return id;
+}
+
+// Looks at what a place has, by the button of a place that the paper names
+async function seeFilesOf(page: Page, label: string) {
+  await placeNamed(page, label).getByRole("button", { name: `See the files of ${label}` }).click();
+  await expect(listing(page)).toBeVisible();
+  await expect(listing(page).getByRole("heading", { level: 3 })).toContainText(label);
+}
+
+// Fetches files of a place through the server, as the page does, and waits until that is done
+async function fetchDataThrough(page: Page, id: string, reference: string, names: string[]) {
+  const seen = await (await page.request.get(`/api/paperagents/${id}/data/files?reference=${encodeURIComponent(reference)}`)).json();
+  const bytes = seen.files.filter((file: { name: string }) => names.includes(file.name)).reduce((sum: number, file: { bytes: number }) => sum + file.bytes, 0);
+  const started = await page.request.post(`/api/paperagents/${id}/data`, { data: { reference, files: names, expected_bytes: bytes, max_megabytes: 500 } });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await dataOf(page, id)).job, { timeout: 20_000 }).toBeNull();
+}
+
+test("shows where the paper says its data is, what each place has before anything is chosen, and fetches nothing until the files are chosen and agreed to", async ({
+  page,
+}) => {
+  test.slow();
+  const id = await agentWithData(page, "Data mapper");
+  await expect(dataHeading(page)).toBeVisible();
+  await expect(page.getByText("Nothing is fetched until you have seen what a place has")).toBeVisible();
+  await expect(step(page, "Get the data")).toContainText("Not started");
+  await expect(page.getByText("No data has been fetched for this agent.")).toBeVisible();
+
+  // The dataset the paper names is shown with its words, and the place its accession is of
+  const named = datasets(page).getByTestId("data-dataset");
+  await expect(named).toHaveCount(1);
+  await expect(named).toContainText("GSE123456");
+  await expect(named.getByRole("blockquote")).toHaveText(DATA);
+  await expect(named).toContainText("Its accession is of GEO series GSE123456.");
+
+  // The places the paper names are each once: those that are fetched from, with what the paper says, and one that is not
+  await expect(places(page).getByTestId("data-candidate")).toHaveCount(5);
+  const zenodo = placeNamed(page, "Zenodo record 1000001");
+  await expect(zenodo).toContainText("Named in the paper");
+  await expect(zenodo).toContainText("Nothing fetched yet");
+  await expect(zenodo.getByRole("blockquote")).toHaveText(ZENODO_LINKS[0]);
+  await expect(zenodo.getByRole("link", { name: /Zenodo record 1000001/ })).toHaveAttribute("href", "https://zenodo.org/records/1000001");
+  const other = placeNamed(page, "Data at osf.io");
+  await expect(other).toContainText("Not fetched from here");
+  await expect(other).toContainText("osf.io is not one of the places that data is fetched from here");
+  await expect(other.getByRole("button")).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Looking at a place asks it what it has, and fetches none of it
+  await seeFilesOf(page, "Zenodo record 1000001");
+  await expect(listing(page)).toContainText("Nuclei of the mouse hippocampus");
+  await expect(page.getByTestId("data-license")).toHaveText("Licensed as cc-by-4.0. 5 files in all.");
+  await expect(listing(page).getByTestId("data-file")).toHaveCount(5);
+  await expect(fileOf(page, "counts.csv")).toContainText("MD5 checksum given, which it is checked by");
+  await expect(fileOf(page, "README.txt")).toContainText("No checksum is given, so it is checked by its size only");
+  await expect(fileOf(page, "restricted.zip")).toContainText("Zenodo does not give this file to everyone");
+  await expect(listing(page).getByRole("checkbox", { name: "restricted.zip", exact: true })).toBeDisabled();
+  await expect(page.getByTestId("data-chosen")).toHaveText("No files are chosen.");
+  expect((await dataOf(page, id)).kept.sources).toEqual([]);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What is wrong with the asking is said before anything is sent
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  await expect(choosing(page).getByText("Choose at least one file.")).toBeVisible();
+  await listing(page).getByRole("checkbox", { name: "counts.csv", exact: true }).check();
+  await listing(page).getByRole("checkbox", { name: "metadata.tsv", exact: true }).check();
+  await expect(page.getByTestId("data-chosen")).toContainText("2 files chosen, ");
+  await choosing(page).getByLabel("Most to fetch, in megabytes").fill("0");
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  await expect(choosing(page).getByText("The most to fetch, in megabytes, is a whole number from 1 to 20000.")).toBeVisible();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // It says what it will do, how far each file is checked, and does nothing if that is not agreed to
+  await choosing(page).getByLabel("Most to fetch, in megabytes").fill("5");
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  const asking = page.getByRole("alertdialog", { name: /^Fetch 2 files, .*, from Zenodo record 1000001\?$/ });
+  await expect(asking).toContainText("2 files will be checked by the checksum that the place gives.");
+  await expect(asking).not.toContainText("size only");
+  await expect(asking).toContainText("A file that does not match is thrown away, and fetching stops at 5 MB.");
+  await expect(asking).toContainText("kept in a folder for this place under data/ in this agent's folder");
+  // The dialog is looked at once it has finished appearing, as what is half faded in has less contrast than it will
+  await expect(asking).toHaveCSS("opacity", "1");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await asking.getByRole("button", { name: "Do not fetch" }).click();
+  await expect(asking).toHaveCount(0);
+  expect((await dataOf(page, id)).kept.sources).toEqual([]);
+  expect((await dataOf(page, id)).job).toBeNull();
+
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  await page.getByRole("alertdialog", { name: /^Fetch 2 files/ }).getByRole("button", { name: "Fetch", exact: true }).click();
+
+  // The files are kept, with how far each was checked, and the step is done
+  await expect(keptData(page)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("data-kept-total")).toHaveText(/^2 files, /);
+  const source = keptSource(page, "Zenodo record 1000001");
+  await expect(source).toContainText("Licensed as cc-by-4.0. Kept in data/zenodo/1000001/.");
+  const kept = source.getByTestId("data-kept-file");
+  await expect(kept).toHaveCount(2);
+  await expect(kept.filter({ hasText: "counts.csv" })).toContainText("Matched the MD5 that the place gave");
+  await expect(kept.filter({ hasText: "counts.csv" })).toContainText(/SHA-256 [0-9a-f]{12}…/);
+  await expect(keptData(page)).toContainText("it says the file is what the place has, and not that the data is what the paper used");
+  await expect(step(page, "Get the data")).toContainText("Done");
+  await expect(gettingData(page)).toContainText("Kept 2 files");
+  await expect(placeNamed(page, "Zenodo record 1000001")).toContainText("2 files kept");
+  const stored = await dataOf(page, id);
+  expect(stored.kept.sources[0].files.map((file: { name: string; present: boolean }) => [file.name, file.present])).toEqual([
+    ["counts.csv", true],
+    ["metadata.tsv", true],
+  ]);
+  expect(stored.kept.sources[0].files[0].checksum).toMatchObject({ algorithm: "md5" });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The place is looked at again, which says what is kept already, and leaves it out of what can be chosen
+  await seeFilesOf(page, "Zenodo record 1000001");
+  await expect(fileOf(page, "counts.csv")).toContainText("Kept already");
+  await expect(listing(page).getByRole("checkbox", { name: "counts.csv", exact: true })).toBeDisabled();
+  await expect(listing(page).getByRole("checkbox", { name: "labels.csv", exact: true })).toBeEnabled();
+  await listing(page).getByRole("button", { name: "Choose all that can be fetched" }).click();
+  await expect(page.getByTestId("data-chosen")).toContainText("2 files chosen, ");
+  await listing(page).getByRole("button", { name: "Choose none" }).click();
+  await expect(page.getByTestId("data-chosen")).toHaveText("No files are chosen.");
+
+  // It is the same after the page is looked at again
+  await page.reload();
+  await expect(keptSource(page, "Zenodo record 1000001").getByTestId("data-kept-file")).toHaveCount(2);
+  await expect(step(page, "Get the data")).toContainText("Done");
+});
+
+test("throws away a file that is not what its place says it is, keeps what is, and says how far each was checked", async ({ page }) => {
+  const id = await agentWithData(page, "Corrupt data");
+  await seeFilesOf(page, "Zenodo record 1000001");
+  await listing(page).getByRole("checkbox", { name: "labels.csv", exact: true }).check();
+  await listing(page).getByRole("checkbox", { name: "README.txt", exact: true }).check();
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  const asking = page.getByRole("alertdialog", { name: /^Fetch 2 files/ });
+  await expect(asking).toContainText("1 file will be checked by the checksum that the place gives.");
+  await expect(asking).toContainText("1 file will be checked by their size only, since the place gives no checksum.");
+  await asking.getByRole("button", { name: "Fetch", exact: true }).click();
+
+  // The file that is wrong is said to be, with both checksums, and is not kept; the other is, as checked by its size only
+  await expect(gettingData(page).getByText("Failed", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(gettingData(page).getByRole("alert")).toContainText("1 of 2 files were kept, and 1 were not.");
+  await expect(gettingData(page).getByRole("alert")).toContainText("labels.csv is not what Zenodo says it is");
+  await expect(gettingData(page).getByRole("alert")).toContainText("It was discarded.");
+  const kept = keptSource(page, "Zenodo record 1000001").getByTestId("data-kept-file");
+  await expect(kept).toHaveCount(1);
+  await expect(kept).toContainText("README.txt");
+  await expect(kept).toContainText("Checked by its size only, since the place gave no checksum");
+  await expect(keptData(page)).not.toContainText("labels.csv");
+  await expect(step(page, "Get the data")).toContainText("Done");
+  const stored = await dataOf(page, id);
+  expect(stored.kept.sources[0].files.map((file: { name: string }) => file.name)).toEqual(["README.txt"]);
+  expect(stored.kept.sources[0].files[0].checksum).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("says that a place gives no checksum and no license, and takes away what was fetched of a place, and of all of them, after asking", async ({
+  page,
+}) => {
+  test.slow();
+  const id = await agentWithData(page, "Geo data");
+  await datasets(page).getByRole("button", { name: "See the files of GEO series GSE123456" }).click();
+  await expect(listing(page).getByRole("heading", { level: 3 })).toContainText("GEO series GSE123456");
+  await expect(page.getByTestId("data-license")).toHaveText("The place does not say how it is licensed. 2 files in all.");
+  await expect(listing(page)).toContainText("It also has files that are not listed here.");
+  await expect(fileOf(page, "suppl/GSE123456_counts.txt.gz")).toContainText("No checksum is given, so it is checked by its size only");
+
+  await listing(page).getByRole("button", { name: "Choose all that can be fetched" }).click();
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  const asking = page.getByRole("alertdialog", { name: /^Fetch 2 files, .*, from GEO series GSE123456\?$/ });
+  await expect(asking).toContainText("2 files will be checked by their size only, since the place gives no checksum.");
+  await expect(asking).toContainText("ftp.ncbi.nlm.nih.gov");
+  await asking.getByRole("button", { name: "Fetch", exact: true }).click();
+
+  const source = keptSource(page, "GEO series GSE123456");
+  await expect(source).toBeVisible({ timeout: 20_000 });
+  await expect(source.getByTestId("data-kept-file")).toHaveCount(2);
+  await expect(source).toContainText("The place does not say how it is licensed. Kept in data/geo/GSE123456/.");
+  await expect(source.getByTestId("data-kept-file").first()).toContainText("Checked by its size only");
+  await expect(source.getByTestId("data-kept-file").filter({ hasText: "suppl/GSE123456_counts.txt.gz" })).toBeVisible();
+  // One place has no button to take everything away, which is the same as taking away that place
+  await expect(page.getByRole("button", { name: "Take away every file" })).toHaveCount(0);
+
+  await fetchDataThrough(page, id, "https://zenodo.org/records/1000001", ["counts.csv"]);
+  await page.reload();
+  await expect(page.getByTestId("data-kept-source")).toHaveCount(2);
+  await expect(page.getByTestId("data-kept-total")).toHaveText(/^3 files, /);
+  await expect(page.getByRole("button", { name: "Take away every file" })).toBeVisible();
+
+  // Taking one place away asks first, and leaves the other
+  await keptSource(page, "Zenodo record 1000001").getByRole("button", { name: "Take away the files from Zenodo record 1000001" }).click();
+  const one = page.getByRole("alertdialog", { name: "Take away the files from Zenodo record 1000001?" });
+  await expect(one).toContainText("This deletes 1 file from this agent's folder");
+  await one.getByRole("button", { name: "Keep" }).click();
+  await expect(page.getByTestId("data-kept-source")).toHaveCount(2);
+  await keptSource(page, "Zenodo record 1000001").getByRole("button", { name: "Take away the files from Zenodo record 1000001" }).click();
+  await page.getByRole("alertdialog", { name: "Take away the files from Zenodo record 1000001?" }).getByRole("button", { name: "Take away" }).click();
+  await expect(page.getByTestId("data-kept-source")).toHaveCount(1);
+  await expect(keptSource(page, "GEO series GSE123456")).toBeVisible();
+  await expect(step(page, "Get the data")).toContainText("Done");
+  expect((await dataOf(page, id)).kept.sources.map((item: { key: string }) => item.key)).toEqual(["geo:GSE123456"]);
+
+  // Taking all away leaves nothing, and the step is not started
+  await page.getByRole("button", { name: "Take away the files from GEO series GSE123456" }).click();
+  await page.getByRole("alertdialog", { name: "Take away the files from GEO series GSE123456?" }).getByRole("button", { name: "Take away" }).click();
+  await expect(page.getByText("No data has been fetched for this agent.")).toBeVisible();
+  await expect(step(page, "Get the data")).toContainText("Not started");
+  expect((await dataOf(page, id)).kept).toMatchObject({ files: 0, sources: [] });
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("takes away every file of every place at once, after asking", async ({ page }) => {
+  const id = await agentWithData(page, "Two places");
+  await fetchDataThrough(page, id, "https://zenodo.org/records/1000001", ["counts.csv", "metadata.tsv"]);
+  await fetchDataThrough(page, id, "GSE123456", ["suppl/GSE123456_counts.txt.gz"]);
+  await page.reload();
+  await expect(page.getByTestId("data-kept-source")).toHaveCount(2);
+
+  await page.getByRole("button", { name: "Take away every file" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Take away every file of Two places?" });
+  await expect(asking).toContainText("This deletes 3 files from this agent's folder");
+  await expect(asking).toContainText("Your own data, and what stands in for a dataset, are not touched.");
+  await asking.getByRole("button", { name: "Take away" }).click();
+
+  await expect(page.getByText("No data has been fetched for this agent.")).toBeVisible();
+  await expect(step(page, "Get the data")).toContainText("Not started");
+  expect((await dataOf(page, id)).kept.files).toBe(0);
+});
+
+test("refuses files that come to more than the most that may be fetched before it asks the server, and looks at a place that is typed", async ({
+  page,
+}) => {
+  const id = await agentWithData(page, "Big data");
+  await seeFilesOf(page, "Zenodo record 1000002");
+  await listing(page).getByRole("checkbox", { name: "atlas.h5ad", exact: true }).check();
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  await expect(choosing(page).getByText(/These files come to .* which is more than the .* that may be fetched\. Choose fewer, or raise the most\./)).toBeVisible();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Raising the most is what is asked, and then it is asked to be agreed to: it is not sent
+  await choosing(page).getByLabel("Most to fetch, in megabytes").fill("1000");
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  const asking = page.getByRole("alertdialog", { name: /^Fetch 1 file, .*, from Zenodo record 1000002\?$/ });
+  await expect(asking).toContainText("fetching stops at 1,000 MB");
+  await asking.getByRole("button", { name: "Do not fetch" }).click();
+  expect((await dataOf(page, id)).job).toBeNull();
+
+  // A place that is typed is looked at by the address, a DOI, or an accession, and what is wrong is said
+  const typed = form(page, "See the files of a place");
+  await typed.getByRole("button", { name: "See the files" }).click();
+  await expect(typed.getByText("Say where the data is: an address, a DOI, or an accession such as GSE12345.")).toBeVisible();
+  await typed.getByLabel("Another place").fill("https://zenodo.org/records/999");
+  await typed.getByRole("button", { name: "See the files" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "was not found" })).toBeVisible();
+  await typed.getByLabel("Another place").fill("https://example.org/data.csv");
+  await typed.getByRole("button", { name: "See the files" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "is not an address or an accession of one of the places that data is fetched from here" })).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await typed.getByLabel("Another place").fill("10.5281/zenodo.1000001");
+  await typed.getByRole("button", { name: "See the files" }).click();
+  await expect(listing(page).getByRole("heading", { level: 3 })).toContainText("Zenodo record 1000001");
+  await expect(page.getByRole("alert").filter({ hasText: "is not an address" })).toHaveCount(0);
+
+  // The places that data is fetched from are shown when they are asked for
+  await page.getByRole("button", { name: "Show the places data is fetched from" }).click();
+  const approved = page.getByRole("list", { name: "Places data is fetched from" });
+  await expect(approved.getByTestId("data-approved").filter({ hasText: "Zenodo" })).toContainText("zenodo.org");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await page.getByRole("button", { name: "Hide the places data is fetched from" }).click();
+  await expect(approved).toHaveCount(0);
+});
+
+test("follows the fetching while it goes on, waits for it before anything else is done to the agent, and keeps nothing if it is stopped", async ({
+  page,
+}) => {
+  const id = await agentWithData(page, "Slow data", false);
+  const typed = form(page, "See the files of a place");
+  await typed.getByLabel("Another place").fill("https://zenodo.org/records/1000003");
+  await typed.getByRole("button", { name: "See the files" }).click();
+  await listing(page).getByRole("checkbox", { name: "slow.bin", exact: true }).check();
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  await page.getByRole("alertdialog", { name: /^Fetch 1 file/ }).getByRole("button", { name: "Fetch", exact: true }).click();
+
+  const stop = gettingData(page).getByRole("button", { name: "Stop: Fetching data: Slow data" });
+  await expect(stop).toBeVisible();
+  await expect(step(page, "Get the data")).toContainText("Going on");
+  const printed = page.getByRole("log", { name: "What this printed: Fetching data: Slow data" });
+  await expect(printed).toContainText("Fetching slow.bin (64 bytes) from https://zenodo.org/api/records/1000003/files/slow.bin/content", { timeout: 10_000 });
+  await expect(gettingData(page)).toContainText(/0 of 1 file · \d+ B of 64 B/);
+  // Nothing else is done to the agent while it goes on
+  await expect(reading(page)).toContainText("The data is being fetched. Reading waits for that.");
+  await expect(page.getByRole("button", { name: "Delete Slow data" })).toBeDisabled();
+  await expect(page.getByLabel("Upload it again")).toBeDisabled();
+  await expect(choosing(page).getByRole("button", { name: "Waiting…" })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await stop.click();
+
+  await expect(gettingData(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("data-kept")).toHaveCount(0);
+  await expect(step(page, "Get the data")).toContainText("Not started");
+  await expect(page.getByRole("button", { name: "Delete Slow data" })).toBeEnabled();
+  await expect(choosing(page).getByRole("button", { name: "Fetch the files that are chosen" })).toBeEnabled();
+  expect(await dataOf(page, id)).toMatchObject({ kept: { files: 0, sources: [] }, job: null });
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("looks again at what a place has when it is not what was shown, and does not fetch what was chosen", async ({ page }) => {
+  const id = await agentWithData(page, "Changed data");
+  await seeFilesOf(page, "Zenodo record 1000001");
+  await listing(page).getByRole("checkbox", { name: "counts.csv", exact: true }).check();
+  let listed = 0;
+  await page.route("**/api/paperagents/*/data/files*", (route) => {
+    listed += 1;
+
+    return route.fallback();
+  });
+  await page.route("**/api/paperagents/*/data", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "changed", message: "Zenodo record 1000001 has files that are not what was shown. Look at them again." } }),
+        })
+      : route.fallback(),
+  );
+  await choosing(page).getByRole("button", { name: "Fetch the files that are chosen" }).click();
+  await page.getByRole("alertdialog", { name: /^Fetch 1 file/ }).getByRole("button", { name: "Fetch", exact: true }).click();
+
+  await expect(choosing(page).getByRole("alert")).toHaveCount(1);
+  await expect(choosing(page).getByRole("alert")).toContainText("has files that are not what was shown");
+  await expect(choosing(page).getByText("Choose at least one file.")).toHaveCount(0);
+  await expect.poll(() => listed).toBeGreaterThan(0);
+  await expect(page.getByTestId("data-chosen")).toHaveText("No files are chosen.");
+  await page.unroute("**/api/paperagents/*/data");
+  expect((await dataOf(page, id)).kept.sources).toEqual([]);
+});
+
+test("says which of the person's own data stands in for a dataset, for one that is not listed too, and that it was not copied", async ({
+  page,
+}) => {
+  const id = await agentWithData(page, "Stand-in data");
+  const added = await page.request.post("/api/own/data/files?name=my-counts.csv&description=Counts%20of%20my%20own", {
+    data: Buffer.from("gene,cell1\nA,1\n"),
+    headers: { "Content-Type": "application/octet-stream" },
+  });
+  expect(added.status()).toBe(201);
+  try {
+    await page.reload();
+    const named = datasets(page).getByTestId("data-dataset");
+    await expect(named.getByRole("button", { name: /^Take it away: / })).toHaveCount(0);
+    await named.getByLabel("Your data to put in the place of GEO").selectOption({ value: "my-counts.csv" });
+    await named.getByRole("button", { name: "Use it in its place" }).click();
+
+    await expect(named).toContainText("Stood in for");
+    await expect(named).toContainText("Your data my-counts.csv stands in for it");
+    await expect(step(page, "Get the data")).toContainText("Done");
+    const stored = await dataOf(page, id);
+    expect(stored.stand_ins).toHaveLength(1);
+    expect(stored.stand_ins[0]).toMatchObject({ own: "my-counts.csv", own_data: { name: "my-counts.csv" } });
+    expect(stored.kept.files).toBe(0);
+    expect(await accessibilityProblems(page)).toEqual([]);
+
+    // A dataset that the paper does not name is stood in for by what it is called
+    await page.getByText("Stand in for a dataset that is not listed").click();
+    const unlisted = page.locator("details", { hasText: "Stand in for a dataset that is not listed" });
+    await unlisted.getByLabel("What it stands in for").fill("A cohort that the paper does not name");
+    await unlisted.getByLabel("Your data to put in the place of A cohort that the paper does not name").selectOption({ value: "my-counts.csv" });
+    await unlisted.getByRole("button", { name: "Use it in its place" }).click();
+    const others = page.getByRole("list", { name: "Other data that stands in" });
+    await expect(others.getByTestId("data-other-stand-in")).toHaveCount(1);
+    await expect(others).toContainText("A cohort that the paper does not name");
+    expect((await dataOf(page, id)).stand_ins).toHaveLength(2);
+    expect(await accessibilityProblems(page)).toEqual([]);
+
+    // It is the same after the page is looked at again, and a warning is given when the data is no longer there
+    await page.reload();
+    await expect(named).toContainText("Your data my-counts.csv stands in for it");
+    expect((await page.request.delete("/api/own/data/my-counts.csv")).ok()).toBe(true);
+    await page.reload();
+    await expect(page.getByText("There is no data of yours called my-counts.csv now.").first()).toBeVisible();
+    expect(await accessibilityProblems(page)).toEqual([]);
+
+    await others.getByRole("button", { name: /^Take it away: my-counts.csv in place of / }).click();
+    await expect(others).toHaveCount(0);
+    await named.getByRole("button", { name: "Take it away: my-counts.csv in place of GEO" }).click();
+    await expect(named).not.toContainText("Stood in for");
+    await expect(step(page, "Get the data")).toContainText("Not started");
+    expect((await dataOf(page, id)).stand_ins).toEqual([]);
+  } finally {
+    await page.request.delete("/api/own/data/my-counts.csv");
+  }
+});
+
+test("says that a paper that has not been read names no dataset and no place yet, and still takes a place that is typed", async ({ page }) => {
+  await agentWithData(page, "Unread data", false);
+  await expect(page.getByText("The paper has not been read to the end, so what it names is not known yet.")).toBeVisible();
+  await expect(page.getByText("No place is named for the data. Say where it is below.")).toBeVisible();
+  await expect(form(page, "See the files of a place")).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
 });

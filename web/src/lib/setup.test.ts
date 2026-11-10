@@ -196,6 +196,43 @@ describe("what a job has counted", () => {
   });
 });
 
+describe("the data of an agent that is fetched", () => {
+  const fetching = (progress: Job["progress"], changes: Partial<Job> = {}) =>
+    job({ kind: "paperagent-data", subject: "cells", title: "Fetching data: Cells", progress, ...changes });
+
+  it("is counted in files, and in the bytes written of those that were agreed to", () => {
+    const going = fetching({ files_total: 3, files_done: 1, bytes_total: 4096, bytes_done: 1024, current: "a.csv" });
+
+    expect(jobCounts(going)).toBe("1 of 3 files · 1.0 KB of 4.0 KB");
+    expect(jobFraction(going)).toBe(0.25);
+  });
+
+  it("goes by the bytes and not the files, since the files are of very different sizes", () => {
+    expect(jobFraction(fetching({ files_total: 2, files_done: 1, bytes_total: 1000, bytes_done: 990 }))).toBe(0.99);
+  });
+
+  it("is never more than all of it, nor less than none", () => {
+    expect(jobFraction(fetching({ files_total: 1, files_done: 0, bytes_total: 10, bytes_done: 50 }))).toBe(1);
+    expect(jobFraction(fetching({ files_total: 1, files_done: 0, bytes_total: 10, bytes_done: -5 }))).toBe(0);
+  });
+
+  it("goes by the files when no bytes are announced, and cannot be told when nothing is counted", () => {
+    expect(jobFraction(fetching({ files_total: 4, files_done: 1 }))).toBe(0.25);
+    expect(jobFraction(fetching({ files_total: 4, files_done: 1, bytes_total: 0, bytes_done: 0 }))).toBe(0.25);
+    expect(jobFraction(fetching({}))).toBeNull();
+    expect(jobCounts(fetching({}))).toBe("");
+  });
+
+  it("says file for one, and what a job that stopped had got to", () => {
+    expect(jobCounts(fetching({ files_total: 1, files_done: 0, bytes_total: 10, bytes_done: 0 }))).toBe("0 of 1 file · 0 B of 10 B");
+    expect(jobFraction(fetching({ files_total: 2, files_done: 1, bytes_total: 100, bytes_done: 40 }, { state: "stopped" }))).toBe(0.4);
+  });
+
+  it("does not take the counts of the data lake for its own", () => {
+    expect(jobFraction(job({ progress: { files_total: 2, files_done: 1, bytes_total: 100, bytes_done: 40 } }))).toBeNull();
+  });
+});
+
 describe("the papers a job reads and the functions it writes", () => {
   it("counts the papers dealt with, of those there are, and the functions", () => {
     const reading = job({ kind: "papers", progress: { papers: 4, finished: 1 } });
