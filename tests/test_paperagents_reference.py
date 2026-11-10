@@ -196,6 +196,7 @@ def call_of(name: str, args: dict[str, Any], result: Any, number: int = 1) -> di
         "file": "fixture/core.py",
         "line": 1,
         "args": {key: value_of(value) for key, value in args.items()},
+        "cwd": "examples",
         "variadic": False,
         "result": value_of(result),
         "returned": True,
@@ -488,6 +489,14 @@ class TestRunnerCalls:
         assert call["returned"] is True
         assert call["from"] == {"file": "examples/a.py", "line": 2}
         assert call["file"] == "fixture/core.py" and call["line"] == 5
+
+    def test_the_folder_a_call_was_made_from_is_recorded_by_its_path_from_the_project(self, tmp_path: Path) -> None:
+        script = (
+            "import os, fixture\nfixture.mean([1])\nos.chdir('..')\nfixture.mean([2])\n"
+            "os.chdir('/')\nfixture.mean([3])\n"
+        )
+        result, _ = run_here(tmp_path, {**BASE, "examples/a.py": script}, "script", "examples/a.py")
+        assert [call["cwd"] for call in calls_of(result)] == ["examples", ".", "/"]
 
     def test_a_call_the_project_makes_to_itself_is_not_recorded_but_is_counted_by_its_caller(
         self, tmp_path: Path

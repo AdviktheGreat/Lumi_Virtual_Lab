@@ -60,6 +60,10 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}/reference  which would be run, what the last run kept, and what is allowed
     GET    /api/paperagents/{id}/reference/{tutorial}  what was kept of one: its calls into the code, its files
     DELETE /api/paperagents/{id}/reference  takes away what the tutorials gave, so that they can be run again
+    POST   /api/paperagents/{id}/tools  starts making tools of the functions the tutorials called
+    GET    /api/paperagents/{id}/tools  which would be made, which would not and why, what was made, and what is allowed
+    GET    /api/paperagents/{id}/tools/{name}  one tool: its wrapper, its signature, and each call that was made again
+    DELETE /api/paperagents/{id}/tools  takes away the tools, so that they can be made again
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -403,6 +407,19 @@ class PaperAgentReferenceBody(RequestModel):
     repeats: StrictInt | None = None
     gigabytes: StrictInt | None = None
     data: StrictBool | None = None
+
+
+class PaperAgentToolsBody(RequestModel):
+    """How to make the tools: the most minutes that the calls of one tool may take, and that all of the tools may, how
+    many tools, how many times each call is made again, how many times a wrapper that does not pass is rewritten, and
+    the most gigabytes that one call may write."""
+
+    minutes: StrictInt | None = None
+    total_minutes: StrictInt | None = None
+    tools: StrictInt | None = None
+    repeats: StrictInt | None = None
+    repairs: StrictInt | None = None
+    gigabytes: StrictInt | None = None
 
 
 class PaperAgentDataBody(RequestModel):
@@ -1251,6 +1268,28 @@ def create_app(
         paperagents.clear_reference(agent_id)
 
         return paperagents.reference(agent_id)
+
+    @api.post("/paperagents/{agent_id}/tools", status_code=202)
+    def make_paperagent_tools(agent_id: str, body: PaperAgentToolsBody) -> dict[str, Any]:
+        job = paperagents.start_tools(
+            agent_id, body.minutes, body.total_minutes, body.tools, body.repeats, body.repairs, body.gigabytes
+        )
+
+        return job.snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/tools")
+    def get_paperagent_tools(agent_id: str) -> dict[str, Any]:
+        return paperagents.tools(agent_id)
+
+    @api.get("/paperagents/{agent_id}/tools/{name}")
+    def get_paperagent_tool(agent_id: str, name: str) -> dict[str, Any]:
+        return paperagents.tool(agent_id, name)
+
+    @api.delete("/paperagents/{agent_id}/tools")
+    def delete_paperagent_tools(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_tools(agent_id)
+
+        return paperagents.tools(agent_id)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:
