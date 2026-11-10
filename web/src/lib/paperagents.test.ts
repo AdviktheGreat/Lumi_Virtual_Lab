@@ -21,6 +21,7 @@ import {
   emptyFetch,
   EMPTY_AGENT,
   EMPTY_READING,
+  dataJob,
   environmentJob,
   existingOf,
   factCount,
@@ -28,6 +29,7 @@ import {
   hasReading,
   isLink,
   isRepo,
+  lastDataJob,
   lastEnvironmentJob,
   lastReadingJob,
   lastRepositoryJob,
@@ -381,6 +383,32 @@ describe("the job that builds the environment of an agent", () => {
     expect(readingKey([building()], 0, "cells")).not.toBe(readingKey([job({ id: "b1", kind: "paperagent-repository" })], 0, "cells"));
     expect(readingKey([building({ subject: "dogs" })], 0, "cells")).toBe("0|");
     expect(readingKey([building({ state: "succeeded" })], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the job that fetches the data of an agent", () => {
+  const getting = (changes: Partial<Job> = {}) => job({ id: "d1", kind: "paperagent-data", ...changes });
+
+  it("is the one at work on that agent, and not the one that fetches its code or another agent's", () => {
+    const jobs = [job({ id: "reading" }), getting({ id: "other", subject: "dogs" }), getting({ id: "old", state: "failed" }), getting()];
+
+    expect(dataJob(jobs, "cells")?.id).toBe("d1");
+    expect(dataJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(dataJob([job({ kind: "paperagent-repository" })], "cells")).toBeUndefined();
+  });
+
+  it("is, when none is at work, the latest that is over", () => {
+    const jobs = [getting({ id: "new", state: "stopped" }), getting({ id: "old", state: "failed" }), job({ state: "failed" })];
+
+    expect(lastDataJob(jobs, "cells")?.id).toBe("new");
+    expect(lastDataJob([getting()], "cells")).toBeUndefined();
+  });
+
+  it("changes the key that the page looks again by, and says nothing of another agent's", () => {
+    expect(readingKey([getting()], 0, "cells")).not.toBe(readingKey([], 0, "cells"));
+    expect(readingKey([getting()], 0, "cells")).not.toBe(readingKey([job({ id: "d1", kind: "paperagent-environment" })], 0, "cells"));
+    expect(readingKey([getting({ subject: "dogs" })], 0, "cells")).toBe("0|");
+    expect(readingKey([getting({ state: "succeeded" })], 0, "cells")).toBe("0|");
   });
 });
 

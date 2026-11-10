@@ -9,6 +9,7 @@ import type {
   Campaign,
   CampaignChange,
   DataLake,
+  DataListing,
   Health,
   Job,
   KeyStatuses,
@@ -36,6 +37,8 @@ import type {
   PaperAgent,
   PaperAgentBuildOptions,
   PaperAgentChange,
+  PaperAgentData,
+  PaperAgentDataFetch,
   PaperAgentEnvironment,
   PaperAgentFetchOptions,
   PaperAgentPassage,
@@ -510,6 +513,29 @@ export const api = {
     request<{ name: string; text: string }>("GET", `/paperagents/${encodeURIComponent(id)}/environment/lock`, undefined, signal),
   paperAgentEnvironmentLog: (id: string, signal?: AbortSignal) =>
     request<{ lines: string[] }>("GET", `/paperagents/${encodeURIComponent(id)}/environment/log`, undefined, signal),
+  // What there is of an agent's data, asking a place what files it has, which fetches none, fetching the files that were chosen,
+  // which goes on as a job, taking away what was fetched, and saying which of a person's own data stands in for a dataset
+  paperAgentData: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentData>("GET", `/paperagents/${encodeURIComponent(id)}/data`, undefined, signal),
+  paperAgentDataFiles: (id: string, reference: string, signal?: AbortSignal) =>
+    request<DataListing>(
+      "GET",
+      `/paperagents/${encodeURIComponent(id)}/data/files?reference=${encodeURIComponent(reference)}`,
+      undefined,
+      signal,
+    ),
+  fetchPaperAgentData: (id: string, fetch: PaperAgentDataFetch) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/data`, fetch),
+  // The files of one place, by its key, or of all of them
+  clearPaperAgentData: (id: string, source?: string) =>
+    request<PaperAgentData>(
+      "DELETE",
+      `/paperagents/${encodeURIComponent(id)}/data${source === undefined ? "" : `?source=${encodeURIComponent(source)}`}`,
+    ),
+  setPaperAgentStandIn: (id: string, dataset: string, own: string) =>
+    request<PaperAgentData>("PUT", `/paperagents/${encodeURIComponent(id)}/data/stand-ins`, { dataset, own }),
+  clearPaperAgentStandIn: (id: string, dataset: string) =>
+    request<PaperAgentData>("DELETE", `/paperagents/${encodeURIComponent(id)}/data/stand-ins?dataset=${encodeURIComponent(dataset)}`),
   paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
     request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,

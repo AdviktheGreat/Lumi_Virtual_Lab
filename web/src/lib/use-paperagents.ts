@@ -2,7 +2,14 @@
 
 import { useCallback } from "react";
 import { api } from "./api";
-import type { PaperAgent, PaperAgentEnvironment, PaperAgentReading, PaperAgentRepository, PaperAgentsList } from "./types";
+import type {
+  PaperAgent,
+  PaperAgentData,
+  PaperAgentEnvironment,
+  PaperAgentReading,
+  PaperAgentRepository,
+  PaperAgentsList,
+} from "./types";
 import { useLooked, type Looked } from "./use-looked";
 
 // The PaperAgents, with what a page needs to make one
@@ -38,6 +45,14 @@ export function usePaperAgentRepository(id: string, report: (error: unknown) => 
 // away, which is what it is built from, and as it is built
 export function usePaperAgentEnvironment(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentEnvironment> {
   const look = useCallback(() => api.paperAgentEnvironment(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+// What there is of an agent's data, looked at again when it may have changed: as the paper is read, which is what it names is found
+// from, as the code is fetched, which may name it too, and as files are fetched
+export function usePaperAgentData(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentData> {
+  const look = useCallback(() => api.paperAgentData(id), [id]);
 
   return useLooked(look, report, again);
 }

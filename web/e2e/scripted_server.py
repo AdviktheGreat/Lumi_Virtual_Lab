@@ -55,6 +55,12 @@ from a script: no key is needed, and every run says the same. What it says depen
   building take a while, so that it can be followed and stopped, "zlib" makes it fail for want of the system package
   zlib1g-dev until that is asked to be installed, "oldpython" makes it fail for a Python that is too new until Python
   3.9 is asked for, and "broken" makes it fail with nothing to say why.
+- The data of a PaperAgent is listed and fetched by stand-ins for the places it is kept at, which have a few records,
+  named by their keys: Zenodo record 1000001 has files of which one is corrupt (what it sends is not what its checksum
+  says), one gives no checksum, and one is restricted; 1000002 has a file larger than the most that is fetched at first;
+  1000003 has a file that takes a while to be sent, so that it can be followed and stopped; and GEO series GSE123456 has
+  files that give no checksum. Any other record is not found. An address at zenodo.org or osf.io in a paper's text is a
+  link to data.
 - Anything else is answered with a short reply that repeats the question.
 
 A conversation is saved as a PDF by a stand-in that puts the page in a file that starts as a PDF does, so that no
@@ -81,7 +87,8 @@ import tempfile
 import threading
 import time
 import webbrowser
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -112,6 +119,8 @@ from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab import openrouter  # noqa: E402
 from virtual_lab.environment import StoppedError  # noqa: E402
+from virtual_lab.paperagents import data as finding  # noqa: E402
+from virtual_lab.paperagents import datahosts as hosting  # noqa: E402
 from virtual_lab.paperagents import environment as building  # noqa: E402
 from virtual_lab.paperagents import fetch as fetching  # noqa: E402
 from virtual_lab.paperagents import repository as cloning  # noqa: E402
@@ -504,6 +513,8 @@ def chunk_reading(text: str) -> ChunkReading:
             facts["datasets"].append(ReadDataset(name="GEO", accession=found.group(0), quote=sentence))
         if found := re.search(r"https://github\.com/[\w./-]*\w", sentence):
             facts["links"].append(ReadLink(url=found.group(0), role="code", quote=sentence))
+        if found := re.search(r"https://(?:zenodo\.org|osf\.io)/[\w./-]*\w", sentence):
+            facts["links"].append(ReadLink(url=found.group(0), role="data", quote=sentence))
         if "only tested on mouse" in sentence:
             facts["scope"].append(ReadScope(aspect="species", value="mouse", quote=sentence))
             facts["limitations"].append(ReadLimitation(quote=sentence))
@@ -648,6 +659,166 @@ def stand_in_clone(
         (destination / name).write_text(text)
 
     return cloning.Cloned(commit=hashlib.sha1(f"{url}@{asked}".encode()).hexdigest(), ref=asked)
+
+
+# How long a file of data that is "slow" takes to be sent, which is long enough for it to be followed and stopped
+DATA_DELAY = 6.0
+
+COUNTS = b"gene,cell1,cell2\nCd4,3,0\nCd8a,0,5\n"
+METADATA = b"cell\tregion\ncell1\tCA1\ncell2\tDG\n"
+LABELS = b"cell,label\ncell1,pyramidal\ncell2,granule\n"
+CORRUPT_LABELS = b"cell,label\ncell1,pyramidal\ncell2,GRANULE\n"
+README = b"These counts are of nuclei of the mouse hippocampus.\n"
+SLOW_FILE = b"x" * 64
+GEO_COUNTS = b"GSE123456 counts, as they are in a file\n"
+GEO_MATRIX = b"GSE123456 series matrix, as it is in a file\n"
+
+# What the stand-ins send for a file, by its address, which is not what its listing says for a file that is corrupt
+DATA_SENT: dict[str, bytes] = {}
+
+
+def data_file(
+    record: str,
+    name: str,
+    body: bytes,
+    algorithm: str | None = "md5",
+    sends: bytes | None = None,
+    why: str | None = None,
+    size: int | None = None,
+    url: str | None = None,
+) -> finding.DataFile:
+    """A file as a place lists it, which has a checksum of what it should be unless the place gives none."""
+    where = url or f"https://zenodo.org/api/records/{record}/files/{name}/content"
+    DATA_SENT[where] = body if sends is None else sends
+    checksum = (algorithm, hashlib.new(algorithm, body).hexdigest()) if algorithm else None
+
+    return finding.DataFile(name, len(body) if size is None else size, where, checksum, why)
+
+
+GEO_FOLDER = "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE123nnn/GSE123456/"
+
+
+@dataclass(frozen=True)
+class StoodInPlace:
+    title: str
+    license: dict[str, str | None] | None
+    files: list[finding.DataFile]
+    notes: tuple[str, ...] = ()
+
+
+CC_BY: dict[str, str | None] = {"name": "cc-by-4.0", "url": None}
+DATA_PLACES = {
+    "zenodo:1000001": StoodInPlace(
+        "Nuclei of the mouse hippocampus",
+        CC_BY,
+        [
+            data_file("1000001", "counts.csv", COUNTS),
+            data_file("1000001", "metadata.tsv", METADATA),
+            data_file("1000001", "labels.csv", LABELS, sends=CORRUPT_LABELS),
+            data_file("1000001", "README.txt", README, algorithm=None),
+            data_file(
+                "1000001",
+                "restricted.zip",
+                b"",
+                algorithm=None,
+                size=5_000,
+                why="Zenodo does not give this file to everyone, as it is restricted",
+            ),
+        ],
+    ),
+    "zenodo:1000002": StoodInPlace(
+        "A large atlas",
+        CC_BY,
+        [
+            finding.DataFile(
+                "atlas.h5ad",
+                600_000_000,
+                "https://zenodo.org/api/records/1000002/files/atlas.h5ad/content",
+                ("md5", "0" * 32),
+            ),
+            data_file("1000002", "small.h5ad", COUNTS),
+        ],
+    ),
+    "zenodo:1000003": StoodInPlace(
+        "A record that is slow to send", CC_BY, [data_file("1000003", "slow.bin", SLOW_FILE)]
+    ),
+    "geo:GSE123456": StoodInPlace(
+        "GEO series GSE123456",
+        None,
+        [
+            data_file(
+                "",
+                "suppl/GSE123456_counts.txt.gz",
+                GEO_COUNTS,
+                algorithm=None,
+                url=f"{GEO_FOLDER}suppl/GSE123456_counts.txt.gz",
+            ),
+            data_file(
+                "",
+                "matrix/GSE123456_series_matrix.txt.gz",
+                GEO_MATRIX,
+                algorithm=None,
+                url=f"{GEO_FOLDER}matrix/GSE123456_series_matrix.txt.gz",
+            ),
+        ],
+        ("It also has files that are not listed here.",),
+    ),
+}
+
+
+def stand_in_list_files(reference: finding.Reference, should_stop: Callable[[], bool] | None = None) -> finding.Listing:
+    """What a place has, or why it cannot be had."""
+    place = DATA_PLACES.get(reference.key)
+    if place is None:
+        raise finding.DataError(f"{reference.label} was not found", "missing")
+
+    return finding.Listing(
+        reference, place.title, place.license, list(place.files), len(place.files), list(place.notes)
+    )
+
+
+def stand_in_fetch_file(
+    reference: finding.Reference,
+    file: finding.DataFile,
+    target: Path,
+    on_bytes: Callable[[int], None],
+    should_stop: Callable[[], bool] | None = None,
+) -> hosting.Fetched:
+    """Fetches a file as the real one does, from what the stand-in sends for it: it is kept only if it is as big as it
+    was said to be and matches the checksum that was given."""
+    if file.bytes is None or file.why is not None:
+        raise finding.DataError(f"{file.name} cannot be fetched: {file.why or 'its size is not given'}", "refused")
+    body = DATA_SENT[file.url]
+    slow = "slow" in file.name
+    part = 2 if slow else max(len(body), 1)
+    pauses = -(-len(body) // part)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(target, "wb") as output:
+            for start in range(0, len(body), part):
+                if should_stop is not None and should_stop():
+                    raise StoppedError("Stopped.")
+                if slow:
+                    time.sleep(DATA_DELAY / pauses)
+                chunk = body[start : start + part]
+                output.write(chunk)
+                on_bytes(len(chunk))
+        if len(body) != file.bytes:
+            raise finding.DataError(f"Only {len(body):,} of the {file.bytes:,} bytes of {file.name} came", "size")
+        if file.checksum is not None:
+            algorithm, expected = file.checksum
+            actual = hashlib.new(algorithm, body).hexdigest()
+            if actual != expected:
+                raise finding.DataError(
+                    f"{file.name} is not what {finding.SOURCES[reference.source].name} says it is: its "
+                    f"{algorithm.upper()} is {actual}, and the checksum given is {expected}. It was discarded.",
+                    "checksum",
+                )
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+
+    return hosting.Fetched(len(body), hashlib.sha256(body).hexdigest(), file.checksum)
 
 
 # How long a build that is "slow" takes, which is long enough for it to be followed and stopped
@@ -1130,6 +1301,8 @@ def main() -> None:
     fetching.europe_pmc_paper = stand_in_europe_pmc
     fetching.linked_paper = stand_in_linked_paper
     cloning.clone = stand_in_clone
+    hosting.list_files = stand_in_list_files
+    hosting.fetch_file = stand_in_fetch_file
     building.ready = stand_in_ready
     building.build_environment = stand_in_build
     building.image_id_of = stand_in_image_id_of

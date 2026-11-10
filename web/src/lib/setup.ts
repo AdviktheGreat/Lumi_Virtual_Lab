@@ -72,7 +72,7 @@ export function stageLabel(target: string): string {
 // What a job counts, if it counts anything: the files of a fetch, the papers that are read, or the functions that are
 // written, or the chunks of a paper that are read, of how many there are
 function counted(job: Job): { done: number; total: number; noun: string } | null {
-  const { done, total, finished, papers, functions, chunks } = job.progress;
+  const { done, total, finished, papers, functions, chunks, files_done: filesDone, files_total: filesTotal } = job.progress;
   const found =
     job.kind === "papers"
       ? { done: finished, total: papers, noun: "paper" }
@@ -80,7 +80,9 @@ function counted(job: Job): { done: number; total: number; noun: string } | null
         ? { done: finished, total: functions, noun: "function" }
         : job.kind === "paperagent-reading"
           ? { done: finished, total: chunks, noun: "chunk" }
-          : { done, total, noun: "file" };
+          : job.kind === "paperagent-data"
+            ? { done: filesDone, total: filesTotal, noun: "file" }
+            : { done, total, noun: "file" };
 
   return typeof found.done === "number" && typeof found.total === "number" && found.total > 0
     ? { done: found.done, total: found.total, noun: found.noun }
@@ -91,7 +93,11 @@ function counted(job: Job): { done: number; total: number; noun: string } | null
 // fetch of the data lake counts files, and the part of the one that is being fetched.
 export function jobFraction(job: Job): number | null {
   if (job.state === "succeeded") return 1;
-  const { bytes, bytes_total: announced } = job.progress;
+  const { bytes, bytes_total: announced, bytes_done: written } = job.progress;
+  // The files of data are of very different sizes, so how far it has got is the bytes written of all that were agreed to
+  if (job.kind === "paperagent-data" && typeof written === "number" && typeof announced === "number" && announced > 0) {
+    return Math.min(Math.max(written / announced, 0), 1);
+  }
   const sum = counted(job);
   if (sum === null) return null;
   const { done, total } = sum;
@@ -103,11 +109,14 @@ export function jobFraction(job: Job): number | null {
 // What a job has counted, in words: files, bytes, and the file it is on for a fetch, and papers or functions for the
 // work on a run. A job that counts nothing says nothing.
 export function jobCounts(job: Job): string {
-  const { fetched, bytes, bytes_total: announced, current } = job.progress;
+  const { fetched, bytes, bytes_total: announced, bytes_done: written, current } = job.progress;
   const parts: string[] = [];
   const sum = counted(job);
   if (sum !== null) parts.push(`${sum.done} of ${sum.total} ${sum.noun}${sum.total === 1 ? "" : "s"}`);
   if (typeof fetched === "number" && fetched > 0) parts.push(`${formatBytes(fetched)} fetched`);
+  if (job.kind === "paperagent-data" && typeof written === "number" && typeof announced === "number" && announced > 0) {
+    parts.push(`${formatBytes(written)} of ${formatBytes(announced)}`);
+  }
   if (isActive(job) && current && typeof bytes === "number" && typeof announced === "number" && announced > 0) {
     parts.push(`${formatBytes(bytes)} of ${formatBytes(announced)} of this file`);
   }
