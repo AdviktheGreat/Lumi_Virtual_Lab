@@ -4,6 +4,7 @@ matters most is what is refused, which is any host that the source was not told 
 and at every address it is sent on to; and that a file is only kept if it is what the place said it is."""
 
 import hashlib
+import io
 import json
 import threading
 import urllib.parse
@@ -13,6 +14,7 @@ from typing import Any
 
 import pytest
 import requests
+import urllib3.response
 from requests.structures import CaseInsensitiveDict
 
 import virtual_lab.paperagents.datahosts as hosting
@@ -65,6 +67,47 @@ class Reply:
 
     def close(self) -> None:
         self.closed = True
+
+
+class Dribble(io.RawIOBase):
+    """A connection that gives one byte for each read of it, as a host that is sending slowly does."""
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+        self.at = 0
+        self.reads = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        self.reads += 1
+        if self.at >= len(self.body):
+            return 0
+        buffer[0] = self.body[self.at]
+        self.at += 1
+
+        return 1
+
+
+class Dribbling(Reply):
+    """Stands in for a response that is read from a connection that sends a byte at a time. Waiting for a whole chunk of
+    it would take a read of the connection for each byte of the chunk."""
+
+    def __init__(self, url: str, body: bytes, declared: int | None = None) -> None:
+        length = str(len(body) if declared is None else declared)
+        super().__init__(url, body=body, headers={"Content-Length": length})
+        self.connection = Dribble(body)
+        self.raw = urllib3.response.HTTPResponse(
+            body=io.BufferedReader(self.connection),
+            preload_content=False,
+            decode_content=False,
+            status=200,
+            headers={"Content-Length": length},
+        )
+
+    def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+        raise AssertionError("a response read from its connection is not waited on for a whole chunk")
 
 
 class Session:
@@ -716,6 +759,58 @@ class TestFetchingAFile:
 
         with pytest.raises(DataError, match="too slow") as caught:
             fetch_file(ZENODO, listed_file(b"abc", FILE_URL), tmp_path / "a", lambda n: None)
+
+        assert caught.value.kind == "unreachable" and not (tmp_path / "a").exists()
+
+    def test_a_host_that_sends_a_byte_at_a_time_is_looked_at_as_often_as_it_sends(
+        self, web: Web, tmp_path: Path
+    ) -> None:
+        body = b"x" * 1000
+        slow = Dribbling(FILE_URL, body)
+        web.routes[("GET", FILE_URL)] = slow
+        stop = threading.Event()
+        sent: list[int] = []
+
+        def counted(count: int) -> None:
+            sent.append(count)
+            if len(sent) == 3:
+                stop.set()
+
+        with pytest.raises(StoppedError):
+            fetch_file(ZENODO, listed_file(body, FILE_URL), tmp_path / "a", counted, stop.is_set)
+
+        assert sent == [1, 1, 1] and slow.connection.reads < 10 and not (tmp_path / "a").exists()
+
+    def test_a_host_that_sends_a_byte_at_a_time_is_given_up_on_when_it_has_had_too_long(
+        self, web: Web, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(hosting, "DOWNLOAD_GRACE_SECONDS", -1)
+        monkeypatch.setattr(hosting, "SLOWEST_BYTES_PER_SECOND", 10**12)
+        slow = Dribbling(FILE_URL, b"x" * 1000)
+        web.routes[("GET", FILE_URL)] = slow
+
+        with pytest.raises(DataError, match="too slow"):
+            fetch_file(ZENODO, listed_file(b"x" * 1000, FILE_URL), tmp_path / "a", lambda n: None)
+
+        assert slow.connection.reads < 10 and not (tmp_path / "a").exists()
+
+    def test_a_file_that_comes_a_byte_at_a_time_is_kept_when_it_is_whole_and_matches(
+        self, web: Web, tmp_path: Path
+    ) -> None:
+        body = b"abcdefgh" * 40
+        web.routes[("GET", FILE_URL)] = Dribbling(FILE_URL, body)
+
+        fetched = fetch_file(
+            ZENODO, listed_file(body, FILE_URL, checksum=("md5", md5(body))), tmp_path / "a", lambda n: None
+        )
+
+        assert (tmp_path / "a").read_bytes() == body and fetched.sha256 == sha256(body)
+
+    def test_a_connection_that_ends_before_the_file_does_leaves_nothing(self, web: Web, tmp_path: Path) -> None:
+        web.routes[("GET", FILE_URL)] = Dribbling(FILE_URL, b"abc", declared=10)
+
+        with pytest.raises(DataError, match="was cut off") as caught:
+            fetch_file(ZENODO, listed_file(b"", FILE_URL, size=10), tmp_path / "a", lambda n: None)
 
         assert caught.value.kind == "unreachable" and not (tmp_path / "a").exists()
 

@@ -1825,6 +1825,8 @@ class PaperAgents:
                 if not destination.resolve().is_relative_to(root.resolve()):
                     raise finding.DataError(f"{file.name} would be kept outside the agent's data", "refused")
                 destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.is_dir():
+                    raise finding.DataError(f"{file.name} cannot be kept: a folder is where it would be", "failed")
                 shutil.move(str(target), destination)
                 size = destination.stat().st_size
             except OSError as error:

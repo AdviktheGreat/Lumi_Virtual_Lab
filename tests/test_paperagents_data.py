@@ -337,6 +337,34 @@ class TestWhatAChoiceOfFilesHasToBe:
         with pytest.raises(DataError, match="capital letters"):
             choose(listing(entry("A.csv", 10), entry("a.csv", 10)), ["A.csv", "a.csv"], 20, 1000)
 
+    def test_a_name_that_differs_only_in_capitals_from_one_that_is_kept_is_refused(self) -> None:
+        with pytest.raises(DataError, match="differ only in their capital letters"):
+            choose(listing(entry("a.csv")), ["a.csv"], 100, 1000, kept={"A.csv"})
+
+    def test_a_file_cannot_have_the_name_of_a_folder_that_another_chosen_file_is_in(self) -> None:
+        shown = listing(entry("a", 10), entry("a/b.csv", 10))
+
+        with pytest.raises(DataError, match="cannot be kept together") as caught:
+            choose(shown, ["a/b.csv", "a"], 20, 1000)
+
+        assert caught.value.kind == "invalid" and "folder" in str(caught.value)
+        assert [file.name for file in choose(shown, ["a/b.csv"], 10, 1000)] == ["a/b.csv"]
+
+    def test_a_file_cannot_be_put_in_a_folder_that_has_the_name_of_a_file_that_is_kept(self) -> None:
+        with pytest.raises(DataError, match="folder that has the name of the file a"):
+            choose(listing(entry("a/b.csv")), ["a/b.csv"], 100, 1000, kept={"a"})
+
+    def test_a_file_cannot_have_the_name_of_a_folder_that_a_file_that_is_kept_is_in(self) -> None:
+        with pytest.raises(DataError, match="name of a folder that a/b.csv is in"):
+            choose(listing(entry("a")), ["a"], 100, 1000, kept={"a/b.csv"})
+
+    def test_files_in_different_folders_are_kept_together(self) -> None:
+        shown = listing(entry("a/x.csv", 10), entry("b/x.csv", 10), entry("a/y/x.csv", 10), entry("ab.csv", 10))
+
+        chosen = choose(shown, ["a/x.csv", "b/x.csv", "a/y/x.csv", "ab.csv"], 40, 1000, kept={"a/z.csv"})
+
+        assert len(chosen) == 4
+
     def test_files_that_are_not_the_size_the_person_was_shown_are_not_fetched(self) -> None:
         with pytest.raises(DataError, match="not the 90 that were shown") as caught:
             choose(listing(entry("a.csv", 100)), ["a.csv"], 90, 1000)

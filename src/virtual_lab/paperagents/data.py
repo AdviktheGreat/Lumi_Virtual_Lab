@@ -592,6 +592,36 @@ class Listing:
         }
 
 
+def clash(names: Iterable[str], kept: Iterable[str]) -> str | None:
+    """Why files cannot be kept under these names, beside each other and what is kept already, or None if they can. On
+    a disk that does not tell capital letters apart two names that differ only in them are one file, and a file cannot
+    have the name of a folder that another is in."""
+    held: dict[str, str] = {}
+    folders: dict[str, str] = {}
+
+    def parents(folded: str) -> list[str]:
+        parts = folded.split("/")
+
+        return ["/".join(parts[:end]) for end in range(1, len(parts))]
+
+    for name in kept:
+        held[name.casefold()] = name
+        folders.update({parent: name for parent in parents(name.casefold())})
+    for name in names:
+        folded = name.casefold()
+        if folded in held:
+            return f"{name} and {held[folded]} differ only in their capital letters, and are one file on some disks"
+        if folded in folders:
+            return f"{name} is the name of a folder that {folders[folded]} is in"
+        for parent in parents(folded):
+            if parent in held:
+                return f"{name} is to be in a folder that has the name of the file {held[parent]}"
+        held[folded] = name
+        folders.update({parent: name for parent in parents(folded)})
+
+    return None
+
+
 def choose(
     listing: Listing, names: Collection[Any], expected_bytes: int, max_bytes: int, kept: Collection[str] = ()
 ) -> list[DataFile]:
@@ -602,7 +632,8 @@ def choose(
     :param max_bytes: The most that may be fetched.
     :param kept: The names of the files of this place that are kept already.
     :raises DataError: If none is asked for, too many, one that the listing does not have, that cannot be fetched, or
-        that is kept already, if what they come to is not what was shown, or is more than may be fetched.
+        that is kept already, if two cannot be kept together or beside what is kept (see clash), if what they come to is
+        not what was shown, or is more than may be fetched.
     """
     if not all(isinstance(name, str) for name in names):
         raise DataError("The names of the files are text", "invalid")
@@ -622,9 +653,8 @@ def choose(
         if name in kept:
             raise DataError(f"{name} is kept already. Remove it first to fetch it again.", "kept")
         chosen.append(file)
-    folded = [file.name.casefold() for file in chosen]
-    if len(set(folded)) != len(folded):
-        raise DataError("Two of the files have names that differ only in their capital letters", "invalid")
+    if (why := clash([file.name for file in chosen], kept)) is not None:
+        raise DataError(f"These files cannot be kept together: {why}", "invalid")
     total = sum(file.bytes or 0 for file in chosen)
     if total != expected_bytes:
         raise DataError(

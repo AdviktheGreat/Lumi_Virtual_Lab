@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+import urllib3
 
 from virtual_lab.constants import WEB_MAX_REDIRECTS, WEB_TIMEOUT_SECONDS, WEB_USER_AGENT
 from virtual_lab.environment import StoppedError
@@ -593,6 +594,18 @@ class Fetched:
     checked: tuple[str, str] | None
 
 
+def received(response: requests.Response) -> Iterator[bytes]:
+    """What a response sends, as each part of it comes. A part is what one read of the connection gave, and not a
+    whole chunk waited for, so a host that sends a byte at a time is looked at, for time and for a stop, as often as it
+    sends anything. Where the connection cannot be read that way, a chunk is waited for."""
+    read = getattr(getattr(response, "raw", None), "read1", None)
+    if read is None:
+        yield from response.iter_content(CHUNK_BYTES)
+        return
+    while part := read(CHUNK_BYTES, decode_content=False):
+        yield part
+
+
 def fetch_file(
     reference: Reference,
     file: DataFile,
@@ -632,7 +645,7 @@ def fetch_file(
                         "size",
                     )
                 with open(target, "wb") as output:
-                    for chunk in response.iter_content(CHUNK_BYTES):
+                    for chunk in received(response):
                         if should_stop is not None and should_stop():
                             raise StoppedError("Stopped.")
                         if time.monotonic() > deadline:
@@ -658,7 +671,7 @@ def fetch_file(
                     f"{actual}, and the checksum given is {expected}. It was discarded.",
                     "checksum",
                 )
-    except requests.RequestException as error:
+    except (requests.RequestException, urllib3.exceptions.HTTPError) as error:
         target.unlink(missing_ok=True)
         raise DataError(f"{file.name} was cut off: {type(error).__name__}", "unreachable") from error
     except OSError as error:

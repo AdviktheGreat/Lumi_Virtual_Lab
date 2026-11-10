@@ -617,6 +617,29 @@ class TestFetching:
             assert refused(agents.download_data, read, REFERENCE, [name], 3).status == 422
         assert contents_asked(web) == [] and not (workspace.root / "escape.txt").exists()
 
+    def test_a_file_whose_place_is_taken_by_a_folder_is_not_kept_and_is_said_not_to_be(
+        self, agents: PaperAgents, read: str, hosted: Web, workspace: Workspace
+    ) -> None:
+        (directory_of(workspace, read) / "data" / "zenodo" / "1234567" / "counts.csv").mkdir(parents=True)
+
+        job = get(agents, read, "counts.csv")
+
+        assert job.state == "failed" and job.error is not None and "a folder is where it would be" in job.error
+        assert keeps(workspace, read) == {} and leftovers(workspace) == []
+        assert agents.data(read)["kept"]["files"] == 0
+
+    def test_a_file_that_differs_only_in_capitals_from_one_that_is_kept_is_not_fetched(
+        self, agents: PaperAgents, read: str, hosted: Web, workspace: Workspace
+    ) -> None:
+        assert get(agents, read, "counts.csv").state == "succeeded"
+        zenodo(hosted, {"counts.csv": COUNTS, "Counts.csv": CSV})
+        asked = len(contents_asked(hosted))
+
+        error = refused(agents.download_data, read, REFERENCE, ["Counts.csv"], len(CSV))
+
+        assert error.status == 422 and "differ only in their capital letters" in error.message
+        assert len(contents_asked(hosted)) == asked and keeps(workspace, read) == {"zenodo/1234567/counts.csv": COUNTS}
+
     def test_progress_is_told_as_bytes_arrive(self, agents: PaperAgents, read: str, web: Web) -> None:
         body = b"x" * (3 * 65_536)
         zenodo(web, {"big.bin": body})
