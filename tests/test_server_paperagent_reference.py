@@ -550,6 +550,19 @@ class TestWhatWasEdited:
         run(agents, prepared, repeats=1)
         assert agents.reference(prepared)["kept"]["complete"] is True
 
+    def test_an_account_that_names_a_tutorial_by_what_is_not_an_id_is_not_shown(
+        self, agents: PaperAgents, prepared: str, containers: Containers, workspace: Workspace
+    ) -> None:
+        run(agents, prepared, repeats=1)
+        directory = directory_of(workspace, prepared)
+        record = kept_reference.stored(directory)
+        assert record is not None
+        for name in ("..", "", "../x", "01-X"):
+            tutorials = [{**record["tutorials"][0], "id": name}, *record["tutorials"][1:]]
+            kept_reference.save(directory, {**record, "tutorials": tutorials})
+            assert kept_reference.stored(directory) is None, name
+            assert agents.reference(prepared)["kept"] is None
+
     def test_a_tutorial_whose_record_was_taken_away_is_not_listed(
         self, agents: PaperAgents, prepared: str, containers: Containers, workspace: Workspace
     ) -> None:

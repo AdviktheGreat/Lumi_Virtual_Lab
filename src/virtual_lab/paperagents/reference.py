@@ -68,6 +68,13 @@ MAX_FILE_BYTES = 256 * 1024**2
 SIZE_SECONDS = 5.0
 OUTPUT_BYTES = 200_000
 MAX_RESULT_BYTES = 10 * 1024**2
+# What the runner keeps at most, which is held to here as well, since what it wrote is written by the tutorial's own
+# process and may say anything: how many calls, files, and cells, and how deeply a value is nested
+MAX_RESULT_CALLS = 100
+MAX_RESULT_FILES = 200
+MAX_RESULT_CELLS = 300
+MAX_DEPTH = 40
+ITEM_ID = re.compile(r"[0-9]{2,}-[a-z0-9-]+")
 KEPT_LINES = 60
 MAX_FILE_NAME = 200
 MAX_KEPT_FILE = 1 << 20
@@ -345,15 +352,39 @@ def plan(stock: dict[str, Any]) -> Plan:
     )
 
 
+def is_shallow(value: Any, limit: int = MAX_DEPTH) -> bool:
+    """Whether JSON is nested no deeper than a limit. It is looked at without recursion, since a value that is nested
+    deeply enough is one that Python cannot be asked to read or write again."""
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if not isinstance(item, (dict, list)):
+            continue
+        if depth > limit:
+            return False
+        children = item.values() if isinstance(item, dict) else item
+        stack.extend((child, depth + 1) for child in children if isinstance(child, (dict, list)))
+
+    return True
+
+
 def valid_result(value: Any) -> bool:
-    """Whether what a run wrote of itself is a result, in the shape the runner writes. It is written by the same
-    process as the tutorial, and so is not trusted to be anything."""
+    """Whether what a run wrote of itself is a result, in the shape the runner writes, and no bigger than the runner
+    keeps. It is written by the same process as the tutorial, and so is not trusted to be anything."""
     if not matches(RESULT, value) or value["schema"] != 1 or value["kind"] not in ("script", "notebook"):
+        return False
+    if (
+        len(value["calls"]) > MAX_RESULT_CALLS
+        or len(value["files"]) > MAX_RESULT_FILES
+        or len(value["cells"]) > MAX_RESULT_CELLS
+    ):
         return False
     values = [call["args"] for call in value["calls"]]
 
-    return all(matches(VALUE, one) for args in values for one in args.values()) and all(
-        call["result"] is None or matches(VALUE, call["result"]) for call in value["calls"]
+    return (
+        all(matches(VALUE, one) for args in values for one in args.values())
+        and all(call["result"] is None or matches(VALUE, call["result"]) for call in value["calls"])
+        and is_shallow(value)
     )
 
 
@@ -362,10 +393,12 @@ def is_detail(value: Any) -> bool:
     return (
         matches(DETAIL, value)
         and value["schema"] == SCHEMA
+        and ITEM_ID.fullmatch(value["id"]) is not None
         and value["status"] in STATUSES
         and (value["failure"] is None or value["failure"]["kind"] in FAILURE_KINDS)
         and all(call["result"] is None or matches(VALUE, call["result"]) for call in value["calls"])
         and all(matches(VALUE, one) for call in value["calls"] for one in call["args"].values())
+        and is_shallow(value)
     )
 
 
@@ -499,7 +532,8 @@ def remove_tree(folder: Path) -> None:
 
 
 def folder_size(folder: Path) -> int:
-    """How many bytes are in a folder, counting each file once and following no link."""
+    """How many bytes are in a folder, following no link. A file with more than one name is counted for each, which
+    errs on the side of stopping a run early."""
     total = 0
     stack = [folder]
     while stack:
@@ -588,7 +622,7 @@ def read_result(folder: Path) -> dict[str, Any] | None:
         if not is_real_folder(where) or not stat.S_ISREG(status.st_mode) or status.st_size > MAX_RESULT_BYTES:
             return None
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
 
     return value if valid_result(value) else None

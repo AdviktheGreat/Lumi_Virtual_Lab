@@ -15,7 +15,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from virtual_lab.paperagents.reference import is_detail
+from virtual_lab.paperagents.reference import ITEM_ID, is_detail
 from virtual_lab.paperagents.repository import COMMIT
 from virtual_lab.paperagents.stock import matches
 from virtual_lab.server.workspace import read_json
@@ -90,7 +90,7 @@ def is_record(value: Any) -> bool:
         and COMMIT.fullmatch(value["commit"]) is not None
         and value["image_id"].startswith("sha256:")
         and len({tutorial["id"] for tutorial in value["tutorials"]}) == len(value["tutorials"])
-        and all(tutorial["id"] == Path(tutorial["id"]).name for tutorial in value["tutorials"])
+        and all(ITEM_ID.fullmatch(tutorial["id"]) is not None for tutorial in value["tutorials"])
     )
 
 

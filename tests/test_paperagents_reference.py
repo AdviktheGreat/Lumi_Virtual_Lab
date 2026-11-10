@@ -408,6 +408,35 @@ class TestShapes:
         bad["result"] = {"type": 3}
         assert not ref.valid_result(result_of(calls=[bad]))
 
+    def test_a_result_with_more_than_the_runner_keeps_is_not_one(self) -> None:
+        calls = [call_of("f", {}, 1, number) for number in range(ref.MAX_RESULT_CALLS + 1)]
+        assert ref.valid_result(result_of(calls=calls[:-1])) and not ref.valid_result(result_of(calls=calls))
+        files = [kept_file(f"f{number}.txt", b"") for number in range(ref.MAX_RESULT_FILES + 1)]
+        assert ref.valid_result(result_of(files=files[:-1])) and not ref.valid_result(result_of(files=files))
+        cell = {"index": 0, "ok": True, "seconds": 0.1, "output": "", "result": None, "skipped": [], "error": None}
+        cells = [{**cell, "index": number} for number in range(ref.MAX_RESULT_CELLS + 1)]
+        assert ref.valid_result(result_of(cells=cells[:-1])) and not ref.valid_result(result_of(cells=cells))
+
+    def test_a_value_nested_deeper_than_the_runner_ever_makes_is_not_one_and_is_not_recursed_into(self) -> None:
+        def nested(levels: int) -> list[Any]:
+            value: list[Any] = []
+            for _ in range(levels):
+                value = [value]
+
+            return value
+
+        assert ref.valid_result(result_of(calls=[call_of("f", {}, nested(8))]))
+        assert not ref.valid_result(result_of(calls=[call_of("f", {}, nested(ref.MAX_DEPTH))]))
+        assert not ref.valid_result(result_of(calls=[call_of("f", {}, nested(100_000))]))
+        assert ref.is_shallow(5) and ref.is_shallow({"a": [1, {"b": []}]}, 4)
+        assert not ref.is_shallow({"a": [1, {"b": []}]}, 3)
+
+    def test_a_tutorial_is_kept_only_under_an_id_made_of_its_place_and_its_name(self) -> None:
+        assert ref.ITEM_ID.fullmatch(ref.slug(1, "examples/Quick Start (v2).py"))
+        assert ref.ITEM_ID.fullmatch(ref.slug(12, "***"))
+        for bad in ("", "..", "../x", "01-A", "a-01", "01/x", "01-x\n"):
+            assert ref.ITEM_ID.fullmatch(bad) is None, bad
+
     def test_nothing_that_is_not_a_dictionary_is_a_result(self) -> None:
         for value in (None, [], "text", 3):
             assert not ref.valid_result(value)
@@ -924,7 +953,12 @@ class TestRunning:
             (folder / ref.RESULT_FOLDER / "result.json").write_text("{not json")
             return "done", 0, ""
 
-        for play in (link, big, garbage):
+        def deep(folder: Path) -> tuple[str, int | None, str]:
+            (folder / ref.RESULT_FOLDER).mkdir()
+            (folder / ref.RESULT_FOLDER / "result.json").write_text("[" * 200_000 + "]" * 200_000)
+            return "done", 0, ""
+
+        for play in (link, big, garbage, deep):
             detail = self.runner(tmp_path, [play]).tutorial(ITEM, 60).detail
             assert detail["status"] == "failed" and detail["failure"]["kind"] == "no_result"
 
