@@ -280,16 +280,18 @@ def read_module(repo: Path, relative: str) -> ast.Module | None:
         return None
 
 
-def module_files(module: str, file: str) -> list[str]:
-    """Where the code of a module may be: where the record says, and where its name leads."""
+def module_files(module: str) -> list[str]:
+    """Where the code of a module is, from its name alone. The file that a record names is not taken as well, as a
+    record is written by the tutorial's own process: a name such as os with a file of the project that happens to define
+    the same function would be a tool that calls what is not the project's."""
     base = module.replace(".", "/")
 
-    return [file, f"{base}.py", f"{base}/__init__.py", f"src/{base}.py", f"src/{base}/__init__.py"]
+    return [f"{base}.py", f"{base}/__init__.py", f"src/{base}.py", f"src/{base}/__init__.py"]
 
 
-def definition(repo: Path, module: str, file: str, function: str) -> tuple[ast.Module, ast.FunctionDef, str] | None:
+def definition(repo: Path, module: str, function: str) -> tuple[ast.Module, ast.FunctionDef, str] | None:
     """The function as the project's code defines it: its module, the definition, and the file it was found in."""
-    for relative in dict.fromkeys(module_files(module, file)):
+    for relative in module_files(module):
         tree = read_module(repo, relative)
         if tree is None:
             continue
@@ -436,7 +438,6 @@ def gather(details: Sequence[dict[str, Any]], repo: Path, most: int) -> Gathered
     for (module, function), calls in groups.items():
         name = tool_name(module, function, taken)
         taken.add(name.lower())
-        first = calls[0][1]
         refusal = refusal_of(calls)
         if refusal is not None:
             dropped.append(drop(name, module, function, refusal, len(calls)))
@@ -453,7 +454,7 @@ def gather(details: Sequence[dict[str, Any]], repo: Path, most: int) -> Gathered
                 drop(name, module, function, "no_usable_call", len(calls), [item["reason"] for item in skipped])
             )
             continue
-        found = definition(repo, module, first["file"], function)
+        found = definition(repo, module, function)
         if found is None:
             dropped.append(drop(name, module, function, "source_not_found", len(calls)))
             continue

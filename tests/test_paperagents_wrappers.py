@@ -196,6 +196,26 @@ class TestComparing:
         assert comp.differences(before, dict(before), Tolerance()) == []
         assert "shows as" in comp.differences(before, {**before, "repr": "(1, 3)"}, Tolerance())[0]
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "(" + "1, " * 200 + "1) [cut]",
+            "<pkg.Model object at 0x>",
+            "<pkg.Model that could not be shown>",
+        ],
+    )
+    def test_a_value_of_which_only_part_of_how_it_shows_was_kept_is_not_told_to_be_the_same(self, text: str) -> None:
+        before = {"type": "pkg.Model", "plain": False, "repr": text}
+        found = comp.differences(before, dict(before), Tolerance())
+        assert len(found) == 1 and "not all of it" in found[0]
+        whole = {**before, "repr": "Model(1)"}
+        assert comp.differences(whole, dict(whole), Tolerance()) == []
+        assert comp.differences(whole, dict(before), Tolerance()) != []
+
+    def test_an_array_that_was_not_hashed_and_has_no_values_is_not_told_to_be_the_same(self) -> None:
+        before = self.array(shape=[100_000_000], dtype="float64")
+        assert len(comp.differences(before, dict(before), Tolerance())) == 1
+
     def test_a_value_of_another_type_or_not_plain_where_it_was_is_not_the_same(self) -> None:
         assert comp.differences(plain([1]), plain((1,)), Tolerance())[0].startswith("Its type is tuple")
         assert comp.differences(plain([1]), {"type": "list", "plain": False, "repr": "[1]"}, Tolerance()) != []
@@ -378,6 +398,26 @@ class TestGathering:
         found = wrap.gather([detail_of(calls)], repo, 10)
         assert found.candidates == []
         assert {item["kind"] for item in found.dropped} == {"source_not_found"}
+
+    def test_a_module_that_is_not_the_projects_is_not_made_a_tool_of_by_a_file_that_the_record_names(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tree(
+            tmp_path / "repo", {"fixture/__init__.py": "", "evil.py": "def system(command):\n    return command\n"}
+        )
+        calls = [
+            call_of("system", {"command": "ls"}, "x", 1, module="os", file="evil.py"),
+            call_of("system", {"command": "ls"}, "x", 2, module="fixture.evil", file="evil.py"),
+        ]
+        found = wrap.gather([detail_of(calls)], repo, 10)
+        assert found.candidates == []
+        assert {item["kind"] for item in found.dropped} == {"source_not_found"}
+
+    def test_a_module_under_src_is_found_by_its_name(self, tmp_path: Path) -> None:
+        repo = tree(tmp_path / "repo", {"src/lib/__init__.py": "", "src/lib/core.py": "def one(x):\n    return x\n"})
+        call = call_of("one", {"x": 1}, 1, module="lib.core", file="src/lib/core.py")
+        (candidate,) = wrap.gather([detail_of([call])], repo, 10).candidates
+        assert candidate.file == "src/lib/core.py"
 
     def test_code_that_is_not_python_or_is_too_big_is_not_read(self, tmp_path: Path) -> None:
         repo = tree(tmp_path / "repo", {"fixture/__init__.py": "", "fixture/bad.py": "def (:\n"})

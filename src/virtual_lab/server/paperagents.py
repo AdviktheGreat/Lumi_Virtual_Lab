@@ -678,7 +678,12 @@ class PaperAgents:
                     agent = {
                         **agent,
                         "repo": {"url": url} if url is not None else None,
-                        "steps": {**steps_of(agent), "repository": "pending", "environment": "pending"},
+                        "steps": {
+                            **steps_of(agent),
+                            "repository": "pending",
+                            "environment": "pending",
+                            "tools": "pending",
+                        },
                     }
             self.save(directory, agent)
 
@@ -1161,7 +1166,7 @@ class PaperAgents:
                 agent = {
                     **agent,
                     "repo": {"url": url},
-                    "steps": {**steps_of(agent), "repository": "pending", "environment": "pending"},
+                    "steps": {**steps_of(agent), "repository": "pending", "environment": "pending", "tools": "pending"},
                 }
                 self.save(directory, agent)
             elif kept_repository.load(directory, url) is not None:
@@ -1225,7 +1230,12 @@ class PaperAgents:
                     {
                         **agent,
                         "repo": {"url": url, "ref": cloned.ref, "commit": cloned.commit},
-                        "steps": {**steps_of(agent), "repository": "done", "environment": "pending"},
+                        "steps": {
+                            **steps_of(agent),
+                            "repository": "done",
+                            "environment": "pending",
+                            "tools": "pending",
+                        },
                     },
                 )
         checked = self.repository(agent_id)["preflight"]
@@ -1266,7 +1276,7 @@ class PaperAgents:
                 {
                     **agent,
                     "repo": {"url": code["url"]} if code is not None else None,
-                    "steps": {**steps_of(agent), "repository": "pending", "environment": "pending"},
+                    "steps": {**steps_of(agent), "repository": "pending", "environment": "pending", "tools": "pending"},
                 },
             )
 
@@ -1564,8 +1574,10 @@ class PaperAgents:
             directory, agent = self.lookup(agent_id)
             self.check_idle(agent_id)
             self.forget_environment(directory)
-            if steps_of(agent)["environment"] != "pending":
-                self.save(directory, {**agent, "steps": {**steps_of(agent), "environment": "pending"}})
+            # The reference run and the tools went with the image they were made in
+            steps = {**steps_of(agent), "environment": "pending", "tools": "pending"}
+            if steps_of(agent) != steps:
+                self.save(directory, {**agent, "steps": steps})
 
     def environment_lock(self, agent_id: str) -> dict[str, str]:
         """The exact versions that were installed in an agent's environment, as the text of a file.

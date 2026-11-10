@@ -623,9 +623,12 @@ class TestWhatTheyBelongTo:
         make(agents, referenced)
         directory = directory_of(workspace, referenced)
 
+        assert tools_step(agents, referenced) == "done"
+
         agents.clear_environment(referenced)
 
         assert kept_tools.stored(directory) is None and not kept_tools.tools_path(directory).exists()
+        assert tools_step(agents, referenced) == "pending"
         reference.build(agents, referenced)
         assert agents.tools(referenced)["kept"] is None
 
@@ -635,10 +638,23 @@ class TestWhatTheyBelongTo:
         make(agents, referenced)
         directory = directory_of(workspace, referenced)
 
+        assert tools_step(agents, referenced) == "done"
+
         agents.clear_repository(referenced)
 
         assert kept_tools.stored(directory) is None and not kept_tools.tools_path(directory).exists()
+        assert tools_step(agents, referenced) == "pending"
         assert agents.tools(referenced)["reference"] is None
+
+    def test_taking_the_address_of_the_code_away_takes_the_tools_and_their_step_away(
+        self, agents: PaperAgents, referenced: str, workspace: Workspace
+    ) -> None:
+        make(agents, referenced)
+        directory = directory_of(workspace, referenced)
+
+        agents.change(referenced, repo="")
+
+        assert kept_tools.stored(directory) is None and tools_step(agents, referenced) == "pending"
 
     def test_deleting_the_agent_takes_all_of_it_away(
         self, agents: PaperAgents, referenced: str, docker: Docker, workspace: Workspace

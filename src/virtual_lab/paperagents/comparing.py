@@ -22,6 +22,11 @@ RELATIVE_TOLERANCE = 1e-6
 ABSOLUTE_TOLERANCE = 1e-9
 MAX_DIFFERENCES = 5
 SHOWN_CHARS = 80
+# What a record leaves in the look of a value that it could not keep whole: the end of one that was cut, the address
+# that was taken out of an object's default look, and the end of what is said of a value that would not show
+CUT = " [cut]"
+ADDRESS = " at 0x"
+UNSHOWN = " that could not be shown>"
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,13 @@ class Tolerance:
 
     def to_dict(self) -> dict[str, float]:
         return {"relative": self.relative, "absolute": self.absolute}
+
+
+def is_whole(text: Any) -> bool:
+    """Whether how a value showed itself is all that there is to tell it by: not cut short, not the look that an object
+    has by default, which is only its type and where it is in memory, and not what is said of a value that would not
+    show."""
+    return isinstance(text, str) and not text.endswith(CUT) and ADDRESS not in text and not text.endswith(UNSHOWN)
 
 
 def shown(value: Any, limit: int = SHOWN_CHARS) -> str:
@@ -89,7 +101,9 @@ def differences(expected: dict[str, Any], got: dict[str, Any], tolerance: Tolera
     Two plain results are compared as they are. Otherwise what is compared is what the record kept of them: what they
     are, their shape and kind of number, and their values if those were kept, within the tolerance. Where only a hash
     of the values was kept, the hash has to be the same, as there is nothing to hold to a tolerance, and where only how
-    a value shows itself was kept, that has to be.
+    a value shows itself was kept, that has to be, if it is all of how it shows itself: one that was cut, or is only an
+    object's type and place in memory, or is of an array or a table that was too big to be hashed, which shows itself in
+    summary, cannot be told from another that looks the same.
     """
     found: list[str] = []
     if expected["type"] != got["type"]:
@@ -109,6 +123,8 @@ def differences(expected: dict[str, Any], got: dict[str, Any], tolerance: Tolera
     elif "sha256" in expected or "sha256" in got:
         if expected.get("sha256") != got.get("sha256"):
             found.append("The hash of the values is not the same, and only a hash was kept, so there was no tolerance")
+    elif "shape" in expected or "shape" in got or not (is_whole(expected.get("repr")) and is_whole(got.get("repr"))):
+        found.append("Only how it shows itself was kept, and not all of it, so it cannot be told to be what it was")
     elif expected.get("repr") != got.get("repr"):
         found.append(f"It shows as {shown(got.get('repr'))} where it showed as {shown(expected.get('repr'))}")
 
