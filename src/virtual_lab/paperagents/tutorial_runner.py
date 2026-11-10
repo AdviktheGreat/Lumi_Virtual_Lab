@@ -210,6 +210,17 @@ def relative(path, copy):
     return path
 
 
+def here(copy):
+    """The folder the process is in, for the record: from the copy of the project if it is in it, and as it is if not,
+    which is where a call has to be made from to find the files that it was given by name."""
+    try:
+        path = os.getcwd()
+    except OSError:
+        return ""
+
+    return "." if path == copy else relative(path, copy)
+
+
 class Recorder(object):
     """Notes the calls that a tutorial makes to the project's own functions: those made from outside the project's code,
     and not those that its functions make to each other. Each is noted with what went in when it was made, and what came
@@ -275,6 +286,7 @@ class Recorder(object):
                 "file": cut(relative(code.co_filename, self.copy), 300),
                 "line": code.co_firstlineno,
                 "args": args,
+                "cwd": cut(here(self.copy), 300),
                 "variadic": bool(code.co_flags & (inspect.CO_VARARGS | inspect.CO_VARKEYWORDS)),
                 "result": None,
                 "returned": False,

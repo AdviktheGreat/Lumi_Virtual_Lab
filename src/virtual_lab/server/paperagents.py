@@ -32,6 +32,13 @@ container of its own with no network, and what each did is kept in checks/ as th
 the project's own functions, with what went in and came out, and the files it wrote. Each is run more than once, to see
 whether the runs agree. The reference run belongs to the environment it was run in: when that goes, it goes. It shows
 that the tutorials ran here and what they gave, and does not show that what they gave is right.
+
+Tools are made, when the person asks, from the calls that the reference run kept. Each function that a tutorial called
+is written as a wrapper that calls the paper's own function and does nothing else, and is called again, in the same
+kind of container, with the arguments that the tutorial passed, each call in a process of its own on a copy of its own
+of the code. A tool that gives again what the tutorial got is of tier A, and is kept with each call that was made as the
+evidence. One that does not is dropped, with why, and is not changed to fit. Tier A says that a tool gives again what
+the tutorials got, and does not say that what it gives is right.
 """
 
 import hashlib
@@ -67,6 +74,7 @@ from virtual_lab.paperagents import preflight as checking
 from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import repository as cloning
 from virtual_lab.paperagents import stock as stocking
+from virtual_lab.paperagents import toolmaking
 from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_structure
 from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
@@ -76,6 +84,8 @@ from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_reference as kept_reference
 from virtual_lab.server import paperagent_repository as kept_repository
+from virtual_lab.server import paperagent_tools as kept_tools
+from virtual_lab.server import paperagent_toolwork as toolwork
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
 from virtual_lab.server.own import Own
@@ -114,6 +124,8 @@ ENVIRONMENT_JOB = "paperagent-environment"
 DATA_JOB = "paperagent-data"
 # The job that runs the tutorials of an agent's code, which is not done to an agent while another job is
 REFERENCE_JOB = "paperagent-reference"
+# The job that makes tools from what the tutorials did, which is not done to an agent while another job is
+TOOLS_JOB = "paperagent-tools"
 # What is left free on the disk when data is fetched, and the longest that a note of which data stands in for what is
 DISK_RESERVE_BYTES = 1 << 30
 MAX_DATASET_CHARS = 200
@@ -517,7 +529,7 @@ class PaperAgents:
             steps["environment"] = "running"
         if self.downloading(agent_id) is not None:
             steps["data"] = "running"
-        if self.reference_job(agent_id) is not None:
+        if self.reference_job(agent_id) is not None or self.tools_job(agent_id) is not None:
             steps["tools"] = "running"
 
         return {
@@ -549,11 +561,15 @@ class PaperAgents:
         """The job that is running an agent's tutorials, if one is."""
         return next((job for job in self.jobs.active(REFERENCE_JOB) if job.subject == agent_id), None)
 
+    def tools_job(self, agent_id: str) -> Job | None:
+        """The job that is making an agent's tools, if one is."""
+        return next((job for job in self.jobs.active(TOOLS_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
-            fetched, or its tutorials run, which what is done to them must wait for.
+            fetched, its tutorials run, or its tools made, which what is done to them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -561,6 +577,7 @@ class PaperAgents:
             or self.making(agent_id)
             or self.downloading(agent_id)
             or self.reference_job(agent_id)
+            or self.tools_job(agent_id)
         )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
@@ -1288,7 +1305,8 @@ class PaperAgents:
                 "something may be using it. Start Docker, stop what uses the image, and try again.",
             )
         kept_environment.forget(directory)
-        # What was run in the image is of no use without it
+        # What was run in the image is of no use without it, nor are the tools made from that
+        kept_tools.forget(directory)
         kept_reference.forget(directory)
 
     def environment(self, agent_id: str, python: Any = None, system_packages: Any = None) -> dict[str, Any]:
@@ -1694,23 +1712,7 @@ class PaperAgents:
             raise ApiError(422, "docker_missing", problem or "Docker is not running, and running tutorials takes it")
 
         with self._lock:
-            directory, agent = self.lookup(agent_id)
-            code = agent.get("repo")
-            intake = kept_repository.load(directory, code["url"] if code is not None else None)
-            if intake is None:
-                raise ApiError(422, "no_code", "Fetch the code first")
-            built = kept_environment.load(directory, intake["commit"])
-            if built is None:
-                raise ApiError(422, "no_environment", "Build the environment first, as the tutorials run in it")
-            self.check_idle(agent_id)
-            image_id = built["image"]["id"]
-            if building.image_id_of(building.tag_of(agent_id, intake["commit"]), self.docker_command) != image_id:
-                raise ApiError(
-                    409,
-                    "image_missing",
-                    "The image of the environment is not in Docker any more. Remove the environment and build it "
-                    "again.",
-                )
+            directory, agent, intake, built, image_id = self.image_for_runs(agent_id, "the tutorials run")
             kept = kept_reference.load(directory, intake["commit"], image_id)
             if kept is not None and kept["complete"]:
                 raise ApiError(409, "done", "The tutorials have been run. Remove that to run them again.")
@@ -1732,6 +1734,35 @@ class PaperAgents:
                 raise ApiError(
                     409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
                 ) from error
+
+    def image_for_runs(
+        self, agent_id: str, why: str
+    ) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any], str]:
+        """What there is of an agent that is run in its environment: where it is kept, what it is, what was found of
+        its code, what was built of it, and the id of the image, which is in Docker. It is called with the lock held.
+
+        :param why: What is run in it, as the reason that it must be built.
+        :raises ApiError: If the code has not been fetched or its environment not built, the agent's paper, code,
+            environment, data, tutorials, or tools are being worked on, or the image is not in Docker.
+        """
+        directory, agent = self.lookup(agent_id)
+        code = agent.get("repo")
+        intake = kept_repository.load(directory, code["url"] if code is not None else None)
+        if intake is None:
+            raise ApiError(422, "no_code", "Fetch the code first")
+        built = kept_environment.load(directory, intake["commit"])
+        if built is None:
+            raise ApiError(422, "no_environment", f"Build the environment first, as {why} in it")
+        self.check_idle(agent_id)
+        image_id = built["image"]["id"]
+        if building.image_id_of(building.tag_of(agent_id, intake["commit"]), self.docker_command) != image_id:
+            raise ApiError(
+                409,
+                "image_missing",
+                "The image of the environment is not in Docker any more. Remove the environment and build it again.",
+            )
+
+        return directory, agent, intake, built, image_id
 
     def referrer(
         self,
@@ -1775,6 +1806,9 @@ class PaperAgents:
         job.update("Running the tutorials")
         # What an earlier run left of itself, which only a server that was stopped hard would
         referencing.remove_runs(agent_id, self.docker_command)
+        # Tools are made from a reference run, and are of no use once it is taken away
+        kept_tools.forget(directory)
+        self.settle_tools(agent_id, "pending")
         account = {
             "schema": kept_reference.SCHEMA,
             "commit": commit,
@@ -1826,30 +1860,222 @@ class PaperAgents:
         )
 
     def settle_reference(self, agent_id: str, failed: bool) -> None:
-        """Says how far the step of making tools has got: failed if the running of the tutorials failed, and pending
-        if it was done or only stopped, as tools are not made from what it kept yet."""
-        with self._lock:
-            try:
-                directory, agent = self.lookup(agent_id)
-            except ApiError:
-                return
-            status = steps_of(agent)["tools"]
-            wanted = "failed" if failed else "pending"
-            if status not in ("done", wanted):
-                self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": wanted}})
+        """Says how far the step of making tools has got when the running of the tutorials ends: failed if it failed,
+        and pending if it was done or only stopped, as tools are made when the person asks."""
+        self.settle_tools(agent_id, "failed" if failed else "pending")
 
     def clear_reference(self, agent_id: str) -> None:
         """Takes away what was kept of the running of an agent's tutorials, so that they can be run again.
 
         :raises ApiError: If there is no agent with this id, or its paper is being read, its code fetched, its
-            environment built, its data fetched, or its tutorials run.
+            environment built, its data fetched, its tutorials run, or its tools made. The tools that were made from
+            them go too.
         """
         with self._lock:
             directory, agent = self.lookup(agent_id)
             self.check_idle(agent_id)
             referencing.remove_runs(agent_id, self.docker_command)
+            # The tools were made from what is taken away
+            kept_tools.forget(directory)
             kept_reference.forget(directory)
-            if steps_of(agent)["tools"] == "failed":
+            if steps_of(agent)["tools"] in ("done", "failed"):
+                self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": "pending"}})
+
+    # The tools, made from what the tutorials did
+
+    def kept_tools_of(
+        self, directory: Path, agent: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """The reference run that is kept, if it is complete, and the account of the tools that were made from it."""
+        code = agent.get("repo")
+        intake = kept_repository.load(directory, code["url"] if code is not None else None)
+        commit = intake["commit"] if intake is not None else None
+        built = kept_environment.load(directory, commit)
+        image_id = built["image"]["id"] if built is not None else None
+        reference = kept_reference.load(directory, commit, image_id)
+        if reference is None or not reference["complete"]:
+            return None, None
+
+        return reference, kept_tools.load(directory, commit, image_id, reference)
+
+    def tools(self, agent_id: str) -> dict[str, Any]:
+        """What there is of the making of an agent's tools: what the tutorials called, which of it would be made into
+        tools and which would not, with why, what was kept of the last making, and what is allowed.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        usable, problem = building.ready(self.docker_command)
+        reference, kept = self.kept_tools_of(directory, agent)
+        preview = None
+        if reference is not None:
+            gathered = toolwork.gather_kept(
+                directory, reference, kept_repository.repo_path(directory), toolmaking.DEFAULT_TOOLS
+            )
+            preview = toolwork.preview_of(gathered)
+        job = self.tools_job(agent_id)
+
+        return {
+            "id": agent_id,
+            "docker": {"ready": usable, "message": problem},
+            "reference": (
+                {
+                    "complete": True,
+                    "tutorials": len(reference["tutorials"]),
+                    "finished_at": reference["finished_at"],
+                    "data": reference["data"] is not None,
+                }
+                if reference is not None
+                else None
+            ),
+            "preview": preview,
+            "kept": kept,
+            "job": job.snapshot() if job is not None else None,
+            "meaning": toolmaking.MEANING,
+            "limits": toolwork.limits_of(),
+        }
+
+    def tool(self, agent_id: str, name: str) -> dict[str, Any]:
+        """One tool of an agent: its wrapper's code, its signature, and the evidence for its tier, which is each call
+        that was made again and what it gave.
+
+        :raises ApiError: If there is no agent with this id, or it has no tool of that name that is as it was made.
+        """
+        directory, agent = self.lookup(agent_id)
+        _, kept = self.kept_tools_of(directory, agent)
+        tool = (
+            kept_tools.load_tool(directory, name)
+            if kept is not None and any(one["name"] == name for one in kept["tools"])
+            else None
+        )
+        if tool is None:
+            raise not_found("tool of that PaperAgent")
+
+        return tool
+
+    def start_tools(
+        self,
+        agent_id: str,
+        minutes: Any = None,
+        total_minutes: Any = None,
+        tools: Any = None,
+        repeats: Any = None,
+        repairs: Any = None,
+        gigabytes: Any = None,
+    ) -> Job:
+        """Starts making tools from the calls that the tutorials made: each function that was called is written as a
+        wrapper of the paper's own function, and called again in the environment, in a container that has none of this
+        machine in it and no network, with the arguments that the tutorial passed. A tool that gives again what the
+        tutorial got is kept; one that does not is dropped, with why.
+
+        :param minutes: The most time all of the calls of one tool may take.
+        :param total_minutes: The most time all of the tools may take together.
+        :param tools: The most tools to make.
+        :param repeats: How many times each call is made again, to see that it gives the same each time.
+        :param repairs: How many times a wrapper that does not pass the checks of one is rewritten.
+        :param gigabytes: The most that one call may write.
+        :raises ApiError: If there is no agent with this id, what is given is not fit, Docker is not running, the code
+            has not been fetched or its environment not built or its image is not in Docker, the tutorials have not
+            been run to their end, none of the functions they called can be a tool, the tools have been made, or the
+            agent's paper, code, environment, data, tutorials, or tools are being worked on.
+        """
+        self.lookup(agent_id)
+        try:
+            limits = toolmaking.check_limits(minutes, total_minutes, tools, repeats, repairs, gigabytes)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        usable, problem = building.ready(self.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and making tools takes it")
+
+        with self._lock:
+            directory, agent, intake, built, image_id = self.image_for_runs(agent_id, "the tools are called")
+            reference, kept = self.kept_tools_of(directory, agent)
+            if reference is None:
+                raise ApiError(422, "no_reference", "Run the tutorials first, as tools are made from what they did")
+            if kept is not None and kept["complete"]:
+                raise ApiError(409, "done", "The tools have been made. Remove them to make them again.")
+            gathered = toolwork.gather_kept(directory, reference, kept_repository.repo_path(directory), limits.tools)
+            if not gathered.candidates:
+                raise ApiError(
+                    422, "no_tools", f"No tool can be made of what the tutorials did. {toolwork.reasons_of(gathered)}"
+                )
+            folder, _ = self.data_to_give(directory) if reference["data"] is not None else (None, None)
+            try:
+                return self.jobs.start(
+                    TOOLS_JOB,
+                    agent_id,
+                    f"Making the tools: {agent['title']}",
+                    self.toolmaker(agent_id, intake["commit"], image_id, reference, limits, gathered, folder),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def toolmaker(
+        self,
+        agent_id: str,
+        commit: str,
+        image_id: str,
+        reference: dict[str, Any],
+        limits: toolmaking.ToolLimits,
+        gathered: Any,
+        folder: Path | None,
+    ) -> Callable[[Job], str | None]:
+        """What a job does to make the tools: makes them one after another, and keeps each as it is made, so that a job
+        that is stopped keeps what it had made."""
+
+        def work(job: Job) -> str | None:
+            status = "failed"
+            try:
+                summary, count = toolwork.make_all(
+                    job,
+                    self.workspace.paperagents_dir / agent_id,
+                    self.workspace.root,
+                    agent_id,
+                    commit,
+                    image_id,
+                    reference,
+                    limits,
+                    gathered,
+                    folder,
+                    self.docker_command,
+                )
+                status = "done" if count else "failed"
+                return summary
+            except StoppedError:
+                status = "pending"
+                raise
+            finally:
+                self.settle_tools(agent_id, status)
+
+        return work
+
+    def settle_tools(self, agent_id: str, status: str) -> None:
+        """Says how far the step of making tools has got: done if tools were made, failed if the making failed or no
+        tool held, and pending if it was stopped or the tools were taken away."""
+        with self._lock:
+            try:
+                directory, agent = self.lookup(agent_id)
+            except ApiError:
+                return
+            if steps_of(agent)["tools"] != status:
+                self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": status}})
+
+    def clear_tools(self, agent_id: str) -> None:
+        """Takes away the tools that were made, so that they can be made again. What the tutorials did is kept.
+
+        :raises ApiError: If there is no agent with this id, or its paper is being read, its code fetched, its
+            environment built, its data fetched, its tutorials run, or its tools made.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            referencing.remove_runs(agent_id, self.docker_command)
+            kept_tools.forget(directory)
+            if steps_of(agent)["tools"] in ("done", "failed"):
                 self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": "pending"}})
 
     # The data that the paper used

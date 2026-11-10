@@ -130,6 +130,7 @@ CALL = {
     "file": str,
     "line": int,
     "args": dict,
+    "cwd": str,
     "variadic": bool,
     "result": (VALUE, None),
     "returned": bool,
@@ -705,6 +706,10 @@ class Runner:
         self.label = label
         self.cpus = building.cpus_for(self.docker)
 
+    def argv(self, item: Item) -> list[str]:
+        """What is run in the container for an item: the runner, told what to run."""
+        return ["python", f"{SANDBOX_WORK_DIR}/{RUNNER_AT}", item.kind, item.path]
+
     def command(self, folder: Path, item: Item, seconds: float, container: str) -> tuple[str, ...]:
         """The docker command that runs a tutorial: everything that the executor of this lab gives code that it runs,
         a container made for a run, and the runner told when to end itself."""
@@ -726,7 +731,7 @@ class Runner:
         )
         arguments = executor.build_command(
             directory=folder.resolve(),
-            command=["python", f"{SANDBOX_WORK_DIR}/{RUNNER_AT}", item.kind, item.path],
+            command=self.argv(item),
             container_name=container,
             mounts=[(self.data, DATA_PATH)] if self.data is not None else [],
         )
