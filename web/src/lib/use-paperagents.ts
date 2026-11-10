@@ -10,6 +10,7 @@ import type {
   PaperAgentReference,
   PaperAgentRepository,
   PaperAgentsList,
+  PaperAgentTools,
 } from "./types";
 import { useLooked, type Looked } from "./use-looked";
 
@@ -62,6 +63,14 @@ export function usePaperAgentData(id: string, report: (error: unknown) => void, 
 // the data is changed, which is what they are run with, and as they are run
 export function usePaperAgentReference(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentReference> {
   const look = useCallback(() => api.paperAgentReference(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+// What there is of the making of an agent's tools, looked at again when it may have changed: as the tutorials are run or taken away,
+// which is what the tools are made from, and as the tools are made
+export function usePaperAgentTools(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentTools> {
+  const look = useCallback(() => api.paperAgentTools(id), [id]);
 
   return useLooked(look, report, again);
 }

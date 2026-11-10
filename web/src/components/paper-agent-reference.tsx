@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { Play, Trash2 } from "lucide-react";
 import { JobOutput } from "@/components/job-output";
 import { ProblemNotice } from "@/components/messages";
+import { Printed } from "@/components/printed";
 import { useServer } from "@/components/server-provider";
 import { Aside, describedBy, Field } from "@/components/settings-fields";
 import {
@@ -49,20 +50,6 @@ interface Shared {
   reference: PaperAgentReference;
   // Whether anything is being done to the agent, which what is done to its tutorials waits for
   busy: boolean;
-}
-
-// A block of text that is long, which is scrolled and can be reached with the keyboard
-function Printed({ label, text }: { label: string; text: string }) {
-  return (
-    <div
-      role="region"
-      aria-label={label}
-      tabIndex={0}
-      className="max-h-56 overflow-auto rounded-md bg-muted/60 p-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-    >
-      <pre className="whitespace-pre-wrap break-words font-mono text-xs">{text}</pre>
-    </div>
-  );
 }
 
 // The tutorials that would be run, and those that would not, with why

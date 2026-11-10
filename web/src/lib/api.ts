@@ -47,6 +47,8 @@ import type {
   PaperAgentReference,
   PaperAgentReferenceOptions,
   PaperAgentRepository,
+  PaperAgentTools,
+  PaperAgentToolsOptions,
   PaperAgentsList,
   PaperFunction,
   PaperFunctionsOptions,
@@ -58,6 +60,7 @@ import type {
   SettingsChange,
   SetupStatus,
   ToolInfo,
+  ToolDetail,
   TutorialDetail,
 } from "./types";
 
@@ -554,6 +557,15 @@ export const api = {
       undefined,
       signal,
     ),
+  // The same of making tools from the calls that the tutorials made: what would be made, making them, which goes on as a job, taking
+  // them away, and what one of them is
+  paperAgentTools: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentTools>("GET", `/paperagents/${encodeURIComponent(id)}/tools`, undefined, signal),
+  makePaperAgentTools: (id: string, options: PaperAgentToolsOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/tools`, options),
+  clearPaperAgentTools: (id: string) => request<PaperAgentTools>("DELETE", `/paperagents/${encodeURIComponent(id)}/tools`),
+  paperAgentTool: (id: string, name: string, signal?: AbortSignal) =>
+    request<ToolDetail>("GET", `/paperagents/${encodeURIComponent(id)}/tools/${encodeURIComponent(name)}`, undefined, signal),
   paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
     request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,

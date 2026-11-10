@@ -33,6 +33,7 @@ import {
   lastEnvironmentJob,
   lastReadingJob,
   lastReferenceJob,
+  lastToolsJob,
   lastRepositoryJob,
   orderedChecks,
   paperFile,
@@ -48,6 +49,7 @@ import {
   stockRows,
   STOCK_ITEMS_SHOWN,
   titleProblem,
+  toolsJob,
   type AgentDraft,
 } from "./paperagents";
 import type { Job, PaperAgent, PaperAgentReading, PaperAgentRepository, Preflight, ReadAnchor, RepositoryStock } from "./types";
@@ -765,5 +767,31 @@ describe("the data of a project", () => {
     expect(said).toContain("accessions GSE1, GSE2, GSE3");
     expect(said).not.toContain("GSE4");
     expect(describeData(stock())).toBe("Nothing says where it is");
+  });
+});
+
+describe("the job that makes the tools of an agent", () => {
+  const making = (changes: Partial<Job> = {}) => job({ id: "t1", kind: "paperagent-tools", ...changes });
+
+  it("is the one at work on that agent, and not the one that runs its tutorials or another agent's", () => {
+    const jobs = [job({ kind: "paperagent-reference" }), making({ id: "other", subject: "dogs" }), making({ id: "old", state: "failed" }), making()];
+
+    expect(toolsJob(jobs, "cells")?.id).toBe("t1");
+    expect(toolsJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(toolsJob([job({ kind: "paperagent-reference" })], "cells")).toBeUndefined();
+  });
+
+  it("is, when none is at work, the latest that is over", () => {
+    const jobs = [making({ id: "new", state: "stopped" }), making({ id: "old", state: "failed" }), job({ state: "failed" })];
+
+    expect(lastToolsJob(jobs, "cells")?.id).toBe("new");
+    expect(lastToolsJob([making()], "cells")).toBeUndefined();
+  });
+
+  it("changes the key that the page looks again by, apart from the running of the tutorials, and says nothing of another agent's", () => {
+    expect(readingKey([making()], 0, "cells")).not.toBe(readingKey([], 0, "cells"));
+    expect(readingKey([making()], 0, "cells")).not.toBe(readingKey([job({ id: "t1", kind: "paperagent-reference" })], 0, "cells"));
+    expect(readingKey([making({ subject: "dogs" })], 0, "cells")).toBe("0|");
+    expect(readingKey([making({ state: "succeeded" })], 0, "cells")).toBe("0|");
   });
 });
