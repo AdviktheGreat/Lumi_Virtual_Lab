@@ -20,6 +20,12 @@ since.
 The environment that the code runs in is built, when the person asks, from the code's own files, in a container that has
 none of this machine in it, and is kept as an image in Docker, which is the same each time it is used. It belongs to the
 commit it was built from: when the code is taken away, or its address is changed, the image goes with it.
+
+The data that the paper used is found from what the paper and its code say of where it is: the accessions and links in
+them, and what the person adds. Each is a place, with what it holds, which is looked up and shown before anything is
+fetched. Files are fetched only when the person says which, and how much may be fetched, from the few places that data
+is fetched from and no others, into the agent's data/ with where each came from and its checksum. The person's own
+data, from the Data page, can stand in for data that the paper used, which is a note of which and not a copy.
 """
 
 import hashlib
@@ -47,6 +53,8 @@ from virtual_lab.constants import (
 from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
+from virtual_lab.paperagents import data as finding
+from virtual_lab.paperagents import datahosts as hosting
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import fetch as fetching
 from virtual_lab.paperagents import preflight as checking
@@ -56,11 +64,13 @@ from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_structure
 from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
 from virtual_lab.provenance import utc_timestamp
+from virtual_lab.server import paperagent_data as kept_data
 from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
+from virtual_lab.server.own import Own
 from virtual_lab.server.papers import (
     MAX_TITLE_CHARS,
     PAPER_KINDS,
@@ -92,6 +102,21 @@ REPOSITORY_JOB = "paperagent-repository"
 MIN_MEGABYTES = 10
 # The job that builds the environment, which is not done to an agent while another job is
 ENVIRONMENT_JOB = "paperagent-environment"
+# The job that fetches data, which is not done to an agent while another job is
+DATA_JOB = "paperagent-data"
+# What is left free on the disk when data is fetched, and the longest that a note of which data stands in for what is
+DISK_RESERVE_BYTES = 1 << 30
+MAX_DATASET_CHARS = 200
+# What each kind of thing that keeps data from being listed or fetched is, as an answer
+DATA_STATUSES = {
+    "invalid": 422,
+    "unsupported": 422,
+    "refused": 422,
+    "too_big": 422,
+    "missing": 404,
+    "changed": 409,
+    "kept": 409,
+}
 
 MAX_AGENTS = 200
 MAX_URL_CHARS = 2000
@@ -471,6 +496,8 @@ class PaperAgents:
             steps["repository"] = "running"
         if self.making(agent_id) is not None:
             steps["environment"] = "running"
+        if self.downloading(agent_id) is not None:
+            steps["data"] = "running"
 
         return {
             "id": agent_id,
@@ -493,13 +520,22 @@ class PaperAgents:
         """The job that is building an agent's environment, if one is."""
         return next((job for job in self.jobs.active(ENVIRONMENT_JOB) if job.subject == agent_id), None)
 
+    def downloading(self, agent_id: str) -> Job | None:
+        """The job that is fetching an agent's data, if one is."""
+        return next((job for job in self.jobs.active(DATA_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
-        :raises ApiError: If the agent's paper is being read, its code fetched, or its environment built, which what is
-            done to them must wait for.
+        :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, or its data
+            fetched, which what is done to them must wait for.
         """
-        job = (self.running(agent_id) if reading else None) or self.cloning(agent_id) or self.making(agent_id)
+        job = (
+            (self.running(agent_id) if reading else None)
+            or self.cloning(agent_id)
+            or self.making(agent_id)
+            or self.downloading(agent_id)
+        )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
 
@@ -604,10 +640,11 @@ class PaperAgents:
             self.save(directory, agent)
 
     def delete(self, agent_id: str) -> None:
-        """Deletes an agent with the paper that was uploaded to it, and the image of its environment.
+        """Deletes an agent with the paper that was uploaded to it, the data fetched for it, and the image of its
+        environment.
 
-        :raises ApiError: If there is no agent with this id, its paper is being read, its code fetched, or its
-            environment built, or the image of its environment cannot be removed.
+        :raises ApiError: If there is no agent with this id, its paper is being read, its code fetched, its environment
+            built, or its data fetched, or the image of its environment cannot be removed.
         """
         # With the lock that starting a reading takes, so that one cannot begin in a directory that is being removed
         with self._lock:
@@ -1507,3 +1544,416 @@ class PaperAgents:
             raise not_found("build of that PaperAgent's environment")
 
         return {"lines": lines}
+
+    # The data that the paper used
+
+    def own_data(self) -> dict[str, dict[str, Any]]:
+        """The person's own data, from the Data page, by name: what it is, and whether it is there and how big."""
+        own = Own(self.workspace, self.max_upload_bytes)
+
+        return {
+            name: {key: shown[key] for key in ("name", "description", "kind", "bytes")}
+            for name, entry in self.workspace.load_own()["data"].items()
+            for shown in [own.describe_data(name, entry)]
+        }
+
+    def data(self, agent_id: str) -> dict[str, Any]:
+        """What there is of an agent's data: the datasets the paper names and the places that it and its code point to
+        for them, what has been fetched, and the person's own data that stands in for some. Nothing is fetched or asked
+        of any host to make this.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        code = agent.get("repo")
+        intake = kept_repository.load(directory, code["url"] if code is not None else None)
+        file = agent["paper"].get("file")
+        reading = kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with())
+        found = finding.find(
+            reading["card"], reading["resources"], intake["stock"]["data"] if intake is not None else None
+        )
+        record = kept_data.load(directory)
+        own = self.own_data()
+        stand_ins = {stand_in["key"]: stand_in for stand_in in record["stand_ins"]}
+        fetched = {source["key"]: len(source["files"]) for source in record["sources"]}
+        job = self.downloading(agent_id)
+
+        return {
+            "id": agent_id,
+            "read": reading["complete"],
+            "datasets": [{**dataset, "stand_in": stand_ins.get(dataset["key"])} for dataset in found["datasets"]],
+            "candidates": [
+                {**candidate, "fetched": fetched.get(candidate["key"], 0)} for candidate in found["candidates"]
+            ],
+            "stand_ins": [{**stand_in, "own_data": own.get(stand_in["own"])} for stand_in in record["stand_ins"]],
+            "own": list(own.values()),
+            "kept": {
+                **kept_data.totals(record),
+                "sources": [
+                    {
+                        **source,
+                        "files": [{**kept, "present": kept_data.present(directory, kept)} for kept in source["files"]],
+                    }
+                    for source in record["sources"]
+                ],
+            },
+            "sources": finding.approved(),
+            "job": job.snapshot() if job is not None else None,
+            "limits": {
+                "default_megabytes": finding.DEFAULT_MEGABYTES,
+                "min_megabytes": finding.MIN_MEGABYTES,
+                "max_megabytes": finding.MAX_MEGABYTES,
+                "max_kept_megabytes": finding.MAX_KEPT_MEGABYTES,
+                "max_files": finding.MAX_CHOSEN_FILES,
+            },
+        }
+
+    def list_data(self, reference: Any) -> finding.Listing:
+        """What a place has, asked of the place.
+
+        :raises ApiError: If the place is not one that data is fetched from here, cannot be asked, or has no such thing.
+        """
+        try:
+            return hosting.list_files(finding.parse_reference(reference))
+        except finding.DataError as error:
+            raise data_error(error) from error
+
+    def data_files(self, agent_id: str, reference: Any) -> dict[str, Any]:
+        """The files of a place, with how big each is, what it is licensed as, and which are fetched already. Nothing is
+        fetched of the files.
+
+        :param reference: An address, a DOI, or an accession.
+        :raises ApiError: If there is no agent with this id, or what is asked is not a place that can be listed.
+        """
+        directory, _ = self.lookup(agent_id)
+        listing = self.list_data(reference)
+        fetched = kept_data.kept_names(kept_data.load(directory), listing.reference.key)
+        shown = listing.to_dict()
+        shown["files"] = [{**file, "kept": file["name"] in fetched} for file in shown["files"]]
+
+        return shown
+
+    def download_data(
+        self, agent_id: str, reference: Any, files: Any, expected_bytes: Any, max_megabytes: Any = None
+    ) -> Job:
+        """Starts fetching files of a place that the person has chosen, which is the only way that anything is fetched.
+        The place is asked what it has again, so that what is fetched is what it says now and not what a page said, and
+        nothing is fetched unless it comes to the size the person was shown.
+
+        :param reference: An address, a DOI, or an accession of a place that data is fetched from.
+        :param files: The names of the files, as the place lists them.
+        :param expected_bytes: What the files came to when they were shown, which is what was agreed to.
+        :param max_megabytes: The most to fetch, in megabytes.
+        :raises ApiError: If there is no agent with this id, what is given is not fit, the files are not what was shown,
+            are more than the limit, are kept already, or cannot be had, or there is not the room, or the agent is
+            being worked on.
+        """
+        self.lookup(agent_id)
+        megabytes = check_count(
+            finding.DEFAULT_MEGABYTES if max_megabytes is None else max_megabytes,
+            "The most that is fetched, in megabytes,",
+            finding.MIN_MEGABYTES,
+            finding.MAX_MEGABYTES,
+        )
+        expected = check_count(
+            expected_bytes,
+            "The size of the files that were shown, in bytes,",
+            0,
+            finding.MAX_MEGABYTES * finding.MEGABYTE,
+        )
+        if not isinstance(files, list) or not all(isinstance(name, str) for name in files):
+            raise ApiError(422, "invalid", "Say which files to fetch, by their names")
+        listing = self.list_data(reference)
+
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            record = kept_data.load(directory)
+            try:
+                chosen = finding.choose(
+                    listing,
+                    files,
+                    expected,
+                    megabytes * finding.MEGABYTE,
+                    kept_data.kept_names(record, listing.reference.key),
+                )
+            except finding.DataError as error:
+                raise data_error(error) from error
+            self.check_room(record, listing.reference, sum(file.bytes or 0 for file in chosen))
+            try:
+                return self.jobs.start(
+                    DATA_JOB,
+                    agent_id,
+                    f"Fetching data: {agent['title']}",
+                    self.loader(agent_id, listing, chosen),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def check_room(self, record: dict[str, Any], reference: finding.Reference, total: int) -> None:
+        """
+        :raises ApiError: If the files of another place are kept under the name this one would be, so that one would be
+            written over, if an agent would keep more than it may, or the disk would be left with too little.
+        """
+        folder = finding.folder_of(reference)
+        if any(source["folder"] == folder and source["key"] != reference.key for source in record["sources"]):
+            raise ApiError(409, "exists", "The files of another place are kept under the name that this one would have")
+        have = kept_data.totals(record)["bytes"]
+        most = finding.MAX_KEPT_MEGABYTES * finding.MEGABYTE
+        if have + total > most:
+            raise ApiError(
+                409,
+                "too_big",
+                f"An agent keeps no more than {describe_size(most)} of data, and {describe_size(have)} is kept. "
+                "Remove some first.",
+            )
+        free = shutil.disk_usage(self.workspace.root).free
+        if free < total + DISK_RESERVE_BYTES:
+            raise ApiError(
+                409,
+                "disk_full",
+                f"There is not room: these files are {describe_size(total)}, and {describe_size(free)} is free on this "
+                f"machine, of which {describe_size(DISK_RESERVE_BYTES)} is left alone.",
+            )
+
+    def loader(
+        self, agent_id: str, listing: finding.Listing, chosen: list[finding.DataFile]
+    ) -> Callable[[Job], str | None]:
+        """What a job does to fetch data: fetches each file that was chosen, checks it, and keeps it."""
+
+        def work(job: Job) -> str | None:
+            failed = False
+            try:
+                return self.take_data(job, agent_id, listing, chosen)
+            except StoppedError:
+                raise
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                self.settle_data(agent_id, failed)
+
+        return work
+
+    def take_data(self, job: Job, agent_id: str, listing: finding.Listing, chosen: list[finding.DataFile]) -> str:
+        reference = listing.reference
+        total = sum(file.bytes or 0 for file in chosen)
+        kept = 0
+        written = 0
+        checked = 0
+        failures: list[str] = []
+        job.update(
+            f"Fetching {len(chosen)} file{'s' if len(chosen) != 1 else ''} from {reference.label}",
+            files_total=len(chosen),
+            files_done=0,
+            bytes_total=total,
+            bytes_done=0,
+            current=None,
+        )
+        with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
+            for number, file in enumerate(chosen, 1):
+                if job.stop.is_set():
+                    raise StoppedError("Stopped.")
+                job.update(f"Fetching {file.name}", current=file.name)
+                job.log(f"Fetching {file.name} ({describe_size(file.bytes or 0)}) from {file.url}")
+                try:
+                    fetched = self.fetch_data_file(
+                        job, agent_id, listing, file, Path(scratch) / f"{number}.part", written
+                    )
+                except finding.DataError as error:
+                    failures.append(f"{file.name}: {error}")
+                    job.log(f"Not kept: {error}")
+                    job.update(bytes_done=written)
+                    continue
+                kept += 1
+                written += fetched.bytes
+                checked += fetched.checked is not None
+                job.update(files_done=kept, bytes_done=written)
+                job.log(
+                    f"Kept {file.name}: {fetched.bytes:,} bytes, SHA-256 {fetched.sha256}"
+                    + (
+                        f", matching the {fetched.checked[0].upper()} that {reference.source} gave"
+                        if fetched.checked
+                        else ""
+                    )
+                )
+        if failures:
+            raise ValueError(
+                f"{kept} of {len(chosen)} files were kept, and {len(failures)} were not. " + " ".join(failures)
+            )
+        how = []
+        if checked:
+            how.append(f"{checked} matched the checksum that the place gave")
+        if kept - checked:
+            how.append(f"{kept - checked} had none to match, and were checked against their size only")
+
+        return (
+            f"Kept {kept} file{'s' if kept != 1 else ''}, {describe_size(written)}, from {reference.label}, in "
+            f"data/{finding.folder_of(reference)}/. {'; '.join(how).capitalize()}."
+        )
+
+    def fetch_data_file(
+        self,
+        job: Job,
+        agent_id: str,
+        listing: finding.Listing,
+        file: finding.DataFile,
+        target: Path,
+        before: int,
+    ) -> hosting.Fetched:
+        """Fetches one file, and puts it where it is kept, with what is said of it.
+
+        :param before: How many bytes of the files before it were kept, which what it adds is counted on.
+        :raises DataError: If it cannot be fetched, is not what it was said to be, or cannot be put in place.
+        """
+        received = 0
+
+        def count(chunk: int) -> None:
+            nonlocal received
+            received += chunk
+            job.update(bytes_done=before + received)
+
+        fetched = hosting.fetch_file(listing.reference, file, target, count, job.stop.is_set)
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            root = kept_data.data_path(directory)
+            destination = root / finding.folder_of(listing.reference) / file.name
+            try:
+                if not destination.resolve().is_relative_to(root.resolve()):
+                    raise finding.DataError(f"{file.name} would be kept outside the agent's data", "refused")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(target), destination)
+                size = destination.stat().st_size
+            except OSError as error:
+                raise finding.DataError(
+                    f"{file.name} could not be put in place: {error.strerror or type(error).__name__}", "failed"
+                ) from error
+            if size != fetched.bytes:
+                destination.unlink(missing_ok=True)
+                raise finding.DataError(
+                    f"{file.name} is {size:,} bytes where it was put, and {fetched.bytes:,} were fetched", "size"
+                )
+            kept_data.save(
+                directory,
+                kept_data.with_file(
+                    kept_data.load(directory),
+                    listing.reference,
+                    listing.reference.label,
+                    listing.title,
+                    listing.license,
+                    {
+                        "name": file.name,
+                        "path": f"{finding.folder_of(listing.reference)}/{file.name}",
+                        "bytes": size,
+                        "sha256": fetched.sha256,
+                        "checksum": (
+                            {"algorithm": fetched.checked[0], "value": fetched.checked[1]}
+                            if fetched.checked is not None
+                            else None
+                        ),
+                        "url": file.url,
+                        "fetched_at": utc_timestamp(),
+                    },
+                ),
+            )
+
+        return fetched
+
+    def settle_data(self, agent_id: str, failed: bool) -> None:
+        """Says how far the step of the data has got: done if there is data that was fetched or that stands in, failed
+        if there is none and fetching failed, and pending if it was only stopped."""
+        with self._lock:
+            try:
+                directory, agent = self.lookup(agent_id)
+            except ApiError:
+                return
+            self.set_data_step(directory, agent, failed)
+
+    def set_data_step(self, directory: Path, agent: dict[str, Any], failed: bool = False) -> None:
+        """Says how far the step of the data has got, from what is kept. Called with the lock held."""
+        status = "done" if kept_data.has_data(kept_data.load(directory)) else "failed" if failed else "pending"
+        if steps_of(agent)["data"] != status:
+            self.save(directory, {**agent, "steps": {**steps_of(agent), "data": status}})
+
+    def clear_data(self, agent_id: str, source: Any = None) -> None:
+        """Takes away the files that were fetched, of one place or of all. What stands in for data is left.
+
+        :param source: The key of a place, as the files are listed by, or none for every file.
+        :raises ApiError: If there is no agent with this id, there are no files of that place, or the agent is being
+            worked on.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            record = kept_data.load(directory)
+            if source is None:
+                record = kept_data.forget_files(directory, record)
+            elif isinstance(source, str) and any(kept["key"] == source for kept in record["sources"]):
+                record = kept_data.forget_source(directory, record, source)
+            else:
+                raise not_found("fetched data of that place")
+            kept_data.save(directory, record)
+            self.set_data_step(directory, agent)
+
+    def set_stand_in(self, agent_id: str, dataset: Any, own: Any) -> None:
+        """Says that some of the person's own data stands in for a dataset that the paper used. It is only a note of
+        which: the data stays where it is, as theirs, and nothing is copied.
+
+        :param dataset: The key of a dataset that the paper names, or, for one that it does not, what to call it.
+        :param own: The name of the data on the Data page.
+        :raises ApiError: If there is no agent with this id, what is given is not fit, or there is no such data of the
+            person's.
+        """
+        self.lookup(agent_id)
+        if not isinstance(dataset, str) or not dataset.strip() or len(dataset) > MAX_DATASET_CHARS:
+            raise ApiError(
+                422,
+                "invalid",
+                f"Say which dataset of the paper it stands in for, in at most {MAX_DATASET_CHARS} characters",
+            )
+        if has_control_character(dataset):
+            raise ApiError(422, "invalid", "The name of the dataset cannot have a control character in it")
+        if not isinstance(own, str) or own not in self.workspace.load_own()["data"]:
+            raise ApiError(422, "no_data", "There is no data of yours with that name. Add it on the Data page first")
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            file = agent["paper"].get("file")
+            reading = kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with())
+            named = {item["id"]: item["name"] for item in reading["card"].get("datasets", [])}
+            text = " ".join(dataset.split())
+            key, name = (dataset, named[dataset]) if dataset in named else (f"name:{text.casefold()}", text)
+            record = kept_data.load(directory)
+            others = [stand_in for stand_in in record["stand_ins"] if stand_in["key"] != key]
+            if len(others) >= kept_data.MAX_STAND_INS:
+                raise ApiError(
+                    409, "too_many", f"No more than {kept_data.MAX_STAND_INS} datasets can have data standing in"
+                )
+            kept_data.save(
+                directory,
+                {**record, "stand_ins": [*others, {"key": key, "name": name, "own": own, "set_at": utc_timestamp()}]},
+            )
+            self.set_data_step(directory, agent)
+
+    def clear_stand_in(self, agent_id: str, dataset: Any) -> None:
+        """Takes away what stands in for a dataset.
+
+        :param dataset: The key it was set with.
+        :raises ApiError: If there is no agent with this id, or nothing stands in for that dataset.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            record = kept_data.load(directory)
+            left = [stand_in for stand_in in record["stand_ins"] if stand_in["key"] != dataset]
+            if len(left) == len(record["stand_ins"]):
+                raise not_found("stand-in for that dataset")
+            kept_data.save(directory, {**record, "stand_ins": left})
+            self.set_data_step(directory, agent)
+
+
+def data_error(error: finding.DataError) -> ApiError:
+    """What a PaperAgent says of something that kept data from being listed or fetched: a place that cannot be had
+    from is the host's, and a request that is not fit is the person's."""
+    return ApiError(DATA_STATUSES.get(error.kind, 502), error.kind, str(error))
