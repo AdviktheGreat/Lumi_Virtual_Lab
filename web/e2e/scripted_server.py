@@ -49,12 +49,18 @@ from a script: no key is needed, and every run says the same. What it says depen
   requirements, a tutorial, and a test, which a GPU is used by if there is one. "gpu" in the address makes it one that
   needs a GPU and has a license for non-commercial use only, and no tutorial, "slow" makes fetching it take a while,
   "missing" makes it a project that is not there, and "huge" makes it more than the most that was asked to be fetched,
-  and "bare" makes it a project that no file says how to install.
+  and "bare" makes it a project that no file says how to install, and "many" gives it scripts to run as well.
 - The environment of a PaperAgent's code is built by a stand-in for Docker, which says what the build prints and keeps
   the images there are by their names. What it does is from the agent's id, which is made of its title: "slow" makes
   building take a while, so that it can be followed and stopped, "zlib" makes it fail for want of the system package
   zlib1g-dev until that is asked to be installed, "oldpython" makes it fail for a Python that is too new until Python
   3.9 is asked for, and "broken" makes it fail with nothing to say why.
+- The tutorials of a PaperAgent's code are run by a stand-in for Docker too, which says what each did, from the agent's
+  id: it ran to the end, called two of the project's functions, and wrote a file, the same each time it was run.
+  "lengthy" makes a tutorial take a while, so that the run can be followed and stopped, "failing" makes every tutorial
+  fail for want of a package, "mixed" makes the second and later ones fail, and "flaky" makes the runs of a tutorial
+  give other calls from one run to the next. "many" in the address of the code gives it two scripts in a folder of
+  examples and one in R, which is not run.
 - The data of a PaperAgent is listed and fetched by stand-ins for the places it is kept at, which have a few records,
   named by their keys: Zenodo record 1000001 has files of which one is corrupt (what it sends is not what its checksum
   says), one gives no checksum, and one is restricted; 1000002 has a file larger than the most that is fetched at first;
@@ -123,6 +129,7 @@ from virtual_lab.paperagents import data as finding  # noqa: E402
 from virtual_lab.paperagents import datahosts as hosting  # noqa: E402
 from virtual_lab.paperagents import environment as building  # noqa: E402
 from virtual_lab.paperagents import fetch as fetching  # noqa: E402
+from virtual_lab.paperagents import reference as referencing  # noqa: E402
 from virtual_lab.paperagents import repository as cloning  # noqa: E402
 from virtual_lab.paperagents.reading import (  # noqa: E402
     ChunkReading,
@@ -654,6 +661,10 @@ def stand_in_clone(
     if not needs_gpu:
         files["tutorials/quickstart.ipynb"] = NOTEBOOK
         files["tests/test_core.py"] = "def test_nothing():\n    assert True\n"
+    if "many" in url:
+        files["examples/demo.py"] = "import cellmapper\nprint(cellmapper.scale([1, 2, 3], 2.5))\n"
+        files["examples/second.py"] = "import cellmapper\nprint(cellmapper.scale([4], 2.0))\n"
+        files["examples/analysis.R"] = "print(1)\n"
     for name, text in files.items():
         (destination / name).parent.mkdir(parents=True, exist_ok=True)
         (destination / name).write_text(text)
@@ -912,6 +923,172 @@ def stand_in_remove_images(label: str, docker_command: Any = ("docker",)) -> boo
 
 def stand_in_remove_builds(label: str, docker_command: Any = ("docker",)) -> int:
     return 0
+
+
+# How long a tutorial that is "lengthy" takes, which is long enough for the run to be followed and stopped
+RUN_DELAY = 6.0
+
+MISSING_PACKAGE = "ModuleNotFoundError: No module named 'scanpy'"
+WRITTEN_FILE = {"path": "embedding.csv", "bytes": 120, "sha256": "e" * 64, "new": True, "kept": False}
+
+
+def stand_in_remove_runs(label: str, docker_command: Any = ("docker",)) -> int:
+    return 0
+
+
+def stand_in_calls(item: referencing.Item, number: int) -> list[dict[str, Any]]:
+    """The calls that a tutorial made, which are of two of the project's functions: one that is given and gives plain
+    data, and one that gives an array."""
+
+    def plain(kind: str, value: Any) -> dict[str, Any]:
+        return {"type": kind, "plain": True, "value": value}
+
+    scale = {
+        "id": 1,
+        "module": "cellmapper.core",
+        "function": "scale",
+        "qualname": "scale",
+        "method": False,
+        "file": "cellmapper/core.py",
+        "line": 3,
+        "args": {"values": plain("list", [1, 2, 3]), "factor": plain("float", 2.5 + number)},
+        "cwd": str(Path(item.path).parent),
+        "variadic": False,
+        "result": plain("list", [2.5 + number, 5.0 + 2 * number, 7.5 + 3 * number]),
+        "returned": True,
+        "cell": 1 if item.kind == "notebook" else None,
+        "from": {"file": item.path, "line": 3},
+    }
+    table = {
+        **scale,
+        "id": 2,
+        "function": "embed",
+        "qualname": "embed",
+        "line": 8,
+        "args": {"values": plain("list", [1, 2, 3])},
+        "result": {"type": "numpy.ndarray", "plain": False, "repr": "array", "shape": [3, 2], "dtype": "float64"},
+        "from": {"file": item.path, "line": 4},
+    }
+
+    return [scale, table]
+
+
+def stand_in_detail(item: referencing.Item, label: str, limits: referencing.Limits) -> dict[str, Any]:
+    """What a tutorial did, for an agent of this id: in the shape that the real run keeps, so that it is read back as
+    one is."""
+    number = int(item.id[:2])
+    fails = "failing" in label or ("mixed" in label and number > 1)
+    runs: list[dict[str, Any]] = [{"status": "failed" if fails else "ok", "seconds": 1.4, "digest": None}]
+    stable: bool | None = None
+    differs: list[str] = []
+    if not fails:
+        runs[0]["digest"] = {"calls": "a" * 64, "files": "b" * 64, "output": "c" * 64}
+        for _ in range(limits.repeats - 1):
+            flaky = "flaky" in label
+            runs.append(
+                {
+                    "status": "ok",
+                    "seconds": 1.1,
+                    "digest": {"calls": ("d" if flaky else "a") * 64, "files": "b" * 64, "output": "c" * 64},
+                }
+            )
+        if limits.repeats > 1:
+            stable = "flaky" not in label
+            differs = ["calls"] if "flaky" in label else []
+    failure = (
+        {
+            "kind": "missing_package",
+            "title": "Something it imports is not installed",
+            "detail": "No module named 'scanpy'. The environment is made of what the authors' files list, and the "
+            "tutorial wants more.",
+            "tail": [
+                "Traceback (most recent call last):",
+                f'  File "{item.path}", line 1, in <module>',
+                MISSING_PACKAGE,
+            ],
+        }
+        if fails
+        else None
+    )
+    cells = (
+        [
+            {
+                "index": 1,
+                "ok": True,
+                "seconds": 0.4,
+                "output": "[2.5, 5.0, 7.5]\n",
+                "result": None,
+                "skipped": [],
+                "error": None,
+            },
+            {
+                "index": 2,
+                "ok": True,
+                "seconds": 0.1,
+                "output": "",
+                "result": None,
+                "skipped": ["%matplotlib inline"],
+                "error": None,
+            },
+        ]
+        if item.kind == "notebook" and not fails
+        else []
+    )
+
+    return {
+        "schema": 1,
+        "id": item.id,
+        "path": item.path,
+        "kind": item.kind,
+        "status": "failed" if fails else "ok",
+        "failure": failure,
+        "python": None if fails else "3.11.9",
+        "seconds": round(sum(run["seconds"] for run in runs), 1),
+        "runs": runs,
+        "stable": stable,
+        "differs": differs,
+        "output": [MISSING_PACKAGE] if fails else ["[2.5, 5.0, 7.5]", "Wrote embedding.csv"],
+        "cells": cells,
+        "cells_total": 2 if item.kind == "notebook" and not fails else 0,
+        "calls": [] if fails else stand_in_calls(item, number),
+        "calls_seen": 0 if fails else 9,
+        "files": [] if fails else [WRITTEN_FILE],
+        "files_more": 0,
+        "packages": [] if fails else ["cellmapper"],
+    }
+
+
+class StandInRunner:
+    """What runs a tutorial in place of Docker: what it did is from the id of the agent it is of."""
+
+    def __init__(
+        self,
+        tag: str,
+        limits: referencing.Limits,
+        scratch: Path,
+        data: Path | None = None,
+        docker_command: Any = ("docker",),
+        stop: threading.Event | None = None,
+        label: str = "",
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.tag = tag
+        self.limits = limits
+        self.data = data
+        self.stop = stop if stop is not None else threading.Event()
+        self.label = label
+        self.clock = clock
+
+    def tutorial(
+        self, item: referencing.Item, seconds: float, keep: Path | None = None, until: float | None = None
+    ) -> referencing.Outcome:
+        if "lengthy" in self.label:
+            for _ in range(int(RUN_DELAY * 10)):
+                if self.stop.is_set():
+                    raise StoppedError("The run was stopped.")
+                time.sleep(0.1)
+
+        return referencing.Outcome(stand_in_detail(item, self.label, self.limits), None)
 
 
 def function_named(kwargs: dict[str, Any]) -> str | None:
@@ -1309,6 +1486,8 @@ def main() -> None:
     building.remove_image = stand_in_remove_image
     building.remove_images = stand_in_remove_images
     building.remove_builds = stand_in_remove_builds
+    referencing.Runner = StandInRunner  # type: ignore[misc,assignment]
+    referencing.remove_runs = stand_in_remove_runs
     openrouter.fetch_models = stand_in_openrouter_models
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened

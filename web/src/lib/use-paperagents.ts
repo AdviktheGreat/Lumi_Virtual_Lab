@@ -7,6 +7,7 @@ import type {
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentReading,
+  PaperAgentReference,
   PaperAgentRepository,
   PaperAgentsList,
 } from "./types";
@@ -53,6 +54,14 @@ export function usePaperAgentEnvironment(id: string, report: (error: unknown) =>
 // from, as the code is fetched, which may name it too, and as files are fetched
 export function usePaperAgentData(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentData> {
   const look = useCallback(() => api.paperAgentData(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+// What there is of the running of an agent's tutorials, looked at again when it may have changed: as the code, the environment, or
+// the data is changed, which is what they are run with, and as they are run
+export function usePaperAgentReference(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentReference> {
+  const look = useCallback(() => api.paperAgentReference(id), [id]);
 
   return useLooked(look, report, again);
 }

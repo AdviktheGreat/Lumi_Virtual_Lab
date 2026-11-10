@@ -16,7 +16,7 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data"];
+  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference"];
   for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
@@ -1993,5 +1993,395 @@ test("says that a paper that has not been read names no dataset and no place yet
   await expect(page.getByText("The paper has not been read to the end, so what it names is not known yet.")).toBeVisible();
   await expect(page.getByText("No place is named for the data. Say where it is below.")).toBeVisible();
   await expect(form(page, "See the files of a place")).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+// What the page says of the tutorials of an agent's code, which are run by a stand-in for Docker (see scripted_server.py): the code
+// of "many" has two scripts as well as a notebook, and one in R, which is not run. What a tutorial does is from the agent's title:
+// "lengthy" takes a while, "failing" fails for want of a package, "mixed" fails after the first, and "flaky" gives other calls
+// each time it is run
+const MANY_ADDRESS = "https://github.com/example/many-scripts";
+const referenceForm = (page: Page) => form(page, "Run the tutorials");
+const runningTutorials = (page: Page) => page.getByRole("region", { name: "Running the tutorials" });
+const referencePlan = (page: Page) => page.getByTestId("reference-plan");
+const keptRun = (page: Page) => page.getByTestId("reference-kept");
+const tutorials = (page: Page) => page.getByTestId("reference-tutorial");
+const tutorialNamed = (page: Page, path: string) => tutorials(page).filter({ has: page.getByText(path, { exact: true }) });
+const referenceOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/reference`)).json();
+const RUN = "Run the tutorials";
+
+// Makes an agent whose code is fetched and whose environment is built, so that what a test is about is its tutorials, and opens it
+async function agentWithEnvironment(page: Page, title: string, repo = CODE_ADDRESS, paper: Record<string, unknown> = { kind: "file" }): Promise<string> {
+  const id = await makeAgent(page, { title, paper, repo });
+  await fetchTheCode(page, id);
+  const started = await page.request.post(`/api/paperagents/${id}/environment`, { data: {} });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await environmentOf(page, id)).job, { timeout: 30_000 }).toBeNull();
+  expect((await environmentOf(page, id)).built).not.toBeNull();
+  await openAgent(page, id, title);
+
+  return id;
+}
+
+test("says what would be run from the code, asks for what is wrong with the asking to be put right, runs the tutorials, and shows what each gave and how far that is known", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Plain tutorials", paper: { kind: "file" }, repo: CODE_ADDRESS });
+  await openAgent(page, id, "Plain tutorials");
+  await expect(page.getByRole("heading", { name: "Tutorials", level: 2, exact: true })).toBeVisible();
+  // They are in the code, and are run in the environment, so there is nothing to run until both are there
+  await expect(page.getByText("Fetch the code first. The tutorials are in it.")).toBeVisible();
+  await expect(referenceForm(page)).toHaveCount(0);
+  await fetchTheCode(page, id);
+  await page.reload();
+  await expect(page.getByText("Build the environment first. The tutorials are run in it.")).toBeVisible();
+  await expect(referenceForm(page)).toHaveCount(0);
+
+  const built = await page.request.post(`/api/paperagents/${id}/environment`, { data: {} });
+  expect(built.status()).toBe(202);
+  await expect.poll(async () => (await environmentOf(page, id)).job, { timeout: 30_000 }).toBeNull();
+  await page.reload();
+  await expect(referencePlan(page)).toBeVisible();
+  await expect(page.getByTestId("reference-plan-summary")).toHaveText("1 tutorial can be run here.");
+  await expect(referencePlan(page).getByRole("list", { name: "Tutorials that would be run" })).toContainText("tutorials/quickstart.ipynb (a notebook)");
+  await expect(step(page, "Build the tools")).toContainText("Not started");
+  expect((await referenceOf(page, id)).kept).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What is wrong with the asking is said before it is sent
+  await referenceForm(page).getByLabel("Most time for one tutorial, in minutes").fill("0");
+  await referenceForm(page).getByLabel("Most time for all of them, in minutes").fill("500");
+  await referenceForm(page).getByLabel("How many tutorials to run").fill("two");
+  await referenceForm(page).getByLabel("How many times to run each").fill("9");
+  await referenceForm(page).getByLabel("Most one run may write, in gigabytes").fill("99");
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(referenceForm(page).getByText(/in minutes, is a whole number from 1 to 60/)).toBeVisible();
+  await expect(referenceForm(page).getByText(/is a whole number from 1 to 240/)).toBeVisible();
+  await expect(referenceForm(page).getByText(/How many tutorials are run is a whole number from 1 to 25/)).toBeVisible();
+  await expect(referenceForm(page).getByText(/How many times each is run is a whole number from 1 to 3/)).toBeVisible();
+  await expect(referenceForm(page).getByText(/in gigabytes, is a whole number from 1 to 20/)).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await referenceOf(page, id)).kept).toBeNull();
+  await referenceForm(page).getByLabel("Most time for one tutorial, in minutes").fill("20");
+  await referenceForm(page).getByLabel("Most time for all of them, in minutes").fill("10");
+  await referenceForm(page).getByLabel("How many tutorials to run").fill("5");
+  await referenceForm(page).getByLabel("How many times to run each").fill("2");
+  await referenceForm(page).getByLabel("Most one run may write, in gigabytes").fill("1");
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(referenceForm(page).getByText("The time for all of them cannot be less than the time for one.")).toBeVisible();
+  expect((await referenceOf(page, id)).kept).toBeNull();
+
+  await referenceForm(page).getByLabel("Most time for all of them, in minutes").fill("30");
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(referencePlan(page)).toHaveCount(0);
+  await expect(referenceForm(page)).toHaveCount(0);
+  await expect(page.getByTestId("reference-kept-when")).toContainText("1 tutorial was run: 1 to the end, 0 not. 1 gave the same each time it was run.");
+  await expect(keptRun(page)).toContainText("Run to the end of the list");
+  await expect(keptRun(page)).toContainText("20 minutes for one and 30 for all, 2 runs of each, and 1 GB written");
+  await expect(keptRun(page).getByText("Given to read").locator("xpath=following-sibling::dd[1]")).toHaveText("None");
+  await expect(step(page, "Build the tools")).toContainText("Not started");
+  await expect(tutorials(page)).toHaveCount(1);
+  const one = tutorialNamed(page, "tutorials/quickstart.ipynb");
+  await expect(one).toHaveAttribute("data-status", "ok");
+  await expect(one).toContainText("Ran to the end");
+  await expect(one.getByTestId("reference-agreement")).toHaveText("The same each of 2 times.");
+  await expect(one).toContainText("2 calls to the code, 1 file written, 2 of 2 cells kept");
+  // It says what was and was not shown, which is that it ran here and gave this
+  await expect(keptRun(page)).toContainText("It does not show that what it gave is right");
+  const kept = await referenceOf(page, id);
+  expect(kept).toMatchObject({
+    kept: {
+      complete: true,
+      limits: { minutes: 20, total_minutes: 30, tutorials: 5, repeats: 2, gigabytes: 1 },
+      tutorials: [{ path: "tutorials/quickstart.ipynb", status: "ok", runs: 2, stable: true, calls: 2 }],
+    },
+    job: null,
+  });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What a tutorial did is looked at when it is asked for, and is not got before
+  await expect(page.getByTestId("reference-detail")).toHaveCount(0);
+  await one.getByRole("button", { name: "Show what it did" }).click();
+  const detail = page.getByTestId("reference-detail");
+  await expect(detail).toBeVisible();
+  await expect(detail.getByRole("list", { name: "How each run ended" })).toContainText("Run 2: ran to the end");
+  await expect(detail).toContainText("3.11.9");
+  await expect(detail.getByTestId("reference-call")).toHaveCount(2);
+  await expect(detail.getByTestId("reference-call").first()).toContainText("cellmapper.core.scale(values=[1,2,3], factor=3.5) gave [3.5,7,10.5]");
+  await expect(detail.getByTestId("reference-call").last()).toContainText("cellmapper.core.embed(values=[1,2,3]) gave numpy.ndarray, shape 3×2, float64");
+  await expect(detail.getByRole("list", { name: "Files that it wrote" })).toContainText("embedding.csv");
+  await expect(detail.getByRole("region", { name: "The end of what it printed" })).toContainText("Wrote embedding.csv");
+  await expect(detail.getByRole("list", { name: "Lines that were left out" })).toContainText("cell 2: %matplotlib inline");
+  await expect(detail.getByTestId("reference-failure")).toHaveCount(0);
+  await expect(page.getByText("Code it imported")).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await one.getByRole("button", { name: "Hide what it did" }).click();
+  await expect(detail).toHaveCount(0);
+
+  // It is the same after the page is looked at again, and cannot be run a second time on top of itself
+  await page.reload();
+  await expect(keptRun(page)).toBeVisible();
+  await expect(tutorials(page)).toHaveCount(1);
+  expect((await page.request.post(`/api/paperagents/${id}/reference`, { data: {} })).status()).toBe(409);
+
+  // Taking it away asks first, and leaves the code and the environment
+  await keptRun(page).getByRole("button", { name: "Take what they gave away" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Take away what the tutorials of Plain tutorials gave?" });
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  await expect(keptRun(page)).toBeVisible();
+  await keptRun(page).getByRole("button", { name: "Take what they gave away" }).click();
+  await page.getByRole("alertdialog", { name: "Take away what the tutorials of Plain tutorials gave?" }).getByRole("button", { name: "Take away" }).click();
+
+  await expect(keptRun(page)).toHaveCount(0);
+  await expect(referencePlan(page)).toBeVisible();
+  await expect(referenceForm(page)).toBeVisible();
+  expect((await referenceOf(page, id)).kept).toBeNull();
+  expect((await environmentOf(page, id)).built).not.toBeNull();
+  await expect(page.getByTestId("code-commit")).toBeVisible();
+});
+
+test("follows a run of the tutorials while it goes on, waits for it before anything else is done to the agent, and keeps what it had done when it is stopped", async ({
+  page,
+}) => {
+  const id = await agentWithEnvironment(page, "Lengthy tutorials", CODE_ADDRESS, { kind: "doi", doi: "10.1000/tutorials-paper" });
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+
+  const stop = runningTutorials(page).getByRole("button", { name: "Stop: Running the tutorials: Lengthy tutorials" });
+  await expect(stop).toBeVisible();
+  await expect(step(page, "Build the tools")).toContainText("Going on");
+  await expect(referenceForm(page).getByRole("button", { name: "Running…" })).toBeDisabled();
+  await expect(page.getByRole("log", { name: "What this printed: Running the tutorials: Lengthy tutorials" })).toContainText("Running tutorials/quickstart.ipynb", {
+    timeout: 10_000,
+  });
+  // Nothing else is done to the agent while it goes on, and its paper is not read
+  await expect(fetchAndRead(page)).toBeDisabled();
+  await expect(reading(page)).toContainText("The tutorials are being run. Reading waits for that.");
+  await expect(page.getByRole("button", { name: "Delete Lengthy tutorials" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Take the code away" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Take the environment away" })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await stop.click();
+
+  await expect(runningTutorials(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(step(page, "Build the tools")).toContainText("Not started");
+  // What came to be before it was stopped is kept, which is nothing here, and is said not to be the whole
+  await expect(keptRun(page)).toContainText("Not run to the end");
+  await expect(keptRun(page)).toContainText("This run did not come to its end");
+  await expect(page.getByTestId("reference-kept-when")).toContainText("No tutorial was run.");
+  await expect(tutorials(page)).toHaveCount(0);
+  await expect(referenceForm(page).getByRole("button", { name: RUN })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Take the environment away" })).toBeEnabled();
+  expect(await referenceOf(page, id)).toMatchObject({ kept: { complete: false, tutorials: [] }, job: null });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Run again and left to end, the run replaces what was kept
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(keptRun(page)).toContainText("Run to the end of the list", { timeout: 25_000 });
+  await expect(keptRun(page)).not.toContainText("Not run to the end");
+  await expect(tutorials(page)).toHaveCount(1);
+  await expect(runningTutorials(page).getByText("Stopped", { exact: true })).toHaveCount(0);
+});
+
+test("says how each tutorial ended, which failed and why, what to do about it, which were not run, and the runs that gave other than the first", async ({
+  page,
+}) => {
+  const failing = await agentWithEnvironment(page, "Failing tutorials", MANY_ADDRESS);
+  await expect(page.getByTestId("reference-plan-summary")).toHaveText("3 tutorials can be run here, 1 cannot.");
+  await expect(referencePlan(page).getByRole("list", { name: "Tutorials that cannot be run here" })).toContainText(
+    "examples/analysis.R: It is written in R, and only Python is run here.",
+  );
+  // The paths that would be run are listed in the order that they are run in
+  await expect(referencePlan(page).getByRole("list", { name: "Tutorials that would be run" }).getByRole("listitem")).toHaveCount(3);
+  await referenceForm(page).getByLabel("How many tutorials to run").fill("2");
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(tutorials(page)).toHaveCount(2);
+  await expect(page.locator("[data-testid=reference-tutorial][data-status=failed]")).toHaveCount(2);
+  await expect(page.getByTestId("reference-kept-when")).toContainText("2 tutorials were run: 0 to the end, 2 not. 0 gave the same each time it was run.");
+  await expect(tutorials(page).first()).toContainText("Stopped with a failure");
+  await expect(tutorials(page).first()).toContainText("Something it imports is not installed");
+  await expect(tutorials(page).first().getByTestId("reference-agreement")).toHaveText("Not compared, as it did not end.");
+  // The ones that were over the number allowed are listed as not run, with why
+  await expect(page.getByTestId("reference-not-run").getByRole("listitem")).toHaveCount(1);
+  await expect(page.getByTestId("reference-not-run")).toContainText("was not run: Only 2 tutorials are run at a time.");
+  await expect(page.getByRole("list", { name: "Tutorials that cannot be run here" })).toContainText("examples/analysis.R");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await tutorials(page).first().getByRole("button", { name: "Show what it did" }).click();
+  const failure = page.getByTestId("reference-failure");
+  await expect(failure).toHaveAttribute("data-kind", "missing_package");
+  await expect(failure).toContainText("No module named 'scanpy'");
+  await expect(failure).toContainText("Build it again with the system package that has it, if it is one.");
+  await expect(failure.getByRole("region", { name: "The end of what it said" })).toContainText("ModuleNotFoundError: No module named 'scanpy'");
+  await expect(page.getByTestId("reference-call")).toHaveCount(0);
+  await expect(page.getByText("It made none, so there is nothing to make a tool from.")).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  const stored = await referenceOf(page, failing);
+  expect(stored.kept.tutorials.map((one: { status: string }) => one.status)).toEqual(["failed", "failed"]);
+
+  // Some that ran to the end and some that did not are told apart
+  const mixed = await agentWithEnvironment(page, "Mixed tutorials", MANY_ADDRESS);
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByTestId("reference-kept-when")).toContainText("3 tutorials were run: 1 to the end, 2 not. 1 gave the same each time it was run.");
+  await expect(page.locator("[data-testid=reference-tutorial][data-status=ok]")).toHaveCount(1);
+  await expect(page.locator("[data-testid=reference-tutorial][data-status=failed]")).toHaveCount(2);
+  expect((await referenceOf(page, mixed)).kept.tutorials).toHaveLength(3);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A tutorial that gives other calls when it is run again is not one that can be held to, and is said to be so in words
+  await agentWithEnvironment(page, "Flaky tutorials");
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(tutorials(page).first()).toHaveAttribute("data-status", "ok");
+  await expect(tutorials(page).first().getByTestId("reference-agreement")).toHaveText("Not the same each of 2 times: the calls to the code differed.");
+  await expect(page.getByTestId("reference-kept-when")).toContainText("1 tutorial was run: 1 to the end, 0 not. 0 gave the same each time it was run.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("runs each tutorial once if that is asked, and says that what was run once was not compared", async ({ page }) => {
+  const id = await agentWithEnvironment(page, "Once tutorials");
+  await referenceForm(page).getByLabel("How many times to run each").fill("1");
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(tutorials(page).first().getByTestId("reference-agreement")).toHaveText("Run once, so not compared.");
+  await expect(page.getByTestId("reference-kept-when")).toContainText("0 gave the same each time it was run.");
+  await expect(keptRun(page)).toContainText("1 run of each");
+  expect((await referenceOf(page, id)).kept.tutorials[0]).toMatchObject({ runs: 1, stable: null });
+});
+
+test("says that there is nothing to run in code that has no tutorial, and that the tutorials were not run for want of Docker or its image", async ({ page }) => {
+  const id = await agentWithEnvironment(page, "No tutorials", "https://github.com/example/gpu-mapper");
+  await expect(page.getByTestId("reference-none")).toContainText("There is nothing to run");
+  await expect(page.getByTestId("reference-none")).toContainText("No tutorial in the code can be run here: only Python is run.");
+  await expect(referenceForm(page)).toHaveCount(0);
+  expect((await page.request.post(`/api/paperagents/${id}/reference`, { data: {} })).status()).toBe(422);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await agentWithEnvironment(page, "Stopped docker tutorials");
+  await page.route("**/api/paperagents/*/reference", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+
+    return route.fulfill({ response, json: { ...body, docker: { ready: false, message: "Docker is installed but is not running." } } });
+  });
+  await page.reload();
+  await expect(page.getByText("Docker is installed but is not running. Running the tutorials takes it.")).toBeVisible();
+  await expect(referencePlan(page)).toBeVisible();
+  await expect(referenceForm(page).getByRole("button", { name: RUN })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await page.unroute("**/api/paperagents/*/reference");
+
+  await page.route("**/api/paperagents/*/reference", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+
+    return route.fulfill({ response, json: { ...body, environment: { ...body.environment, image_present: false } } });
+  });
+  await page.reload();
+  await expect(page.getByText("Docker no longer has the image of the environment, so the tutorials cannot be run.")).toBeVisible();
+  await expect(referenceForm(page).getByRole("button", { name: RUN })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("says why the server refused to run the tutorials, and looks again when what the page shows is out of date", async ({ page }) => {
+  const id = await agentWithEnvironment(page, "Refused tutorials");
+  await page.route("**/api/paperagents/*/reference", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "docker_missing", message: "Docker is not installed on this machine, and running tutorials takes it." } }),
+        })
+      : route.fallback(),
+  );
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(referenceForm(page).getByRole("alert")).toContainText("Docker is not installed on this machine");
+  await page.unroute("**/api/paperagents/*/reference");
+
+  // Tutorials that were run a moment before the page looked are not a reason to refuse: the page looks again
+  let looked = 0;
+  await page.route("**/api/paperagents/*/reference", (route) => {
+    if (route.request().method() === "GET") looked += 1;
+
+    return route.request().method() === "POST"
+      ? route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "done", message: "The tutorials have been run. Remove that to run them again." } }),
+        })
+      : route.fallback();
+  });
+  const before = looked;
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect.poll(() => looked).toBeGreaterThan(before);
+  await expect(referenceForm(page).getByRole("alert")).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/reference");
+  expect((await referenceOf(page, id)).kept).toBeNull();
+
+  // What was kept of a tutorial is gone when it is asked for, which is as the run was taken away, and the page looks again
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  let seen = 0;
+  await page.route("**/api/paperagents/*/reference", (route) => {
+    if (route.request().method() === "GET") seen += 1;
+
+    return route.fallback();
+  });
+  await page.route("**/api/paperagents/*/reference/*", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: { code: "not_found", message: "There is no such tutorial." } }) }),
+  );
+  const again = seen;
+  await tutorials(page).first().getByRole("button", { name: "Show what it did" }).click();
+  await expect.poll(() => seen).toBeGreaterThan(again);
+  await expect(page.getByTestId("reference-detail")).toHaveCount(0);
+  await expect(keptRun(page)).toBeVisible();
+  await page.unroute("**/api/paperagents/*/reference/*");
+  await page.unroute("**/api/paperagents/*/reference");
+});
+
+test("gives the runs the data that was fetched, to read, unless that is asked not to be done, and says what they were given", async ({ page }) => {
+  test.slow();
+  const id = await makeAgent(page, { title: "Data tutorials", paper: { kind: "file" }, repo: CODE_ADDRESS });
+  await sendPaper(page, id, "cells.txt", DATA_PAPER);
+  await readTheAgent(page, id);
+  await fetchTheCode(page, id);
+  const built = await page.request.post(`/api/paperagents/${id}/environment`, { data: {} });
+  expect(built.status()).toBe(202);
+  await expect.poll(async () => (await environmentOf(page, id)).job, { timeout: 30_000 }).toBeNull();
+  await fetchDataThrough(page, id, "https://zenodo.org/records/1000001", ["counts.csv"]);
+  await openAgent(page, id, "Data tutorials");
+
+  const given = referenceForm(page).getByRole("checkbox", { name: /^Give the runs the data that was fetched/ });
+  await expect(given).toBeChecked();
+  await expect(referenceForm(page)).toContainText("It is there to read only, at /opt/paper/data, and PAPER_DATA says where.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await given.uncheck();
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(keptRun(page).getByText("Given to read").locator("xpath=following-sibling::dd[1]")).toHaveText("None");
+  expect((await referenceOf(page, id)).kept.data).toBeNull();
+
+  // Run again with it, the runs are given what was fetched
+  await keptRun(page).getByRole("button", { name: "Take what they gave away" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take away" }).click();
+  await expect(referenceForm(page)).toBeVisible();
+  const again = referenceForm(page).getByRole("checkbox", { name: /^Give the runs the data that was fetched/ });
+  // What was asked for is still there to ask for again
+  await expect(again).not.toBeChecked();
+  await again.check();
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(keptRun(page).getByText("Given to read").locator("xpath=following-sibling::dd[1]")).toContainText("1 file, ");
+  expect((await referenceOf(page, id)).kept.data).toMatchObject({ files: 1 });
   expect(await accessibilityProblems(page)).toEqual([]);
 });
