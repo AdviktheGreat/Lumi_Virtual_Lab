@@ -497,12 +497,15 @@ export function ReferenceSection({
   reference,
   busy,
   running,
+  settling,
   jobs,
   onCleared,
   onStale,
 }: Shared & {
   // The run that is at work, if there is one
   running: Job | undefined;
+  // Whether a run has just ended well, and what the page shows of it is from before it did
+  settling: boolean;
   jobs: JobsData;
   onCleared: (reference: PaperAgentReference) => void;
   // Looks at the agent and its tutorials again, as is done when the server says what the page shows is out of date
@@ -517,6 +520,7 @@ export function ReferenceSection({
   if (!reference.environment.built) {
     return <p className="text-sm text-muted-foreground">Build the environment first. The tutorials are run in it.</p>;
   }
+  if (settling) return <p className="text-sm text-muted-foreground">Looking at what the tutorials gave…</p>;
   const finished = kept !== null && kept.complete;
 
   return (
@@ -532,7 +536,8 @@ export function ReferenceSection({
         </Aside>
       )}
       {running !== undefined && <JobOutput key={running.id} job={running} jobs={jobs} />}
-      {kept !== null && (
+      {/* What is kept while a run goes on is the account of a run that has begun, which is not one that did not come to its end */}
+      {kept !== null && running === undefined && (
         <KeptRun agent={agent} reference={reference} kept={kept} busy={busy} onCleared={onCleared} onStale={onStale} />
       )}
       {!finished && plan !== null && plan.runnable.length === 0 && (

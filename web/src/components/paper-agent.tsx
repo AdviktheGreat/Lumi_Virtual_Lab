@@ -482,6 +482,9 @@ function Agent({
   const ranReference = reference.value.kind === "ready" ? reference.value.value : null;
   const lastRun = lastReferenceJob(all, agent.id);
   // How the last run ended is said if it did not end well, and while what it gave is kept
+  // A run that is over, and succeeded, while what the page has of it is from before it ended: it is looked at again, and what is
+  // kept is not said to be a run that did not come to its end in the meantime
+  const settling = lastRun?.state === "succeeded" && ranReference?.kept != null && !ranReference.kept.complete;
   const lastRunShown =
     lastRun !== undefined && (lastRun.state !== "succeeded" || (ranReference?.kept?.tutorials.length ?? 0) > 0) ? lastRun : undefined;
   const idle = !working && !fetchingCode && !makingEnvironment && !fetchingData && !runningTutorials;
@@ -667,6 +670,7 @@ function Agent({
               reference={value}
               busy={!idle}
               running={running}
+              settling={settling}
               jobs={jobs}
               onCleared={(cleared) => {
                 reference.set(cleared);

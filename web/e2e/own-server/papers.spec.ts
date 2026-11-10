@@ -2156,6 +2156,14 @@ test("follows a run of the tutorials while it goes on, waits for it before anyth
   await expect(page.getByRole("log", { name: "What this printed: Running the tutorials: Lengthy tutorials" })).toContainText("Running tutorials/quickstart.ipynb", {
     timeout: 10_000,
   });
+  // What is kept of a run that has begun is the account of one that is not over, which is not one that did not come to its end, and
+  // is not said to be, even when the page is looked at again while it goes on
+  expect((await referenceOf(page, id)).kept).toMatchObject({ complete: false, tutorials: [] });
+  await page.reload();
+  await expect(stop).toBeVisible();
+  await expect(referenceForm(page).getByRole("button", { name: "Running…" })).toBeDisabled();
+  await expect(keptRun(page)).toHaveCount(0);
+  await expect(page.getByText("did not come to its end")).toHaveCount(0);
   // Nothing else is done to the agent while it goes on, and its paper is not read
   await expect(fetchAndRead(page)).toBeDisabled();
   await expect(reading(page)).toContainText("The tutorials are being run. Reading waits for that.");
