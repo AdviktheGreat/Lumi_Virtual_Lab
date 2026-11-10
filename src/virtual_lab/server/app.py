@@ -127,6 +127,7 @@ from virtual_lab.export_chat import chat_html
 from virtual_lab.export_notebook import chat_notebook, notebook_text
 from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.openrouter import Catalog
+from virtual_lab.paperagents.data import MAX_NAME_CHARS as MAX_DATA_FILE_CHARS
 from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
@@ -146,7 +147,7 @@ from virtual_lab.server.mcp import (
 )
 from virtual_lab.server.mcp_catalog import MCP_CATALOG, describe_catalog
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
-from virtual_lab.server.paperagents import MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
+from virtual_lab.server.paperagents import MAX_DATASET_CHARS, MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
 from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_PAPERS, MAX_TITLE_CHARS, Papers
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
 from virtual_lab.server.setup import Setup
@@ -385,6 +386,24 @@ class PaperAgentEnvironmentBody(RequestModel):
     system_packages: list[str] | None = Field(None, max_length=40)
     minutes: StrictInt | None = None
     gigabytes: StrictInt | None = None
+
+
+class PaperAgentDataBody(RequestModel):
+    """Which files of a place to fetch, which is only ever what the person chose: the place, as an address, a DOI, or an
+    accession; the names of the files; the size they came to when they were shown, which is what was agreed to; and the
+    most to fetch, in megabytes."""
+
+    reference: str = Field(max_length=500)
+    files: list[Annotated[str, StringConstraints(max_length=MAX_DATA_FILE_CHARS)]] = Field(max_length=100)
+    expected_bytes: StrictInt = Field(ge=0)
+    max_megabytes: StrictInt | None = None
+
+
+class PaperAgentStandInBody(RequestModel):
+    """Which of the person's own data stands in for a dataset that the paper used."""
+
+    dataset: str = Field(max_length=MAX_DATASET_CHARS * 4)
+    own: str = Field(max_length=1000)
 
 
 class PaperAgentPaperBody(RequestModel):
@@ -1193,6 +1212,40 @@ def create_app(
     @api.get("/paperagents/{agent_id}/environment/log")
     def get_paperagent_environment_log(agent_id: str) -> dict[str, Any]:
         return paperagents.environment_log(agent_id)
+
+    @api.get("/paperagents/{agent_id}/data")
+    def get_paperagent_data(agent_id: str) -> dict[str, Any]:
+        return paperagents.data(agent_id)
+
+    @api.get("/paperagents/{agent_id}/data/files")
+    def get_paperagent_data_files(agent_id: str, reference: str = Query(max_length=500)) -> dict[str, Any]:
+        return paperagents.data_files(agent_id, reference)
+
+    @api.post("/paperagents/{agent_id}/data", status_code=202)
+    def fetch_paperagent_data(agent_id: str, body: PaperAgentDataBody) -> dict[str, Any]:
+        job = paperagents.download_data(agent_id, body.reference, body.files, body.expected_bytes, body.max_megabytes)
+
+        return job.snapshot(0)
+
+    @api.delete("/paperagents/{agent_id}/data")
+    def delete_paperagent_data(agent_id: str, source: str | None = Query(None, max_length=600)) -> dict[str, Any]:
+        paperagents.clear_data(agent_id, source)
+
+        return paperagents.data(agent_id)
+
+    @api.put("/paperagents/{agent_id}/data/stand-ins")
+    def put_paperagent_stand_in(agent_id: str, body: PaperAgentStandInBody) -> dict[str, Any]:
+        paperagents.set_stand_in(agent_id, body.dataset, body.own)
+
+        return paperagents.data(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/data/stand-ins")
+    def delete_paperagent_stand_in(
+        agent_id: str, dataset: str = Query(max_length=MAX_DATASET_CHARS * 4)
+    ) -> dict[str, Any]:
+        paperagents.clear_stand_in(agent_id, dataset)
+
+        return paperagents.data(agent_id)
 
     @api.get("/paperagents/{agent_id}/passage")
     def get_paperagent_passage(agent_id: str, start: int = Query(ge=0), end: int = Query(ge=0)) -> dict[str, Any]:
