@@ -44,6 +44,8 @@ import type {
   PaperAgentPassage,
   PaperAgentReadOptions,
   PaperAgentReading,
+  PaperAgentReference,
+  PaperAgentReferenceOptions,
   PaperAgentRepository,
   PaperAgentsList,
   PaperFunction,
@@ -56,6 +58,7 @@ import type {
   SettingsChange,
   SetupStatus,
   ToolInfo,
+  TutorialDetail,
 } from "./types";
 
 // What the server's error says: its code is a word to act on, its message is for a person, and the rest is
@@ -536,6 +539,21 @@ export const api = {
     request<PaperAgentData>("PUT", `/paperagents/${encodeURIComponent(id)}/data/stand-ins`, { dataset, own }),
   clearPaperAgentStandIn: (id: string, dataset: string) =>
     request<PaperAgentData>("DELETE", `/paperagents/${encodeURIComponent(id)}/data/stand-ins?dataset=${encodeURIComponent(dataset)}`),
+  // What there is of the running of an agent's tutorials, running them, which goes on as a job, taking away what they gave, and
+  // what one of them did
+  paperAgentReference: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentReference>("GET", `/paperagents/${encodeURIComponent(id)}/reference`, undefined, signal),
+  runPaperAgentReference: (id: string, options: PaperAgentReferenceOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/reference`, options),
+  clearPaperAgentReference: (id: string) =>
+    request<PaperAgentReference>("DELETE", `/paperagents/${encodeURIComponent(id)}/reference`),
+  paperAgentTutorial: (id: string, tutorial: string, signal?: AbortSignal) =>
+    request<TutorialDetail>(
+      "GET",
+      `/paperagents/${encodeURIComponent(id)}/reference/${encodeURIComponent(tutorial)}`,
+      undefined,
+      signal,
+    ),
   paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
     request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,

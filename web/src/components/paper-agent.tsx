@@ -11,6 +11,7 @@ import { CodeSection } from "@/components/paper-agent-code";
 import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { ReadingSection } from "@/components/paper-agent-reading";
+import { ReferenceSection } from "@/components/paper-agent-reference";
 import { useServer } from "@/components/server-provider";
 import { useSetupJobs } from "@/components/setup-provider";
 import { WorkStatus } from "@/components/work-status";
@@ -44,12 +45,14 @@ import {
   lastDataJob,
   lastEnvironmentJob,
   lastReadingJob,
+  lastReferenceJob,
   lastRepositoryJob,
   MAX_AGENT_TITLE,
   paperFile,
   paperLink,
   readingJob,
   readingKey,
+  referenceJob,
   repoName,
   repositoryJob,
   repoProblem,
@@ -65,6 +68,7 @@ import type {
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentReading,
+  PaperAgentReference,
   PaperAgentRepository,
   PaperAgentsList,
   PaperAgentSource,
@@ -76,6 +80,7 @@ import {
   usePaperAgentData,
   usePaperAgentEnvironment,
   usePaperAgentReading,
+  usePaperAgentReference,
   usePaperAgentRepository,
   usePaperAgentsList,
 } from "@/lib/use-paperagents";
@@ -428,6 +433,7 @@ function Agent({
   repository,
   environment,
   data,
+  reference,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
@@ -436,6 +442,7 @@ function Agent({
   repository: LookedAt<PaperAgentRepository>;
   environment: LookedAt<PaperAgentEnvironment>;
   data: LookedAt<PaperAgentData>;
+  reference: LookedAt<PaperAgentReference>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -468,7 +475,19 @@ function Agent({
   const lastGet = lastDataJob(all, agent.id);
   // How the last fetching ended is said if it did not end well, and while the files it fetched are kept
   const lastGetShown = lastGet !== undefined && (lastGet.state !== "succeeded" || (gotten?.kept.files ?? 0) > 0) ? lastGet : undefined;
-  const idle = !working && !fetchingCode && !makingEnvironment && !fetchingData;
+  // The same of the tutorials, which are run in the environment, and not while anything else is done to the agent. The agent says that
+  // its tools are being made while they are run, which is the step they are part of
+  const running = referenceJob(all, agent.id);
+  const runningTutorials = running !== undefined || agent.steps.tools === "running";
+  const ranReference = reference.value.kind === "ready" ? reference.value.value : null;
+  const lastRun = lastReferenceJob(all, agent.id);
+  // How the last run ended is said if it did not end well, and while what it gave is kept
+  // A run that is over, and succeeded, while what the page has of it is from before it ended: it is looked at again, and what is
+  // kept is not said to be a run that did not come to its end in the meantime
+  const settling = lastRun?.state === "succeeded" && ranReference?.kept != null && !ranReference.kept.complete;
+  const lastRunShown =
+    lastRun !== undefined && (lastRun.state !== "succeeded" || (ranReference?.kept?.tutorials.length ?? 0) > 0) ? lastRun : undefined;
+  const idle = !working && !fetchingCode && !makingEnvironment && !fetchingData && !runningTutorials;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
   const changed = (next: PaperAgent) => {
@@ -476,6 +495,7 @@ function Agent({
     repository.reload();
     environment.reload();
     data.reload();
+    reference.reload();
   };
   const shared = { agent, list, working: !idle, onChanged: changed };
   const own = agent.paper.kind === "file";
@@ -521,7 +541,9 @@ function Agent({
                     ? "The environment is being built. Reading waits for that."
                     : fetchingData
                       ? "The data is being fetched. Reading waits for that."
-                      : null
+                      : runningTutorials
+                        ? "The tutorials are being run. Reading waits for that."
+                        : null
               }
               jobs={jobs}
               onCleared={(cleared) => {
@@ -561,8 +583,9 @@ function Agent({
               onCleared={(cleared) => {
                 repository.set(cleared);
                 environment.reload();
-                // What the code names for the data is found from the code
+                // What the code names for the data is found from the code, and its tutorials are what are run
                 data.reload();
+                reference.reload();
                 onReload();
               }}
               onStale={() => {
@@ -570,6 +593,7 @@ function Agent({
                 repository.reload();
                 environment.reload();
                 data.reload();
+                reference.reload();
               }}
             />
           )}
@@ -596,11 +620,14 @@ function Agent({
               jobs={jobs}
               onCleared={(cleared) => {
                 environment.set(cleared);
+                // What was run in the image goes with it
+                reference.reload();
                 onReload();
               }}
               onStale={() => {
                 onReload();
                 environment.reload();
+                reference.reload();
               }}
             />
           )}
@@ -622,7 +649,36 @@ function Agent({
               jobs={jobs}
               onData={(next) => {
                 data.set(next);
+                // What the tutorials are given to read is what was fetched
+                reference.reload();
                 onReload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Tutorials"
+        intro="The tutorials of the code, run in the environment so that what they did is kept. This shows that they ran here and what they gave. It does not show that what they gave is right."
+      >
+        <WorkStatus job={running} last={lastRunShown} jobs={jobs} label="Running the tutorials" />
+        <Looked state={reference.value} label="Looking at the tutorials" failure="The tutorials could not be looked at." onRetry={reference.reload}>
+          {(value) => (
+            <ReferenceSection
+              key={agent.id}
+              agent={agent}
+              reference={value}
+              busy={!idle}
+              running={running}
+              settling={settling}
+              jobs={jobs}
+              onCleared={(cleared) => {
+                reference.set(cleared);
+                onReload();
+              }}
+              onStale={() => {
+                onReload();
+                reference.reload();
               }}
             />
           )}
@@ -650,6 +706,7 @@ export function AgentPage({ id }: { id: string }) {
   const repository = usePaperAgentRepository(id, report, again);
   const environment = usePaperAgentEnvironment(id, report, again);
   const data = usePaperAgentData(id, report, again);
+  const reference = usePaperAgentReference(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -678,6 +735,7 @@ export function AgentPage({ id }: { id: string }) {
                 repository={repository}
                 environment={environment}
                 data={data}
+                reference={reference}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />

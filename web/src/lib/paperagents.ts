@@ -248,8 +248,9 @@ export function readingKey(jobs: readonly Job[] | null, ended: number, agent: st
   const fetching = (jobs ?? []).filter((job) => isActive(job) && job.kind === REPOSITORY_JOB && job.subject === agent).map((job) => job.id);
   const building = (jobs ?? []).filter((job) => isActive(job) && job.kind === ENVIRONMENT_JOB && job.subject === agent).map((job) => job.id);
   const getting = (jobs ?? []).filter((job) => isActive(job) && job.kind === DATA_JOB && job.subject === agent).map((job) => job.id);
+  const running = (jobs ?? []).filter((job) => isActive(job) && job.kind === REFERENCE_JOB && job.subject === agent).map((job) => job.id);
 
-  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}`;
+  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}`;
 }
 
 // The job that fetches the code of an agent, which the server runs with the agent's id as its subject
@@ -289,6 +290,19 @@ export function dataJob(jobs: readonly Job[], agent: string): Job | undefined {
 // The latest fetching of an agent's data that is over, whose outcome is what it was last done with
 export function lastDataJob(jobs: readonly Job[], agent: string): Job | undefined {
   return jobs.find((job) => !isActive(job) && job.kind === DATA_JOB && job.subject === agent);
+}
+
+// The job that runs the tutorials of an agent's code, which the server runs with the agent's id as its subject
+export const REFERENCE_JOB = "paperagent-reference";
+
+// The job at work running an agent's tutorials, which nothing else is done to the agent in the meantime
+export function referenceJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === REFERENCE_JOB && job.subject === agent);
+}
+
+// The latest running of an agent's tutorials that is over, whose outcome is what it was last done with
+export function lastReferenceJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => !isActive(job) && job.kind === REFERENCE_JOB && job.subject === agent);
 }
 
 export interface ReadingDraft {

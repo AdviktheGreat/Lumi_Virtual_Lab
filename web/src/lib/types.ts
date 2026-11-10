@@ -1346,3 +1346,207 @@ export interface PaperAgentDataFetch {
   expected_bytes: number;
   max_megabytes: number;
 }
+
+// A tutorial of the code that can be run here, and one that cannot, with why
+export interface ReferenceItem {
+  // What its record is kept under
+  id: string;
+  path: string;
+  kind: "script" | "notebook";
+}
+
+export interface ReferenceSkipped {
+  path: string;
+  kind: string;
+  reason: string;
+}
+
+// What would be run, from what was found in the code
+export interface ReferencePlan {
+  runnable: ReferenceItem[];
+  skipped: ReferenceSkipped[];
+  // How many more tutorials the code has than were listed
+  more: number;
+}
+
+export type TutorialStatus = "ok" | "failed" | "timed_out" | "too_big";
+
+export type TutorialFailureKind =
+  | "needs_network"
+  | "missing_file"
+  | "missing_package"
+  | "needs_gpu"
+  | "needs_notebook"
+  | "notebook_unreadable"
+  | "out_of_memory"
+  | "timeout"
+  | "too_big"
+  | "no_result"
+  | "error";
+
+// What a reference run was allowed, and what each run of a tutorial was given of the machine
+export interface ReferenceLimits {
+  minutes: number;
+  total_minutes: number;
+  tutorials: number;
+  repeats: number;
+  gigabytes: number;
+  memory: string;
+  cpus: string;
+  pids: number;
+}
+
+// How one tutorial ended, in a list
+export interface TutorialSummary {
+  id: string;
+  path: string;
+  kind: "script" | "notebook";
+  status: TutorialStatus;
+  failure: { kind: TutorialFailureKind; title: string } | null;
+  seconds: number;
+  // How many times it was run, and whether the runs agreed, which is null if it was run once or did not finish
+  runs: number;
+  stable: boolean | null;
+  // What was not the same from one run to the next
+  differs: string[];
+  calls: number;
+  files: number;
+  cells: number;
+  cells_total: number;
+}
+
+// What was kept of a run of the tutorials
+export interface ReferenceKept {
+  commit: string;
+  image_id: string;
+  started_at: string;
+  finished_at: string | null;
+  // Whether it came to its end, and was not stopped or failed on the way
+  complete: boolean;
+  limits: ReferenceLimits;
+  // What the runs were given of the data that was fetched, or null if they were given none
+  data: { files: number; bytes: number } | null;
+  tutorials: TutorialSummary[];
+  skipped: ReferenceSkipped[];
+  more: number;
+  not_run: { path: string; reason: string }[];
+}
+
+// What there is of the running of an agent's tutorials: which would be run, what is given, and what was kept
+export interface PaperAgentReference {
+  id: string;
+  docker: { ready: boolean; message: string | null };
+  commit: string | null;
+  environment: { built: boolean; image_present: boolean | null };
+  plan: ReferencePlan | null;
+  // What a run would be given of the data, or null if there is none
+  data: { files: number; bytes: number } | null;
+  kept: ReferenceKept | null;
+  // The run that is at work, if one is
+  job: Job | null;
+  // What a reference run is, in words, which is said wherever it is shown
+  meaning: string;
+  limits: {
+    default_minutes: number;
+    max_minutes: number;
+    default_total_minutes: number;
+    max_total_minutes: number;
+    default_tutorials: number;
+    max_tutorials: number;
+    default_repeats: number;
+    max_repeats: number;
+    default_gigabytes: number;
+    max_gigabytes: number;
+    memory: string;
+    cpus: string;
+    pids: number;
+  };
+}
+
+// What to say of running the tutorials: the most time for one and for all, how many, how many times each, the most one may write, and
+// whether they are given the data. What is left out is what the server defaults to
+export interface PaperAgentReferenceOptions {
+  minutes?: number;
+  total_minutes?: number;
+  tutorials?: number;
+  repeats?: number;
+  gigabytes?: number;
+  data?: boolean;
+}
+
+// A value that a tutorial passed to the code's function, or that it got back: itself if it is plain data, and otherwise what it was
+// and a look at it
+export interface TutorialValue {
+  type: string;
+  plain: boolean;
+  value?: unknown;
+  repr?: string;
+  shape?: number[];
+  dtype?: string;
+  sha256?: string;
+  values?: unknown;
+}
+
+// A call that a tutorial made to one of the code's own functions
+export interface TutorialCall {
+  id: number;
+  module: string;
+  function: string;
+  qualname: string;
+  method: boolean;
+  file: string;
+  line: number;
+  args: Record<string, TutorialValue>;
+  // The folder it was made from, which is where it has to be made from again
+  cwd: string;
+  variadic: boolean;
+  result: TutorialValue | null;
+  returned: boolean;
+  cell: number | null;
+  from: { file: string; line: number };
+}
+
+export interface TutorialFile {
+  path: string;
+  bytes: number;
+  sha256: string | null;
+  // Whether the tutorial made it, and did not find it
+  new: boolean;
+  // Whether its content is kept
+  kept: boolean;
+}
+
+export interface TutorialCell {
+  index: number;
+  ok: boolean;
+  seconds: number;
+  output: string;
+  result: string | null;
+  // Which magics or shell lines were left out of it, as they are not Python
+  skipped: string[];
+  error: { type: string; message: string; traceback: string[]; cell: number | null } | null;
+}
+
+// What was kept of one tutorial: how it ended, what it printed, the calls it made, and the files it wrote
+export interface TutorialDetail {
+  id: string;
+  path: string;
+  kind: "script" | "notebook";
+  status: TutorialStatus;
+  failure: { kind: TutorialFailureKind; title: string; detail: string; tail: string[] } | null;
+  python: string | null;
+  seconds: number;
+  runs: { status: string; seconds: number; digest: Record<string, unknown> | null }[];
+  stable: boolean | null;
+  differs: string[];
+  // The end of what it printed, by line
+  output: string[];
+  cells: TutorialCell[];
+  cells_total: number;
+  calls: TutorialCall[];
+  // How many calls it made in all, of which calls are kept
+  calls_seen: number;
+  files: TutorialFile[];
+  files_more: number;
+  packages: string[];
+}

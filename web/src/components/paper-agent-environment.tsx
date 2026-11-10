@@ -2,10 +2,10 @@
 
 import { useId, useState } from "react";
 import { Hammer, Trash2 } from "lucide-react";
+import { JobOutput } from "@/components/job-output";
 import { ProblemNotice } from "@/components/messages";
 import { useServer } from "@/components/server-provider";
 import { Aside, describedBy, Field } from "@/components/settings-fields";
-import { Log } from "@/components/setup-jobs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,10 +35,8 @@ import {
   suggestion,
   type EnvironmentDraft,
 } from "@/lib/paperagent-environment";
-import { EMPTY_LOG, type JobLog } from "@/lib/setup";
 import type { EnvironmentBuilt, EnvironmentFailed, EnvironmentRecipe, Job, PaperAgent, PaperAgentEnvironment } from "@/lib/types";
 import type { JobsData } from "@/lib/use-jobs";
-import { useJobLogs } from "@/lib/use-jobs";
 import { useAttempt } from "@/lib/use-looked";
 
 interface Shared {
@@ -247,15 +245,6 @@ function BuildForm({
       </div>
     </form>
   );
-}
-
-// What the build prints, as it goes
-function BuildOutput({ job, jobs }: { job: Job; jobs: JobsData }) {
-  const logs = useJobLogs(jobs.jobs, job.id);
-  const log: JobLog = logs[job.id] ?? EMPTY_LOG;
-  const current = jobs.jobs?.find((item) => item.id === job.id) ?? job;
-
-  return <Log job={current} log={log} />;
 }
 
 // Text that is kept on the server, which is asked for when it is wanted to be seen, and each time, as a build may change it
@@ -572,7 +561,7 @@ export function EnvironmentSection({
           {environment.docker.message ?? "Docker is not running."} Building takes it. The environment cannot be built until it is.
         </Aside>
       )}
-      {building !== undefined && <BuildOutput key={building.id} job={building} jobs={jobs} />}
+      {building !== undefined && <JobOutput key={building.id} job={building} jobs={jobs} />}
       {built !== null && <BuiltEnvironment agent={agent} environment={environment} built={built} busy={busy} onCleared={onCleared} />}
       {built === null && unsupported !== null && (
         <section className="flex flex-col gap-2 rounded-lg border border-border p-3" data-testid="environment-unsupported" data-kind={unsupported.kind}>

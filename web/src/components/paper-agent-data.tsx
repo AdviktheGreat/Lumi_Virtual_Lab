@@ -3,11 +3,11 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import { ExternalLink, Search, X } from "lucide-react";
+import { JobOutput } from "@/components/job-output";
 import { KeptData, Files } from "@/components/paper-agent-data-files";
 import { ProblemNotice } from "@/components/messages";
 import { useServer } from "@/components/server-provider";
 import { Aside, describedBy, Field } from "@/components/settings-fields";
-import { Log } from "@/components/setup-jobs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,11 +23,9 @@ import {
   standInPresent,
 } from "@/lib/paperagent-data";
 import { describeAnchor, isLink } from "@/lib/paperagents";
-import { EMPTY_LOG, type JobLog } from "@/lib/setup";
 import type { DataCandidate, DataDataset, DataListing, DataStandIn, Job, PaperAgent, PaperAgentData } from "@/lib/types";
 import type { Problem } from "@/lib/errors";
 import type { JobsData } from "@/lib/use-jobs";
-import { useJobLogs } from "@/lib/use-jobs";
 import { useAttempt } from "@/lib/use-looked";
 import { cn } from "@/lib/utils";
 
@@ -43,15 +41,6 @@ interface Shared {
   busy: boolean;
   // Shows the data as it now is, as what changed it gives it back
   onData: (data: PaperAgentData) => void;
-}
-
-// What is printed as data is fetched
-function FetchOutput({ job, jobs }: { job: Job; jobs: JobsData }) {
-  const logs = useJobLogs(jobs.jobs, job.id);
-  const log: JobLog = logs[job.id] ?? EMPTY_LOG;
-  const current = jobs.jobs?.find((item) => item.id === job.id) ?? job;
-
-  return <Log job={current} log={log} />;
 }
 
 // The names of the person's own data that can stand in for something, to choose one
@@ -451,7 +440,7 @@ export function DataSection({
         Nothing is fetched until you have seen what a place has, chosen the files, and agreed to what they come to. Data is only fetched from
         the places listed at the end, and what is kept is in this agent&apos;s own folder.
       </Aside>
-      {fetching !== undefined && <FetchOutput key={fetching.id} job={fetching} jobs={jobs} />}
+      {fetching !== undefined && <JobOutput key={fetching.id} job={fetching} jobs={jobs} />}
       <Datasets {...shared} onSee={(candidate) => void see(candidate.url ?? "")} seeing={asking} />
       <Places
         data={data}
