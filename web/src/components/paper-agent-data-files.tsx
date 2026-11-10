@@ -158,7 +158,7 @@ export function Files({ agent, data, listing, busy, jobs, onRelist }: FilesProps
               disabled={available.length === 0 || busy}
               onClick={() => setChosen(new Set(available.map((file) => file.name)))}
             >
-              Choose all that can be fetched
+              {listing.truncated ? "Choose all listed that can be fetched" : "Choose all that can be fetched"}
             </Button>
             <Button type="button" variant="outline" size="xs" disabled={chosen.size === 0} onClick={() => setChosen(new Set())}>
               Choose none
@@ -250,8 +250,8 @@ export function Files({ agent, data, listing, busy, jobs, onRelist }: FilesProps
               Fetch {count(picked.length, "file")}, {formatBytes(total)}, from {listing.label}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              They are fetched from {info ? info.hosts.join(", ") : listing.source} and kept under data/{listing.source}/ in this agent&apos;s
-              folder. {by.checksum > 0 && `${count(by.checksum, "file")} will be checked by the checksum that the place gives. `}
+              They are fetched from {info ? info.hosts.join(", ") : listing.source} and kept in a folder for this place under data/ in this
+              agent&apos;s folder. {by.checksum > 0 && `${count(by.checksum, "file")} will be checked by the checksum that the place gives. `}
               {by.size > 0 && `${count(by.size, "file")} will be checked by their size only, since the place gives no checksum. `}
               A file that does not match is thrown away, and fetching stops at {Number(draft.megabytes).toLocaleString("en-US")} MB.
             </AlertDialogDescription>

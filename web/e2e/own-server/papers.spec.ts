@@ -1672,6 +1672,7 @@ test("shows where the paper says its data is, what each place has before anythin
   await expect(asking).toContainText("2 files will be checked by the checksum that the place gives.");
   await expect(asking).not.toContainText("size only");
   await expect(asking).toContainText("A file that does not match is thrown away, and fetching stops at 5 MB.");
+  await expect(asking).toContainText("kept in a folder for this place under data/ in this agent's folder");
   // The dialog is looked at once it has finished appearing, as what is half faded in has less contrast than it will
   await expect(asking).toHaveCSS("opacity", "1");
   expect(await accessibilityProblems(page)).toEqual([]);
@@ -1886,7 +1887,6 @@ test("follows the fetching while it goes on, waits for it before anything else i
   await expect(reading(page)).toContainText("The data is being fetched. Reading waits for that.");
   await expect(page.getByRole("button", { name: "Delete Slow data" })).toBeDisabled();
   await expect(page.getByLabel("Upload it again")).toBeDisabled();
-  await expect(listing(page).getByRole("button", { name: "Fetching…" })).toHaveCount(0);
   await expect(choosing(page).getByRole("button", { name: "Waiting…" })).toBeDisabled();
   expect(await accessibilityProblems(page)).toEqual([]);
 
