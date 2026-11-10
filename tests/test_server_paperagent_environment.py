@@ -33,6 +33,7 @@ from test_server_paperagent_repository import (
 from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.paperagents import environment as building
+from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import repository as cloning
 from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server.app import create_app
@@ -53,6 +54,7 @@ class Docker:
         self.removed: list[str] = []
         self.swept: list[str] = []
         self.cleaned: list[str] = []
+        self.runs_cleaned: list[str] = []
         self.usable: tuple[bool, str | None] = (True, None)
         self.error: BaseException | None = None
         self.gate: threading.Event | None = None
@@ -148,6 +150,11 @@ class Docker:
 
         return 0
 
+    def remove_runs(self, label: str, docker_command: Any = ("docker",)) -> int:
+        self.runs_cleaned.append(label)
+
+        return 0
+
 
 @pytest.fixture
 def docker(monkeypatch: pytest.MonkeyPatch) -> Docker:
@@ -158,6 +165,7 @@ def docker(monkeypatch: pytest.MonkeyPatch) -> Docker:
     monkeypatch.setattr(building, "remove_image", stand_in.remove_image)
     monkeypatch.setattr(building, "remove_images", stand_in.remove_images)
     monkeypatch.setattr(building, "remove_builds", stand_in.remove_builds)
+    monkeypatch.setattr(referencing, "remove_runs", stand_in.remove_runs)
 
     return stand_in
 

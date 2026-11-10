@@ -26,6 +26,12 @@ them, and what the person adds. Each is a place, with what it holds, which is lo
 fetched. Files are fetched only when the person says which, and how much may be fetched, from the few places that data
 is fetched from and no others, into the agent's data/ with where each came from and its checksum. The person's own
 data, from the Data page, can stand in for data that the paper used, which is a note of which and not a copy.
+
+The tutorials and examples of the code are run, when the person asks, in the environment that was built, each in a
+container of its own with no network, and what each did is kept in checks/ as the reference run: the calls it made to
+the project's own functions, with what went in and came out, and the files it wrote. Each is run more than once, to see
+whether the runs agree. The reference run belongs to the environment it was run in: when that goes, it goes. It shows
+that the tutorials ran here and what they gave, and does not show that what they gave is right.
 """
 
 import hashlib
@@ -58,6 +64,7 @@ from virtual_lab.paperagents import datahosts as hosting
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import fetch as fetching
 from virtual_lab.paperagents import preflight as checking
+from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import repository as cloning
 from virtual_lab.paperagents import stock as stocking
 from virtual_lab.paperagents.anchors import document_from
@@ -67,6 +74,7 @@ from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server import paperagent_data as kept_data
 from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
+from virtual_lab.server import paperagent_reference as kept_reference
 from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
@@ -104,6 +112,8 @@ MIN_MEGABYTES = 10
 ENVIRONMENT_JOB = "paperagent-environment"
 # The job that fetches data, which is not done to an agent while another job is
 DATA_JOB = "paperagent-data"
+# The job that runs the tutorials of an agent's code, which is not done to an agent while another job is
+REFERENCE_JOB = "paperagent-reference"
 # What is left free on the disk when data is fetched, and the longest that a note of which data stands in for what is
 DISK_RESERVE_BYTES = 1 << 30
 MAX_DATASET_CHARS = 200
@@ -418,6 +428,15 @@ def steps_of(agent: dict[str, Any]) -> dict[str, str]:
     return {step: steps[step] if steps.get(step) in STATUSES else "pending" for step in STEPS}
 
 
+def describe_run(detail: dict[str, Any]) -> str:
+    """What came of a tutorial, in a line for a job's log."""
+    if detail["failure"] is not None:
+        return f"{detail['path']}: {detail['failure']['title'].lower()}"
+    agreed = {True: ", and the runs agree", False: ", but the runs do not agree", None: ""}[detail["stable"]]
+
+    return f"{detail['path']}: ran to the end in {detail['seconds']} seconds{agreed}"
+
+
 def same_paper(left: dict[str, Any], right: dict[str, Any]) -> bool:
     """Whether two agents are of one paper, which is told by the contents of the file, if both have one, and by the DOI
     or the link."""
@@ -498,6 +517,8 @@ class PaperAgents:
             steps["environment"] = "running"
         if self.downloading(agent_id) is not None:
             steps["data"] = "running"
+        if self.reference_job(agent_id) is not None:
+            steps["tools"] = "running"
 
         return {
             "id": agent_id,
@@ -524,17 +545,22 @@ class PaperAgents:
         """The job that is fetching an agent's data, if one is."""
         return next((job for job in self.jobs.active(DATA_JOB) if job.subject == agent_id), None)
 
+    def reference_job(self, agent_id: str) -> Job | None:
+        """The job that is running an agent's tutorials, if one is."""
+        return next((job for job in self.jobs.active(REFERENCE_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
-        :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, or its data
-            fetched, which what is done to them must wait for.
+        :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
+            fetched, or its tutorials run, which what is done to them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
             or self.cloning(agent_id)
             or self.making(agent_id)
             or self.downloading(agent_id)
+            or self.reference_job(agent_id)
         )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
@@ -1250,6 +1276,8 @@ class PaperAgents:
         """
         record = kept_environment.stored(directory)
         gone = True
+        # A container that a run left when the server was stopped hard, which would keep its image from being removed
+        referencing.remove_runs(directory.name, self.docker_command)
         if record is not None:
             gone = building.remove_image(building.tag_of(directory.name, record["commit"]), self.docker_command)
         if not (building.remove_images(directory.name, self.docker_command) and gone):
@@ -1260,6 +1288,8 @@ class PaperAgents:
                 "something may be using it. Start Docker, stop what uses the image, and try again.",
             )
         kept_environment.forget(directory)
+        # What was run in the image is of no use without it
+        kept_reference.forget(directory)
 
     def environment(self, agent_id: str, python: Any = None, system_packages: Any = None) -> dict[str, Any]:
         """What there is of an agent's environment: what would be built from its code and how, if it can be, why not
@@ -1544,6 +1574,283 @@ class PaperAgents:
             raise not_found("build of that PaperAgent's environment")
 
         return {"lines": lines}
+
+    # The tutorials, run to keep what they give as the reference
+
+    def data_to_give(self, directory: Path) -> tuple[Path | None, dict[str, int] | None]:
+        """The folder of the data that was fetched, and how much is in it, if there is any, which is what a run is
+        given to read."""
+        record = kept_data.load(directory)
+        present = [
+            file for source in record["sources"] for file in source["files"] if kept_data.present(directory, file)
+        ]
+        folder = kept_data.data_path(directory)
+        if not present or folder.is_symlink() or not folder.is_dir():
+            return None, None
+
+        return folder, {"files": len(present), "bytes": sum(file["bytes"] for file in present)}
+
+    def reference(self, agent_id: str) -> dict[str, Any]:
+        """What there is of the running of an agent's tutorials: which would be run and which would not, with why, what
+        a run is given to read, what was kept of the last, and what is allowed.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        code = agent.get("repo")
+        intake = kept_repository.load(directory, code["url"] if code is not None else None)
+        commit = intake["commit"] if intake is not None else None
+        usable, problem = building.ready(self.docker_command)
+        built = kept_environment.load(directory, commit)
+        present = None
+        if built is not None and usable:
+            present = (
+                building.image_id_of(building.tag_of(agent_id, built["commit"]), self.docker_command)
+                == built["image"]["id"]
+            )
+        job = self.reference_job(agent_id)
+        _, data = self.data_to_give(directory)
+
+        return {
+            "id": agent_id,
+            "docker": {"ready": usable, "message": problem},
+            "commit": commit,
+            "environment": {"built": built is not None, "image_present": present},
+            "plan": referencing.plan(intake["stock"]).to_dict() if intake is not None else None,
+            "data": data,
+            "kept": kept_reference.load(directory, commit, built["image"]["id"] if built is not None else None),
+            "job": job.snapshot() if job is not None else None,
+            "meaning": referencing.MEANING,
+            "limits": {
+                "default_minutes": referencing.DEFAULT_MINUTES,
+                "max_minutes": referencing.MAX_MINUTES,
+                "default_total_minutes": referencing.DEFAULT_TOTAL_MINUTES,
+                "max_total_minutes": referencing.MAX_TOTAL_MINUTES,
+                "default_tutorials": referencing.DEFAULT_TUTORIALS,
+                "max_tutorials": referencing.MAX_TUTORIALS,
+                "default_repeats": referencing.DEFAULT_REPEATS,
+                "max_repeats": referencing.MAX_REPEATS,
+                "default_gigabytes": referencing.DEFAULT_GIGABYTES,
+                "max_gigabytes": referencing.MAX_GIGABYTES,
+                "memory": building.MEMORY,
+                "cpus": building.CPUS,
+                "pids": building.PIDS,
+            },
+        }
+
+    def reference_tutorial(self, agent_id: str, tutorial: str) -> dict[str, Any]:
+        """What was kept of one tutorial of the reference run: how it ended, what it printed, the calls it made to the
+        project's functions, and the files it wrote.
+
+        :raises ApiError: If there is no agent with this id, or the reference run did not include that tutorial.
+        """
+        directory, agent = self.lookup(agent_id)
+        code = agent.get("repo")
+        intake = kept_repository.load(directory, code["url"] if code is not None else None)
+        built = kept_environment.load(directory, intake["commit"] if intake is not None else None)
+        record = (
+            kept_reference.load(directory, intake["commit"], built["image"]["id"])
+            if intake is not None and built is not None
+            else None
+        )
+        detail = kept_reference.load_detail(directory, record, tutorial) if record is not None else None
+        if detail is None:
+            raise not_found("tutorial of that PaperAgent's reference run")
+
+        return detail
+
+    def start_reference(
+        self,
+        agent_id: str,
+        minutes: Any = None,
+        total_minutes: Any = None,
+        tutorials: Any = None,
+        repeats: Any = None,
+        gigabytes: Any = None,
+        use_data: Any = None,
+    ) -> Job:
+        """Starts running the tutorials of an agent's code in its environment, each in a container that has none of this
+        machine in it and no network, within the time and the disk it is given, and keeping what each did.
+
+        :param minutes: The most time one run of one tutorial may take.
+        :param total_minutes: The most time all of the runs may take together.
+        :param tutorials: The most tutorials to run.
+        :param repeats: How many times each is run, to see whether the runs agree.
+        :param gigabytes: The most that one run may write.
+        :param use_data: Whether the runs are given the data that was fetched, to read. It is, if it is not said.
+        :raises ApiError: If there is no agent with this id, what is given is not fit, Docker is not running, the code
+            has not been fetched or its environment not built or its image is not in Docker, there is nothing in the
+            code to run, the tutorials have been run, or the agent's paper, code, environment, or data is being worked
+            on.
+        """
+        self.lookup(agent_id)
+        try:
+            limits = referencing.check_limits(minutes, total_minutes, tutorials, repeats, gigabytes)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        give = check_flag(True if use_data is None else use_data, "Whether the runs are given the data")
+        usable, problem = building.ready(self.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and running tutorials takes it")
+
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            code = agent.get("repo")
+            intake = kept_repository.load(directory, code["url"] if code is not None else None)
+            if intake is None:
+                raise ApiError(422, "no_code", "Fetch the code first")
+            built = kept_environment.load(directory, intake["commit"])
+            if built is None:
+                raise ApiError(422, "no_environment", "Build the environment first, as the tutorials run in it")
+            self.check_idle(agent_id)
+            image_id = built["image"]["id"]
+            if building.image_id_of(building.tag_of(agent_id, intake["commit"]), self.docker_command) != image_id:
+                raise ApiError(
+                    409,
+                    "image_missing",
+                    "The image of the environment is not in Docker any more. Remove the environment and build it "
+                    "again.",
+                )
+            kept = kept_reference.load(directory, intake["commit"], image_id)
+            if kept is not None and kept["complete"]:
+                raise ApiError(409, "done", "The tutorials have been run. Remove that to run them again.")
+            plan = referencing.plan(intake["stock"])
+            if not plan.runnable:
+                raise ApiError(
+                    422, "no_tutorials", "There is no tutorial in the code that can be run here: only Python is run"
+                )
+            folder, data = self.data_to_give(directory) if give else (None, None)
+            try:
+                return self.jobs.start(
+                    REFERENCE_JOB,
+                    agent_id,
+                    f"Running the tutorials: {agent['title']}",
+                    self.referrer(agent_id, intake["commit"], image_id, limits, plan, data, folder),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def referrer(
+        self,
+        agent_id: str,
+        commit: str,
+        image_id: str,
+        limits: referencing.Limits,
+        plan: referencing.Plan,
+        data: dict[str, int] | None,
+        folder: Path | None,
+    ) -> Callable[[Job], str | None]:
+        """What a job does to run the tutorials: runs them one after another, and keeps what each came to as it ends,
+        so that a run that is stopped keeps what it had done."""
+
+        def work(job: Job) -> str | None:
+            failed = False
+            try:
+                return self.run_tutorials(job, agent_id, commit, image_id, limits, plan, data, folder)
+            except StoppedError:
+                raise
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                self.settle_reference(agent_id, failed)
+
+        return work
+
+    def run_tutorials(
+        self,
+        job: Job,
+        agent_id: str,
+        commit: str,
+        image_id: str,
+        limits: referencing.Limits,
+        plan: referencing.Plan,
+        data: dict[str, int] | None,
+        folder: Path | None,
+    ) -> str:
+        directory = self.workspace.paperagents_dir / agent_id
+        job.update("Running the tutorials")
+        # What an earlier run left of itself, which only a server that was stopped hard would
+        referencing.remove_runs(agent_id, self.docker_command)
+        account = {
+            "schema": kept_reference.SCHEMA,
+            "commit": commit,
+            "image_id": image_id,
+            "started_at": utc_timestamp(),
+            "finished_at": None,
+            "complete": False,
+            "limits": limits.to_dict(),
+            "data": data,
+            "tutorials": [],
+            "skipped": list(plan.skipped),
+            "more": plan.more,
+            "not_run": [],
+        }
+        kept_reference.begin(directory, account)
+
+        def started(item: referencing.Item, number: int, total: int) -> None:
+            job.update(f"Running the tutorials: {item.path} ({number} of {total})")
+            job.log(f"Running {item.path}")
+
+        def ended(item: referencing.Item, outcome: referencing.Outcome) -> None:
+            nonlocal account
+            summary = referencing.summary_of(outcome.detail)
+            account = kept_reference.keep_tutorial(directory, account, outcome.detail, summary)
+            job.log(describe_run(outcome.detail))
+
+        with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
+            runner = referencing.Runner(
+                building.tag_of(agent_id, commit),
+                limits,
+                Path(scratch),
+                folder,
+                self.docker_command,
+                job.stop,
+                agent_id,
+            )
+            not_run = referencing.run_reference(
+                runner, plan.runnable, started, ended, lambda item: kept_reference.files_path(directory, item.id)
+            )
+        kept_reference.finish(directory, account, not_run, utc_timestamp())
+        ran = account["tutorials"]
+        finished = sum(1 for tutorial in ran if tutorial["status"] == "ok")
+        agreed = sum(1 for tutorial in ran if tutorial["stable"] is True)
+        left = f" {len(not_run)} were not run." if not_run else ""
+
+        return (
+            f"Ran {len(ran)} tutorials: {finished} to the end, {len(ran) - finished} not. "
+            f"{agreed} gave the same each time it was run.{left}"
+        )
+
+    def settle_reference(self, agent_id: str, failed: bool) -> None:
+        """Says how far the step of making tools has got: failed if the running of the tutorials failed, and pending
+        if it was done or only stopped, as tools are not made from what it kept yet."""
+        with self._lock:
+            try:
+                directory, agent = self.lookup(agent_id)
+            except ApiError:
+                return
+            status = steps_of(agent)["tools"]
+            wanted = "failed" if failed else "pending"
+            if status not in ("done", wanted):
+                self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": wanted}})
+
+    def clear_reference(self, agent_id: str) -> None:
+        """Takes away what was kept of the running of an agent's tutorials, so that they can be run again.
+
+        :raises ApiError: If there is no agent with this id, or its paper is being read, its code fetched, its
+            environment built, its data fetched, or its tutorials run.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            referencing.remove_runs(agent_id, self.docker_command)
+            kept_reference.forget(directory)
+            if steps_of(agent)["tools"] == "failed":
+                self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": "pending"}})
 
     # The data that the paper used
 

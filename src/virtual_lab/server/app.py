@@ -56,6 +56,10 @@ and everything else is a request and an answer.
     DELETE /api/paperagents/{id}/environment  takes away the environment and its image, so that it can be built again
     GET    /api/paperagents/{id}/environment/lock  the exact versions that were installed
     GET    /api/paperagents/{id}/environment/log  what the last build printed
+    POST   /api/paperagents/{id}/reference  starts running the code's tutorials in the environment, with no network
+    GET    /api/paperagents/{id}/reference  which would be run, what the last run kept, and what is allowed
+    GET    /api/paperagents/{id}/reference/{tutorial}  what was kept of one: its calls into the code, its files
+    DELETE /api/paperagents/{id}/reference  takes away what the tutorials gave, so that they can be run again
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -386,6 +390,19 @@ class PaperAgentEnvironmentBody(RequestModel):
     system_packages: list[str] | None = Field(None, max_length=40)
     minutes: StrictInt | None = None
     gigabytes: StrictInt | None = None
+
+
+class PaperAgentReferenceBody(RequestModel):
+    """How to run the tutorials: the most minutes one run may take, and all of the runs together, how many tutorials,
+    how many times each is run, the most gigabytes one run may write, and whether the runs are given the data that was
+    fetched, to read."""
+
+    minutes: StrictInt | None = None
+    total_minutes: StrictInt | None = None
+    tutorials: StrictInt | None = None
+    repeats: StrictInt | None = None
+    gigabytes: StrictInt | None = None
+    data: StrictBool | None = None
 
 
 class PaperAgentDataBody(RequestModel):
@@ -1212,6 +1229,28 @@ def create_app(
     @api.get("/paperagents/{agent_id}/environment/log")
     def get_paperagent_environment_log(agent_id: str) -> dict[str, Any]:
         return paperagents.environment_log(agent_id)
+
+    @api.post("/paperagents/{agent_id}/reference", status_code=202)
+    def run_paperagent_reference(agent_id: str, body: PaperAgentReferenceBody) -> dict[str, Any]:
+        job = paperagents.start_reference(
+            agent_id, body.minutes, body.total_minutes, body.tutorials, body.repeats, body.gigabytes, body.data
+        )
+
+        return job.snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/reference")
+    def get_paperagent_reference(agent_id: str) -> dict[str, Any]:
+        return paperagents.reference(agent_id)
+
+    @api.get("/paperagents/{agent_id}/reference/{tutorial}")
+    def get_paperagent_reference_tutorial(agent_id: str, tutorial: str) -> dict[str, Any]:
+        return paperagents.reference_tutorial(agent_id, tutorial)
+
+    @api.delete("/paperagents/{agent_id}/reference")
+    def delete_paperagent_reference(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_reference(agent_id)
+
+        return paperagents.reference(agent_id)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:
