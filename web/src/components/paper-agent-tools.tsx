@@ -550,8 +550,9 @@ export function ToolsSection({
         </Aside>
       )}
       {making !== undefined && <JobOutput key={making.id} job={making} jobs={jobs} />}
-      {/* What is kept while the tools are made is the account of a making that has begun, which is not one that did not come to its end */}
-      {kept !== null && making === undefined && (
+      {/* What is kept while the tools are made is the account of a making that has begun, which is not one that did not come to its end.
+          The server says that one goes on before the page has looked at the jobs */}
+      {kept !== null && making === undefined && tools.job === null && (
         <KeptTools agent={agent} tools={tools} kept={kept} busy={busy} onCleared={onCleared} onStale={onStale} />
       )}
       {!finished && preview !== null && preview.candidates.length === 0 && (
@@ -567,7 +568,7 @@ export function ToolsSection({
           <MakeForm
             agent={agent}
             tools={tools}
-            busy={busy || making !== undefined}
+            busy={busy || making !== undefined || tools.job !== null}
             draft={draft}
             onDraft={setDraft}
             jobs={jobs}
