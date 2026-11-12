@@ -160,6 +160,7 @@ export function ToolsView() {
                 server={server}
                 onChange={(what) => changes.change(server.name, what)}
                 onKeysChanged={() => void changes.refresh()}
+                onChecked={() => void changes.refresh()}
                 onSignOut={() => void changes.signOut(server)}
                 onRemove={(button) => {
                   asker.current = button;

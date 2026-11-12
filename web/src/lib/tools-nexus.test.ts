@@ -19,6 +19,7 @@ const server = (fields: Partial<McpServer> = {}): McpServer => ({
   keys_set: [],
   problem: null,
   setup: null,
+  holds: null,
   ...fields,
 });
 

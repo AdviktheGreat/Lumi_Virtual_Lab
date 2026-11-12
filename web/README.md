@@ -323,6 +323,13 @@ choice of key or account, or a sign-out), and one that comes back after that is 
 account says whether it is signed in (`signed_in` in `GET /api/mcp`; `null` where that does not apply or is not known), and
 **Sign out** forgets the sign-in (`DELETE /api/mcp/servers/{name}/sign-in`), so the next conversation asks again.
 
+What a server lists besides its tools, its resources and prompts, is shown under the check (`holds` in `GET /api/mcp` and in
+the result of a check) as a line, **It also lists 3 resources and 2 prompts**, that opens to each resource with its address
+and each prompt with the `/command` it is written as and the arguments it takes, with when the server was last connected to
+(`src/components/mcp-holds.tsx`). It is what the last connection found, kept by the server, so it is there when the page is
+opened, and it is not there for a server that was set up in another way since, until it is checked again. A check that found
+the server has the list of servers read again, so a card's line (**Also lists:**) and the settings show it too.
+
 A conversation is given the servers that are on when it begins, which `POST /api/chats` takes as `mcp` when it is to have
 others, and connects to them when its first message is sent, since that is when the lead needs the tools. It keeps the
 servers it was begun with while it is open, so one changed in the settings is for the conversations that begin after.
@@ -409,6 +416,17 @@ conversation's own skills, or on the home page those it will be begun with, and 
 opens, or when a slash is first written in a conversation (`src/lib/use-skill-choices.ts`). A command has the name where a skill has it too, and a name that no
 command or skill has is a message. The transcript shows the skill as a chip, Retry and Edit send it again with it, and the
 exports name it. The rules are in `src/lib/commands.ts` and `src/lib/skills.ts` (`skillChoices`).
+
+A prompt of an MCP server that the conversation has can be written after a slash as well, as `/held_compare_genes TP53
+second=BRCA1`: the letters of its command list it in the menu, after the skills, with the server it is of, and it is not
+listed for a slash alone. Only a server that was connected to has prompts to offer, since that is when what it lists is
+known (`holds`); they are those of the servers the conversation was given (`config.mcp`), or on the home page those that are
+on, and are read from the server as skills are (`src/lib/use-prompt-choices.ts`). The first words go to the first argument
+that is needed (or the first it takes), and any other is written `name=words`, which goes on to the next name; a name the
+prompt does not take is part of the words (`readPromptArguments` in `src/lib/prompts.ts`). Choosing it asks the server to
+write it out (`POST /api/mcp/servers/{name}/render`), and the words are put **in the box, and not sent**: the researcher
+reads them, and may change them, before they send them as a message of their own, so a prompt is never sent unread. A
+prompt that could not be written out leaves what was typed in the box, and the notice says why.
 
 `/lab` is a command whose choices are made in a panel (`src/components/lab-dialog.tsx`), which opens with what was
 written after it as what the scientists are to work on. The researcher chooses a team that discusses it, with the lead

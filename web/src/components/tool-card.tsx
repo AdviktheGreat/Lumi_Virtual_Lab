@@ -5,7 +5,7 @@ import { Check, ChevronDown, ExternalLink, Plus } from "lucide-react";
 import { ServerSetup } from "@/components/mcp-setup";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { describeTransport } from "@/lib/mcp";
+import { describeHolds, describeTransport } from "@/lib/mcp";
 import { catalogNeeds, needsText, readiness, type Readiness } from "@/lib/tools-nexus";
 import type { McpCatalogServer, McpChange, McpServer } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -84,12 +84,14 @@ export function ToolCard({
   server,
   onChange,
   onKeysChanged,
+  onChecked,
   onSignOut,
   onRemove,
 }: {
   server: McpServer;
   onChange: (change: McpChange) => void;
   onKeysChanged: () => void;
+  onChecked: () => void;
   onSignOut: () => void;
   onRemove: (button: HTMLButtonElement) => void;
 }) {
@@ -97,6 +99,7 @@ export function ToolCard({
   const [open, setOpen] = useState(false);
   const state = readiness(server);
   const transport = describeTransport(server);
+  const holds = server.holds === null ? null : describeHolds(server.holds);
 
   return (
     <li className={CARD} data-testid={`tool-${server.name}`}>
@@ -113,6 +116,11 @@ export function ToolCard({
             </p>
           )}
           {server.target !== null && <code className="truncate text-xs text-muted-foreground">{server.target}</code>}
+          {holds !== null && (
+            <p className="text-xs text-muted-foreground" data-testid={`tool-${server.name}-lists`}>
+              <span className="font-medium text-foreground">Also lists:</span> {holds}
+            </p>
+          )}
         </CardText>
       </div>
       <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-1">
@@ -128,7 +136,7 @@ export function ToolCard({
       </div>
       {open && (
         <div id={`${id}-setup`} className="flex flex-col gap-3 border-t border-border px-4 py-3" data-testid={`tool-${server.name}-setup`}>
-          <ServerSetup server={server} onChange={onChange} onKeysChanged={onKeysChanged} onSignOut={onSignOut} />
+          <ServerSetup server={server} onChange={onChange} onKeysChanged={onKeysChanged} onChecked={onChecked} onSignOut={onSignOut} />
         </div>
       )}
     </li>

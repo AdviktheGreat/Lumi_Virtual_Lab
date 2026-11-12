@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MOST_TOOLS_NAMED,
   describeCheck,
+  describeHolds,
   describeSignIn,
   describeTransport,
   howManyOn,
@@ -10,7 +11,7 @@ import {
   nameProblem,
   readEntry,
 } from "./mcp";
-import type { McpServer } from "./types";
+import type { McpHolds, McpServer } from "./types";
 
 const server = (name: string, fields: Partial<McpServer> = {}): McpServer => ({
   name,
@@ -29,6 +30,7 @@ const server = (name: string, fields: Partial<McpServer> = {}): McpServer => ({
   keys_set: [],
   problem: null,
   setup: null,
+  holds: null,
   ...fields,
 });
 
@@ -164,5 +166,32 @@ describe("a server's sign-in", () => {
 
   it("is not said for a server that is not signed in to", () => {
     expect(describeSignIn(server("a", { signed_in: null }))).toBeNull();
+  });
+});
+
+describe("what a server lists besides its tools", () => {
+  const holds = (resources: number, prompts: number, more = false): McpHolds => ({
+    resources: Array.from({ length: resources }, (_, at) => ({
+      name: `r${at}`,
+      title: null,
+      uri: `genes://r${at}`,
+      description: "",
+      mime_type: null,
+      template: false,
+    })),
+    prompts: Array.from({ length: prompts }, (_, at) => ({ name: `p${at}`, command: `genes_p${at}`, title: null, description: "", arguments: [] })),
+    problems: [],
+    more,
+  });
+
+  it("is told in a few words, with the counts of each that there is", () => {
+    expect(describeHolds(holds(2, 1))).toBe("2 resources and 1 prompt");
+    expect(describeHolds(holds(1, 0))).toBe("1 resource");
+    expect(describeHolds(holds(0, 3))).toBe("3 prompts");
+  });
+
+  it("is nothing where it lists none, and is said to be at least what is counted where there is more", () => {
+    expect(describeHolds(holds(0, 0))).toBeNull();
+    expect(describeHolds(holds(2, 1, true))).toBe("at least 2 resources and 1 prompt");
   });
 });

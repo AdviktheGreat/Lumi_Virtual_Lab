@@ -1,4 +1,4 @@
-import type { McpCheck, McpEntry, McpServer } from "./types";
+import type { McpCheck, McpEntry, McpHolds, McpServer } from "./types";
 
 // What a server's name may be, as the server says: it starts the names of the server's tools
 const SERVER_NAME = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
@@ -83,6 +83,19 @@ export function describeCheck(check: McpCheck): { text: string; tools: string[];
     tools: check.tools.slice(0, MOST_TOOLS_NAMED),
     more: Math.max(0, check.tools.length - MOST_TOOLS_NAMED),
   };
+}
+
+// The most resources, and the most prompts, that are listed in full, so that a server with a great many does not fill the page
+export const MOST_HELD_SHOWN = 20;
+
+// What a server lists besides its tools, in a few words such as "2 resources and 1 prompt", or null where it lists none
+export function describeHolds(holds: McpHolds): string | null {
+  const parts: string[] = [];
+  if (holds.resources.length > 0) parts.push(holds.resources.length === 1 ? "1 resource" : `${holds.resources.length} resources`);
+  if (holds.prompts.length > 0) parts.push(holds.prompts.length === 1 ? "1 prompt" : `${holds.prompts.length} prompts`);
+  if (parts.length === 0) return null;
+
+  return `${holds.more ? "at least " : ""}${parts.join(" and ")}`;
 }
 
 // What a server's sign-in is, for what is shown beside it, or null for a server that is not signed in to

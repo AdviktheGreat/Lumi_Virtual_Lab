@@ -11,9 +11,11 @@ import {
   unmetNote,
   written,
   COMMANDS,
+  PROMPT_ROWS,
   SKILL_ROWS,
   type Surroundings,
 } from "./commands";
+import type { PromptChoice } from "./prompts";
 
 const IDLE: Surroundings = { place: "chat", state: "idle", turns: 2, answered: 2, holdUp: null, directives: {} };
 const WORKING: Surroundings = { ...IDLE, state: "running" };
@@ -370,5 +372,89 @@ describe("skills written after a slash", () => {
 
   it("say when the lead did not read them", () => {
     expect(skillUnmetNote("dose-response")).toBe("The lead answered without reading the skill dose-response, though /dose-response asked for it.");
+  });
+});
+
+const SUMMARIZE: PromptChoice = {
+  server: "genes",
+  serverTitle: "Genes",
+  command: "genes_summarize_gene",
+  name: "summarize_gene",
+  description: "Summarize a gene.",
+  arguments: [
+    { name: "symbol", description: "", required: true },
+    { name: "depth", description: "", required: false },
+  ],
+};
+const PLAIN: PromptChoice = { ...SUMMARIZE, command: "genes_overview", name: "overview", description: "", arguments: [] };
+const PROMPTED: Surroundings = { ...IDLE, prompts: [SUMMARIZE, PLAIN] };
+
+describe("prompts of MCP servers written after a slash", () => {
+  it("are named by what follows a slash, and are given the words written after the name, over several lines", () => {
+    expect(typedCommand("/genes_sum", "chat", [], [SUMMARIZE])).toEqual({ kind: "naming", query: "genes_sum" });
+    expect(typedCommand("/Genes_Summarize_Gene TP53\nmore", "home", [], [SUMMARIZE])).toEqual({
+      kind: "prompting",
+      prompt: SUMMARIZE,
+      rest: "TP53\nmore",
+    });
+  });
+
+  it("are not one unless a server of the conversation has it, and a command or a skill of that name comes first", () => {
+    expect(typedCommand("/genes_summarize_gene TP53", "chat")).toEqual({ kind: "none" });
+    expect(typedCommand("/ask Why?", "chat", [], [{ ...SUMMARIZE, command: "ask" }])).toMatchObject({ kind: "arguing" });
+    const skill = { name: "genes_summarize_gene", description: "A skill." };
+    expect(typedCommand("/genes_summarize_gene TP53", "chat", [skill], [SUMMARIZE])).toMatchObject({ kind: "skilling" });
+  });
+
+  it("are not listed for a slash alone, and are for the letters of their commands, after the commands and the skills", () => {
+    expect(rowsFor("/", PROMPTED).map((row) => row.label)).toEqual(rowsFor("/", IDLE).map((row) => row.label));
+
+    expect(rowsFor("/summ", PROMPTED)).toMatchObject([
+      {
+        key: "prompt genes_summarize_gene",
+        label: "/genes_summarize_gene",
+        summary: "Prompt of Genes: Summarize a gene.",
+        reason: null,
+        action: { fill: "/genes_summarize_gene " },
+      },
+    ]);
+    const both = rowsFor("/genes_", { ...PROMPTED, skills: [{ name: "genes_skill", description: "" }] });
+    expect(both.map((row) => row.label)).toEqual(["/genes_skill", "/genes_summarize_gene", "/genes_overview"]);
+    expect(both.at(-1)?.summary).toBe("Prompt of Genes");
+  });
+
+  it("that take no arguments are written out when they are chosen, and those that take some wait to be given them", () => {
+    expect(rowsFor("/overview", PROMPTED)).toMatchObject([{ label: "/genes_overview", action: { run: { prompt: PLAIN, values: {}, arg: "" } } }]);
+    expect(rowsFor("/genes_overview ", PROMPTED)).toMatchObject([{ reason: null, action: { run: { prompt: PLAIN, values: {}, arg: "" } } }]);
+    expect(rowsFor("/genes_overview x", PROMPTED)).toMatchObject([{ reason: "It takes no arguments" }]);
+  });
+
+  it("are run with the arguments that were written, and wait for those that are needed", () => {
+    expect(rowsFor("/genes_summarize_gene ", PROMPTED)).toMatchObject([{ label: "/genes_summarize_gene", reason: "Type symbol" }]);
+    expect(rowsFor("/genes_summarize_gene  TP53 depth=long ", PROMPTED)).toMatchObject([
+      {
+        reason: null,
+        summary: "Write the prompt of Genes out in the box, to read before sending",
+        action: { run: { prompt: SUMMARIZE, values: { symbol: "TP53", depth: "long" }, arg: "TP53 depth=long" } },
+      },
+    ]);
+  });
+
+  it("are written out into the box while the lead works, since that is not sending them", () => {
+    const working = { ...PROMPTED, state: "running" as const, holdUp: "A file is still going" };
+
+    expect(rowsFor("/summ", working)[0].reason).toBeNull();
+    expect(rowsFor("/genes_summarize_gene TP53", working)[0].reason).toBeNull();
+  });
+
+  it("are listed up to as many as the menu has room for", () => {
+    const many = Array.from({ length: PROMPT_ROWS + 5 }, (_, number) => ({ ...SUMMARIZE, command: `zz_${number}`, name: `zz${number}` }));
+
+    expect(rowsFor("/zz", { ...IDLE, prompts: many })).toHaveLength(PROMPT_ROWS);
+  });
+
+  it("are written out again as they were when they could not be written out", () => {
+    expect(written({ prompt: SUMMARIZE, values: { symbol: "TP53" }, arg: "TP53" })).toBe("/genes_summarize_gene TP53");
+    expect(written({ prompt: PLAIN, values: {}, arg: "" })).toBe("/genes_overview");
   });
 });

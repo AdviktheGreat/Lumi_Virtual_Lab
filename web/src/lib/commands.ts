@@ -1,4 +1,5 @@
 import { EXPORT_CHOICES } from "./export";
+import { readPromptArguments, type PromptChoice } from "./prompts";
 import { controlsFor } from "./steering";
 import type { ChatState } from "./types";
 
@@ -96,12 +97,25 @@ export interface SkillChoice {
 // How many skills the menu lists for the letters of a name, so that a library of hundreds does not fill it
 export const SKILL_ROWS = 8;
 
+// How many prompts the menu lists for the letters of a name, so that servers with a great many do not fill it
+export const PROMPT_ROWS = 8;
+
 // What a command is given when it is run: what it takes, which is nothing for most. A skill is given the words that say what
 // it is to be used for, and goes with a message as a command does.
-export type Invocation = { name: CommandName; arg: string } | { skill: string; arg: string };
+export type Sendable = { name: CommandName; arg: string } | { skill: string; arg: string };
+
+// A prompt of an MCP server that is run: it is not sent, but written out by the server for its arguments, by name, into the
+// box, to be read and sent by the person. What was written after its name is kept, to put back in the box if it could not be.
+export interface PromptInvocation {
+  prompt: PromptChoice;
+  values: Record<string, string>;
+  arg: string;
+}
+
+export type Invocation = Sendable | PromptInvocation;
 
 // What a message is sent to the server with for an invocation: the command it names, or the skill
-export function givenAs(invocation: Invocation | undefined): { directive?: string; skill?: string } {
+export function givenAs(invocation: Sendable | undefined): { directive?: string; skill?: string } {
   if (invocation === undefined) return {};
 
   return "skill" in invocation ? { skill: invocation.skill } : { directive: invocation.name };
@@ -122,6 +136,8 @@ export interface Surroundings {
   directives: Record<string, string | null> | null;
   // The skills the conversation has, or will be begun with, which can be written after a slash
   skills?: readonly SkillChoice[];
+  // The prompts of the MCP servers the conversation has, or will be begun with, which can be written after a slash
+  prompts?: readonly PromptChoice[];
 }
 
 function sentence(text: string): string {
@@ -154,7 +170,7 @@ export function skillUnmetNote(name: string): string {
 
 // What a command is as it was written in the box, to put back there when it could not be run
 export function written(invocation: Invocation): string {
-  const name = "skill" in invocation ? invocation.skill : invocation.name;
+  const name = "skill" in invocation ? invocation.skill : "prompt" in invocation ? invocation.prompt.command : invocation.name;
 
   return invocation.arg === "" ? `/${name}` : `/${name} ${invocation.arg}`;
 }
@@ -216,13 +232,20 @@ export type Typed =
   // The name of a command, and what has been written after it
   | { kind: "arguing"; command: Command; rest: string }
   // The name of one of the skills, and what has been written after it
-  | { kind: "skilling"; skill: SkillChoice; rest: string };
+  | { kind: "skilling"; skill: SkillChoice; rest: string }
+  // The name of one of the prompts of an MCP server, and what has been written after it
+  | { kind: "prompting"; prompt: PromptChoice; rest: string };
 
 // A command is the whole of the box, on one line unless it is given with a message: a slash, a name, and what the command
 // takes. A skill is the same, with the words it is to be used for, and its name is letters, digits, hyphens, dots, and
 // underscores. What is written to the lead that begins with a slash, such as the path of a file, is not one unless a command
 // or a skill has that name, which a command is where both have.
-export function typedCommand(draft: string, place: Place, skills: readonly SkillChoice[] = []): Typed {
+export function typedCommand(
+  draft: string,
+  place: Place,
+  skills: readonly SkillChoice[] = [],
+  prompts: readonly PromptChoice[] = [],
+): Typed {
   const naming = /^\/([a-z0-9._-]*)$/i.exec(draft);
   if (naming) return { kind: "naming", query: naming[1].toLowerCase() };
   const arguing = /^\/([a-z0-9._-]+)[ \t]+([\s\S]*)$/i.exec(draft);
@@ -236,8 +259,10 @@ export function typedCommand(draft: string, place: Place, skills: readonly Skill
     return { kind: "arguing", command, rest: arguing[2] };
   }
   const skill = skills.find((candidate) => candidate.name.toLowerCase() === name);
+  if (skill) return { kind: "skilling", skill, rest: arguing[2] };
+  const prompt = prompts.find((candidate) => candidate.command.toLowerCase() === name);
 
-  return skill ? { kind: "skilling", skill, rest: arguing[2] } : { kind: "none" };
+  return prompt ? { kind: "prompting", prompt, rest: arguing[2] } : { kind: "none" };
 }
 
 // A line of the menu
@@ -285,10 +310,34 @@ function skillRows(query: string, surroundings: Surroundings): Row[] {
     }));
 }
 
+// The prompts whose commands have the letters written after a slash, listed as the skills are, with the server each is of. One
+// that takes arguments is begun in the box to be finished, and one that takes none is written out at once.
+function promptRows(query: string, surroundings: Surroundings): Row[] {
+  if (query === "") return [];
+  const named = (surroundings.prompts ?? []).filter((prompt) => prompt.command.toLowerCase().includes(query));
+
+  return [
+    ...named.filter((prompt) => prompt.command.toLowerCase().startsWith(query)),
+    ...named.filter((prompt) => !prompt.command.toLowerCase().startsWith(query)),
+  ]
+    .slice(0, PROMPT_ROWS)
+    .map((prompt) => ({
+      key: `prompt ${prompt.command}`,
+      label: `/${prompt.command}`,
+      summary: promptSummary(prompt),
+      reason: null,
+      action: prompt.arguments.length > 0 ? { fill: `/${prompt.command} ` } : { run: { prompt, values: {}, arg: "" } },
+    }));
+}
+
+function promptSummary(prompt: PromptChoice): string {
+  return prompt.description === "" ? `Prompt of ${prompt.serverTitle}` : `Prompt of ${prompt.serverTitle}: ${prompt.description}`;
+}
+
 // The lines of the menu for what is in the box, which is none when it is not for a command. What can be chosen comes first,
 // and what is named from its first letter before what has the letters elsewhere in its name.
 export function rowsFor(draft: string, surroundings: Surroundings): Row[] {
-  const typed = typedCommand(draft, surroundings.place, surroundings.skills);
+  const typed = typedCommand(draft, surroundings.place, surroundings.skills, surroundings.prompts);
   if (typed.kind === "none") return [];
 
   if (typed.kind === "naming") {
@@ -298,7 +347,10 @@ export function rowsFor(draft: string, surroundings: Surroundings): Row[] {
       ...named.filter((command) => !command.name.startsWith(typed.query)),
     ].map((command) => nameRow(command, surroundings));
 
-    return [...rows.filter((row) => row.reason === null), ...rows.filter((row) => row.reason !== null), ...skillRows(typed.query, surroundings)];
+    return [...rows.filter((row) => row.reason === null), ...rows.filter((row) => row.reason !== null),
+      ...skillRows(typed.query, surroundings),
+      ...promptRows(typed.query, surroundings),
+    ];
   }
 
   if (typed.kind === "skilling") {
@@ -312,6 +364,21 @@ export function rowsFor(draft: string, surroundings: Surroundings): Row[] {
         summary: text === "" ? SKILL_NEEDS : `Use the skill ${skill.name} for: ${text}`,
         reason: givenWhy(surroundings) ?? (text === "" ? SKILL_NEEDS : null),
         action: { run: { skill: skill.name, arg: text } },
+      },
+    ];
+  }
+
+  if (typed.kind === "prompting") {
+    const { prompt, rest } = typed;
+    const read = readPromptArguments(prompt, rest);
+
+    return [
+      {
+        key: `prompt ${prompt.command}`,
+        label: `/${prompt.command}`,
+        summary: `Write the prompt of ${prompt.serverTitle} out in the box, to read before sending`,
+        reason: read.ok ? null : read.problem,
+        action: { run: { prompt, values: read.ok ? read.values : {}, arg: rest.trim() } },
       },
     ];
   }

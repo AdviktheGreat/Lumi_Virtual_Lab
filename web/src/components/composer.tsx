@@ -7,6 +7,7 @@ import { SlashMenu } from "@/components/slash-menu";
 import { Button } from "@/components/ui/button";
 import type { TrayItem } from "@/lib/attachments";
 import { rowsFor, type Invocation, type Place, type Row, type SkillChoice } from "@/lib/commands";
+import type { PromptChoice } from "@/lib/prompts";
 import { controlsFor } from "@/lib/steering";
 import type { ChatState } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,8 @@ export interface ComposerCommands {
   directives?: Record<string, string | null> | null;
   // The skills that can be written after a slash, which are given with a message as a command is
   skills?: readonly SkillChoice[];
+  // The prompts of MCP servers that can be written after a slash, which the server writes out into the box
+  prompts?: readonly PromptChoice[];
   onRun: (invocation: Invocation) => void;
 }
 
@@ -121,12 +124,13 @@ export function Composer({
   const answered = commands?.answered ?? 0;
   const directives = commands?.directives ?? null;
   const skills = commands?.skills;
+  const prompts = commands?.prompts;
   const rows = useMemo(
     () =>
       place === undefined || putAwayAt === value
         ? []
-        : rowsFor(value, { place, state, turns, answered, holdUp, directives, skills }),
-    [place, state, turns, answered, holdUp, directives, skills, value, putAwayAt],
+        : rowsFor(value, { place, state, turns, answered, holdUp, directives, skills, prompts }),
+    [place, state, turns, answered, holdUp, directives, skills, prompts, value, putAwayAt],
   );
   const menuOpen = rows.length > 0;
   const lit = menuOpen ? litRow(rows, cursor) : -1;
