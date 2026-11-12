@@ -270,6 +270,51 @@ class TestFailing:
         assert told.states("alpha") == ["connecting", "failed", "connecting", "failed"]
 
 
+class TestRemembering:
+    def remembering(self, connect: Callable[..., Any], remember: Callable[..., None]) -> Connections:
+        told = Told()
+        asker = Asker(told, lambda: False, lambda name: name.title(), 30.0)
+        servers = {name: entry(name) for name in ("alpha", "beta")}
+
+        return Connections(servers, told, lambda: False, asker, start_timeout=30.0, connect=connect, remember=remember)
+
+    def test_each_server_that_is_connected_to_is_remembered_with_its_entry_and_what_it_gave(self) -> None:
+        connect = FakeConnect(alpha=("a",), beta=("b",))
+        remembered: list[tuple[str, dict[str, Any], FakeTools]] = []
+
+        self.remembering(connect, lambda name, given, opened: remembered.append((name, dict(given), opened))).tools()
+
+        assert sorted((name, given) for name, given, _ in remembered) == [
+            ("alpha", entry("alpha")),
+            ("beta", entry("beta")),
+        ]
+        assert {id(opened) for _, _, opened in remembered} == {id(made) for made in connect.made}
+
+    def test_a_server_that_could_not_be_connected_to_is_not_remembered(self) -> None:
+        remembered: list[str] = []
+        connections = self.remembering(
+            FakeConnect(alpha=("a",), beta=RuntimeError("down")), lambda name, given, opened: remembered.append(name)
+        )
+
+        with pytest.raises(ServersNotConnectedError):
+            connections.tools()
+
+        assert remembered == ["alpha"]
+
+    def test_a_server_that_cannot_be_remembered_is_still_connected_to_and_its_tools_given(self) -> None:
+        def broken(name: str, given: Any, opened: Any) -> None:
+            raise OSError("the disk is full")
+
+        connections = self.remembering(FakeConnect(alpha=("a",), beta=("b",)), broken)
+
+        assert [tool.name for tool in connections.tools()] == ["a", "b"]
+
+    def test_nothing_is_asked_of_a_conversation_that_does_not_remember(self) -> None:
+        connections, _ = make(FakeConnect(alpha=("a",), beta=("b",)))
+
+        assert [tool.name for tool in connections.tools()] == ["a", "b"]
+
+
 class TestStopping:
     def test_a_turn_stopped_while_a_server_connects_ends_and_tells_it_was_not_connected(self) -> None:
         release = threading.Event()

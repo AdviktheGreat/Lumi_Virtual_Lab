@@ -4,6 +4,7 @@ to it is kept, and forgetting that sign-in."""
 import sys
 import threading
 import webbrowser
+from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +17,7 @@ pytest.importorskip("mcp")
 
 from virtual_lab import connect_mcp  # noqa: E402
 from virtual_lab.mcp_auth import SignInStorage  # noqa: E402
-from virtual_lab.mcp_tools import MCPServerError  # noqa: E402
+from virtual_lab.mcp_tools import Held, MCPServerError  # noqa: E402
 from virtual_lab.server.app import create_app  # noqa: E402
 from virtual_lab.server.mcp import (  # noqa: E402
     CHECK_TIMEOUT,
@@ -100,7 +101,9 @@ class Connecting:
     def __init__(self, names: tuple[str, ...] = ("genes_echo", "genes_count"), error: Exception | None = None) -> None:
         self.asked: list[tuple[dict[str, Any], dict[str, Any]]] = []
         self.error = error
-        self.tools = SimpleNamespace(tools=tuple(SimpleNamespace(name=name) for name in names), closed=0)
+        self.tools = SimpleNamespace(
+            tools=tuple(SimpleNamespace(name=name) for name in names), held=defaultdict(Held), closed=0
+        )
         self.tools.close = lambda: setattr(self.tools, "closed", self.tools.closed + 1)
 
     def __call__(self, config: dict[str, Any], **options: Any) -> Any:
@@ -117,7 +120,12 @@ class TestConnectingToLook:
 
         result = check_connection("genes", GENES, connect)
 
-        assert result == {"ok": True, "tools": ["genes_echo", "genes_count"], "reason": None}
+        assert result == {
+            "ok": True,
+            "tools": ["genes_echo", "genes_count"],
+            "reason": None,
+            "holds": {"resources": [], "prompts": [], "problems": [], "more": False},
+        }
         assert connect.tools.closed == 1
 
     def test_it_is_connected_to_as_a_conversation_would_be_but_without_asking_anyone_anything(self) -> None:

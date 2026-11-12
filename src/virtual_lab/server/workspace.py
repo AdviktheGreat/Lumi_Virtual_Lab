@@ -6,6 +6,7 @@ one workspace directory.
         scientists.json                                  the scientists the person described
         tools.json                                       which of the library's tools a new conversation is not given
         mcp.json                                         the MCP servers the person set up, each as a config gives it
+        mcp_seen.json                                    what each of them held when it was last connected to
         own.json                                         the data and software the person gave every conversation
         own_data/                                        the files the person uploaded, which own.json describes
         skills/                                          the skills the person put there, each a folder with a SKILL.md
@@ -49,6 +50,9 @@ TOOLS_FILE_NAME = "tools.json"
 
 # The MCP servers the person set up, by name, each as a config gives it
 MCP_FILE_NAME = "mcp.json"
+
+# What each of those held, its resources and prompts, when it was last connected to, by the server's name
+MCP_SEEN_FILE_NAME = "mcp_seen.json"
 
 # The data and software the person gave the lab to use in every conversation, and where the files they uploaded are kept
 OWN_FILE_NAME = "own.json"
@@ -318,15 +322,41 @@ class Workspace:
         return entry
 
     def remove_mcp_server(self, name: str) -> bool:
-        """Forgets a server. Whether there was one."""
+        """Forgets a server, and what it held. Whether there was one."""
         with self._mcp_lock:
             servers = self.load_mcp_servers()
             if name not in servers:
                 return False
             del servers[name]
             write_atomically(self.mcp_path, json.dumps({"servers": servers}, indent=4).encode("utf-8"))
+            seen = self.load_mcp_seen()
+            if seen.pop(name, None) is not None:
+                write_atomically(self.mcp_seen_path, json.dumps({"servers": seen}, indent=4).encode("utf-8"))
 
         return True
+
+    @property
+    def mcp_seen_path(self) -> Path:
+        return self.root / MCP_SEEN_FILE_NAME
+
+    def load_mcp_seen(self) -> dict[str, Any]:
+        """What the servers held when they were last connected to, by name, as server.mcp_seen keeps it."""
+        data = read_json(self.mcp_seen_path)
+        seen = data.get("servers") if isinstance(data, dict) else None
+
+        if not isinstance(seen, dict):
+            return {}
+
+        return {name: record for name, record in seen.items() if isinstance(name, str)}
+
+    def put_mcp_seen(self, name: str, record: dict[str, Any]) -> None:
+        """Keeps what a server held, in place of what was kept before. A server that is not set up has nothing kept."""
+        with self._mcp_lock:
+            if name not in self.load_mcp_servers():
+                return
+            seen = self.load_mcp_seen()
+            seen[name] = record
+            write_atomically(self.mcp_seen_path, json.dumps({"servers": seen}, indent=4).encode("utf-8"))
 
     @property
     def papers_dir(self) -> Path:

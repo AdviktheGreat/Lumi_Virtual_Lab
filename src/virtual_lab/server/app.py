@@ -71,7 +71,9 @@ and everything else is a request and an answer.
     POST   /api/mcp/catalog/{name}      add one of them, on
     PUT    /api/mcp/servers/{name}      set a server up in full, or replace it, DELETE forgets it
     PATCH  /api/mcp/servers/{name}      turn it on or off, or choose how a preset is signed in to
-    POST   /api/mcp/servers/{name}/check   connect to it, to say whether it can be and which tools it gives
+    POST   /api/mcp/servers/{name}/check   connect to it, to say whether it can be and which tools it gives, and what it
+                                         holds besides: its resources and prompts
+    POST   /api/mcp/servers/{name}/render   write one of its prompts out, as the words of a message
     DELETE /api/mcp/servers/{name}/sign-in   forget the sign-in to it, so that the next conversation asks for one
     GET    /api/campaigns, POST         the campaigns, each with the goal its programs share, and a new one
     GET    /api/campaigns/{id}          one campaign, with its programs and what they have spent; PATCH changes its name
@@ -147,15 +149,18 @@ from virtual_lab.server.keychain import Keychain, KeychainError, recall
 from virtual_lab.server.library import SETTABLE_KEYS, provider_statuses
 from virtual_lab.server.mcp import (
     MAX_SERVERS,
+    ServerUnavailableError,
     change_entry,
     check_connection,
     check_entry,
     describe_servers,
+    render_prompt,
     server_title,
     service_keys,
     sign_out,
 )
 from virtual_lab.server.mcp_catalog import MCP_CATALOG, describe_catalog
+from virtual_lab.server.mcp_seen import seen_record
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
 from virtual_lab.server.paperagent_given import view as given_view
 from virtual_lab.server.paperagents import MAX_DATASET_CHARS, MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
@@ -173,6 +178,12 @@ from virtual_lab.skills import MAX_COPIED_BYTES, MAX_COPIED_FILES, MAX_SKILLS
 LOG = logging.getLogger("uvicorn.error")
 
 MAX_MESSAGE_CHARS = 200_000
+
+# What a prompt of an MCP server may be filled in with: the most arguments, and the most characters of the name of a
+# prompt or an argument, and of what one is given
+MAX_PROMPT_ARGUMENTS = 32
+MAX_PROMPT_NAME_CHARS = 200
+MAX_PROMPT_ARGUMENT_CHARS = 20_000
 
 # Where the models OpenRouter serves are kept, in the workspace, so that what they cost is known when the server is
 # started again with no connection
@@ -478,6 +489,16 @@ class McpChangeBody(RequestModel):
 
     enabled: StrictBool | None = None
     auth: Literal["key", "oauth"] | None = None
+
+
+class McpRenderBody(RequestModel):
+    """A prompt of an MCP server to write out, by its name on the server, and what to fill it in with, by name."""
+
+    prompt: str = Field(min_length=1, max_length=MAX_PROMPT_NAME_CHARS)
+    arguments: dict[
+        Annotated[str, StringConstraints(max_length=MAX_PROMPT_NAME_CHARS)],
+        Annotated[str, StringConstraints(max_length=MAX_PROMPT_ARGUMENT_CHARS)],
+    ] = Field(default_factory=dict, max_length=MAX_PROMPT_ARGUMENTS)
 
 
 class ApprovalBody(RequestModel):
@@ -1339,9 +1360,12 @@ def create_app(
     def get_paperagent_passage(agent_id: str, start: int = Query(ge=0), end: int = Query(ge=0)) -> dict[str, Any]:
         return paperagents.passage(agent_id, start, end)
 
+    def shown_mcp_servers() -> list[dict[str, Any]]:
+        return describe_servers(store.load_mcp_servers(), store.load_mcp_seen())
+
     @api.get("/mcp")
     def get_mcp() -> dict[str, Any]:
-        return {"servers": describe_servers(store.load_mcp_servers())}
+        return {"servers": shown_mcp_servers()}
 
     @api.put("/mcp/servers/{name}")
     def set_mcp_server(name: str, body: McpServerBody) -> dict[str, Any]:
@@ -1354,7 +1378,7 @@ def create_app(
             raise ApiError(422, "invalid", f"At most {MAX_SERVERS} servers can be set up")
         store.put_mcp_server(name, entry)
 
-        return {"servers": describe_servers(store.load_mcp_servers())}
+        return {"servers": shown_mcp_servers()}
 
     @api.patch("/mcp/servers/{name}")
     def change_mcp_server(name: str, body: McpChangeBody) -> dict[str, Any]:
@@ -1367,7 +1391,7 @@ def create_app(
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
 
-        return {"servers": describe_servers(store.load_mcp_servers())}
+        return {"servers": shown_mcp_servers()}
 
     @api.get("/mcp/catalog")
     def get_mcp_catalog() -> dict[str, Any]:
@@ -1385,14 +1409,14 @@ def create_app(
             raise ApiError(422, "invalid", f"At most {MAX_SERVERS} servers can be set up")
         store.put_mcp_server(name, check_entry(name, found.entry))
 
-        return {"servers": describe_servers(store.load_mcp_servers())}
+        return {"servers": shown_mcp_servers()}
 
     @api.delete("/mcp/servers/{name}")
     def remove_mcp_server(name: str) -> dict[str, Any]:
         if not store.remove_mcp_server(name):
             raise not_found("server of yours with that name")
 
-        return {"servers": describe_servers(store.load_mcp_servers())}
+        return {"servers": shown_mcp_servers()}
 
     def known_mcp_server(name: str) -> dict[str, Any] | None:
         """What is kept for a server that is set up, or None for a preset that is not; any other name is not found."""
@@ -1413,10 +1437,24 @@ def create_app(
                 raise ApiError(409, "busy", f"{server_title(name, entry)} is being checked")
             checking.add(name)
         try:
-            return check_connection(name, entry)
+            result = check_connection(name, entry)
         finally:
             with checking_lock:
                 checking.discard(name)
+        if entry is not None and result.get("ok") and "holds" in result:
+            store.put_mcp_seen(name, seen_record(name, entry, result["holds"]))
+
+        return result
+
+    @api.post("/mcp/servers/{name}/render")
+    def render_mcp_prompt(name: str, body: McpRenderBody) -> dict[str, Any]:
+        entry = known_mcp_server(name)
+        try:
+            return render_prompt(name, entry, body.prompt, body.arguments)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        except ServerUnavailableError as error:
+            raise ApiError(502, "unavailable", str(error)) from error
 
     @api.delete("/mcp/servers/{name}/sign-in")
     def sign_out_of_mcp_server(name: str) -> dict[str, Any]:
@@ -1425,7 +1463,7 @@ def create_app(
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
 
-        return {"servers": describe_servers(store.load_mcp_servers())}
+        return {"servers": shown_mcp_servers()}
 
     @api.get("/campaigns")
     def list_campaigns() -> dict[str, Any]:

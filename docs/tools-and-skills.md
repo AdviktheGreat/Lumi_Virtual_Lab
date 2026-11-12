@@ -249,6 +249,7 @@ mcp.render_prompt(mcp.prompts[0], {"symbol": "TP53"})             # a RenderedPr
 - **A read can wait for a person's approval**, under the name `resources/read` in a server's `approval`: `ask: ["*"]` holds for reads as for every tool, `allow: ["resources/read"]` lets them through, and a list of tools' names does not touch them.
 - **A prompt is rendered, not run.** `render_prompt` asks the server to write it out for the arguments it is given, and checks them first: one it does not take, or one it needs that is not given, is refused. What comes back is what the server says, one message or several. Where the server wrote some as the assistant's, `.text` says who is speaking. Nothing has been done, and what the prompt says is the server's words, so use the prompts only of servers whose tools you would use. A prompt's `command` is the server's name and its own, made as a tool's name is.
 - **What cannot be listed does not keep the tools from being given.** A server that cannot list its resources, or its prompts, or does not do so within 30 seconds (or `start_timeout`, if that is shorter), is connected to all the same, and `mcp.problems` says what could not be listed. Two prompts that would be written the same, such as `a-b` and `a_b`, are not both kept.
+- **`mcp.held` gives what each server listed**, by the server's name, as a `Held` with its `resources`, `prompts`, `problems`, and `more`, which is what the program that runs the lab keeps to show a server's resources and prompts without connecting to it again.
 
 #### Paperclip, Adaptyv, and Proto
 
