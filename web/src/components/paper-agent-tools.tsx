@@ -502,7 +502,7 @@ function KeptTools({
       {!kept.complete && (
         <Aside>This making did not come to its end, because it was stopped or failed. The tools that were made are kept, and the next making replaces them.</Aside>
       )}
-      <p className="text-xs text-muted-foreground">{tools.meaning} A conversation cannot use a tool yet.</p>
+      <p className="text-xs text-muted-foreground">{tools.meaning} A conversation is given the tools when the agent is given to conversations, under In conversations below.</p>
       <ClearTools agent={agent} busy={busy} onCleared={onCleared} />
     </section>
   );

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { accessibilityProblems } from "../axe";
-import { askWhereCodeRuns, expect, test } from "../fixtures";
+import { answered, askWhereCodeRuns, expect, test } from "../fixtures";
 
 // The runs and the agents are the workspace's, and a conversation made while a run is given its functions is given them, so
 // each test takes what it made away, and none is run beside another
@@ -2488,9 +2488,9 @@ test("says what would be made, asks for what is wrong with the asking to be put 
   await expect(keptTools(page)).toContainText("20 minutes for the calls of one tool and 30 for all, each call made again 2 times, 1 rewrite, and 1 GB written");
   await expect(keptTools(page).getByText("Given to read").locator("xpath=following-sibling::dd[1]")).toHaveText("None");
   await expect(step(page, "Build the tools")).toContainText("Done");
-  // It says what was and was not shown, and that a conversation cannot use a tool yet
+  // It says what was and was not shown, and where a conversation is given the tools
   await expect(keptTools(page)).toContainText("does not show that");
-  await expect(keptTools(page)).toContainText("A conversation cannot use a tool yet.");
+  await expect(keptTools(page)).toContainText("A conversation is given the tools when the agent is given to conversations, under In conversations below.");
 
   await expect(page.getByTestId("tool")).toHaveCount(1);
   const scale = toolNamed(page, "scale");
@@ -2728,4 +2728,153 @@ test("says why the server refused to make the tools, and looks again when what t
   await expect(keptTools(page)).toBeVisible();
   await page.unroute("**/api/paperagents/*/tools/*");
   await page.unroute("**/api/paperagents/*/tools");
+});
+
+const inConversations = (page: Page) => page.getByRole("region", { name: "In conversations" });
+const givenTools = (page: Page) => inConversations(page).getByTestId("given-tool");
+const giveBox = (page: Page) => page.getByLabel("Give this agent to the conversations I start");
+const givenSummary = (page: Page) => page.getByTestId("given-summary");
+const givenOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/given`)).json();
+
+// The names of the tools that the model is offered in a conversation that is made now, which the script says when it is asked
+async function offeredIn(page: Page, where: "local" | "nowhere"): Promise<string[]> {
+  const question = `tool:offered in a conversation where code runs ${where}`;
+  const made = await page.request.post("/api/chats", { data: { title: question, ...(where === "local" ? { code: { where: "local" } } : {}) } });
+  expect(made.status()).toBe(201);
+  await page.goto(`/chat?id=${(await made.json()).id}`);
+  await page.getByRole("textbox", { name: "Message" }).fill(question);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await answered(page, "Offered:");
+  const text = (await page.getByTestId("lead-message").last().textContent()) ?? "";
+
+  return text.slice(text.indexOf("Offered:") + "Offered:".length).trim().split(/\s+/).filter(Boolean);
+}
+
+test("gives an agent to conversations, shows what a conversation is given of it with the tier of each tool, and gives none of it once it is not given or its tools are gone", async ({
+  page,
+}) => {
+  const id = await agentWithTutorials(page, "Given cells");
+  const prefix = "given_cells_";
+  await sendPaper(page, id, "cells.txt", CELLS);
+  await readTheAgent(page, id);
+  expect((await page.request.post(`/api/paperagents/${id}/tools`, { data: {} })).status()).toBe(202);
+  await expect.poll(async () => (await toolsOf(page, id)).job, { timeout: 30_000 }).toBeNull();
+  expect((await toolsOf(page, id)).kept).toMatchObject({ complete: true });
+  await openAgent(page, id, "Given cells");
+
+  // It says what a conversation would be given, and that it is not given yet
+  await expect(inConversations(page)).toBeVisible();
+  await expect(giveBox(page)).not.toBeChecked();
+  await expect(givenSummary(page)).toContainText("Tier A: runs the authors' code");
+  await expect(givenSummary(page)).toContainText("Not given to conversations.");
+  await expect(givenSummary(page)).toContainText("3 tools that read the paper and 1 that runs its code.");
+  await expect(givenTools(page)).toHaveCount(4);
+  for (const name of ["search_paper", "show_claim", "show_method_card"]) {
+    const tool = inConversations(page).locator(`[data-testid=given-tool][data-name=${prefix}${name}]`);
+    await expect(tool).toHaveAttribute("data-kind", "reading");
+    await expect(tool).toContainText("Tier D");
+    await expect(tool).toContainText("Reads what was found in the paper");
+  }
+  const runs = inConversations(page).locator(`[data-testid=given-tool][data-name=${prefix}scale]`);
+  await expect(runs).toHaveAttribute("data-kind", "run");
+  await expect(runs).toContainText("Tier A");
+  await expect(runs).toContainText("scale(values, factor)");
+  await expect(runs).toContainText("Runs the authors' own function");
+  await expect(page.getByTestId("given-meaning")).toContainText("Neither shows that what it says or gives is right.");
+  await expect(inConversations(page)).toContainText("A call may take up to 5 minutes, in a container with no network");
+  await expect(page.getByTestId("given-why")).toHaveCount(0);
+  expect(await givenOf(page, id)).toMatchObject({ given: false, tier: "A", problem: null });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A conversation that is made before it is given is not given it
+  expect((await offeredIn(page, "local")).filter((name) => name.startsWith(prefix))).toEqual([]);
+
+  // One that is made after is, with the tools that run only where code runs
+  await openAgent(page, id, "Given cells");
+  await giveBox(page).click();
+  await expect(giveBox(page)).toBeChecked();
+  await expect(givenSummary(page)).toHaveAttribute("data-given", "true");
+  await expect(givenSummary(page)).toContainText("Given to the conversations that you start from now on.");
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).given).toBe(true);
+  expect((await offeredIn(page, "local")).filter((name) => name.startsWith(prefix))).toEqual([
+    `${prefix}scale`,
+    `${prefix}search_paper`,
+    `${prefix}show_claim`,
+    `${prefix}show_method_card`,
+  ]);
+  expect((await offeredIn(page, "nowhere")).filter((name) => name.startsWith(prefix))).toEqual([
+    `${prefix}search_paper`,
+    `${prefix}show_claim`,
+    `${prefix}show_method_card`,
+  ]);
+
+  // The agents that are given are marked in the list
+  await page.goto("/papers");
+  await expect(page.getByTestId("paper-agent").filter({ hasText: "Given cells" })).toContainText("Given to conversations");
+
+  // A tool that is taken away is not offered, and the page says why it is not given
+  await openAgent(page, id, "Given cells");
+  expect((await page.request.delete(`/api/paperagents/${id}/tools`)).status()).toBe(200);
+  await page.reload();
+  await expect(givenTools(page)).toHaveCount(3);
+  await expect(page.getByTestId("given-why")).toContainText("It has no tool that runs. Tools that run are made of what the tutorials did, under Tools.");
+  await expect(givenSummary(page)).toContainText("Tier D: reads the paper");
+  expect((await offeredIn(page, "local")).filter((name) => name.startsWith(prefix))).toEqual([
+    `${prefix}search_paper`,
+    `${prefix}show_claim`,
+    `${prefix}show_method_card`,
+  ]);
+
+  // Taking it back gives none of it to a conversation that is made after
+  await openAgent(page, id, "Given cells");
+  await giveBox(page).click();
+  await expect(giveBox(page)).not.toBeChecked();
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).given).toBe(false);
+  expect((await offeredIn(page, "local")).filter((name) => name.startsWith(prefix))).toEqual([]);
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("says that an agent whose paper has not been read has nothing to give yet, can still be given, and says what is wrong when the tools that run cannot be called", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Unread cells", paper: { kind: "file" } });
+  await openAgent(page, id, "Unread cells");
+  await expect(givenSummary(page)).toContainText("Nothing to give yet");
+  await expect(givenSummary(page)).toContainText("No tool is given.");
+  await expect(givenTools(page)).toHaveCount(0);
+  await expect(page.getByTestId("given-why")).toContainText("The paper has not been read, so the tools that read it are not given. Read it under Reading.");
+  await expect(page.getByTestId("given-why")).toContainText("It has no code, so it has no tool that runs.");
+  expect(await givenOf(page, id)).toMatchObject({ given: false, tier: null, tools: [], problem: null });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // It can be given before it has anything to give, and a conversation made then is offered none of it
+  await giveBox(page).click();
+  await expect(giveBox(page)).toBeChecked();
+  expect((await offeredIn(page, "local")).filter((name) => name.startsWith("unread_cells_"))).toEqual([]);
+
+  // What the server says of why its tools cannot be called is said as it says it, and is not taken for a tool that is missing
+  await page.route("**/api/paperagents/*/given", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+
+    return route.fulfill({
+      response,
+      json: {
+        ...body,
+        tier: "D",
+        tools: [{ name: "unread_cells_search_paper", kind: "reading", tier: "D", summary: "Searches the text of the paper for words, and gives the places.", parameters: ["query", "max_results"] }],
+        problem: "The tools cannot be run: Docker is not running, or the image of the environment is not in it.",
+      },
+    });
+  });
+  await openAgent(page, id, "Unread cells");
+  await expect(page.getByTestId("given-problem")).toHaveText("The tools cannot be run: Docker is not running, or the image of the environment is not in it.");
+  await expect(givenTools(page)).toHaveCount(1);
+  await expect(givenTools(page)).toContainText("unread_cells_search_paper(query, max_results)");
+  await expect(page.getByTestId("given-why")).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/given");
+
+  // An agent that is not there is not given, and the page says so
+  await page.request.delete(`/api/paperagents/${id}`);
+  expect((await page.request.get(`/api/paperagents/${id}/given`)).status()).toBe(404);
 });

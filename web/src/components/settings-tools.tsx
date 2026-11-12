@@ -64,7 +64,8 @@ export function ToolsTab({ tools, onChanged }: { tools: Loaded<ToolInfo[]>; onCh
         <Wrench className="mr-1.5 inline size-3.5 align-text-bottom" aria-hidden />
         The lead can call these to look things up in public literature and databases, and to read the files you attach. Each
         call is shown in the program as it is made. A program is given the tools that are on when it begins, and
-        every one adds to what each message costs, since the model is told what it does.
+        every one adds to what each message costs, since the model is told what it does. The tools of a PaperAgent are not
+        listed here: each is given from the page of its agent, which says what it gives and the tier of each tool.
       </Aside>
       {tools.kind === "loading" && <p className="text-sm text-muted-foreground">Looking at the tools…</p>}
       {tools.kind === "failed" && (

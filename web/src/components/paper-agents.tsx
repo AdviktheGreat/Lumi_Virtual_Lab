@@ -9,6 +9,7 @@ import { ProblemNotice } from "@/components/messages";
 import { PageSection } from "@/components/page-section";
 import { useServer } from "@/components/server-provider";
 import { describedBy, Field } from "@/components/settings-fields";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Radio } from "@/components/ui/radio";
@@ -70,11 +71,14 @@ export function PaperAgentsNav({ view }: { view: PaperView }) {
 function AgentRow({ agent }: { agent: PaperAgent }) {
   return (
     <li className="flex flex-col gap-1.5 rounded-xl border border-border bg-card p-4 transition-colors hover:border-ring/50" data-testid="paper-agent">
-      <h3 className="min-w-0 break-words text-sm font-medium">
-        <Link href={agentAddress(agent.id)} className="rounded-sm outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
-          {agent.title}
-        </Link>
-      </h3>
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="min-w-0 break-words text-sm font-medium">
+          <Link href={agentAddress(agent.id)} className="rounded-sm outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+            {agent.title}
+          </Link>
+        </h3>
+        {agent.given && <Badge variant="secondary">Given to conversations</Badge>}
+      </div>
       <p className="break-all text-xs text-muted-foreground">{describePaper(agent.paper)}</p>
       {agent.repo !== null && <p className="break-all text-xs text-muted-foreground">Code: {repoName(agent.repo.url)}</p>}
       <p className="text-xs text-muted-foreground">{describeSteps(agent)}</p>

@@ -245,6 +245,8 @@ A conversation that is given an agent is given tools that are named from it, `<t
 
 An agent is of tier A if it has tools that run and of tier D if it has only those that read, and each tool says its own, in its description and in `GET /api/paperagents/{id}/given`.
 
+**On the page.** The In conversations part, after Tools, has a box that gives the agent to the conversations that are made from then on (and takes it back), and shows what a conversation would be given of it: the agent's tier, how many tools read the paper and how many run its code, and each tool with its name, what it is passed, what it does, and its tier. If a kind of tool is missing it says why (the paper has not been read, the agent has no code, or no tools have been made), and if the server says the tools that run cannot be called (Docker is not running, or the image is not in it) that is shown as it says it. An agent can be given before it has anything to give. The list of agents marks the agents that are given. The page looks again at what an agent gives when the paper is read or taken away, and when its code, environment, data, tutorials, or tools change. The Tools part of Settings does not list these tools, and says that they are given from the page of the agent.
+
 **How far this has been checked.** What tier D says is that the words are the paper's and where they are, found by their words, so a place that says it in other words may be missed. What tier A says is what it said when the tools were made: the function gave again what the tutorials got, for the arguments the tutorials passed. A call with other arguments is not checked at all. Neither says that what the paper says, or what a tool gives, is right.
 
 ## What it does not do yet

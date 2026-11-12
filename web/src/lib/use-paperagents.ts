@@ -6,6 +6,7 @@ import type {
   PaperAgent,
   PaperAgentData,
   PaperAgentEnvironment,
+  PaperAgentGiven,
   PaperAgentReading,
   PaperAgentReference,
   PaperAgentRepository,
@@ -71,6 +72,12 @@ export function usePaperAgentReference(id: string, report: (error: unknown) => v
 // which is what the tools are made from, and as the tools are made
 export function usePaperAgentTools(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentTools> {
   const look = useCallback(() => api.paperAgentTools(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+export function usePaperAgentGiven(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentGiven> {
+  const look = useCallback(() => api.paperAgentGiven(id), [id]);
 
   return useLooked(look, report, again);
 }
