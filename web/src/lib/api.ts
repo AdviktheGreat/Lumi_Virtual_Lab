@@ -37,6 +37,7 @@ import type {
   PaperAgent,
   PaperAgentBuildOptions,
   PaperAgentChange,
+  PaperAgentGiven,
   PaperAgentData,
   PaperAgentDataFetch,
   PaperAgentEnvironment,
@@ -489,6 +490,11 @@ export const api = {
     request<PaperAgent>("GET", `/paperagents/${encodeURIComponent(id)}`, undefined, signal),
   changePaperAgent: (id: string, change: PaperAgentChange) =>
     request<PaperAgent>("PATCH", `/paperagents/${encodeURIComponent(id)}`, change),
+  // What a conversation is given of an agent, with the tier of each tool, and giving it to the conversations that are made from
+  // now on or not
+  paperAgentGiven: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentGiven>("GET", `/paperagents/${encodeURIComponent(id)}/given`, undefined, signal),
+  givePaperAgent: (id: string, given: boolean) => request<PaperAgent>("PATCH", `/paperagents/${encodeURIComponent(id)}`, { given }),
   // Deletes an agent with the paper uploaded to it, and gives back the agents that are left
   deletePaperAgent: (id: string) => request<PaperAgentsList>("DELETE", `/paperagents/${encodeURIComponent(id)}`),
   uploadAgentPaper,

@@ -64,6 +64,7 @@ function agent(steps: Partial<PaperAgent["steps"]> = {}): PaperAgent {
     paper: { kind: "doi", doi: "10.1038/s41586-020-2649-2" },
     repo: null,
     steps: { reading: "pending", repository: "pending", environment: "pending", data: "pending", tools: "pending", ...steps },
+    given: false,
   };
 }
 

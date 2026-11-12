@@ -10,6 +10,7 @@ import { PageSection } from "@/components/page-section";
 import { CodeSection } from "@/components/paper-agent-code";
 import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
+import { GivenSection } from "@/components/paper-agent-given";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { ReferenceSection } from "@/components/paper-agent-reference";
 import { ToolsSection } from "@/components/paper-agent-tools";
@@ -70,6 +71,7 @@ import type {
   PaperAgent,
   PaperAgentData,
   PaperAgentEnvironment,
+  PaperAgentGiven,
   PaperAgentReading,
   PaperAgentReference,
   PaperAgentRepository,
@@ -83,6 +85,7 @@ import {
   usePaperAgent,
   usePaperAgentData,
   usePaperAgentEnvironment,
+  usePaperAgentGiven,
   usePaperAgentReading,
   usePaperAgentReference,
   usePaperAgentRepository,
@@ -440,6 +443,7 @@ function Agent({
   data,
   reference,
   tools,
+  given,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
@@ -450,6 +454,7 @@ function Agent({
   data: LookedAt<PaperAgentData>;
   reference: LookedAt<PaperAgentReference>;
   tools: LookedAt<PaperAgentTools>;
+  given: LookedAt<PaperAgentGiven>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -513,6 +518,7 @@ function Agent({
     data.reload();
     reference.reload();
     tools.reload();
+    given.reload();
   };
   const shared = { agent, list, working: !idle, onChanged: changed };
   const own = agent.paper.kind === "file";
@@ -573,6 +579,8 @@ function Agent({
                 // What the paper points to is found from what was read
                 repository.reload();
                 data.reload();
+                // The tools that read it are given only while its text is kept
+                given.reload();
               }}
             />
           )}
@@ -608,6 +616,7 @@ function Agent({
                 data.reload();
                 reference.reload();
                 tools.reload();
+                given.reload();
                 onReload();
               }}
               onStale={() => {
@@ -617,6 +626,7 @@ function Agent({
                 data.reload();
                 reference.reload();
                 tools.reload();
+                given.reload();
               }}
             />
           )}
@@ -646,6 +656,7 @@ function Agent({
                 // What was run in the image goes with it
                 reference.reload();
                 tools.reload();
+                given.reload();
                 onReload();
               }}
               onStale={() => {
@@ -653,6 +664,7 @@ function Agent({
                 environment.reload();
                 reference.reload();
                 tools.reload();
+                given.reload();
               }}
             />
           )}
@@ -677,6 +689,7 @@ function Agent({
                 // What the tutorials are given to read is what was fetched
                 reference.reload();
                 tools.reload();
+                given.reload();
                 onReload();
               }}
             />
@@ -702,12 +715,14 @@ function Agent({
                 reference.set(cleared);
                 // The tools are made of what the tutorials gave
                 tools.reload();
+                given.reload();
                 onReload();
               }}
               onStale={() => {
                 onReload();
                 reference.reload();
                 tools.reload();
+                given.reload();
               }}
             />
           )}
@@ -730,12 +745,32 @@ function Agent({
               jobs={jobs}
               onCleared={(cleared) => {
                 tools.set(cleared);
+                given.reload();
                 onReload();
               }}
               onStale={() => {
                 onReload();
                 reference.reload();
                 tools.reload();
+                given.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="In conversations"
+        intro="Give this agent to the conversations you start, so that the lead can search what the paper says, with the place, and, where code runs, call the tools made of its code. A tier says how far a tool was checked. It does not say that what the paper says or what a tool gives is right."
+      >
+        <Looked state={given.value} label="Looking at what the agent gives" failure="What the agent gives could not be looked at." onRetry={given.reload}>
+          {(value) => (
+            <GivenSection
+              key={agent.id}
+              agent={agent}
+              given={value}
+              onChanged={(next) => {
+                onChanged(next);
+                given.reload();
               }}
             />
           )}
@@ -765,6 +800,7 @@ export function AgentPage({ id }: { id: string }) {
   const data = usePaperAgentData(id, report, again);
   const reference = usePaperAgentReference(id, report, again);
   const tools = usePaperAgentTools(id, report, again);
+  const given = usePaperAgentGiven(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -795,6 +831,7 @@ export function AgentPage({ id }: { id: string }) {
                 data={data}
                 reference={reference}
                 tools={tools}
+                given={given}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />

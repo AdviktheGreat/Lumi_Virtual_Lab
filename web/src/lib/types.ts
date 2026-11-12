@@ -833,6 +833,8 @@ export interface PaperAgent {
   // Where the paper's code is, if that is known, and once it is fetched the commit that was, with what was asked for to get it
   repo: PaperAgentRepo | null;
   steps: Record<PaperAgentStep, PaperAgentStatus>;
+  // Whether the conversations that are made from now on are given the agent, which only the person says
+  given: boolean;
 }
 
 export interface PaperAgentRepo {
@@ -976,6 +978,35 @@ export interface NewPaperAgent {
 export interface PaperAgentChange {
   title?: string;
   repo?: string;
+  // Whether the conversations that are made from now on are given the agent
+  given?: boolean;
+}
+
+// One tool that a conversation is given of an agent: one that reads what was kept of its paper, or one that runs the
+// authors' code
+export interface GivenTool {
+  name: string;
+  kind: "reading" | "run";
+  // D for one that reads, and for one that runs, the tier it was made as
+  tier: string;
+  // What it does, in a line
+  summary: string;
+  // The names of what it is passed
+  parameters: string[];
+}
+
+// What an agent gives a conversation, worked out from what is kept now
+export interface PaperAgentGiven {
+  id: string;
+  given: boolean;
+  // A if it has tools that run, D if it has only tools that read, and null if it has none
+  tier: string | null;
+  tools: GivenTool[];
+  // Why the tools that run are not given, if they would be and cannot be, such as Docker not running
+  problem: string | null;
+  // What the tiers say, in words
+  meaning: string;
+  limits: { call_seconds: number; memory: string; cpus: string };
 }
 
 // What was found in a project's files, by looking at them: nothing in it was run
