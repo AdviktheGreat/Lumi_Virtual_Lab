@@ -376,6 +376,12 @@ MCP_LOG_TAIL_CHARS = 2_000
 # Most pages an MCP server may list its tools in, so that a server whose pages never end cannot
 # keep a connection from finishing
 MCP_MAX_TOOL_PAGES = 1_000
+# Most resources, or prompts, that an MCP server's connection keeps of what it lists, so that a server with thousands
+# cannot slow a connection or fill a page
+MCP_MAX_LISTED = 200
+# Seconds an MCP server may take to list its resources and prompts, once its tools are listed: a server that does not
+# say in time is connected to without them
+MCP_LIST_HELD_TIMEOUT = 30.0
 # Most characters of what an MCP server says of how to use its tools that the agents are told,
 # so that a server cannot fill their context with it
 MCP_MAX_INSTRUCTIONS_CHARS = 8_000
