@@ -30,6 +30,7 @@ from virtual_lab.server.functions import check_function_runs, given_runs
 from virtual_lab.server.library import SETTABLE_KEYS, missing_keys, models, provider_of
 from virtual_lab.server.mcp import check_server_names, servers_on
 from virtual_lab.server.own import check_own_names
+from virtual_lab.server.paperagent_given import check_agent_ids, given_agents
 from virtual_lab.server.skills import check_skill_names, load_skills
 from virtual_lab.server.tools import check_tool_names, tool_names
 from virtual_lab.server.workspace import SCIENTIST_FIELDS, Settings, Workspace, read_json
@@ -97,6 +98,9 @@ class ChatConfig:
     :param software: The names of the software the person gave the lab that the agents are told they can use.
     :param functions: The ids of the runs of papers whose functions the lead and the team may call, as tools, where code
         runs. A conversation goes on with those of them that are still there.
+    :param paperagents: The ids of the PaperAgents whose tools the lead and the team may call: the tools that read what
+        was found in the paper, and, where code runs, the tools that run the authors' own code in the agent's own image.
+        A conversation goes on with those of them that are still there.
     :param skills: The names of the skills the lead may read, as they were when the conversation was made. A conversation
         goes on with those of them that are still there.
     :param max_delegations: The most team sessions the lead may start in answering one message, or None for as many as
@@ -123,6 +127,7 @@ class ChatConfig:
     data: tuple[str, ...] = ()
     software: tuple[str, ...] = ()
     functions: tuple[str, ...] = ()
+    paperagents: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
     max_delegations: int | None = None
     max_rounds: int | None = None
@@ -160,6 +165,7 @@ class ChatConfig:
             "data": list(self.data),
             "software": list(self.software),
             "functions": list(self.functions),
+            "paperagents": list(self.paperagents),
             "skills": list(self.skills),
             "max_delegations": self.max_delegations,
             "max_rounds": self.max_rounds,
@@ -190,6 +196,8 @@ class ChatConfig:
             software=tuple(dict.fromkeys(str(name) for name in data.get("software", ()))),
             # A conversation begun before the lab could write functions from papers has none, and goes on without
             functions=tuple(dict.fromkeys(str(name) for name in data.get("functions", ()))),
+            # A conversation begun before a PaperAgent could be given to one has none, and goes on without
+            paperagents=tuple(dict.fromkeys(str(name) for name in data.get("paperagents", ()))),
             # A conversation begun before the lead could be given skills has none, and goes on without
             skills=tuple(dict.fromkeys(str(name) for name in data.get("skills", ()))),
             # A conversation begun before the limits could be set has the lead's own, and goes on with them
@@ -446,8 +454,9 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         names of the library's tools to give, which are all but those the workspace has turned off, "mcp", the names
         of the MCP servers to give, which are those the workspace has turned on, and "data" and "software", the
         names of what the person gave the lab to give, which are all of it, and "functions", the ids of the runs of
-        papers whose functions to give, which are those the person gave to conversations, and "skills", the names of
-        the skills to give, which are all there are but those the workspace has turned off.
+        papers whose functions to give, which are those the person gave to conversations, "paperagents", the ids of
+        the PaperAgents to give, which are those the person gave to conversations, and "skills", the names of the
+        skills to give, which are all there are but those the workspace has turned off.
     :raises ValueError: If something chosen cannot be used.
     """
     scientists = library(workspace)
@@ -494,6 +503,12 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         else given_runs(workspace)
     )
 
+    paperagents = (
+        check_agent_ids(request["paperagents"], workspace)
+        if request.get("paperagents") is not None
+        else given_agents(workspace)
+    )
+
     found = load_skills(workspace)
     if request.get("skills") is not None:
         skills = check_skill_names(request["skills"], found)
@@ -526,6 +541,7 @@ def resolve_config(request: Mapping[str, Any], settings: Settings, workspace: Wo
         data=tuple(data),
         software=tuple(software),
         functions=tuple(functions),
+        paperagents=tuple(paperagents),
         skills=tuple(skills),
         max_delegations=allowed.get("max_delegations"),
         max_rounds=allowed.get("max_rounds"),

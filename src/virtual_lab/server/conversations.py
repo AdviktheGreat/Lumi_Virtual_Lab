@@ -55,6 +55,7 @@ from virtual_lab.server.skills import Skills, load_skills
 from virtual_lab.server.library import missing_keys
 from virtual_lab.server.mcp import is_on, server_title
 from virtual_lab.server.own import given
+from virtual_lab.server.paperagent_given import agent_tools
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
@@ -232,6 +233,8 @@ class Conversations:
         out what it has cost, or None to leave that to whoever registered them.
     :param skill_saver: What a program that builds a skill saves it with, or None for a Skills of the workspace's own,
         which has a lock of its own, so a server that keeps skills elsewhere gives it the one that it keeps.
+    :param docker_command: How Docker is invoked, which the tools of a PaperAgent that run the authors' code are run
+        with, in the agent's own image.
     """
 
     def __init__(
@@ -244,7 +247,9 @@ class Conversations:
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         catalog: Catalog | None = None,
         skill_saver: SkillSaver | None = None,
+        docker_command: Sequence[str] = ("docker",),
     ) -> None:
+        self.docker_command = tuple(docker_command)
         self.workspace = workspace
         self.skill_saver = skill_saver if skill_saver is not None else Skills(workspace).save_built
         self.campaigns = Campaigns(workspace)
@@ -713,13 +718,21 @@ class Conversations:
         # it is being opened again
         stored = self.workspace.load_mcp_servers()
         servers = {name: stored[name] for name in config.mcp if name in stored and is_on(stored[name])}
+        # What no function or tool of a PaperAgent is named from, since the servers' tools are not known until they are
+        # connected to
+        prefixes = [f"{tool_prefix(name)}_" for name in servers]
         # What the person had it write from papers, which runs where the code does, and so only where there is some
-        written = function_tools(
+        written = function_tools(self.workspace, config.functions, session, {tool.name for tool in chosen}, prefixes)
+        # What the person gave of a PaperAgent: its tools that read the paper, and those that run its code in its own
+        # image where code is allowed
+        agents = agent_tools(
             self.workspace,
-            config.functions,
+            config.paperagents,
             session,
-            {tool.name for tool in chosen},
-            [f"{tool_prefix(name)}_" for name in servers],
+            {tool.name for tool in (*chosen, *written)},
+            prefixes,
+            self.docker_command,
+            handle.stopping,
         )
         if servers and not keyless:
             asker = Asker(handle.tell, handle.stopping, lambda name: server_title(name, servers.get(name)))
@@ -734,7 +747,7 @@ class Conversations:
                 client=self.client,
                 chat_models=chat_models,
                 title=title,
-                tools=(*chosen, *written),
+                tools=(*chosen, *written, *agents),
                 late_tools=handle.connections.tools if handle.connections is not None else None,
                 skills=skills,
                 instructions=config.instructions,

@@ -39,6 +39,10 @@ kind of container, with the arguments that the tutorial passed, each call in a p
 of the code. A tool that gives again what the tutorial got is of tier A, and is kept with each call that was made as the
 evidence. One that does not is dropped, with why, and is not changed to fit. Tier A says that a tool gives again what
 the tutorials got, and does not say that what it gives is right.
+
+An agent is given to conversations when the person says so (the flag `given` in its agent.json), or when they name it
+for one. What a conversation is then given of it is in paperagent_given.py: tools that read what was found in the
+paper, which are of tier D, and its tools of tier A, which run the authors' code where the conversation may run code.
 """
 
 import hashlib
@@ -422,6 +426,12 @@ def is_pin(repo: dict[str, Any]) -> bool:
         return False
 
 
+def is_given(agent: dict[str, Any]) -> bool:
+    """Whether the person gave the agent to the conversations that are made from now on, which only a record that says
+    so does."""
+    return agent.get("given") is True
+
+
 def made_with() -> dict[str, int]:
     """What a reading is made with now, which a reading that was kept must have been made with to be shown as this
     one: the version of what reads, and the sizes the text is cut into chunks of."""
@@ -459,6 +469,33 @@ def same_paper(left: dict[str, Any], right: dict[str, Any]) -> bool:
         return False
 
     return bool(left[left["kind"]] == right[right["kind"]])
+
+
+def data_to_give(directory: Path) -> tuple[Path | None, dict[str, int] | None]:
+    """The folder of the data that was fetched for an agent, and how much is in it, if there is any, which is what a run
+    is given to read."""
+    record = kept_data.load(directory)
+    present = [file for source in record["sources"] for file in source["files"] if kept_data.present(directory, file)]
+    folder = kept_data.data_path(directory)
+    if not present or folder.is_symlink() or not folder.is_dir():
+        return None, None
+
+    return folder, {"files": len(present), "bytes": sum(file["bytes"] for file in present)}
+
+
+def kept_tools_of(directory: Path, agent: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """The reference run that is kept for an agent, if it is complete, and the account of the tools that were made from
+    it."""
+    code = agent.get("repo")
+    intake = kept_repository.load(directory, code["url"] if code is not None else None)
+    commit = intake["commit"] if intake is not None else None
+    built = kept_environment.load(directory, commit)
+    image_id = built["image"]["id"] if built is not None else None
+    reference = kept_reference.load(directory, commit, image_id)
+    if reference is None or not reference["complete"]:
+        return None, None
+
+    return reference, kept_tools.load(directory, commit, image_id, reference)
 
 
 class PaperAgents:
@@ -539,6 +576,7 @@ class PaperAgents:
             "paper": agent["paper"],
             "repo": agent.get("repo"),
             "steps": steps,
+            "given": is_given(agent),
         }
 
     def running(self, agent_id: str) -> Job | None:
@@ -657,18 +695,21 @@ class PaperAgents:
     def save(self, directory: Path, agent: dict[str, Any]) -> None:
         write_atomically(directory / AGENT_FILE, json.dumps(agent, indent=4).encode("utf-8"))
 
-    def change(self, agent_id: str, title: Any = None, repo: Any = None) -> None:
-        """Says again what an agent is called, and where its code is. What is left out is left as it was, and an empty
-        address takes the code away.
+    def change(self, agent_id: str, title: Any = None, repo: Any = None, given: Any = None) -> None:
+        """Says again what an agent is called, where its code is, and whether it is given to the conversations that are
+        made from now on. What is left out is left as it was, and an empty address takes the code away.
 
         :raises ApiError: If there is no agent with this id, or what is given is not fit.
         """
-        if title is None and repo is None:
-            raise ApiError(422, "invalid", "Say what to change: the title, or where the code is")
+        if title is None and repo is None and given is None:
+            raise ApiError(422, "invalid", "Say what to change: the title, where the code is, or whether it is given")
+        wanted = check_flag(given, "given") if given is not None else None
         with self._lock:
             directory, agent = self.lookup(agent_id)
             if title is not None:
                 agent = {**agent, "title": check_title(title)}
+            if wanted is not None:
+                agent = {**agent, "given": wanted}
             if repo is not None:
                 url = None if is_blank(repo) else check_repo(repo)
                 if url != (agent.get("repo") or {}).get("url"):
@@ -1607,19 +1648,6 @@ class PaperAgents:
 
     # The tutorials, run to keep what they give as the reference
 
-    def data_to_give(self, directory: Path) -> tuple[Path | None, dict[str, int] | None]:
-        """The folder of the data that was fetched, and how much is in it, if there is any, which is what a run is
-        given to read."""
-        record = kept_data.load(directory)
-        present = [
-            file for source in record["sources"] for file in source["files"] if kept_data.present(directory, file)
-        ]
-        folder = kept_data.data_path(directory)
-        if not present or folder.is_symlink() or not folder.is_dir():
-            return None, None
-
-        return folder, {"files": len(present), "bytes": sum(file["bytes"] for file in present)}
-
     def reference(self, agent_id: str) -> dict[str, Any]:
         """What there is of the running of an agent's tutorials: which would be run and which would not, with why, what
         a run is given to read, what was kept of the last, and what is allowed.
@@ -1639,7 +1667,7 @@ class PaperAgents:
                 == built["image"]["id"]
             )
         job = self.reference_job(agent_id)
-        _, data = self.data_to_give(directory)
+        _, data = data_to_give(directory)
 
         return {
             "id": agent_id,
@@ -1733,7 +1761,7 @@ class PaperAgents:
                 raise ApiError(
                     422, "no_tutorials", "There is no tutorial in the code that can be run here: only Python is run"
                 )
-            folder, data = self.data_to_give(directory) if give else (None, None)
+            folder, data = data_to_give(directory) if give else (None, None)
             try:
                 return self.jobs.start(
                     REFERENCE_JOB,
@@ -1895,21 +1923,6 @@ class PaperAgents:
 
     # The tools, made from what the tutorials did
 
-    def kept_tools_of(
-        self, directory: Path, agent: dict[str, Any]
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """The reference run that is kept, if it is complete, and the account of the tools that were made from it."""
-        code = agent.get("repo")
-        intake = kept_repository.load(directory, code["url"] if code is not None else None)
-        commit = intake["commit"] if intake is not None else None
-        built = kept_environment.load(directory, commit)
-        image_id = built["image"]["id"] if built is not None else None
-        reference = kept_reference.load(directory, commit, image_id)
-        if reference is None or not reference["complete"]:
-            return None, None
-
-        return reference, kept_tools.load(directory, commit, image_id, reference)
-
     def tools(self, agent_id: str) -> dict[str, Any]:
         """What there is of the making of an agent's tools: what the tutorials called, which of it would be made into
         tools and which would not, with why, what was kept of the last making, and what is allowed.
@@ -1918,7 +1931,7 @@ class PaperAgents:
         """
         directory, agent = self.lookup(agent_id)
         usable, problem = building.ready(self.docker_command)
-        reference, kept = self.kept_tools_of(directory, agent)
+        reference, kept = kept_tools_of(directory, agent)
         preview = None
         if reference is not None:
             gathered = toolwork.gather_kept(
@@ -1954,7 +1967,7 @@ class PaperAgents:
         :raises ApiError: If there is no agent with this id, or it has no tool of that name that is as it was made.
         """
         directory, agent = self.lookup(agent_id)
-        _, kept = self.kept_tools_of(directory, agent)
+        _, kept = kept_tools_of(directory, agent)
         tool = (
             kept_tools.load_tool(directory, name)
             if kept is not None and any(one["name"] == name for one in kept["tools"])
@@ -2002,7 +2015,7 @@ class PaperAgents:
 
         with self._lock:
             directory, agent, intake, built, image_id = self.image_for_runs(agent_id, "the tools are called")
-            reference, kept = self.kept_tools_of(directory, agent)
+            reference, kept = kept_tools_of(directory, agent)
             if reference is None:
                 raise ApiError(422, "no_reference", "Run the tutorials first, as tools are made from what they did")
             if kept is not None and kept["complete"]:
@@ -2012,7 +2025,7 @@ class PaperAgents:
                 raise ApiError(
                     422, "no_tools", f"No tool can be made of what the tutorials did. {toolwork.reasons_of(gathered)}"
                 )
-            folder, _ = self.data_to_give(directory) if reference["data"] is not None else (None, None)
+            folder, _ = data_to_give(directory) if reference["data"] is not None else (None, None)
             try:
                 return self.jobs.start(
                     TOOLS_JOB,

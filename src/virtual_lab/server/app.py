@@ -41,7 +41,9 @@ and everything else is a request and an answer.
     PATCH  /api/papers/runs/{id}        whether its functions are given to the conversations that are made from now on
     GET    /api/paperagents             the PaperAgents, and what a page needs to make one
     POST   /api/paperagents             an agent of a paper, given by its DOI, a link, or a file that is uploaded to it
-    GET    /api/paperagents/{id}        one agent; PATCH says what it is called and where its code is; DELETE deletes it
+    GET    /api/paperagents/{id}        one agent; PATCH says what it is called, where its code is, and whether it is
+                                        given to the conversations that are made from now on; DELETE deletes it
+    GET    /api/paperagents/{id}/given  the tools a conversation is given of it, each with its tier, and why not some
     POST   /api/paperagents/{id}/paper  the paper of an agent whose paper is a file, as the body, named by ?name=
     DELETE /api/paperagents/{id}/paper  takes that paper away
     POST   /api/paperagents/{id}/reading  starts reading the paper, within the limit on spending in the body, as a job
@@ -155,6 +157,7 @@ from virtual_lab.server.mcp import (
 )
 from virtual_lab.server.mcp_catalog import MCP_CATALOG, describe_catalog
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
+from virtual_lab.server.paperagent_given import view as given_view
 from virtual_lab.server.paperagents import MAX_DATASET_CHARS, MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
 from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_PAPERS, MAX_TITLE_CHARS, Papers
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
@@ -249,6 +252,7 @@ class ChatBody(RequestModel):
     data: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
     software: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
     functions: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
+    paperagents: list[str] | None = Field(None, max_length=MAX_OWN_ITEMS)
     skills: list[str] | None = Field(None, max_length=MAX_SKILLS)
     campaign: str | None = Field(None, max_length=MAX_ID_CHARS)
 
@@ -456,10 +460,11 @@ class PaperAgentBody(RequestModel):
 
 class PaperAgentChangeBody(RequestModel):
     """What to say again of an agent: any of these, and what is not given is left as it is. An empty repo takes the code
-    away."""
+    away, and given is whether the conversations that are made from now on are given the agent."""
 
     title: str | None = Field(None, max_length=MAX_TITLE_CHARS * 4)
     repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+    given: StrictBool | None = None
 
 
 class McpServerBody(RequestModel):
@@ -668,6 +673,7 @@ def create_app(
         max_upload_bytes=max_upload_bytes,
         catalog=models_of_openrouter,
         skill_saver=skills.save_built,
+        docker_command=docker_command,
     )
     own = Own(store, max_upload_bytes)
     papers = Papers(
@@ -1158,9 +1164,13 @@ def create_app(
 
     @api.patch("/paperagents/{agent_id}")
     def change_paperagent(agent_id: str, body: PaperAgentChangeBody) -> dict[str, Any]:
-        paperagents.change(agent_id, body.title, body.repo)
+        paperagents.change(agent_id, body.title, body.repo, body.given)
 
         return paperagents.view(agent_id)
+
+    @api.get("/paperagents/{agent_id}/given")
+    def get_paperagent_given(agent_id: str) -> dict[str, Any]:
+        return given_view(store, agent_id, docker_command)
 
     @api.delete("/paperagents/{agent_id}")
     def delete_paperagent(agent_id: str) -> dict[str, Any]:
