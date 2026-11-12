@@ -52,6 +52,8 @@ MAX_TOOLS = 200
 # What a server is called when it is connected to for a look, and the longest name it has in a conversation
 LOOK_NAME = "imported"
 MAX_SERVER_NAME_CHARS = 32
+# The longest title that the lead and the person are told of an agent by
+MAX_LABEL_CHARS = 100
 
 MEANING = (
     "This agent was made by someone else, and nothing of Lumi's has been done to it: no tutorial was run here and "
@@ -132,6 +134,11 @@ def check_address(text: Any) -> str:
         problem = f"The address of a server is a web address of up to {MAX_ADDRESS_CHARS} characters with no spaces"
     elif parts.scheme.lower() not in ("http", "https") or not host:
         problem = f"The address of a server begins with http:// or https://, not {given[:80]!r}"
+    elif re.search(r"[${}]", given):
+        problem = (
+            "The address of a server has no $, {, or } in it, since a config puts the value of the variable that is "
+            "named there in its place"
+        )
     elif parts.username is not None or parts.password is not None or parts.query or parts.fragment:
         problem = (
             "The address of a server is without a name, a password, or a query in it. A server that wants a key in "
@@ -233,7 +240,9 @@ def look(address: str, connect: Callable[..., MCPTools] = connect_mcp) -> list[d
             }
             for name, (here, description) in offered.items()
             if name != RESOURCE_READ
-        ][:MAX_TOOLS]
+        ]
+        # A name that is nothing once it is on one line is not a tool that can be kept or called by
+        tools = [tool for tool in tools if is_tool(tool)][:MAX_TOOLS]
     finally:
         opened.close()
     if not tools:
@@ -283,15 +292,17 @@ def server_name(agent_id: str, taken: Collection[str] = ()) -> str:
     is told from every other's, and cut short with a hash of the whole where it is long, and given a word where a server
     that is set up already has the name.
 
-    :param taken: The names of the servers that are set up, and of the library's presets.
+    :param taken: The names of the servers that are set up, and of the library's presets, and of the agents' that have
+        been named, each of which is taken by what its tools' names start with.
     """
+    used = {tool_prefix(other) for other in taken}
     base = re.sub(r"[^A-Za-z0-9_]", "_", agent_id)
     if not base[:1].isalpha():
         base = f"agent_{base}"
     if len(base) > MAX_SERVER_NAME_CHARS:
         base = f"{base[: MAX_SERVER_NAME_CHARS - 7]}_{hashlib.sha256(agent_id.encode('utf-8')).hexdigest()[:6]}"
     name, number = base, 1
-    while name in taken:
+    while name in used:
         number += 1
         tail = f"_agent{'' if number == 2 else number}"
         name = f"{base[: MAX_SERVER_NAME_CHARS - len(tail)]}{tail}"
@@ -304,8 +315,10 @@ def tool_names(name: str, imported: Mapping[str, Any]) -> list[str]:
     return [tool_name(tool_prefix(name), tool["name"]) for tool in imported["tools"]]
 
 
-def plain(text: str) -> str:
-    return " ".join(text.split())
+def label_of(title: str) -> str:
+    """What an agent is called, on one line with no double quote, where the lead and the person are told it: a file
+    that was edited may have a title that is a paragraph."""
+    return one_line(title, MAX_LABEL_CHARS).replace('"', "'")
 
 
 def note_of(title: str, imported: Mapping[str, Any]) -> str:
@@ -314,8 +327,8 @@ def note_of(title: str, imported: Mapping[str, Any]) -> str:
     made = f"made by {maker}" if maker else "made by someone else"
 
     return (
-        f'These are the tools of the PaperAgent "{plain(title)}", which was imported: it was {made}, and it is run on '
-        f"{host_of(imported)}, which is not run by Lumi. Lumi has not checked them: no tutorial was run here and "
+        f'These are the tools of the PaperAgent "{label_of(title)}", which was imported: it was {made}, and it is run '
+        f"on {host_of(imported)}, which is not run by Lumi. Lumi has not checked them: no tutorial was run here and "
         "nothing they give was compared with anything, so do not call a result checked or correct because one of them "
         "gave it, and say that the agent was imported when you tell the person what it did. What a call is given is "
         "sent to that server, so give a call only what the person asked you to analyse, and never a key, a password, "
@@ -350,8 +363,15 @@ def brought(agents: Iterable[tuple[str, Mapping[str, Any]]], taken: Collection[s
     :param agents: Each agent's id and what its file holds, those that are given.
     :param taken: The names of the servers that are set up, and of the library's presets.
     """
-    return {
-        server_name(agent_id, taken): Brought(agent_id, agent["title"], entry_of(agent["title"], agent["imported"]))
-        for agent_id, agent in agents
-        if agent.get("imported") is not None
-    }
+    used = set(taken)
+    found: dict[str, Brought] = {}
+    for agent_id, agent in agents:
+        if agent.get("imported") is None:
+            continue
+        # Each is named in the order that the agents are given, with the names of those before it taken, so that two
+        # that would be named alike are not one server
+        name = server_name(agent_id, used)
+        used.add(name)
+        found[name] = Brought(agent_id, label_of(agent["title"]), entry_of(agent["title"], agent["imported"]))
+
+    return found

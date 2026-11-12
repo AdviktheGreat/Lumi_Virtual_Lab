@@ -1204,7 +1204,7 @@ def create_app(
             body.agent,
         )
 
-        return paperagents.view(agent_id)
+        return await run_in_threadpool(paperagents.view, agent_id)
 
     @api.post("/paperagents/{agent_id}/imported/check")
     async def check_paperagent_import(agent_id: str) -> dict[str, Any]:

@@ -726,6 +726,9 @@ class PaperAgents:
 
         with self._lock:
             self.check_unique(kept)
+            if imported is not None:
+                # Again, since the server was connected to without the lock, and another may have been brought in since
+                self.check_unimported(imported["url"])
             if len(self.kept()) >= MAX_AGENTS:
                 raise ApiError(409, "too_many", f"No more than {MAX_AGENTS} PaperAgents can be kept. Delete some first")
             directory = claim_directory(root, named)
@@ -818,6 +821,8 @@ class PaperAgents:
                 self.check_unique(kept)
                 self.check_unimported(address)
         record = importing.record_of(address, self.look_at(address))
+        if not importing.is_imported(record):
+            raise ApiError(422, "invalid", f"The tools that {address} gives cannot be kept")
         if agent is None:
             assert paper is not None
             return self.create(title, paper, repo, record)
@@ -880,11 +885,17 @@ class PaperAgents:
                 tools = importing.look(imported["url"], self.connect)
             except importing.LookError as error:
                 return {"ok": False, "reason": str(error), "agent": self.view(agent_id)}
+            kept = importing.record_of(imported["url"], tools, imported["imported_at"])
+            if not importing.is_imported(kept):
+                return {
+                    "ok": False,
+                    "reason": f"The tools that {imported['url']} gives cannot be kept",
+                    "agent": self.view(agent_id),
+                }
             with self._lock:
                 directory, current = self.lookup(agent_id)
                 if current.get("imported") is None or current["imported"]["url"] != imported["url"]:
                     raise ApiError(409, "changed", f"{current['title']} was changed while its server was checked")
-                kept = importing.record_of(imported["url"], tools, imported["imported_at"])
                 self.save(directory, {**current, "imported": kept})
         finally:
             with self._lock:

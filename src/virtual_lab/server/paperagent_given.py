@@ -633,7 +633,8 @@ def view(workspace: Workspace, agent_id: str, docker_command: Sequence[str] = ("
     reserved = RESERVED_TOOL_NAMES
     imported = found[1].get("imported")
     # The tools that an imported agent listed, named as a conversation that has it would name them, which are not
-    # connected to for this: they are as they were when the server was last connected to
+    # connected to for this: they are as they were when the server was last connected to. The name is the one it has
+    # when no other imported agent in the conversation would be named alike, which is given a suffix
     name = importing.server_name(agent_id, {*workspace.load_mcp_servers(), *MCP_PRESETS}) if imported else ""
     listed = (
         [
