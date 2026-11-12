@@ -11,6 +11,8 @@ never shown as what another says: a reading of a file that is not the agent's is
 """
 
 import json
+import math
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -38,6 +40,16 @@ SCHEMA = 1
 # How much of the paper is given around a quote, and the most of it that a page may ask for
 PASSAGE_CONTEXT = 400
 MAX_PASSAGE_CHARS = 5000
+
+# How a search of the paper goes: how long a question may be, how many places it may ask for, and how long a place is
+MAX_QUERY_CHARS = 300
+MAX_MATCHES = 10
+MATCH_CHARS = 700
+# Words that say nothing of what is asked for, and so are not looked for
+COMMON_WORDS = frozenset(
+    "a an and are as at be by did do does for from how in is it of on or that the this to was were what when where "
+    "which who why with".split()
+)
 
 
 def reading_dir(directory: Path) -> Path:
@@ -214,3 +226,57 @@ def passage(document: Document, start: int, end: int) -> dict[str, Any]:
         "text": document.text[start:end],
         "after": document.text[end : end + PASSAGE_CONTEXT],
     }
+
+
+def segments(document: Document) -> list[tuple[int, int]]:
+    """The places a search looks in: each paragraph of the text, cut where a space is if it is longer than a place is
+    given, and none that is in the references."""
+    text = document.text
+    skipped = document.references()
+    found = []
+    for paragraph in re.finditer(r"\S(?:.|\n(?!\s*\n))*", text):
+        start, stop = paragraph.start(), paragraph.end()
+        while start < stop:
+            end = min(start + MATCH_CHARS, stop)
+            if end < stop:
+                space = text.rfind(" ", start + MATCH_CHARS // 2, end)
+                end = space if space > 0 else end
+            if not any(begin <= start and end <= finish for begin, finish in skipped) and text[start:end].strip():
+                found.append((start, end))
+            start = end
+            while start < stop and text[start].isspace():
+                start += 1
+
+    return found
+
+
+def search(document: Document, query: str, limit: int) -> list[dict[str, Any]]:
+    """The places in the paper that have the words of a question, the best first. A word that is in few places counts
+    for more than one that is in many, and a place with more of the words is better than one with fewer. This finds
+    words and not meaning, so a place that says it in other words is not found.
+
+    :param limit: How many places to give, at most.
+    :return: Each place with where it is (the characters it is from and to, the page, and the section) and its words.
+    :raises ValueError: If the question has no word in it that is looked for, or it is too long.
+    """
+    if len(query) > MAX_QUERY_CHARS:
+        raise ValueError(f"A question is at most {MAX_QUERY_CHARS} characters")
+    words = list(dict.fromkeys(word for word in re.findall(r"\w+", query.lower()) if word not in COMMON_WORDS))
+    if not words:
+        raise ValueError("Ask with some words that the paper may have, such as a name, a method, or a number")
+    places = [(start, end, document.text[start:end].lower()) for start, end in segments(document)]
+    frequency = {word: sum(1 for _, _, lowered in places if word in lowered) for word in words}
+    scored = []
+    for start, end, lowered in places:
+        score = sum(
+            math.log(1 + len(places) / (1 + frequency[word])) * min(lowered.count(word), 3)
+            for word in words
+            if frequency[word]
+        )
+        if score > 0:
+            scored.append((-score, start, end))
+
+    return [
+        {**document.anchor(start, end), "text": document.text[start:end]}
+        for _, start, end in sorted(scored)[: max(limit, 0)]
+    ]
