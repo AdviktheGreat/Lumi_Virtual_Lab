@@ -52,6 +52,7 @@ from virtual_lab.approval import (
 )
 from virtual_lab.constants import (
     MCP_CALL_TIMEOUT,
+    MCP_LIST_HELD_TIMEOUT,
     MCP_LOG_TAIL_CHARS,
     MCP_MAX_INSTRUCTIONS_CHARS,
     MCP_MAX_LISTED,
@@ -1087,12 +1088,13 @@ class MCPConnection:
                 listing.cancel()
                 raise
             holding_more = self.loop.submit(self.list_held(client))
+            list_held_timeout = min(self.start_timeout, MCP_LIST_HELD_TIMEOUT)
             try:
-                held = self.wait(holding_more, self.start_timeout)
+                held = self.wait(holding_more, list_held_timeout)
             except concurrent.futures.TimeoutError:
                 holding_more.cancel()
                 held = Held(
-                    problems=(f"It did not list its resources and prompts within {self.start_timeout:g} seconds",)
+                    problems=(f"It did not list its resources and prompts within {list_held_timeout:g} seconds",)
                 )
         except concurrent.futures.TimeoutError:
             self.end(holding, graceful=False)
@@ -1210,6 +1212,8 @@ class MCPConnection:
 
         client, generation = self.connected()
         sent = self.loop.submit(request(client))
+        # A resource read and a prompt render take no read timeout of their own from the client, so only this wait
+        # ends one that hangs
         too_slow = TimeoutError(f"The MCP server {self.server.name} did not answer within {self.timeout} seconds")
         try:
             return self.wait(sent, None if self.timeout is None else self.timeout + CALL_TIMEOUT_MARGIN)

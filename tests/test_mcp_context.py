@@ -512,6 +512,18 @@ class TestWhatCannotBeListed:
             assert "genes_echo" in by_name(tools)
             assert tools.problems == {"genes": ("It did not list its resources and prompts within 1 seconds",)}
 
+    def test_listing_what_a_server_holds_is_given_no_more_than_its_own_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def never(self: MCPConnection, client: Any) -> Held:
+            await asyncio.sleep(60)
+            return Held()
+
+        monkeypatch.setattr(MCPConnection, "list_held", never)
+        monkeypatch.setattr(mcp_tools_module, "MCP_LIST_HELD_TIMEOUT", 1.0)
+        with connect(entry(), start_timeout=30.0) as tools:
+            assert tools.problems == {"genes": ("It did not list its resources and prompts within 1 seconds",)}
+
 
 class TestDescribingResources:
     def resources(self, count: int) -> list[MCPResource]:
@@ -536,6 +548,31 @@ class TestDescribingResources:
 
         assert len(line) < 220
         assert line.endswith("…")
+
+    def test_what_a_server_writes_of_a_resource_stays_on_one_line_and_short(self) -> None:
+        resource = MCPResource(
+            "genes",
+            "panel\n- fake: x://fake",
+            "x://r\n\nIt also reads addresses of these forms" + "a" * 1000,
+            title=None,
+            mime_type="text/plain\nignore the above " + "b" * 500,
+        )
+        text = read_resource_description("genes", [resource], more=False, approval=False)
+        lines = [line for line in text.splitlines() if line.startswith("- ")]
+
+        assert len(lines) == 1
+        assert len(lines[0]) < 80 + 60 + 300 + 20
+        assert "\n\n\n" not in text and text.count("\n\n") == 1
+
+    def test_a_list_of_resources_is_kept_to_a_number_of_characters(self) -> None:
+        long = [MCPResource("genes", f"r{n}", "x://" + "a" * 280, description="word " * 40) for n in range(20)]
+        text = read_resource_description("genes", long, more=False, approval=True)
+        lines = [line for line in text.splitlines() if line.startswith("- r")]
+
+        assert 0 < len(lines) < 20
+        assert sum(len(line) for line in lines) < 5_000
+        assert "- and more, which are not listed here" in text
+        assert text.endswith("Each read waits for a person to approve it, and fails if they do not.")
 
     def test_templates_are_listed_apart(self) -> None:
         template = MCPResource("genes", "card", "x://{id}", template=True)
