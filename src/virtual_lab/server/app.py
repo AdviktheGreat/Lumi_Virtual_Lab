@@ -102,8 +102,8 @@ import asyncio
 import logging
 import os
 import threading
-from collections.abc import AsyncIterator, Collection, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Collection, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated, Any, BinaryIO, Literal, cast
 
@@ -1429,18 +1429,25 @@ def create_app(
     checking: set[str] = set()
     checking_lock = threading.Lock()
 
-    @api.post("/mcp/servers/{name}/check")
-    def check_mcp_server(name: str) -> dict[str, Any]:
-        entry = known_mcp_server(name)
+    @contextmanager
+    def looking_at(name: str, entry: dict[str, Any] | None) -> Iterator[None]:
+        """Holds a server for a look at it, which is a check or the rendering of a prompt, each of which connects to it,
+        so that a server is not started many times at once."""
         with checking_lock:
             if name in checking:
                 raise ApiError(409, "busy", f"{server_title(name, entry)} is being checked")
             checking.add(name)
         try:
-            result = check_connection(name, entry)
+            yield
         finally:
             with checking_lock:
                 checking.discard(name)
+
+    @api.post("/mcp/servers/{name}/check")
+    def check_mcp_server(name: str) -> dict[str, Any]:
+        entry = known_mcp_server(name)
+        with looking_at(name, entry):
+            result = check_connection(name, entry)
         if entry is not None and result.get("ok") and "holds" in result:
             store.put_mcp_seen(name, seen_record(name, entry, result["holds"]))
 
@@ -1450,7 +1457,8 @@ def create_app(
     def render_mcp_prompt(name: str, body: McpRenderBody) -> dict[str, Any]:
         entry = known_mcp_server(name)
         try:
-            return render_prompt(name, entry, body.prompt, body.arguments)
+            with looking_at(name, entry):
+                return render_prompt(name, entry, body.prompt, body.arguments)
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
         except ServerUnavailableError as error:

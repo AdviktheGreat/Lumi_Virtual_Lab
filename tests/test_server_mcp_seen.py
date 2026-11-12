@@ -2,6 +2,7 @@
 it was connected to, which a check keeps and which a prompt is rendered from, and the slash menu's prompts."""
 
 import sys
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +25,14 @@ from virtual_lab.server.mcp import (  # noqa: E402
     describe_servers,
     render_prompt,
 )
-from virtual_lab.server.mcp_seen import describe_held, fingerprint, recall_held, seen_record  # noqa: E402
+from virtual_lab.server.mcp_seen import (  # noqa: E402
+    MAX_ARGUMENTS,
+    MAX_PROBLEMS,
+    describe_held,
+    fingerprint,
+    recall_held,
+    seen_record,
+)
 from virtual_lab.server.workspace import Settings, Workspace  # noqa: E402
 
 from conftest import TEST_MODEL, FakeClient  # noqa: E402
@@ -170,6 +178,20 @@ class TestWhatIsKept:
         ]
         assert described["problems"] == ["It said no"] and described["more"] is True
 
+    def test_what_a_server_says_of_one_prompt_or_of_its_problems_is_kept_only_up_to_a_limit(self) -> None:
+        arguments = tuple(MCPPromptArgument(f"a{number}") for number in range(MAX_ARGUMENTS + 10))
+        held = held_of(
+            prompts=(MCPPrompt("genes", "many", "genes_many\nand\nmore " + "z" * 900, arguments=arguments),),
+            problems=tuple(f"problem {number}" for number in range(MAX_PROBLEMS + 10)),
+        )
+
+        described = describe_held(held)
+
+        [many] = described["prompts"]
+        assert "\n" not in many["command"] and len(many["command"]) <= 200
+        assert len(many["arguments"]) == MAX_ARGUMENTS
+        assert len(described["problems"]) == MAX_PROBLEMS
+
     def test_it_is_recalled_while_the_server_is_set_up_as_it_was_with_when_it_was_seen(self) -> None:
         entry = {"url": "https://genes.example.org/mcp"}
         record = seen_record("genes", entry, describe_held(held_of(prompts=(prompt_of(),))), THEN)
@@ -232,6 +254,24 @@ class TestWhatTheWorkspaceKeeps:
 
         assert workspace.load_mcp_seen() == {}
         assert not workspace.mcp_seen_path.exists()
+
+    def test_what_a_connection_made_before_the_server_was_changed_held_is_not_kept(self, workspace: Workspace) -> None:
+        workspace.put_mcp_server("genes", self.entry())
+        before = seen_record("genes", self.entry(), describe_held(held_of(prompts=(prompt_of(),))), THEN)
+        workspace.put_mcp_server("genes", {"url": "https://other.example.org/mcp"})
+
+        workspace.put_mcp_seen("genes", before)
+
+        assert workspace.load_mcp_seen() == {}
+
+    def test_what_a_server_held_is_kept_when_it_was_only_turned_off_meanwhile(self, workspace: Workspace) -> None:
+        workspace.put_mcp_server("genes", self.entry())
+        before = seen_record("genes", self.entry(), describe_held(held_of()), THEN)
+        workspace.put_mcp_server("genes", {**self.entry(), "enabled": False})
+
+        workspace.put_mcp_seen("genes", before)
+
+        assert workspace.load_mcp_seen() == {"genes": before}
 
     def test_what_is_kept_of_one_server_is_replaced_and_not_that_of_the_others(self, workspace: Workspace) -> None:
         for name in ("genes", "other"):
@@ -483,6 +523,30 @@ class TestRenderingAPrompt:
         arguments = {f"a{n}": "x" for n in range(33)}
 
         assert self.render(genes, "summarize_gene", arguments).status_code == 422
+
+    def test_a_server_is_not_rendered_from_while_it_is_being_looked_at_and_can_be_after(
+        self, genes: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        began, release = threading.Event(), threading.Event()
+        results: list[Any] = []
+
+        def slow(name: str, entry: Any) -> dict[str, Any]:
+            began.set()
+            release.wait(10)
+            return {"ok": True, "tools": [], "reason": None}
+
+        monkeypatch.setattr("virtual_lab.server.app.check_connection", slow)
+        checking = threading.Thread(target=lambda: results.append(genes.post("/api/mcp/servers/genes/check")))
+        checking.start()
+        assert began.wait(10)
+
+        refused = self.render(genes, "summarize_gene", {"symbol": "TP53"})
+        release.set()
+        checking.join(10)
+
+        assert refused.status_code == 409 and refused.json()["error"]["code"] == "busy"
+        assert results[0].status_code == 200
+        assert self.render(genes, "summarize_gene", {"symbol": "TP53"}).status_code == 200
 
     def test_a_server_that_is_not_there_is_not_found(self, client: TestClient) -> None:
         assert self.render(client, "x", name="nothing").status_code == 404

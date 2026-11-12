@@ -8,17 +8,13 @@ not been looked at, until it is connected to again. What is kept is only for sho
 it, and a prompt is rendered by asking the server.
 """
 
-import hashlib
-import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from virtual_lab.mcp_context import one_line
 from virtual_lab.mcp_tools import Held
-
-# What the entry of a server says that is not about how it is reached, which does not change what it holds
-NOT_ABOUT_REACHING = ("enabled", "disabled")
+from virtual_lab.server.workspace import mcp_fingerprint as fingerprint
 
 # Most characters of what is kept of a server's words, each as one line, so that a server cannot fill a page
 MAX_NAME_CHARS = 200
@@ -26,13 +22,9 @@ MAX_URI_CHARS = 500
 MAX_ABOUT_CHARS = 500
 MAX_ARGUMENT_ABOUT_CHARS = 300
 
-
-def fingerprint(name: str, entry: Mapping[str, Any] | None) -> str:
-    """A short mark of how a server is reached, which is the same while it is set up the same way, whether it is on
-    or off."""
-    given = {key: value for key, value in (entry or {}).items() if key not in NOT_ABOUT_REACHING}
-
-    return hashlib.sha256(json.dumps([name, given], sort_keys=True, default=str).encode("utf-8")).hexdigest()
+# Most arguments of a prompt, and most things said of what could not be listed, that are kept
+MAX_ARGUMENTS = 32
+MAX_PROBLEMS = 20
 
 
 def describe_held(held: Held) -> dict[str, Any]:
@@ -53,7 +45,7 @@ def describe_held(held: Held) -> dict[str, Any]:
         "prompts": [
             {
                 "name": one_line(prompt.name, MAX_NAME_CHARS),
-                "command": prompt.command,
+                "command": one_line(prompt.command, MAX_NAME_CHARS),
                 "title": one_line(prompt.title, MAX_NAME_CHARS) or None,
                 "description": one_line(prompt.description, MAX_ABOUT_CHARS),
                 "arguments": [
@@ -62,12 +54,12 @@ def describe_held(held: Held) -> dict[str, Any]:
                         "description": one_line(argument.description, MAX_ARGUMENT_ABOUT_CHARS),
                         "required": argument.required,
                     }
-                    for argument in prompt.arguments
+                    for argument in prompt.arguments[:MAX_ARGUMENTS]
                 ],
             }
             for prompt in held.prompts
         ],
-        "problems": [one_line(problem, MAX_ABOUT_CHARS) for problem in held.problems],
+        "problems": [one_line(problem, MAX_ABOUT_CHARS) for problem in held.problems[:MAX_PROBLEMS]],
         "more": held.more,
     }
 
