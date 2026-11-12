@@ -37,10 +37,12 @@ from virtual_lab.custom_tools import tool_from_function
 from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.function_checks import FunctionSourceError, read_function
+from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import toolmaking as making
 from virtual_lab.paperagents import wrappers
 from virtual_lab.paperagents.reading import CARD_KINDS, RESOURCE_KINDS
+from virtual_lab.server import imported_agents as importing
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_tools as kept_tools
 from virtual_lab.server.errors import not_found
@@ -147,6 +149,19 @@ def given_agents(workspace: Workspace) -> list[str]:
         for directory in sorted(root.iterdir())
         if (found := find(workspace, directory.name)) is not None and is_given(found[1])
     ]
+
+
+def imported_among(
+    workspace: Workspace, agent_ids: Iterable[str], taken: Collection[str] = ()
+) -> dict[str, importing.Brought]:
+    """The agents among those given that were imported, each by the name its server has in a conversation, and as the
+    conversation reaches it. An agent that is gone is left out.
+
+    :param taken: The names of the servers that are set up, and of the library's presets.
+    """
+    found = (find(workspace, agent_id) for agent_id in dict.fromkeys(agent_ids))
+
+    return importing.brought(((directory.name, agent) for directory, agent in filter(None, found)), taken)
 
 
 def check_agent_ids(names: object, workspace: Workspace) -> list[str]:
@@ -616,11 +631,30 @@ def view(workspace: Workspace, agent_id: str, docker_command: Sequence[str] = ("
     if offer is None or found is None:
         raise not_found("PaperAgent with that id")
     reserved = RESERVED_TOOL_NAMES
+    imported = found[1].get("imported")
+    # The tools that an imported agent listed, named as a conversation that has it would name them, which are not
+    # connected to for this: they are as they were when the server was last connected to
+    name = importing.server_name(agent_id, {*workspace.load_mcp_servers(), *MCP_PRESETS}) if imported else ""
+    listed = (
+        [
+            {
+                "name": here,
+                "kind": "imported",
+                "tier": importing.TIER,
+                "summary": tool["summary"],
+                "parameters": tool["parameters"],
+            }
+            for here, tool in zip(importing.tool_names(name, imported), imported["tools"], strict=True)
+            if here not in reserved
+        ]
+        if imported
+        else []
+    )
 
     return {
         "id": agent_id,
         "given": is_given(found[1]),
-        "tier": offer.tier,
+        "tier": offer.tier or (importing.TIER if listed else None),
         "tools": [
             {
                 "name": entry.tool.name,
@@ -631,8 +665,10 @@ def view(workspace: Workspace, agent_id: str, docker_command: Sequence[str] = ("
             }
             for entry in offer.entries
             if entry.tool.name not in reserved
-        ],
+        ]
+        + listed,
         "problem": offer.problem,
         "meaning": MEANING,
+        "imported": importing.describe(imported) if imported else None,
         "limits": {"call_seconds": CALL_SECONDS, "memory": building.MEMORY, "cpus": building.CPUS},
     }

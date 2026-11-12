@@ -57,6 +57,7 @@ class Connections:
     :param connect: What connects to a server, as connect_mcp does, which is for tests.
     :param remember: Told of each server that was connected to, with its entry and what it holds, so that what it holds
         can be shown without connecting to it again. What goes wrong in it does not fail the connection.
+    :param titles: What to call servers that are not set up in the settings, by name, as an imported PaperAgent's is.
     """
 
     def __init__(
@@ -68,6 +69,7 @@ class Connections:
         start_timeout: float = MCP_START_TIMEOUT,
         connect: Callable[..., MCPTools] = connect_mcp,
         remember: Callable[[str, Mapping[str, Any], MCPTools], None] | None = None,
+        titles: Mapping[str, str] | None = None,
     ) -> None:
         self._remember = remember
         self._tell = tell
@@ -77,7 +79,11 @@ class Connections:
         self._connect = connect
         self._changed = threading.Condition()
         self._closed = False
-        self._links = {name: Link(name, entry, server_title(name, entry)) for name, entry in servers.items()}
+        kept = titles or {}
+        self._titled = frozenset(kept)
+        self._links = {
+            name: Link(name, entry, kept.get(name) or server_title(name, entry)) for name, entry in servers.items()
+        }
 
     def tools(self) -> tuple[Tool, ...]:
         """The servers' tools, once every server is connected to, which the conversation is given before its first
@@ -107,10 +113,18 @@ class Connections:
                 else:
                     self._announce(link, "failed", link.error or "")
         if failed:
+            # The server of a PaperAgent that was imported is not set up in the settings, and is not turned off there
+            brought = [link for link in failed if link.name in self._titled]
+            if not brought:
+                away = "turn the server off in the settings"
+            elif len(brought) == len(failed):
+                away = "stop giving the PaperAgent that was imported"
+            else:
+                away = "turn the server off in the settings, or stop giving the PaperAgent that was imported"
             raise ServersNotConnectedError(
                 "\n\n".join(f"{link.title} could not be connected to: {link.error}" for link in failed)
-                + "\n\nThe turn did not begin, and nothing was spent. Put it right, or turn the server off in the "
-                "settings, and send the message again."
+                + f"\n\nThe turn did not begin, and nothing was spent. Put it right, or {away}, and send the message "
+                "again."
             )
 
         return tuple(tool for link in self._links.values() if link.opened is not None for tool in link.opened.tools)

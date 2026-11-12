@@ -33,6 +33,7 @@ from virtual_lab.constants import (
 )
 from virtual_lab.events import ChatEvent
 from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, accepts_images, detect_source
+from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.mcp_tools import MCPTools, tool_prefix
 from virtual_lab.openrouter import Catalog
 from virtual_lab.server.asking import Asker
@@ -56,7 +57,7 @@ from virtual_lab.server.library import missing_keys
 from virtual_lab.server.mcp import is_on, server_title
 from virtual_lab.server.mcp_seen import describe_held, seen_record
 from virtual_lab.server.own import given
-from virtual_lab.server.paperagent_given import agent_tools
+from virtual_lab.server.paperagent_given import agent_tools, imported_among
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
@@ -724,6 +725,9 @@ class Conversations:
         # it is being opened again
         stored = self.workspace.load_mcp_servers()
         servers = {name: stored[name] for name in config.mcp if name in stored and is_on(stored[name])}
+        # The PaperAgents that were imported, whose servers are reached as these are, and are not among those set up
+        imported = imported_among(self.workspace, config.paperagents, {*stored, *MCP_PRESETS})
+        servers.update({name: item.entry for name, item in imported.items()})
         # What no function or tool of a PaperAgent is named from, since the servers' tools are not known until they are
         # connected to
         prefixes = [f"{tool_prefix(name)}_" for name in servers]
@@ -741,8 +745,19 @@ class Conversations:
             handle.stopping,
         )
         if servers and not keyless:
-            asker = Asker(handle.tell, handle.stopping, lambda name: server_title(name, servers.get(name)))
-            handle.connections = Connections(servers, handle.tell, handle.stopping, asker, remember=self._remember_held)
+            titles = {name: item.title for name, item in imported.items()}
+            asker = Asker(
+                handle.tell, handle.stopping, lambda name: titles.get(name) or server_title(name, servers.get(name))
+            )
+
+            def remember(name: str, entry: Mapping[str, Any], opened: MCPTools) -> None:
+                # What an imported agent's server held is not one of the settings' servers' to show
+                if name not in imported:
+                    self._remember_held(name, entry, opened)
+
+            handle.connections = Connections(
+                servers, handle.tell, handle.stopping, asker, remember=remember, titles=titles
+            )
         skills = load_skills(self.workspace).only(config.skills)
         try:
             handle.chat = Chat(

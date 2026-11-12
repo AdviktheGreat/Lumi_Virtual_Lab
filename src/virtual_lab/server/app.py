@@ -41,6 +41,9 @@ and everything else is a request and an answer.
     PATCH  /api/papers/runs/{id}        whether its functions are given to the conversations that are made from now on
     GET    /api/paperagents             the PaperAgents, and what a page needs to make one
     POST   /api/paperagents             an agent of a paper, given by its DOI, a link, or a file that is uploaded to it
+    POST   /api/paperagents/import      an agent that someone else made, from the server that hosts it
+    POST   /api/paperagents/{id}/imported/check  connects to the server of an imported agent again, to see its tools
+    DELETE /api/paperagents/{id}/imported  takes away what it was imported from, leaving the agent of its paper
     GET    /api/paperagents/{id}        one agent; PATCH says what it is called, where its code is, and whether it is
                                         given to the conversations that are made from now on; DELETE deletes it
     GET    /api/paperagents/{id}/given  the tools a conversation is given of it, each with its tier, and why not some
@@ -467,6 +470,16 @@ class PaperAgentBody(RequestModel):
     title: str = Field("", max_length=MAX_TITLE_CHARS * 4)
     paper: PaperAgentPaperBody
     repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+
+
+class PaperAgentImportBody(RequestModel):
+    """The server of an agent that someone else made, and which paper it is of, or the agent to add the server to."""
+
+    url: str = Field(max_length=MAX_URL_CHARS * 2)
+    title: str | None = Field(None, max_length=MAX_TITLE_CHARS * 4)
+    paper: PaperAgentPaperBody | None = None
+    repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+    agent: str | None = Field(None, max_length=200)
 
 
 class PaperAgentChangeBody(RequestModel):
@@ -1178,6 +1191,30 @@ def create_app(
     @api.post("/paperagents", status_code=201)
     def make_paperagent(body: PaperAgentBody) -> dict[str, Any]:
         return paperagents.view(paperagents.create(body.title, body.paper.model_dump(exclude_none=True), body.repo))
+
+    @api.post("/paperagents/import", status_code=201)
+    async def import_paperagent(body: PaperAgentImportBody) -> dict[str, Any]:
+        # Connecting to the server may take a while, which is not waited for on the thread that serves the others
+        agent_id = await run_in_threadpool(
+            paperagents.import_agent,
+            body.url,
+            body.title,
+            body.paper.model_dump(exclude_none=True) if body.paper is not None else None,
+            body.repo,
+            body.agent,
+        )
+
+        return paperagents.view(agent_id)
+
+    @api.post("/paperagents/{agent_id}/imported/check")
+    async def check_paperagent_import(agent_id: str) -> dict[str, Any]:
+        return await run_in_threadpool(paperagents.check_import, agent_id)
+
+    @api.delete("/paperagents/{agent_id}/imported")
+    def remove_paperagent_import(agent_id: str) -> dict[str, Any]:
+        paperagents.remove_import(agent_id)
+
+        return paperagents.view(agent_id)
 
     @api.get("/paperagents/{agent_id}")
     def get_paperagent(agent_id: str) -> dict[str, Any]:

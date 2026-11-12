@@ -43,6 +43,11 @@ the tutorials got, and does not say that what it gives is right.
 An agent is given to conversations when the person says so (the flag `given` in its agent.json), or when they name it
 for one. What a conversation is then given of it is in paperagent_given.py: tools that read what was found in the
 paper, which are of tier D, and its tools of tier A, which run the authors' code where the conversation may run code.
+
+An agent that someone else made of a paper, such as a server that Paper2Agent hosts, can be imported: it is kept as an
+agent of that paper, with where the server is reached and the tools it listed. It is of the tier Imported, which says
+that nothing of Lumi's has been done to it, and what it gives a conversation is in paperagent_given.py and
+imported_agents.py.
 """
 
 import hashlib
@@ -70,6 +75,7 @@ from virtual_lab.constants import (
 from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
+from virtual_lab.mcp_tools import MCPTools, connect_mcp
 from virtual_lab.paperagents import data as finding
 from virtual_lab.paperagents import datahosts as hosting
 from virtual_lab.paperagents import environment as building
@@ -83,6 +89,7 @@ from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_structure
 from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
 from virtual_lab.provenance import utc_timestamp
+from virtual_lab.server import imported_agents as importing
 from virtual_lab.server import paperagent_data as kept_data
 from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
@@ -405,6 +412,9 @@ def is_agent(value: Any) -> bool:
     ):
         return False
     repo = value.get("repo")
+    imported = value.get("imported")
+    if imported is not None and not importing.is_imported(imported):
+        return False
 
     return repo is None or (isinstance(repo, dict) and passes(check_repo, repo.get("url")) and is_pin(repo))
 
@@ -508,6 +518,7 @@ class PaperAgents:
     :param client: An OpenAI client to read with, which is for tests.
     :param chat_models: The chat models to read with, which is for tests.
     :param docker_command: How Docker is invoked, which environments are built and kept with.
+    :param connect: What connects to the server of an imported agent, as connect_mcp does, which is for tests.
     """
 
     def __init__(
@@ -519,8 +530,10 @@ class PaperAgents:
         client: Any = None,
         chat_models: ModelSource | None = None,
         docker_command: Sequence[str] = ("docker",),
+        connect: Callable[..., MCPTools] = connect_mcp,
     ) -> None:
         self.docker_command = tuple(docker_command)
+        self.connect = connect
         self.workspace = workspace
         self.max_upload_bytes = min(max_upload_bytes, MAX_PAPER_FILE_BYTES)
         self.jobs = jobs if jobs is not None else Jobs()
@@ -530,6 +543,8 @@ class PaperAgents:
         # Held from looking for an agent of a paper to keeping the one that is made, so that of two of one paper only
         # one is made, and while a file is put in, an agent is changed, or one is removed
         self._lock = threading.Lock()
+        # The imported agents whose server is being connected to, which is one connection at a time to each
+        self._looking: set[str] = set()
 
     def describe(self) -> dict[str, Any]:
         """Every agent, the latest first, and what a page needs to make one."""
@@ -541,7 +556,41 @@ class PaperAgents:
             "max_paper_bytes": self.max_upload_bytes,
             "suffixes": list(PAPER_SUFFIXES),
             "repo_hosts": list(REPO_HOSTS),
+            "importable": self.importable(),
         }
+
+    def importable(self) -> list[dict[str, Any]]:
+        """The servers that others host, which can be imported, each with the agent that has it already, and the agent
+        of its paper, if there is one, which it could be added to."""
+        kept = self.kept()
+        found = []
+        for server in importing.IMPORTABLE:
+            paper = {"kind": "doi", "doi": server.doi}
+            found.append(
+                {
+                    "key": server.key,
+                    "title": server.title,
+                    "about": server.about,
+                    "made_by": server.made_by,
+                    "url": server.url,
+                    "site": server.site,
+                    "paper": paper,
+                    "repo": server.repo,
+                    "agent": next(
+                        (
+                            directory.name
+                            for directory, agent in kept
+                            if agent.get("imported") and importing.same_address(agent["imported"]["url"], server.url)
+                        ),
+                        None,
+                    ),
+                    "paper_agent": next(
+                        (directory.name for directory, agent in kept if same_paper(paper, agent["paper"])), None
+                    ),
+                }
+            )
+
+        return found
 
     def kept(self) -> list[tuple[Path, dict[str, Any]]]:
         """The agents there are, each with where it is kept and what its file holds."""
@@ -577,6 +626,7 @@ class PaperAgents:
             "repo": agent.get("repo"),
             "steps": steps,
             "given": is_given(agent),
+            "imported": importing.describe(agent["imported"]) if agent.get("imported") is not None else None,
         }
 
     def running(self, agent_id: str) -> Job | None:
@@ -656,12 +706,15 @@ class PaperAgents:
                     existing=directory.name,
                 )
 
-    def create(self, title: Any, paper: dict[str, Any], repo: Any = None) -> str:
+    def create(
+        self, title: Any, paper: dict[str, Any], repo: Any = None, imported: dict[str, Any] | None = None
+    ) -> str:
         """Makes an agent of a paper, with nothing done to it yet.
 
         :param title: What it is called, which may be left out unless the paper is a file.
         :param paper: Which paper, as check_paper takes it.
         :param repo: The address of the paper's code, if it is known.
+        :param imported: What the agent was imported from, as imported_agents.record_of makes it, for one that was.
         :raises ApiError: If what is given is not fit, there is an agent of the paper already, or there are too many.
         :return: Its id.
         """
@@ -684,6 +737,7 @@ class PaperAgents:
                     "paper": kept,
                     "repo": {"url": code} if code is not None else None,
                     "steps": dict.fromkeys(STEPS, "pending"),
+                    **({"imported": imported} if imported is not None else {}),
                 }
                 self.save(directory, agent)
             except BaseException:
@@ -727,6 +781,127 @@ class PaperAgents:
                         },
                     }
             self.save(directory, agent)
+
+    def import_agent(
+        self, url: Any, title: Any = None, paper: dict[str, Any] | None = None, repo: Any = None, agent: Any = None
+    ) -> str:
+        """Brings in an agent that someone else made, from the server that hosts it: an agent of its paper, as one is
+        made, or, for the id of an agent that there is, that agent with the server added to it. The server is connected
+        to first, to see that it is one and which tools it gives, and nothing is called.
+
+        :param url: Where the server is reached.
+        :param title: What the agent is called, which may be left out unless the paper is a file.
+        :param paper: Which paper the agent is of, as check_paper takes it, which an agent that there is already has.
+        :param repo: The address of the paper's code, if it is known.
+        :param agent: The agent to add the server to, if it is not to be made.
+        :raises ApiError: If what is given is not fit, the server cannot be connected to or gives no tools, the agent
+            has a server already, or another has this server or this paper.
+        :return: The id of the agent.
+        """
+        address = importing.check_address(url)
+        if agent is not None:
+            if paper is not None or not is_blank(title) or not is_blank(repo):
+                raise ApiError(
+                    422, "invalid", "A server that is added to a PaperAgent that there is is given with its id only"
+                )
+            if not isinstance(agent, str):
+                raise not_found("PaperAgent with that id")
+            self.check_unimported(address, agent)
+        else:
+            if paper is None:
+                raise ApiError(422, "invalid", "Say which paper the agent is of, by its DOI, a link, or a file")
+            kept = check_paper(paper)
+            check_title(title, kept)
+            if not is_blank(repo):
+                check_repo(repo)
+            with self._lock:
+                self.check_unique(kept)
+                self.check_unimported(address)
+        record = importing.record_of(address, self.look_at(address))
+        if agent is None:
+            assert paper is not None
+            return self.create(title, paper, repo, record)
+        with self._lock:
+            directory, current = self.lookup(agent)
+            self.check_unimported(address, agent)
+            self.save(directory, {**current, "imported": record})
+
+        return agent
+
+    def check_unimported(self, address: str, agent_id: str | None = None) -> None:
+        """
+        :param agent_id: The agent that is to have the server, which has none already.
+        :raises ApiError: If the agent has a server already, there is none such, or another agent has this server.
+        """
+        if agent_id is not None:
+            _, current = self.lookup(agent_id)
+            if current.get("imported") is not None:
+                raise ApiError(409, "exists", f"{current['title']} was imported already", existing=agent_id)
+        for directory, other in self.kept():
+            if (
+                directory.name != agent_id
+                and other.get("imported")
+                and importing.same_address(other["imported"]["url"], address)
+            ):
+                raise ApiError(
+                    409,
+                    "exists",
+                    f"That server was imported already, as the PaperAgent {other['title']}.",
+                    existing=directory.name,
+                )
+
+    def look_at(self, address: str) -> list[dict[str, str]]:
+        """The tools that the server at an address gives.
+
+        :raises ApiError: If it cannot be connected to or gives none, which says why.
+        """
+        try:
+            return importing.look(address, self.connect)
+        except importing.LookError as error:
+            raise ApiError(error.status, "unavailable" if error.status == 502 else "invalid", str(error)) from error
+
+    def check_import(self, agent_id: str) -> dict[str, Any]:
+        """Connects to the server of an imported agent again, to say whether it can be, and to keep the tools it gives
+        now, in place of those it gave. What an agent keeps is left as it was when the server cannot be connected to.
+
+        :raises ApiError: If there is no agent with this id, it was not imported, or it is being connected to.
+        :return: Whether it was, why not, and the agent.
+        """
+        _, agent = self.lookup(agent_id)
+        imported = agent.get("imported")
+        if imported is None:
+            raise ApiError(422, "invalid", f"{agent['title']} was not imported")
+        with self._lock:
+            if agent_id in self._looking:
+                raise ApiError(409, "busy", f"The server of {agent['title']} is being checked")
+            self._looking.add(agent_id)
+        try:
+            try:
+                tools = importing.look(imported["url"], self.connect)
+            except importing.LookError as error:
+                return {"ok": False, "reason": str(error), "agent": self.view(agent_id)}
+            with self._lock:
+                directory, current = self.lookup(agent_id)
+                if current.get("imported") is None or current["imported"]["url"] != imported["url"]:
+                    raise ApiError(409, "changed", f"{current['title']} was changed while its server was checked")
+                kept = importing.record_of(imported["url"], tools, imported["imported_at"])
+                self.save(directory, {**current, "imported": kept})
+        finally:
+            with self._lock:
+                self._looking.discard(agent_id)
+
+        return {"ok": True, "reason": None, "agent": self.view(agent_id)}
+
+    def remove_import(self, agent_id: str) -> None:
+        """Takes away what an agent was imported from, which leaves the agent of its paper, as it is otherwise.
+
+        :raises ApiError: If there is no agent with this id, or it was not imported.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            if agent.get("imported") is None:
+                raise ApiError(422, "invalid", f"{agent['title']} was not imported")
+            self.save(directory, {key: value for key, value in agent.items() if key != "imported"})
 
     def delete(self, agent_id: str) -> None:
         """Deletes an agent with the paper that was uploaded to it, the data fetched for it, and the image of its
