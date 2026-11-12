@@ -59,8 +59,12 @@ from a script: no key is needed, and every run says the same. What it says depen
   id: it ran to the end, called two of the project's functions, and wrote a file, the same each time it was run.
   "lengthy" makes a tutorial take a while, so that the run can be followed and stopped, "failing" makes every tutorial
   fail for want of a package, "mixed" makes the second and later ones fail, and "flaky" makes the runs of a tutorial
-  give other calls from one run to the next. "many" in the address of the code gives it two scripts in a folder of
-  examples and one in R, which is not run.
+  give other calls from one run to the next, and "methods" makes the calls be to methods. "many" in the address of the
+  code gives it two scripts in a folder of examples and one in R, which is not run.
+- The tools of a PaperAgent are made of those calls, with a wrapper that is written and checked as it is for real, and a
+  stand-in for the container that calls it again, which gives what the tutorial got: scale is made into a tool, and
+  embed is not, as only how its array looks was kept. "tedious" makes the calls take a while, so that the making can
+  be followed and stopped, and "brittle" makes scale give other than it did, so that it is not made either.
 - The data of a PaperAgent is listed and fetched by stand-ins for the places it is kept at, which have a few records,
   named by their keys: Zenodo record 1000001 has files of which one is corrupt (what it sends is not what its checksum
   says), one gives no checksum, and one is restricted; 1000002 has a file larger than the most that is fetched at first;
@@ -93,7 +97,7 @@ import tempfile
 import threading
 import time
 import webbrowser
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -131,6 +135,8 @@ from virtual_lab.paperagents import environment as building  # noqa: E402
 from virtual_lab.paperagents import fetch as fetching  # noqa: E402
 from virtual_lab.paperagents import reference as referencing  # noqa: E402
 from virtual_lab.paperagents import repository as cloning  # noqa: E402
+from virtual_lab.paperagents import toolmaking as making  # noqa: E402
+from virtual_lab.paperagents import wrappers  # noqa: E402
 from virtual_lab.paperagents.reading import (  # noqa: E402
     ChunkReading,
     ReadClaim,
@@ -617,6 +623,26 @@ NOTEBOOK = json.dumps(
 )
 
 
+CORE_FOR_GPU = "import torch\n\nmodel = torch.nn.Linear(2, 2).cuda()\n"
+
+# The functions that the stand-in tutorials call, where the calls say they are: scale at line 3 and embed at line 8
+CORE = (
+    "import torch\n"
+    "\n"
+    "def scale(values: list[float], factor: float = 1.0) -> list[float]:\n"
+    '    """Multiplies each value by a factor."""\n'
+    "    return [value * factor for value in values]\n"
+    "\n"
+    "\n"
+    "def embed(values: list[float]) -> list[list[float]]:\n"
+    '    """Places each value in two dimensions."""\n'
+    "    return [[value, value] for value in values]\n"
+    "\n"
+    "\n"
+    'device = "cuda" if torch.cuda.is_available() else "cpu"\n'
+)
+
+
 def stand_in_clone(
     url: str,
     destination: Path,
@@ -652,11 +678,7 @@ def stand_in_clone(
         "LICENSE": NONCOMMERCIAL_LICENSE if needs_gpu else MIT_LICENSE,
         "requirements.txt": "cupy-cuda12x==13.0.0\ntorch==2.1.0\n" if needs_gpu else "scanpy==1.9.3\nnumpy==1.26.4\n",
         "cellmapper/__init__.py": "",
-        "cellmapper/core.py": (
-            "import torch\n\nmodel = torch.nn.Linear(2, 2).cuda()\n"
-            if needs_gpu
-            else 'import torch\n\ndevice = "cuda" if torch.cuda.is_available() else "cpu"\n'
-        ),
+        "cellmapper/core.py": CORE_FOR_GPU if needs_gpu else CORE,
     }
     if not needs_gpu:
         files["tutorials/quickstart.ipynb"] = NOTEBOOK
@@ -936,7 +958,7 @@ def stand_in_remove_runs(label: str, docker_command: Any = ("docker",)) -> int:
     return 0
 
 
-def stand_in_calls(item: referencing.Item, number: int) -> list[dict[str, Any]]:
+def stand_in_calls(item: referencing.Item, number: int, label: str = "") -> list[dict[str, Any]]:
     """The calls that a tutorial made, which are of two of the project's functions: one that is given and gives plain
     data, and one that gives an array."""
 
@@ -969,6 +991,10 @@ def stand_in_calls(item: referencing.Item, number: int) -> list[dict[str, Any]]:
         "result": {"type": "numpy.ndarray", "plain": False, "repr": "array", "shape": [3, 2], "dtype": "float64"},
         "from": {"file": item.path, "line": 4},
     }
+
+    # Methods are not made into tools, so that none of what these tutorials called can be
+    if "methods" in label:
+        return [{**call, "method": True, "qualname": f"Mapper.{call['function']}"} for call in (scale, table)]
 
     return [scale, table]
 
@@ -1050,7 +1076,7 @@ def stand_in_detail(item: referencing.Item, label: str, limits: referencing.Limi
         "output": [MISSING_PACKAGE] if fails else ["[2.5, 5.0, 7.5]", "Wrote embedding.csv"],
         "cells": cells,
         "cells_total": 2 if item.kind == "notebook" and not fails else 0,
-        "calls": [] if fails else stand_in_calls(item, number),
+        "calls": [] if fails else stand_in_calls(item, number, label),
         "calls_seen": 0 if fails else 9,
         "files": [] if fails else [WRITTEN_FILE],
         "files_more": 0,
@@ -1089,6 +1115,35 @@ class StandInRunner:
                 time.sleep(0.1)
 
         return referencing.Outcome(stand_in_detail(item, self.label, self.limits), None)
+
+
+# How long the calls of a tool that is "tedious" take, which is long enough for the making to be followed and stopped
+TOOL_DELAY = 6.0
+
+
+def stand_in_replay(
+    self: making.ToolRunner, source: str, function: str, cases: Sequence[wrappers.Case], seconds: float
+) -> making.Replay:
+    """What calling a wrapper again gives in place of a container: what the tutorial got, which is what a function that
+    does the same each time gives, unless the agent is "brittle". The wrapper has been written and checked as it is for
+    real, and what it gave is judged as it is for real: an array that was only kept by its look cannot be told from
+    another, so its tool is not made."""
+    if "tedious" in self.label:
+        for _ in range(int(TOOL_DELAY * 10)):
+            if self.stop.is_set():
+                raise StoppedError("Stopped.")
+            time.sleep(0.1)
+
+    def gave(case: wrappers.Case) -> dict[str, Any]:
+        value = case.expected
+        if "brittle" in self.label and value.get("plain") and isinstance(value["value"], list):
+            value = {**value, "value": [item + 1 for item in value["value"]]}
+
+        return {"schema": 1, "ok": True, "error": None, "result": value, "seconds": 0.1, "output": ""}
+
+    results: list[list[dict[str, Any] | None]] = [[gave(case) for _ in range(self.tools.repeats)] for case in cases]
+
+    return making.Replay("done", 0, results, [])
 
 
 def function_named(kwargs: dict[str, Any]) -> str | None:
@@ -1488,6 +1543,7 @@ def main() -> None:
     building.remove_builds = stand_in_remove_builds
     referencing.Runner = StandInRunner  # type: ignore[misc,assignment]
     referencing.remove_runs = stand_in_remove_runs
+    making.ToolRunner.replay = stand_in_replay  # type: ignore[method-assign]
     openrouter.fetch_models = stand_in_openrouter_models
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened

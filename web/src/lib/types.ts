@@ -1550,3 +1550,188 @@ export interface TutorialDetail {
   files_more: number;
   packages: string[];
 }
+
+// Why a function that a tutorial called was not made a tool, in a word
+export type ToolDroppedKind =
+  | "method"
+  | "nested"
+  | "variadic"
+  | "no_usable_call"
+  | "source_not_found"
+  | "source_mismatch"
+  | "too_many_parameters"
+  | "wrapper"
+  | "replay_error"
+  | "replay_differs"
+  | "timed_out"
+  | "out_of_time"
+  | "over_limit";
+
+// A function that was not made a tool, with why
+export interface ToolDropped {
+  name: string;
+  module: string;
+  function: string;
+  kind: ToolDroppedKind;
+  reason: string;
+  // What was found, such as how what a call gave was not what the tutorial got
+  details: string[];
+  // How many calls the tutorials made to it
+  calls: number;
+}
+
+// A tutorial whose calls were not looked at, with why
+export interface ToolUnused {
+  tutorial: string;
+  reason: string;
+}
+
+// A call that cannot be made again, with why
+export interface ToolSkipped {
+  call: number;
+  tutorial: string;
+  reason: string;
+}
+
+// A function that would be made a tool
+export interface ToolCandidate {
+  name: string;
+  module: string;
+  function: string;
+  file: string;
+  line: number;
+  // How many calls can be made again
+  cases: number;
+  tutorials: string[];
+  skipped: ToolSkipped[];
+}
+
+// A tool that was made, in a list: it is of tier A, which says that it gave again what the tutorial got
+export interface ToolSummary {
+  name: string;
+  tier: string;
+  module: string;
+  function: string;
+  parameters: string[];
+  // How many calls were made again, of how many that were recorded, and how many times each
+  checked: number;
+  recorded: number;
+  repeats: number;
+  tutorials: string[];
+}
+
+// What making tools was allowed, and what each call that is made again is given of the machine
+export interface ToolsLimits {
+  minutes: number;
+  total_minutes: number;
+  tools: number;
+  repeats: number;
+  repairs: number;
+  gigabytes: number;
+  memory: string;
+  cpus: string;
+  pids: number;
+}
+
+// What was kept of the making of tools, which is of one commit, one image, and one reference run
+export interface ToolsKept {
+  commit: string;
+  image_id: string;
+  reference: { started_at: string; finished_at: string };
+  started_at: string;
+  finished_at: string | null;
+  // Whether it came to its end, and was not stopped or failed on the way
+  complete: boolean;
+  limits: ToolsLimits;
+  // Whether the calls were given the data that the tutorials were
+  data: boolean;
+  tools: ToolSummary[];
+  dropped: ToolDropped[];
+  unused: ToolUnused[];
+}
+
+// What there is of the making of an agent's tools: what would be made and what would not, what was made, and what is allowed
+export interface PaperAgentTools {
+  id: string;
+  docker: { ready: boolean; message: string | null };
+  // The run of the tutorials that tools are made from, or null if there is none that came to its end
+  reference: { complete: boolean; tutorials: number; finished_at: string; data: boolean } | null;
+  preview: { candidates: ToolCandidate[]; dropped: ToolDropped[]; unused: ToolUnused[] } | null;
+  kept: ToolsKept | null;
+  // The making that is at work, if there is one
+  job: Job | null;
+  // What a tool of tier A is, in words, which is said wherever it is shown
+  meaning: string;
+  limits: {
+    default_minutes: number;
+    max_minutes: number;
+    default_total_minutes: number;
+    max_total_minutes: number;
+    default_tools: number;
+    max_tools: number;
+    default_repeats: number;
+    max_repeats: number;
+    default_repairs: number;
+    max_repairs: number;
+    default_gigabytes: number;
+    max_gigabytes: number;
+    memory: string;
+    cpus: string;
+    pids: number;
+  };
+}
+
+// What to say of making tools: the most time for the calls of one and for all, how many, how many times each call is made again, how
+// many times a wrapper is rewritten, and the most one may write. What is left out is what the server defaults to
+export interface PaperAgentToolsOptions {
+  minutes?: number;
+  total_minutes?: number;
+  tools?: number;
+  repeats?: number;
+  repairs?: number;
+  gigabytes?: number;
+}
+
+// What came of calling a tool again with the arguments of one call of a tutorial
+export interface ToolCase {
+  call: number;
+  tutorial: string;
+  cell: number | null;
+  origin: { file: string; line: number };
+  cwd: string;
+  // What the tutorial passed, as JSON, by parameter
+  args: Record<string, unknown>;
+  // What the tutorial got
+  expected: TutorialValue;
+  repeats: number;
+  // How many of the times it was made again gave what the tutorial got
+  matched: number;
+  verdict: "match" | "differs" | "error" | "not_run";
+  differences: string[];
+  got: TutorialValue | null;
+  error: { type: string; message: string; traceback?: string[] } | null;
+}
+
+// One tool: its wrapper, its signature, and the evidence for its tier, which is each call that was made again
+export interface ToolDetail {
+  name: string;
+  tier: string;
+  repo: { module: string; function: string; file: string; line: number };
+  signature: { name: string; type: string; required: boolean; default: unknown }[];
+  description: string;
+  wrapper_sha256: string;
+  // The wrapper's code
+  source: string;
+  evidence: {
+    kind: string;
+    image_id: string;
+    tolerance: { relative: number; absolute: number };
+    repeats: number;
+    checked: number;
+    recorded: number;
+    cases: ToolCase[];
+    skipped: ToolSkipped[];
+    // The steps by which the wrapper was rewritten until it passed its checks, each with what it was for
+    repairs: { change: string; because: string[] }[];
+  };
+}

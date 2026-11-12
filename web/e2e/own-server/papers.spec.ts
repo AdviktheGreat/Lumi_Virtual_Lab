@@ -16,7 +16,7 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference"];
+  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools"];
   for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
@@ -2392,4 +2392,340 @@ test("gives the runs the data that was fetched, to read, unless that is asked no
   await expect(keptRun(page).getByText("Given to read").locator("xpath=following-sibling::dd[1]")).toContainText("1 file, ");
   expect((await referenceOf(page, id)).kept.data).toMatchObject({ files: 1 });
   expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+const toolsForm = (page: Page) => form(page, "Make the tools");
+const makingTools = (page: Page) => page.getByRole("region", { name: "Making the tools" });
+const toolsPreview = (page: Page) => page.getByTestId("tools-preview");
+const keptTools = (page: Page) => page.getByTestId("tools-kept");
+const toolNamed = (page: Page, name: string) => page.locator(`[data-testid=tool][data-name=${name}]`);
+const toolsOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/tools`)).json();
+const MAKE = "Make the tools";
+
+// Makes an agent whose tutorials have been run, so that what a test is about is its tools, and opens it
+async function agentWithTutorials(page: Page, title: string, paper: Record<string, unknown> = { kind: "file" }): Promise<string> {
+  const id = await agentWithEnvironment(page, title, CODE_ADDRESS, paper);
+  const started = await page.request.post(`/api/paperagents/${id}/reference`, { data: {} });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await referenceOf(page, id)).job, { timeout: 30_000 }).toBeNull();
+  expect((await referenceOf(page, id)).kept).toMatchObject({ complete: true });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Tools", level: 2, exact: true })).toBeVisible();
+
+  return id;
+}
+
+test("says that tools are made of what the tutorials did, and that there is nothing to make until they have been run", async ({ page }) => {
+  const id = await agentWithEnvironment(page, "Unrun tools");
+  await expect(page.getByRole("heading", { name: "Tools", level: 2, exact: true })).toBeVisible();
+  await expect(page.getByTestId("tools-no-reference")).toHaveText("Run the tutorials first. Tools are made from the calls that they made.");
+  await expect(toolsForm(page)).toHaveCount(0);
+  await expect(toolsPreview(page)).toHaveCount(0);
+  await expect(step(page, "Build the tools")).toContainText("Not started");
+  const asked = await page.request.post(`/api/paperagents/${id}/tools`, { data: {} });
+  expect(asked.status()).toBe(422);
+  expect((await asked.json()).error.code).toBe("no_reference");
+  expect(await toolsOf(page, id)).toMatchObject({ reference: null, preview: null, kept: null, job: null });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Once they are run the page looks again, and the tools can be made
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(toolsPreview(page)).toBeVisible();
+  await expect(page.getByTestId("tools-no-reference")).toHaveCount(0);
+  await expect(toolsForm(page)).toBeVisible();
+});
+
+test("says what would be made, asks for what is wrong with the asking to be put right, makes the tools, and shows each with how far it was checked and what it was held to", async ({
+  page,
+}) => {
+  const id = await agentWithTutorials(page, "Plain tools");
+  await expect(toolsPreview(page)).toBeVisible();
+  await expect(page.getByTestId("tools-preview-summary")).toHaveText("2 functions can be made into tools.");
+  const candidates = toolsPreview(page).getByRole("list", { name: "Functions that would be made into tools" });
+  await expect(candidates).toContainText("scale is cellmapper.core.scale, called 1 time in 1 tutorial");
+  await expect(candidates).toContainText("embed is cellmapper.core.embed, called 1 time in 1 tutorial");
+  await expect(toolsForm(page)).toContainText("A tool is a small function, written without a model");
+  await expect(toolsForm(page)).toContainText("no network");
+  await expect(step(page, "Build the tools")).toContainText("Not started");
+  expect((await toolsOf(page, id)).kept).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What is wrong with the asking is said before it is sent
+  await toolsForm(page).getByLabel("Most time for the calls of one tool, in minutes").fill("0");
+  await toolsForm(page).getByLabel("Most time for all of the tools, in minutes").fill("500");
+  await toolsForm(page).getByLabel("How many tools to make").fill("many");
+  await toolsForm(page).getByLabel("How many times to call each again").fill("9");
+  await toolsForm(page).getByLabel("How many times a wrapper may be rewritten").fill("-1");
+  await toolsForm(page).getByLabel("Most one call may write, in gigabytes").fill("99");
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect(toolsForm(page).getByText(/for the calls of one tool, in minutes, is a whole number from 1 to 30/)).toBeVisible();
+  await expect(toolsForm(page).getByText(/for all of the tools, in minutes, is a whole number from 1 to 120/)).toBeVisible();
+  await expect(toolsForm(page).getByText(/How many tools are made is a whole number from 1 to 50/)).toBeVisible();
+  await expect(toolsForm(page).getByText(/How many times each call is made again is a whole number from 1 to 3/)).toBeVisible();
+  await expect(toolsForm(page).getByText(/How many times a wrapper is rewritten is a whole number from 0 to 3/)).toBeVisible();
+  await expect(toolsForm(page).getByText(/in gigabytes, is a whole number from 1 to 20/)).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await toolsOf(page, id)).kept).toBeNull();
+  await toolsForm(page).getByLabel("Most time for the calls of one tool, in minutes").fill("20");
+  await toolsForm(page).getByLabel("Most time for all of the tools, in minutes").fill("10");
+  await toolsForm(page).getByLabel("How many tools to make").fill("5");
+  await toolsForm(page).getByLabel("How many times to call each again").fill("2");
+  await toolsForm(page).getByLabel("How many times a wrapper may be rewritten").fill("1");
+  await toolsForm(page).getByLabel("Most one call may write, in gigabytes").fill("1");
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect(toolsForm(page).getByText("The time for all of the tools cannot be less than the time for one.")).toBeVisible();
+  expect((await toolsOf(page, id)).kept).toBeNull();
+
+  await toolsForm(page).getByLabel("Most time for all of the tools, in minutes").fill("30");
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+
+  await expect(keptTools(page)).toBeVisible({ timeout: 25_000 });
+  await expect(toolsPreview(page)).toHaveCount(0);
+  await expect(toolsForm(page)).toHaveCount(0);
+  await expect(page.getByTestId("tools-kept-when")).toContainText("1 tool of tier A. 1 function was not made into a tool.");
+  await expect(keptTools(page)).toContainText("Made to the end of the list");
+  await expect(keptTools(page)).toContainText("20 minutes for the calls of one tool and 30 for all, each call made again 2 times, 1 rewrite, and 1 GB written");
+  await expect(keptTools(page).getByText("Given to read").locator("xpath=following-sibling::dd[1]")).toHaveText("None");
+  await expect(step(page, "Build the tools")).toContainText("Done");
+  // It says what was and was not shown, and that a conversation cannot use a tool yet
+  await expect(keptTools(page)).toContainText("does not show that");
+  await expect(keptTools(page)).toContainText("A conversation cannot use a tool yet.");
+
+  await expect(page.getByTestId("tool")).toHaveCount(1);
+  const scale = toolNamed(page, "scale");
+  await expect(scale).toContainText("scale(values, factor)");
+  await expect(scale).toContainText("Tier A");
+  await expect(scale).toContainText("It calls cellmapper.core.scale.");
+  await expect(scale).toContainText("1 call, each made again 2 times, gave what the tutorial got every time");
+  // The function that gave an array is not a tool, with why, and what was found
+  const dropped = page.getByTestId("tools-dropped");
+  await expect(dropped.getByTestId("tool-dropped")).toHaveCount(1);
+  await expect(dropped.getByTestId("tool-dropped")).toHaveAttribute("data-kind", "replay_differs");
+  await expect(dropped).toContainText("cellmapper.core.embed");
+  await expect(dropped).toContainText("It gave something else when it was called again");
+  await expect(dropped).toContainText("Only how it shows itself was kept, and not all of it, so it cannot be told to be what it was");
+  expect(await toolsOf(page, id)).toMatchObject({
+    kept: {
+      complete: true,
+      limits: { minutes: 20, total_minutes: 30, tools: 5, repeats: 2, repairs: 1, gigabytes: 1 },
+      tools: [{ name: "scale", tier: "A", checked: 1, recorded: 1, repeats: 2 }],
+      dropped: [{ name: "embed", kind: "replay_differs" }],
+    },
+    job: null,
+  });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The wrapper and what it was held to are looked at when they are asked for, and are not got before
+  await expect(page.getByTestId("tool-detail")).toHaveCount(0);
+  await scale.getByRole("button", { name: "Show the wrapper and the evidence" }).click();
+  const detail = page.getByTestId("tool-detail");
+  await expect(detail).toBeVisible();
+  await expect(detail).toContainText("cellmapper.core.scale");
+  await expect(detail).toContainText("cellmapper/core.py, line 3");
+  await expect(detail.getByRole("list", { name: "Parameters of the tool" })).toContainText("values: list[float]");
+  await expect(detail.getByRole("list", { name: "Parameters of the tool" })).toContainText("factor: float = 1");
+  await expect(detail).toContainText("Multiplies each value by a factor.");
+  await expect(detail.getByRole("region", { name: "The wrapper's code" })).toContainText("def scale");
+  await expect(detail.getByTestId("tool-case")).toHaveCount(1);
+  await expect(detail.getByTestId("tool-case")).toHaveAttribute("data-verdict", "match");
+  await expect(detail.getByTestId("tool-case")).toContainText("scale(values=[1,2,3], factor=3.5)");
+  await expect(detail.getByTestId("tool-case")).toContainText("Gave what the tutorial got, 2 of 2 times");
+  await expect(detail).toContainText("1 call of 1 recorded, each made again 2 times.");
+  await expect(detail).toContainText("A number is the same if it is within 0.000001 of the other");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await scale.getByRole("button", { name: "Hide the wrapper and the evidence" }).click();
+  await expect(detail).toHaveCount(0);
+
+  // It is the same after the page is looked at again, and cannot be made a second time on top of itself
+  await page.reload();
+  await expect(keptTools(page)).toBeVisible();
+  await expect(page.getByTestId("tool")).toHaveCount(1);
+  expect((await page.request.post(`/api/paperagents/${id}/tools`, { data: {} })).status()).toBe(409);
+
+  // Taking them away asks first, and leaves what the tutorials gave
+  await keptTools(page).getByRole("button", { name: "Take the tools away" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Take away the tools of Plain tools?" });
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  await expect(keptTools(page)).toBeVisible();
+  await keptTools(page).getByRole("button", { name: "Take the tools away" }).click();
+  await page.getByRole("alertdialog", { name: "Take away the tools of Plain tools?" }).getByRole("button", { name: "Take away" }).click();
+
+  await expect(keptTools(page)).toHaveCount(0);
+  await expect(toolsPreview(page)).toBeVisible();
+  await expect(toolsForm(page)).toBeVisible();
+  await expect(step(page, "Build the tools")).toContainText("Not started");
+  expect((await toolsOf(page, id)).kept).toBeNull();
+  expect((await referenceOf(page, id)).kept).toMatchObject({ complete: true });
+  await expect(keptRun(page)).toBeVisible();
+});
+
+test("follows the making of tools while it goes on, waits for it before anything else is done to the agent, and keeps what it had made when it is stopped", async ({
+  page,
+}) => {
+  const id = await agentWithTutorials(page, "Tedious tools", { kind: "doi", doi: "10.1000/tools-paper" });
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+
+  const stop = makingTools(page).getByRole("button", { name: "Stop: Making the tools: Tedious tools" });
+  await expect(stop).toBeVisible();
+  await expect(step(page, "Build the tools")).toContainText("Going on");
+  await expect(toolsForm(page).getByRole("button", { name: "Making…" })).toBeDisabled();
+  await expect(page.getByRole("log", { name: "What this printed: Making the tools: Tedious tools" })).toContainText("Calling scale again, 1 call of the tutorials", {
+    timeout: 10_000,
+  });
+  // What is kept of a making that has begun is the account of one that is not over, which is not one that did not come to its end
+  expect((await toolsOf(page, id)).kept).toMatchObject({ complete: false, tools: [] });
+  await page.reload();
+  await expect(stop).toBeVisible();
+  await expect(toolsForm(page).getByRole("button", { name: "Making…" })).toBeDisabled();
+  await expect(keptTools(page)).toHaveCount(0);
+  await expect(page.getByText("did not come to its end")).toHaveCount(0);
+  // Nothing else is done to the agent while it goes on, and its paper is not read, and the tutorials are not run again
+  await expect(fetchAndRead(page)).toBeDisabled();
+  await expect(reading(page)).toContainText("The tools are being made. Reading waits for that.");
+  await expect(page.getByRole("button", { name: "Delete Tedious tools" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Take the code away" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Take the environment away" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Take what they gave away" })).toBeDisabled();
+  await expect(step(page, "Build the tools")).toContainText("Going on");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await stop.click();
+
+  await expect(makingTools(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(step(page, "Build the tools")).toContainText("Not started");
+  // What came to be before it was stopped is kept, which is nothing here, and is said not to be the whole
+  await expect(keptTools(page)).toContainText("Not made to the end");
+  await expect(keptTools(page)).toContainText("This making did not come to its end");
+  await expect(page.getByTestId("tools-kept-when")).toContainText("No tool was made.");
+  await expect(page.getByTestId("tool")).toHaveCount(0);
+  await expect(toolsForm(page).getByRole("button", { name: MAKE })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Take what they gave away" })).toBeEnabled();
+  expect(await toolsOf(page, id)).toMatchObject({ kept: { complete: false, tools: [] }, job: null });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Made again and left to end, the making replaces what was kept
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect(keptTools(page)).toContainText("Made to the end of the list", { timeout: 40_000 });
+  await expect(keptTools(page)).not.toContainText("Not made to the end");
+  await expect(page.getByTestId("tool")).toHaveCount(1);
+  await expect(makingTools(page).getByText("Stopped", { exact: true })).toHaveCount(0);
+});
+
+test("says which functions were not made into tools, and why, when none held, and when none could be", async ({ page }) => {
+  const brittle = await agentWithTutorials(page, "Brittle tools");
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect(keptTools(page)).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByTestId("tools-kept-when")).toContainText("No tool held. 2 functions were not made into a tool.");
+  await expect(page.getByTestId("tool")).toHaveCount(0);
+  await expect(step(page, "Build the tools")).toContainText("Failed");
+  const dropped = page.getByTestId("tools-dropped").getByTestId("tool-dropped");
+  await expect(dropped).toHaveCount(2);
+  // What differed is said, a call at a time
+  await expect(dropped.first()).toContainText("cellmapper.core.scale");
+  await expect(dropped.first()).toContainText("[0] is 4.5 where it was 3.5");
+  await expect(keptTools(page).getByRole("button", { name: "Take the tools away" })).toBeEnabled();
+  expect((await toolsOf(page, brittle)).kept).toMatchObject({ complete: true, tools: [], dropped: [{ kind: "replay_differs" }, { kind: "replay_differs" }] });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Methods of a class are not made into tools, so there is nothing to make, and the asking is refused
+  const methods = await agentWithTutorials(page, "Methods tools");
+  await expect(page.getByTestId("tools-none")).toContainText("There is nothing to make");
+  await expect(page.getByTestId("tools-none")).toContainText("No function that the tutorials called can be made into a tool.");
+  await expect(toolsPreview(page).getByTestId("tool-dropped")).toHaveCount(2);
+  await expect(toolsPreview(page).getByTestId("tool-dropped").first()).toHaveAttribute("data-kind", "method");
+  await expect(toolsPreview(page).getByTestId("tool-dropped").first()).toContainText("A method of a class");
+  await expect(toolsForm(page)).toHaveCount(0);
+  const asked = await page.request.post(`/api/paperagents/${methods}/tools`, { data: {} });
+  expect(asked.status()).toBe(422);
+  expect((await asked.json()).error.code).toBe("no_tools");
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("takes away the tools when what the tutorials gave is taken away, and says when Docker is not running", async ({ page }) => {
+  const id = await agentWithTutorials(page, "Linked tools");
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect(keptTools(page)).toBeVisible({ timeout: 25_000 });
+
+  await keptRun(page).getByRole("button", { name: "Take what they gave away" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take away" }).click();
+  await expect(keptRun(page)).toHaveCount(0);
+  await expect(page.getByTestId("tools-no-reference")).toBeVisible();
+  await expect(keptTools(page)).toHaveCount(0);
+  await expect(step(page, "Build the tools")).toContainText("Not started");
+  expect((await toolsOf(page, id)).kept).toBeNull();
+
+  await referenceForm(page).getByRole("button", { name: RUN }).click();
+  await expect(keptRun(page)).toBeVisible({ timeout: 25_000 });
+  await expect(toolsForm(page)).toBeVisible();
+  await page.route("**/api/paperagents/*/tools", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+
+    return route.fulfill({ response, json: { ...body, docker: { ready: false, message: "Docker is installed but is not running." } } });
+  });
+  await page.reload();
+  await expect(page.getByText("Docker is installed but is not running. Making tools takes it.")).toBeVisible();
+  await expect(toolsPreview(page)).toBeVisible();
+  await expect(toolsForm(page).getByRole("button", { name: MAKE })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await page.unroute("**/api/paperagents/*/tools");
+});
+
+test("says why the server refused to make the tools, and looks again when what the page shows is out of date", async ({ page }) => {
+  const id = await agentWithTutorials(page, "Refused tools");
+  await page.route("**/api/paperagents/*/tools", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "docker_missing", message: "Docker is not installed on this machine, and making tools takes it." } }),
+        })
+      : route.fallback(),
+  );
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect(toolsForm(page).getByRole("alert")).toContainText("Docker is not installed on this machine");
+  await page.unroute("**/api/paperagents/*/tools");
+
+  // Tools that were made a moment before the page looked are not a reason to refuse: the page looks again
+  let looked = 0;
+  await page.route("**/api/paperagents/*/tools", (route) => {
+    if (route.request().method() === "GET") looked += 1;
+
+    return route.request().method() === "POST"
+      ? route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "done", message: "The tools have been made. Remove them to make them again." } }),
+        })
+      : route.fallback();
+  });
+  const before = looked;
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect.poll(() => looked).toBeGreaterThan(before);
+  await expect(toolsForm(page).getByRole("alert")).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/tools");
+  expect((await toolsOf(page, id)).kept).toBeNull();
+
+  // What was kept of a tool is gone when it is asked for, which is as the tools were taken away, and the page looks again
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect(keptTools(page)).toBeVisible({ timeout: 25_000 });
+  let seen = 0;
+  await page.route("**/api/paperagents/*/tools", (route) => {
+    if (route.request().method() === "GET") seen += 1;
+
+    return route.fallback();
+  });
+  await page.route("**/api/paperagents/*/tools/*", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: { code: "not_found", message: "There is no such tool." } }) }),
+  );
+  const again = seen;
+  await toolNamed(page, "scale").getByRole("button", { name: "Show the wrapper and the evidence" }).click();
+  await expect.poll(() => seen).toBeGreaterThan(again);
+  await expect(page.getByTestId("tool-detail")).toHaveCount(0);
+  await expect(keptTools(page)).toBeVisible();
+  await page.unroute("**/api/paperagents/*/tools/*");
+  await page.unroute("**/api/paperagents/*/tools");
 });

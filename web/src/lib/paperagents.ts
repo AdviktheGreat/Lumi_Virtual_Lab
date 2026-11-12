@@ -249,8 +249,9 @@ export function readingKey(jobs: readonly Job[] | null, ended: number, agent: st
   const building = (jobs ?? []).filter((job) => isActive(job) && job.kind === ENVIRONMENT_JOB && job.subject === agent).map((job) => job.id);
   const getting = (jobs ?? []).filter((job) => isActive(job) && job.kind === DATA_JOB && job.subject === agent).map((job) => job.id);
   const running = (jobs ?? []).filter((job) => isActive(job) && job.kind === REFERENCE_JOB && job.subject === agent).map((job) => job.id);
+  const making = (jobs ?? []).filter((job) => isActive(job) && job.kind === TOOLS_JOB && job.subject === agent).map((job) => job.id);
 
-  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}`;
+  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}`;
 }
 
 // The job that fetches the code of an agent, which the server runs with the agent's id as its subject
@@ -303,6 +304,19 @@ export function referenceJob(jobs: readonly Job[], agent: string): Job | undefin
 // The latest running of an agent's tutorials that is over, whose outcome is what it was last done with
 export function lastReferenceJob(jobs: readonly Job[], agent: string): Job | undefined {
   return jobs.find((job) => !isActive(job) && job.kind === REFERENCE_JOB && job.subject === agent);
+}
+
+// The job that makes the tools of an agent from the calls its tutorials made, which the server runs with the agent's id as its subject
+export const TOOLS_JOB = "paperagent-tools";
+
+// The job at work making an agent's tools, which nothing else is done to the agent in the meantime
+export function toolsJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === TOOLS_JOB && job.subject === agent);
+}
+
+// The latest making of an agent's tools that is over, whose outcome is what it was last done with
+export function lastToolsJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => !isActive(job) && job.kind === TOOLS_JOB && job.subject === agent);
 }
 
 export interface ReadingDraft {

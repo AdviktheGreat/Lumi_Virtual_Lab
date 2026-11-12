@@ -12,6 +12,7 @@ import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { ReferenceSection } from "@/components/paper-agent-reference";
+import { ToolsSection } from "@/components/paper-agent-tools";
 import { useServer } from "@/components/server-provider";
 import { useSetupJobs } from "@/components/setup-provider";
 import { WorkStatus } from "@/components/work-status";
@@ -47,6 +48,7 @@ import {
   lastReadingJob,
   lastReferenceJob,
   lastRepositoryJob,
+  lastToolsJob,
   MAX_AGENT_TITLE,
   paperFile,
   paperLink,
@@ -60,6 +62,7 @@ import {
   STEP_LABELS,
   STEPS,
   titleProblem,
+  toolsJob,
 } from "@/lib/paperagents";
 import { uploadProblem } from "@/lib/papers";
 import { tidy } from "@/lib/scientists";
@@ -72,6 +75,7 @@ import type {
   PaperAgentRepository,
   PaperAgentsList,
   PaperAgentSource,
+  PaperAgentTools,
 } from "@/lib/types";
 import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
@@ -83,6 +87,7 @@ import {
   usePaperAgentReference,
   usePaperAgentRepository,
   usePaperAgentsList,
+  usePaperAgentTools,
 } from "@/lib/use-paperagents";
 import { cn } from "@/lib/utils";
 
@@ -434,6 +439,7 @@ function Agent({
   environment,
   data,
   reference,
+  tools,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
@@ -443,6 +449,7 @@ function Agent({
   environment: LookedAt<PaperAgentEnvironment>;
   data: LookedAt<PaperAgentData>;
   reference: LookedAt<PaperAgentReference>;
+  tools: LookedAt<PaperAgentTools>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -476,9 +483,11 @@ function Agent({
   // How the last fetching ended is said if it did not end well, and while the files it fetched are kept
   const lastGetShown = lastGet !== undefined && (lastGet.state !== "succeeded" || (gotten?.kept.files ?? 0) > 0) ? lastGet : undefined;
   // The same of the tutorials, which are run in the environment, and not while anything else is done to the agent. The agent says that
-  // its tools are being made while they are run, which is the step they are part of
+  // its tools are being made while they are run or while the tools are made, which is the step they are part of, so until the jobs
+  // have been looked at it is not known which of the two it is
   const running = referenceJob(all, agent.id);
-  const runningTutorials = running !== undefined || agent.steps.tools === "running";
+  const makingTools = toolsJob(all, agent.id);
+  const runningTutorials = running !== undefined || (agent.steps.tools === "running" && makingTools === undefined);
   const ranReference = reference.value.kind === "ready" ? reference.value.value : null;
   const lastRun = lastReferenceJob(all, agent.id);
   // How the last run ended is said if it did not end well, and while what it gave is kept
@@ -487,7 +496,14 @@ function Agent({
   const settling = lastRun?.state === "succeeded" && ranReference?.kept != null && !ranReference.kept.complete;
   const lastRunShown =
     lastRun !== undefined && (lastRun.state !== "succeeded" || (ranReference?.kept?.tutorials.length ?? 0) > 0) ? lastRun : undefined;
-  const idle = !working && !fetchingCode && !makingEnvironment && !fetchingData && !runningTutorials;
+  // The same of the tools, which are made of what the tutorials gave
+  const madeTools = tools.value.kind === "ready" ? tools.value.value : null;
+  const lastMaking = lastToolsJob(all, agent.id);
+  // How the last making ended is said if it did not end well, and while what it made is kept
+  const lastMakingShown = lastMaking !== undefined && (lastMaking.state !== "succeeded" || madeTools?.kept != null) ? lastMaking : undefined;
+  // A making that is over, and succeeded, while what the page has of it is from before it ended
+  const settlingTools = lastMaking?.state === "succeeded" && madeTools?.kept != null && !madeTools.kept.complete;
+  const idle = !working && !fetchingCode && !makingEnvironment && !fetchingData && !runningTutorials && makingTools === undefined;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
   const changed = (next: PaperAgent) => {
@@ -496,6 +512,7 @@ function Agent({
     environment.reload();
     data.reload();
     reference.reload();
+    tools.reload();
   };
   const shared = { agent, list, working: !idle, onChanged: changed };
   const own = agent.paper.kind === "file";
@@ -541,9 +558,13 @@ function Agent({
                     ? "The environment is being built. Reading waits for that."
                     : fetchingData
                       ? "The data is being fetched. Reading waits for that."
-                      : runningTutorials
+                      : running !== undefined
                         ? "The tutorials are being run. Reading waits for that."
-                        : null
+                        : makingTools !== undefined
+                          ? "The tools are being made. Reading waits for that."
+                          : runningTutorials
+                            ? "The tutorials are being run or the tools made. Reading waits for that."
+                            : null
               }
               jobs={jobs}
               onCleared={(cleared) => {
@@ -586,6 +607,7 @@ function Agent({
                 // What the code names for the data is found from the code, and its tutorials are what are run
                 data.reload();
                 reference.reload();
+                tools.reload();
                 onReload();
               }}
               onStale={() => {
@@ -594,6 +616,7 @@ function Agent({
                 environment.reload();
                 data.reload();
                 reference.reload();
+                tools.reload();
               }}
             />
           )}
@@ -622,12 +645,14 @@ function Agent({
                 environment.set(cleared);
                 // What was run in the image goes with it
                 reference.reload();
+                tools.reload();
                 onReload();
               }}
               onStale={() => {
                 onReload();
                 environment.reload();
                 reference.reload();
+                tools.reload();
               }}
             />
           )}
@@ -651,6 +676,7 @@ function Agent({
                 data.set(next);
                 // What the tutorials are given to read is what was fetched
                 reference.reload();
+                tools.reload();
                 onReload();
               }}
             />
@@ -674,11 +700,42 @@ function Agent({
               jobs={jobs}
               onCleared={(cleared) => {
                 reference.set(cleared);
+                // The tools are made of what the tutorials gave
+                tools.reload();
                 onReload();
               }}
               onStale={() => {
                 onReload();
                 reference.reload();
+                tools.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Tools"
+        intro="Small functions that each call one function of the code, made of the calls the tutorials made. Each is called again in the environment, to see that it gives what the tutorial got. This does not show that what it gives is right."
+      >
+        <WorkStatus job={makingTools} last={lastMakingShown} jobs={jobs} label="Making the tools" />
+        <Looked state={tools.value} label="Looking at the tools" failure="The tools could not be looked at." onRetry={tools.reload}>
+          {(value) => (
+            <ToolsSection
+              key={agent.id}
+              agent={agent}
+              tools={value}
+              busy={!idle}
+              making={makingTools}
+              settling={settlingTools}
+              jobs={jobs}
+              onCleared={(cleared) => {
+                tools.set(cleared);
+                onReload();
+              }}
+              onStale={() => {
+                onReload();
+                reference.reload();
+                tools.reload();
               }}
             />
           )}
@@ -707,6 +764,7 @@ export function AgentPage({ id }: { id: string }) {
   const environment = usePaperAgentEnvironment(id, report, again);
   const data = usePaperAgentData(id, report, again);
   const reference = usePaperAgentReference(id, report, again);
+  const tools = usePaperAgentTools(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -736,6 +794,7 @@ export function AgentPage({ id }: { id: string }) {
                 environment={environment}
                 data={data}
                 reference={reference}
+                tools={tools}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />
