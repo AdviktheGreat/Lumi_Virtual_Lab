@@ -26,7 +26,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { attachedNames, readiness } from "@/lib/attachments";
-import { givenAs, isDirective, written, type Invocation } from "@/lib/commands";
+import { givenAs, isDirective, written, type Invocation, type PromptInvocation, type Sendable } from "@/lib/commands";
+import { withPrompt } from "@/lib/prompts";
 import { joining } from "@/lib/team-choice";
 import { describeError, plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { EXPORT_CHOICES } from "@/lib/export";
@@ -36,6 +37,7 @@ import { cleanTitle } from "@/lib/history";
 import { currentTurn, unreadNotes, type SentNote } from "@/lib/steering";
 import { useAttachments } from "@/lib/use-attachments";
 import { useChat } from "@/lib/use-chat";
+import { usePromptChoices } from "@/lib/use-prompt-choices";
 import { useSkillChoices } from "@/lib/use-skill-choices";
 import { useDocumentTitle } from "@/lib/use-document-title";
 import { useExport } from "@/lib/use-export";
@@ -46,6 +48,7 @@ import type { ChatState, LabChoice, LimitsChange } from "@/lib/types";
 
 // What the conversation has of skills until it is known, which is kept the same so that what is made of it is not made again
 const NO_SKILLS: readonly string[] = [];
+const NO_SERVERS: readonly string[] = [];
 
 const STATE_LABELS: Record<ChatState, string | null> = {
   idle: null,
@@ -93,6 +96,7 @@ export function ChatView({ id }: { id: string }) {
   const attachments = useAttachments(id, server.status === "ready" ? server.settings.max_upload_bytes : null);
   const { scroller, atBottom, jump, onScroll } = useStickToBottom<HTMLDivElement>(transcript.lastId);
   const skillChoices = useSkillChoices(status.kind === "ready" ? status.info.config.skills : NO_SKILLS, draft.startsWith("/"));
+  const promptChoices = usePromptChoices(status.kind === "ready" ? status.info.config.mcp : NO_SERVERS, draft.startsWith("/"));
   // The files are looked at again when something may have changed them: code ran, a turn ended, or a file was sent
   const sentFiles = attachments.items.filter((item) => item.status === "ready").length;
   const listed = useFiles(id, filesChanged(transcript) + sentFiles);
@@ -121,7 +125,7 @@ export function ChatView({ id }: { id: string }) {
 
   // What is in the box is sent as a message, or a command is, which is given with a message of its own and which, when it
   // could not be sent, is put back in the box
-  async function send(command?: Invocation) {
+  async function send(command?: Sendable) {
     const text = command ? command.arg.trim() : draft.trim();
     const sent = attachments.items.filter((item) => item.status === "ready");
     setSending(true);
@@ -134,6 +138,23 @@ export function ChatView({ id }: { id: string }) {
       jump("instant");
     } catch (error) {
       if (command) setDraft(written(command));
+      report(error);
+      setProblem(problemOf(error));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // A prompt of an MCP server is written out by the server into the box, and is not sent: the person reads it, and may change it,
+  // before they send it. Where the server could not write it out, what was typed is put back in the box.
+  async function writePrompt(command: PromptInvocation) {
+    setSending(true);
+    setProblem(null);
+    try {
+      const { text } = await api.renderMcpPrompt(command.prompt.server, command.prompt.name, command.values);
+      setDraft((was) => withPrompt(was, text));
+    } catch (error) {
+      setDraft((was) => withPrompt(was, written(command)));
       report(error);
       setProblem(problemOf(error));
     } finally {
@@ -228,6 +249,11 @@ export function ChatView({ id }: { id: string }) {
   }
 
   function run(invocation: Invocation) {
+    if ("prompt" in invocation) {
+      void writePrompt(invocation);
+
+      return;
+    }
     if ("skill" in invocation) {
       void send(invocation);
 
@@ -414,6 +440,7 @@ export function ChatView({ id }: { id: string }) {
                   answered: transcript.turns.filter((turn) => turn.outcome === "answered").length,
                   directives: status.kind === "ready" ? status.info.directives : null,
                   skills: skillChoices,
+                  prompts: promptChoices,
                   onRun: run,
                 }}
                 footer={

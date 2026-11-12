@@ -284,6 +284,46 @@ export interface McpKey {
 
 export type McpAuth = "key" | "oauth";
 
+// A resource an MCP server lists: something to read, such as a table or a document, or, for a template, a family of them
+export interface McpResource {
+  name: string;
+  title: string | null;
+  uri: string;
+  description: string;
+  mime_type: string | null;
+  // Whether its address is a pattern to be filled in, which is not one thing to read
+  template: boolean;
+}
+
+export interface McpPromptArgument {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+// A prompt an MCP server lists: words to begin a message with, written out by the server for the arguments it takes
+export interface McpPrompt {
+  // Its name on the server
+  name: string;
+  // What it is written as after a slash
+  command: string;
+  title: string | null;
+  description: string;
+  arguments: McpPromptArgument[];
+}
+
+// What an MCP server lists besides its tools, as it was when it was last connected to
+export interface McpHolds {
+  resources: McpResource[];
+  prompts: McpPrompt[];
+  // What the server said of what it could not list
+  problems: string[];
+  // Whether it has more than it was asked for, which are not listed
+  more: boolean;
+  // When it was connected to, ISO 8601 in UTC: not said of what a check has just found
+  seen?: string | null;
+}
+
 // One of the MCP servers a conversation can be given the tools of, as the settings list it: a preset of the library's,
 // or one the person described
 export interface McpServer {
@@ -314,6 +354,8 @@ export interface McpServer {
   problem: string | null;
   // What to do before it can be connected to, which only a preset says
   setup: string | null;
+  // What it listed when it was last connected to, as it is set up now: null where it has not been, or has been changed since
+  holds: McpHolds | null;
 }
 
 // One of the servers of the catalog, which others run and which are added with a click
@@ -347,6 +389,16 @@ export interface McpCheck {
   ok: boolean;
   tools: string[];
   reason: string | null;
+  // What it listed besides its tools, where it was connected to
+  holds?: McpHolds;
+}
+
+// A prompt of an MCP server written out for some arguments, as the words to begin a message with
+export interface RenderedPrompt {
+  text: string;
+  // Each part of it, with who says it
+  messages: { role: string; text: string }[];
+  description?: string;
 }
 
 export interface McpChange {

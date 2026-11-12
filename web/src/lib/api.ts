@@ -56,6 +56,7 @@ import type {
   PaperReadOptions,
   PaperRun,
   PapersList,
+  RenderedPrompt,
   Scientist,
   Settings,
   SettingsChange,
@@ -411,6 +412,9 @@ export const api = {
   removeMcpServer: async (name: string) =>
     (await request<{ servers: McpServer[] }>("DELETE", `/mcp/servers/${encodeURIComponent(name)}`)).servers,
   checkMcpServer: (name: string) => request<McpCheck>("POST", `/mcp/servers/${encodeURIComponent(name)}/check`),
+  // A prompt of a server, which is its name on the server, written out by the server for the arguments, by name, as text
+  renderMcpPrompt: (name: string, prompt: string, args: Record<string, string>) =>
+    request<RenderedPrompt>("POST", `/mcp/servers/${encodeURIComponent(name)}/render`, { prompt, arguments: args }),
   signOutMcpServer: async (name: string) =>
     (await request<{ servers: McpServer[] }>("DELETE", `/mcp/servers/${encodeURIComponent(name)}/sign-in`)).servers,
   // Docker, the images, the data lake, the jobs, and what is left to do. Asking is not quick, since Docker is asked.

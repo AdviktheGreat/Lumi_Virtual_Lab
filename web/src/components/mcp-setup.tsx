@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
+import { Holds } from "@/components/mcp-holds";
 import { KeyForm } from "@/components/settings-keys";
 import { useServer } from "@/components/server-provider";
 import { Button } from "@/components/ui/button";
@@ -55,17 +56,21 @@ function CheckResult({ check }: { check: Check }) {
 
 // What it takes for a server to be used, and what can be done about it: how it is signed in to or given a key, the keys it
 // asks for, why it cannot work if it cannot, whether it is signed in to, a look at whether it can be connected to, and how
-// to set it up. A change to the server takes what a look found away, since that is of the server as it was.
+// to set it up. A change to the server takes what a look found away, since that is of the server as it was. What the server
+// lists besides its tools is what the last look at it found, which is kept, so it is shown before there is another.
 export function ServerSetup({
   server,
   onChange,
   onKeysChanged,
+  onChecked,
   onSignOut,
   inset = false,
 }: {
   server: McpServer;
   onChange: (change: McpChange) => void;
   onKeysChanged: () => void;
+  // Told when a look found the server, since it keeps what it listed, which the list of servers is read again to show
+  onChecked: () => void;
   onSignOut: () => void;
   // Whether it is set in from the left, to be under the box of a server that is on or off
   inset?: boolean;
@@ -79,6 +84,7 @@ export function ServerSetup({
   // Which check is the latest, so that what an earlier one found, after the server was changed, is not shown
   const latest = useRef(0);
   const indent = inset ? "pl-6.5" : undefined;
+  const held = check.kind === "found" && check.check.ok && check.check.holds !== undefined ? check.check.holds : server.holds;
 
   function forget() {
     latest.current += 1;
@@ -92,6 +98,7 @@ export function ServerSetup({
     try {
       const found = await api.checkMcpServer(server.name);
       if (mine === latest.current) setCheck({ kind: "found", check: found });
+      if (found.ok) onChecked();
     } catch (error) {
       report(error);
       if (mine === latest.current) setCheck({ kind: "failed", problem: describeError(error) });
@@ -189,6 +196,8 @@ export function ServerSetup({
           <CheckResult check={check} />
         </div>
       )}
+
+      <Holds name={server.name} holds={held} className={indent} />
 
       {server.setup !== null && (
         <details className={cn("text-xs text-muted-foreground", indent)}>

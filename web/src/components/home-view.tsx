@@ -20,14 +20,16 @@ import { SkillsDialog } from "@/components/skills-dialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { readiness } from "@/lib/attachments";
-import { givenAs, isDirective, written, type Invocation } from "@/lib/commands";
+import { givenAs, isDirective, written, type Invocation, type PromptInvocation, type Sendable } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { formatAmount } from "@/lib/limits";
 import { checkProgram, type ProgramDraft, type ProgramProblems } from "@/lib/programs";
+import { withPrompt } from "@/lib/prompts";
 import { choiceButtonText, choiceKept, choiceStart, vanished } from "@/lib/skills";
 import { DEFAULT_LEAD_TITLE } from "@/lib/team-choice";
 import { useAttachments } from "@/lib/use-attachments";
 import { useMissingKeys } from "@/lib/use-missing-keys";
+import { usePromptChoices } from "@/lib/use-prompt-choices";
 import { useSkillChoices } from "@/lib/use-skill-choices";
 import type { ChatInfo, LabChoice, LimitsChange, ProgramKind } from "@/lib/types";
 
@@ -129,7 +131,7 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
   }
 
   // A conversation is begun with what is in the box, or with a command, which is given with the message that begins it
-  async function start(command?: Invocation) {
+  async function start(command?: Sendable) {
     if (!programReady()) return;
     const text = command ? command.arg.trim() : draft.trim();
     setSending(true);
@@ -142,6 +144,23 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
       report(error);
       setProblem(problemOf(error));
       await forgetGoneSkills();
+      setSending(false);
+    }
+  }
+
+  // A prompt of an MCP server is written out by the server into the box, and is not sent: the person reads it, and may change it,
+  // before they send it. Where the server could not write it out, what was typed is put back in the box.
+  async function writePrompt(command: PromptInvocation) {
+    setSending(true);
+    setProblem(null);
+    try {
+      const { text } = await api.renderMcpPrompt(command.prompt.server, command.prompt.name, command.values);
+      setDraft((was) => withPrompt(was, text));
+    } catch (error) {
+      setDraft((was) => withPrompt(was, written(command)));
+      report(error);
+      setProblem(problemOf(error));
+    } finally {
       setSending(false);
     }
   }
@@ -182,12 +201,18 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
   // Which skills are on is not known until they are read, which is done as the page opens, so that a command pasted in whole is
   // not taken for a message
   const skillChoices = useSkillChoices(skillsChosen, true);
+  const promptChoices = usePromptChoices(null, true);
 
   // What a custom program may spend, in words, as it will be where nothing was chosen for it
   const spendLimit = "max_cost" in limitsChosen ? (limitsChosen.max_cost ?? null) : (ready?.max_cost ?? null);
   const spending = spendLimit === null ? "Spending limit: none" : `Spending limit: $${formatAmount(spendLimit)}`;
 
   function run(invocation: Invocation) {
+    if ("prompt" in invocation) {
+      void writePrompt(invocation);
+
+      return;
+    }
     if ("skill" in invocation) {
       void start(invocation);
 
@@ -269,7 +294,7 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
                   onRemove: (id) => attachments.remove([id]),
                   onRetry: attachments.retry,
                 }}
-                commands={{ place: "home", turns: 0, answered: 0, directives, skills: skillChoices, onRun: run }}
+                commands={{ place: "home", turns: 0, answered: 0, directives, skills: skillChoices, prompts: promptChoices, onRun: run }}
                 autoFocus
                 roomy
                 footer={

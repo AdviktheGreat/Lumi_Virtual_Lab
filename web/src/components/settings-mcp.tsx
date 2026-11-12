@@ -19,12 +19,14 @@ function ServerRow({
   server,
   onChange,
   onKeysChanged,
+  onChecked,
   onRemove,
   onSignOut,
 }: {
   server: McpServer;
   onChange: (change: McpChange) => void;
   onKeysChanged: () => void;
+  onChecked: () => void;
   onRemove: (button: HTMLButtonElement) => void;
   onSignOut: () => void;
 }) {
@@ -61,7 +63,7 @@ function ServerRow({
           </Button>
         )}
       </div>
-      <ServerSetup server={server} onChange={onChange} onKeysChanged={onKeysChanged} onSignOut={onSignOut} inset />
+      <ServerSetup server={server} onChange={onChange} onKeysChanged={onKeysChanged} onChecked={onChecked} onSignOut={onSignOut} inset />
     </li>
   );
 }
@@ -114,6 +116,7 @@ export function McpSection({ servers, onChanged }: { servers: Loaded<McpServer[]
                 server={server}
                 onChange={(what) => changes.change(server.name, what)}
                 onKeysChanged={() => void changes.refresh()}
+                onChecked={() => void changes.refresh()}
                 onSignOut={() => void changes.signOut(server)}
                 onRemove={(button) => {
                   asker.current = button;

@@ -12,6 +12,19 @@ export function program(extra: Record<string, unknown> = {}): Record<string, unk
   return { command: [PYTHON, TEST_SERVER], ...extra };
 }
 
+// The same with resources and prompts as well as tools: a panel of genes, a picture, a template for a gene's card, and two
+// prompts, summarize_gene (symbol, and depth if wanted) and compare-genes (first, second)
+export function contextProgram(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { command: [PYTHON, TEST_SERVER, "--context"], ...extra };
+}
+
+// Connects to a server, as a check does, so that what it lists is kept and the page can show it
+export async function look(page: Page, name: string): Promise<void> {
+  const response = await page.request.post(`/api/mcp/servers/${name}/check`);
+  expect(response.status(), await response.text()).toBe(200);
+  expect((await response.json()).ok, await response.text()).toBe(true);
+}
+
 // Sets a server up, as the settings do, in full
 export async function setUp(page: Page, name: string, entry: Record<string, unknown>): Promise<void> {
   const response = await page.request.put(`/api/mcp/servers/${name}`, { data: { entry } });
