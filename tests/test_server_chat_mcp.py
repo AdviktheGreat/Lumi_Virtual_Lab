@@ -133,6 +133,27 @@ class TestConnecting:
         names = [tool["function"]["name"] for tool in fake_client.completions.calls[0]["tools"]]
         assert {"genes_echo", "genes_total", "genes_lookup"} <= set(names)
 
+    def test_what_a_server_holds_is_kept_when_a_conversation_connects_to_it_and_the_settings_show_it(
+        self, client: TestClient, app: FastAPI
+    ) -> None:
+        add_server(client, command=[sys.executable, SERVER, "--context"])
+
+        def holds() -> Any:
+            return next(s for s in client.get("/api/mcp").json()["servers"] if s["name"] == "genes")["holds"]
+
+        assert holds() is None
+        made = new_chat(client)
+        say(client, made["id"])
+        wait_idle(client, made["id"])
+
+        kept = holds()
+        assert {prompt["command"] for prompt in kept["prompts"]} == {"genes_summarize_gene", "genes_compare_genes"}
+        assert {resource["uri"] for resource in kept["resources"]} == {
+            "genes://panel",
+            "genes://logo",
+            "genes://gene/{symbol}",
+        }
+
     def test_the_servers_are_kept_for_the_next_message_and_not_connected_to_again(
         self, client: TestClient, app: FastAPI, fake_client: FakeClient
     ) -> None:

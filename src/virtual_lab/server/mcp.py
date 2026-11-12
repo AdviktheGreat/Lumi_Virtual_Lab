@@ -17,8 +17,18 @@ from typing import Any
 
 from virtual_lab.mcp_auth import has_sign_in, sign_out_mcp
 from virtual_lab.mcp_presets import MCP_PRESETS, preset_entry
-from virtual_lab.mcp_tools import SERVER_KEYS, VARIABLE, MCPServerConfig, MCPTools, connect_mcp, parse_server
+from virtual_lab.mcp_tools import (
+    SERVER_KEYS,
+    VARIABLE,
+    MCPServerConfig,
+    MCPServerError,
+    MCPToolError,
+    MCPTools,
+    connect_mcp,
+    parse_server,
+)
 from virtual_lab.server.mcp_catalog import MCP_CATALOG, CatalogServer
+from virtual_lab.server.mcp_seen import describe_held, recall_held
 from virtual_lab.websearch import EXA_KEY
 
 # What a server's name may be, which its tools' names start with, so that it is one of letters, digits, and "_"
@@ -30,6 +40,9 @@ MAX_SERVERS = 64
 # Seconds a check of a server waits for it to start, or to answer, which is less than a conversation waits, since a
 # person is watching for the answer
 CHECK_TIMEOUT = 30.0
+
+# Most characters of a prompt that is rendered to be put in a message, which a person reads and sends
+MAX_RENDERED_CHARS = 100_000
 
 # The presets that the interface does not list until the service is ready to be used from it, which is not so of
 # Adaptyv's yet. One that has been set up is listed all the same, so that it can be turned off or taken away. They are
@@ -204,15 +217,19 @@ def program_missing(command: str | None, cwd: str | None) -> bool:
     return shutil.which(command) is None
 
 
-def describe_server(name: str, entry: Mapping[str, Any] | None) -> dict[str, Any]:
+def describe_server(
+    name: str, entry: Mapping[str, Any] | None, seen: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """A server as the settings show it.
 
     :param name: Its name.
     :param entry: What is kept for it, or None for a preset that has not been set up.
+    :param seen: What the servers held when they were last connected to, by name, as the workspace keeps it.
     :return: Its title, what it is for, whether it is on, how it is signed in to or given a key and which keys are
         missing, which of the keys the interface may give are set, whether it has tools that wait for the researcher's
-        approval, whether a sign-in to it is kept (None for a server that is not signed in to), and, if it cannot work
-        as it is, why.
+        approval, whether a sign-in to it is kept (None for a server that is not signed in to), what it held, its
+        resources and prompts, when it was last connected to as it is set up now (None if it was not, or has been
+        changed since), and, if it cannot work as it is, why.
     """
     preset = MCP_PRESETS.get(name)
     if preset is not None and (entry is None or entry.get("preset") == name):
@@ -255,6 +272,7 @@ def describe_server(name: str, entry: Mapping[str, Any] | None) -> dict[str, Any
         "keys_set": [
             variable for variable in variables_in(filled) if variable in os.environ and variable in service_keys()
         ],
+        "holds": recall_held(seen or {}, name, entry),
         "problem": problem,
         "setup": preset.setup_for(dict(given)) if preset is not None else None,
     }
@@ -302,10 +320,41 @@ def sign_out(name: str, entry: Mapping[str, Any] | None) -> bool:
     return sign_out_mcp(url)
 
 
+class ServerUnavailableError(RuntimeError):
+    """Raised when a server cannot be connected to for a look, or does not do what it is asked, and says why."""
+
+
+def connect_to_look(
+    name: str, entry: Mapping[str, Any] | None, connect: Callable[..., MCPTools], **options: Any
+) -> MCPTools:
+    """Connects to a server as a conversation would, whether or not it is on, but without asking anyone anything.
+    Nobody is sent to a sign-in page: a server that is signed in to is connected to with the sign-in it has.
+
+    :raises ServerUnavailableError: If it is signed in to and there is no sign-in kept.
+    :raises Exception: Whatever connecting raises, which says why it could not.
+    """
+    given = {key: value for key, value in (entry or {"preset": name}).items() if key not in ("enabled", "disabled")}
+    if sign_in_kept(name, given) is False:
+        raise ServerUnavailableError(
+            f"{server_title(name, entry)} is not signed in to yet. A program that has it on asks you to sign in, "
+            "when you send its first message."
+        )
+
+    return connect(
+        {"mcpServers": {name: given}},
+        start_timeout=CHECK_TIMEOUT,
+        approve=lambda request: False,
+        answer=lambda question: None,
+        may_sign_in=False,
+        **options,
+    )
+
+
 def check_connection(
     name: str, entry: Mapping[str, Any] | None, connect: Callable[..., MCPTools] = connect_mcp
 ) -> dict[str, Any]:
-    """Connects to a server as a conversation would, to say whether it can be, and which tools it gives.
+    """Connects to a server as a conversation would, to say whether it can be, and which tools, resources, and prompts
+    it gives.
 
     The server is connected to whether or not it is on. Nobody is sent to a sign-in page: a server that is signed in to
     is connected to with the sign-in it has, and is said to need one where it has none. Nothing is called, and the
@@ -313,44 +362,85 @@ def check_connection(
 
     :param entry: What is kept for it, or None for a preset that has not been set up.
     :param connect: What connects to a server, as connect_mcp does, which is for tests.
-    :return: Whether it was connected to, the names of the tools it gives, which the lead is given, and, if it was not,
+    :return: Whether it was connected to, the names of the tools it gives, which the lead is given, what it holds
+        besides (its resources and prompts, and what could not be listed of them), and, if it was not connected to,
         why.
     """
-    title = server_title(name, entry)
-    given = {key: value for key, value in (entry or {"preset": name}).items() if key not in ("enabled", "disabled")}
-    failed = {"ok": False, "tools": []}
     try:
-        if sign_in_kept(name, given) is False:
-            return {
-                **failed,
-                "reason": f"{title} is not signed in to yet. A program that has it on asks you to sign in, "
-                "when you send its first message.",
-            }
-        opened = connect(
-            {"mcpServers": {name: given}},
-            start_timeout=CHECK_TIMEOUT,
-            approve=lambda request: False,
-            answer=lambda question: None,
-            may_sign_in=False,
-        )
+        opened = connect_to_look(name, entry, connect)
     except Exception as error:  # noqa: BLE001
-        return {**failed, "reason": str(error) or type(error).__name__}
+        return {"ok": False, "tools": [], "reason": str(error) or type(error).__name__}
     try:
-        return {"ok": True, "tools": [tool.name for tool in opened.tools], "reason": None}
+        return {
+            "ok": True,
+            "tools": [tool.name for tool in opened.tools],
+            "reason": None,
+            "holds": describe_held(opened.held[name]),
+        }
     finally:
         opened.close()
 
 
-def describe_servers(stored: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+def render_prompt(
+    name: str,
+    entry: Mapping[str, Any] | None,
+    prompt: str,
+    arguments: Mapping[str, Any] | None,
+    connect: Callable[..., MCPTools] = connect_mcp,
+) -> dict[str, Any]:
+    """Connects to a server as a check does, and asks it to write one of its prompts out for some arguments, as the
+    words to begin a message with, which the person reads before they send it.
+
+    :param prompt: The prompt's name on the server.
+    :param arguments: Its arguments by name, as text. Those it needs must be given.
+    :param connect: What connects to a server, as connect_mcp does, which is for tests.
+    :raises ValueError: If the server has no such prompt, an argument is not one it takes or one it needs is not given,
+        or the prompt comes out longer than a message may be.
+    :raises ServerUnavailableError: If the server could not be connected to, or did not write it out.
+    :return: What it says as `text`, and as `messages`, each with the `role` that says it, and what the server says of
+        it as `description`.
+    """
+    try:
+        opened = connect_to_look(name, entry, connect, timeout=CHECK_TIMEOUT)
+    except Exception as error:  # noqa: BLE001
+        raise ServerUnavailableError(str(error) or type(error).__name__) from error
+    try:
+        found = next((item for item in opened.prompts if item.name == prompt), None)
+        if found is None:
+            offered = ", ".join(item.name for item in opened.prompts) or "none"
+            raise ValueError(f"{server_title(name, entry)} has no prompt {prompt}: it has {offered}")
+        try:
+            rendered = opened.render_prompt(found, arguments)
+        except (MCPToolError, MCPServerError, TimeoutError) as error:
+            raise ServerUnavailableError(str(error)) from error
+    finally:
+        opened.close()
+    if len(rendered.text) > MAX_RENDERED_CHARS:
+        raise ValueError(
+            f"The prompt {prompt} came out at {len(rendered.text):,} characters, which is more than the "
+            f"{MAX_RENDERED_CHARS:,} that a message made of it may have"
+        )
+
+    return {
+        "text": rendered.text,
+        "messages": [{"role": role, "text": words} for role, words in rendered.messages],
+        "description": rendered.description,
+    }
+
+
+def describe_servers(
+    stored: Mapping[str, Mapping[str, Any]], seen: Mapping[str, Any] | None = None
+) -> list[dict[str, Any]]:
     """Every server the settings show: the presets, in the library's order, whether or not they are set up, except
     those that are not offered yet, and then the person's own, in the order they were added.
 
     :param stored: The servers that are kept, by name.
+    :param seen: What the servers held when they were last connected to, by name, as the workspace keeps it.
     """
     own = [name for name in stored if name not in MCP_PRESETS]
     offered = [name for name in MCP_PRESETS if name not in NOT_OFFERED or name in stored]
 
-    return [describe_server(name, stored.get(name)) for name in (*offered, *own)]
+    return [describe_server(name, stored.get(name), seen) for name in (*offered, *own)]
 
 
 def check_server_names(names: Any, stored: Mapping[str, Mapping[str, Any]]) -> list[str]:

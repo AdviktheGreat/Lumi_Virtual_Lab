@@ -55,6 +55,8 @@ class Connections:
     :param asker: What the servers' approvals and questions are put to the researcher with.
     :param start_timeout: Seconds a server may take to start, or be connected to, besides any spent signing in.
     :param connect: What connects to a server, as connect_mcp does, which is for tests.
+    :param remember: Told of each server that was connected to, with its entry and what it holds, so that what it holds
+        can be shown without connecting to it again. What goes wrong in it does not fail the connection.
     """
 
     def __init__(
@@ -65,7 +67,9 @@ class Connections:
         asker: Asker,
         start_timeout: float = MCP_START_TIMEOUT,
         connect: Callable[..., MCPTools] = connect_mcp,
+        remember: Callable[[str, Mapping[str, Any], MCPTools], None] | None = None,
     ) -> None:
+        self._remember = remember
         self._tell = tell
         self._stopping = stopping
         self.asker = asker
@@ -165,6 +169,12 @@ class Connections:
             )
         except Exception as caught:  # noqa: BLE001
             error = str(caught) or type(caught).__name__
+        if opened is not None and self._remember is not None:
+            try:
+                self._remember(link.name, link.entry, opened)
+            except Exception:  # noqa: BLE001, S110
+                # What a server held is only kept for showing, and is not worth a turn that cannot begin
+                pass
         with self._changed:
             # Not kept for a conversation that was closed while it connected, which nothing would close it for
             discard = opened if self._closed else None

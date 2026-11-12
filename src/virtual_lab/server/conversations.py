@@ -33,7 +33,7 @@ from virtual_lab.constants import (
 )
 from virtual_lab.events import ChatEvent
 from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, accepts_images, detect_source
-from virtual_lab.mcp_tools import tool_prefix
+from virtual_lab.mcp_tools import MCPTools, tool_prefix
 from virtual_lab.openrouter import Catalog
 from virtual_lab.server.asking import Asker
 from virtual_lab.server.campaigns import Campaigns
@@ -54,6 +54,7 @@ from virtual_lab.server.functions import function_tools
 from virtual_lab.server.skills import Skills, load_skills
 from virtual_lab.server.library import missing_keys
 from virtual_lab.server.mcp import is_on, server_title
+from virtual_lab.server.mcp_seen import describe_held, seen_record
 from virtual_lab.server.own import given
 from virtual_lab.server.paperagent_given import agent_tools
 from virtual_lab.server.setup import Setup
@@ -690,6 +691,11 @@ class Conversations:
                 missing=[issue["id"] for issue in issues],
             )
 
+    def _remember_held(self, name: str, entry: Mapping[str, Any], opened: MCPTools) -> None:
+        """Keeps what a server held when a conversation connected to it, so that the settings and the slash menu can
+        show it without connecting."""
+        self.workspace.put_mcp_seen(name, seen_record(name, entry, describe_held(opened.held[name])))
+
     def _start(self, directory: Path, config: ChatConfig, title: str | None, keyless: bool = False) -> ChatHandle:
         self.know_prices(config.model)
         handle = ChatHandle(directory, config, self.loop, keyless)
@@ -736,7 +742,7 @@ class Conversations:
         )
         if servers and not keyless:
             asker = Asker(handle.tell, handle.stopping, lambda name: server_title(name, servers.get(name)))
-            handle.connections = Connections(servers, handle.tell, handle.stopping, asker)
+            handle.connections = Connections(servers, handle.tell, handle.stopping, asker, remember=self._remember_held)
         skills = load_skills(self.workspace).only(config.skills)
         try:
             handle.chat = Chat(

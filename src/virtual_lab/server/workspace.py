@@ -6,6 +6,7 @@ one workspace directory.
         scientists.json                                  the scientists the person described
         tools.json                                       which of the library's tools a new conversation is not given
         mcp.json                                         the MCP servers the person set up, each as a config gives it
+        mcp_seen.json                                    what each of them held when it was last connected to
         own.json                                         the data and software the person gave every conversation
         own_data/                                        the files the person uploaded, which own.json describes
         skills/                                          the skills the person put there, each a folder with a SKILL.md
@@ -18,11 +19,12 @@ one workspace directory.
 A conversation is shown from the files it was saved in.
 """
 
+import hashlib
 import json
 import math
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
@@ -50,6 +52,12 @@ TOOLS_FILE_NAME = "tools.json"
 # The MCP servers the person set up, by name, each as a config gives it
 MCP_FILE_NAME = "mcp.json"
 
+# What each of those held, its resources and prompts, when it was last connected to, by the server's name
+MCP_SEEN_FILE_NAME = "mcp_seen.json"
+
+# What the entry of a server says that is not about how it is reached, which does not change what it holds
+NOT_ABOUT_REACHING = ("enabled", "disabled")
+
 # The data and software the person gave the lab to use in every conversation, and where the files they uploaded are kept
 OWN_FILE_NAME = "own.json"
 OWN_DATA_DIR_NAME = "own_data"
@@ -74,6 +82,14 @@ MAX_SLUG_CHARS = 48
 
 # What a campaign's id may be, which is how a page names it
 CAMPAIGN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def mcp_fingerprint(name: str, entry: Mapping[str, Any] | None) -> str:
+    """A short mark of how an MCP server is reached, which is the same while it is set up the same way, whether it is on
+    or off."""
+    given = {key: value for key, value in (entry or {}).items() if key not in NOT_ABOUT_REACHING}
+
+    return hashlib.sha256(json.dumps([name, given], sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
 def is_text(value: Any) -> bool:
@@ -318,15 +334,44 @@ class Workspace:
         return entry
 
     def remove_mcp_server(self, name: str) -> bool:
-        """Forgets a server. Whether there was one."""
+        """Forgets a server, and what it held. Whether there was one."""
         with self._mcp_lock:
             servers = self.load_mcp_servers()
             if name not in servers:
                 return False
             del servers[name]
             write_atomically(self.mcp_path, json.dumps({"servers": servers}, indent=4).encode("utf-8"))
+            seen = self.load_mcp_seen()
+            if seen.pop(name, None) is not None:
+                write_atomically(self.mcp_seen_path, json.dumps({"servers": seen}, indent=4).encode("utf-8"))
 
         return True
+
+    @property
+    def mcp_seen_path(self) -> Path:
+        return self.root / MCP_SEEN_FILE_NAME
+
+    def load_mcp_seen(self) -> dict[str, Any]:
+        """What the servers held when they were last connected to, by name, as server.mcp_seen keeps it."""
+        data = read_json(self.mcp_seen_path)
+        seen = data.get("servers") if isinstance(data, dict) else None
+
+        if not isinstance(seen, dict):
+            return {}
+
+        return {name: record for name, record in seen.items() if isinstance(name, str)}
+
+    def put_mcp_seen(self, name: str, record: dict[str, Any]) -> None:
+        """Keeps what a server held, in place of what was kept before. Nothing is kept for a server that is not set up,
+        or is set up differently from the record's fingerprint, as it is when a connection made before it was changed
+        finishes after."""
+        with self._mcp_lock:
+            servers = self.load_mcp_servers()
+            if name not in servers or record.get("fingerprint") != mcp_fingerprint(name, servers[name]):
+                return
+            seen = self.load_mcp_seen()
+            seen[name] = record
+            write_atomically(self.mcp_seen_path, json.dumps({"servers": seen}, indent=4).encode("utf-8"))
 
     @property
     def papers_dir(self) -> Path:

@@ -1354,6 +1354,8 @@ class MCPTools:
         self.prompts: tuple[MCPPrompt, ...] = ()
         # What could not be listed of what the servers hold besides tools, by the server's name
         self.problems: dict[str, tuple[str, ...]] = {}
+        # Everything each server listed besides its tools, by the server's name
+        self.held: dict[str, Held] = {}
         self.loop = loop
         self.log_dir = log_dir
         self.closed = False
@@ -1743,5 +1745,6 @@ def connect_mcp(
     opened.problems = {
         connection.server.name: connection.held.problems for connection in connections if connection.held.problems
     }
+    opened.held = {connection.server.name: connection.held for connection in connections}
 
     return opened
