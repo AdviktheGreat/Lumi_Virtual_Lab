@@ -53,17 +53,18 @@ export function readPromptArguments(prompt: PromptChoice, written: string): Prom
   if (taken.length === 0) return text === "" ? { ok: true, values: {} } : { ok: false, problem: "It takes no arguments" };
   const first = taken.find((argument) => argument.required) ?? taken[0];
   const marks = [...text.matchAll(new RegExp(`(?:^|\\s)(${taken.map((argument) => escaped(argument.name)).join("|")})=`, "g"))];
-  const values: Record<string, string> = {};
+  // A map, since the names of the arguments are the server's, and a name such as constructor is not one that is there already
+  const values = new Map<string, string>();
   const lead = (marks.length === 0 ? text : text.slice(0, marks[0].index)).trim();
-  if (lead !== "") values[first.name] = lead;
+  if (lead !== "") values.set(first.name, lead);
   for (const [at, mark] of marks.entries()) {
     const name = mark[1];
     const words = text.slice(mark.index + mark[0].length, at + 1 < marks.length ? marks[at + 1].index : text.length).trim();
-    if (name in values) return { ok: false, problem: `${name} is given twice` };
-    if (words !== "") values[name] = words;
+    if (values.has(name)) return { ok: false, problem: `${name} is given twice` };
+    if (words !== "") values.set(name, words);
   }
-  const lacking = taken.find((argument) => argument.required && !(argument.name in values));
-  if (lacking === undefined) return { ok: true, values };
+  const lacking = taken.find((argument) => argument.required && !values.has(argument.name));
+  if (lacking === undefined) return { ok: true, values: Object.fromEntries(values) };
 
   return { ok: false, problem: lacking === first ? `Type ${lacking.name}` : `Add ${lacking.name}=…` };
 }

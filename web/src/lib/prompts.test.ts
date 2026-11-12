@@ -128,6 +128,22 @@ describe("the arguments written after a prompt", () => {
     expect(readPromptArguments(odd, "axb=2 a.b=1")).toEqual({ ok: true, values: { axb: "2", "a.b": "1" } });
   });
 
+  it("are read for any name a server gives an argument, such as those that every object has", () => {
+    const odd = choice({
+      arguments: [
+        { name: "constructor", description: "", required: true },
+        { name: "toString", description: "", required: false },
+        { name: "__proto__", description: "", required: false },
+      ],
+    });
+
+    expect(readPromptArguments(odd, "")).toEqual({ ok: false, problem: "Type constructor" });
+    expect(readPromptArguments(odd, "a toString=b")).toEqual({ ok: true, values: { constructor: "a", toString: "b" } });
+    const given = readPromptArguments(odd, "a __proto__=b");
+    expect(given.ok && Object.keys(given.values)).toEqual(["constructor", "__proto__"]);
+    expect(given.ok && JSON.stringify(given.values)).toBe('{"constructor":"a","__proto__":"b"}');
+  });
+
   it("keep the lines of what is written", () => {
     expect(readPromptArguments(choice(), "line one\nline two depth=short")).toEqual({
       ok: true,
