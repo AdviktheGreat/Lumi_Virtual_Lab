@@ -233,6 +233,23 @@ A server can also ask a person something while one of its tools runs, as Proto's
 
 What a server's `instructions` say, and what the server says itself of how to use its tools, are told to the agents of a meeting given its tools, or a session given them.
 
+#### Resources and prompts
+
+Besides tools, a server may have **resources**, which are documents and data it can be asked for by an address (a URI), and **prompts**, which are workflows it offers a person to start. A server that says it has either is asked to list them when it is connected to, and what it lists, up to 200 of each, is on the connection:
+
+```python
+mcp.resources   # MCPResource: each server's resources, and the templates of the addresses it reads, with {parts} to fill in
+mcp.prompts     # MCPPrompt: name, what it is for, and the arguments it takes
+mcp.read_resource("genes", "genes://panel")                       # what it holds, as text
+mcp.render_prompt(mcp.prompts[0], {"symbol": "TP53"})             # a RenderedPrompt: .messages, and .text to begin a message with
+```
+
+- **The lead is given a tool for reading a server's resources**, `genes_read_resource` for the server `genes`, which takes an address. Its description lists the first twenty resources and templates the server listed, with their kinds and what they are, so that the lead knows what is there. It is given where the server has resources, unless the server's entry says `resources: false`, or chooses its `tools` and does not say `resources: true`, or the server has a tool of that name itself, which is warned of. What a resource says is data from the server, and the tool says so, so that the lead does not take it for an instruction.
+- **A resource that is not text is described**, as a tool's image or file is, and one that comes in several parts has each part's address before its words. A server that refuses an address, as it does for one it does not have, raises `MCPToolError` with what it said.
+- **A read can wait for a person's approval**, under the name `resources/read` in a server's `approval`: `ask: ["*"]` holds for reads as for every tool, `allow: ["resources/read"]` lets them through, and a list of tools' names does not touch them.
+- **A prompt is rendered, not run.** `render_prompt` asks the server to write it out for the arguments it is given, and checks them first: one it does not take, or one it needs that is not given, is refused. What comes back is what the server says, one message or several. Where the server wrote some as the assistant's, `.text` says who is speaking. Nothing has been done, and what the prompt says is the server's words, so use the prompts only of servers whose tools you would use. A prompt's `command` is the server's name and its own, made as a tool's name is.
+- **What cannot be listed does not keep the tools from being given.** A server that cannot list its resources, or its prompts, or does not do so within `start_timeout`, is connected to all the same, and `mcp.problems` says what could not be listed. Two prompts that would be written the same, such as `a-b` and `a_b`, are not both kept.
+
 #### Paperclip, Adaptyv, and Proto
 
 Three services built for agents doing biology have presets, a server's entry written out already, with what waits for approval and what the agents are told:

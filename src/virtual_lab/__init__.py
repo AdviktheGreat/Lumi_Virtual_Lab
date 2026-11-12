@@ -132,6 +132,7 @@ from virtual_lab.literature import (
     search_preprints,
 )
 from virtual_lab.mcp_auth import SignInError, sign_out_mcp
+from virtual_lab.mcp_context import MCPPrompt, MCPResource, RenderedPrompt
 from virtual_lab.mcp_presets import MCP_PRESETS, MCPPreset
 from virtual_lab.mcp_tools import MCPServerError, MCPToolError, MCPTools, connect_mcp
 from virtual_lab.paper_batch import (
@@ -334,6 +335,8 @@ __all__ = [
     "LocalExecutor",
     "LocalSession",
     "MCPPreset",
+    "MCPPrompt",
+    "MCPResource",
     "MCPServerError",
     "MCPToolError",
     "MCPTools",
@@ -368,6 +371,7 @@ __all__ = [
     "Question",
     "QuestionResult",
     "RecordNotFoundError",
+    "RenderedPrompt",
     "RepairAttempt",
     "RepairOutcome",
     "Resource",

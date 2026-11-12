@@ -1,13 +1,16 @@
 """An MCP server for the tests of connect_mcp, run as its own process.
 
 python mcp_test_server.py [--pid-file PATH] [--sleep SECONDS] [--say TEXT] [--instructions TEXT]
-    [--oauth [--token-seconds SECONDS] [--token-path PATH] [--deny]] [stdio | http PORT | sse PORT | die]
+    [--oauth [--token-seconds SECONDS] [--token-path PATH] [--deny]] [--context] [stdio | http PORT | sse PORT | die]
 
 With --oauth, a server over HTTP or SSE is signed in to with OAuth, from an authorization server
 of its own that registers any client and signs anyone in at once, as a browser would find once a
 person had signed in. Its tokens are issued at --token-path, away from the MCP server's own
 /token, as an authorization server on another host issues them. GET /oauth-stats says how many
 clients were registered, sign-ins made, and tokens refreshed.
+
+With --context, the server has resources and prompts as well as tools: a panel of genes, a picture, and a template for
+the address of a gene's card, and two prompts, one with an argument that may be left out.
 """
 
 import argparse
@@ -27,7 +30,7 @@ from mcp.server.auth.provider import (
 )
 from mcp.server.auth.routes import build_metadata
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
-from mcp.server.mcpserver import Context, Elicit, ElicitationResult, Resolve
+from mcp.server.mcpserver import AssistantMessage, Context, Elicit, ElicitationResult, Resolve, UserMessage
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
@@ -44,6 +47,7 @@ parser.add_argument("--oauth", action="store_true", help="Be signed in to with O
 parser.add_argument("--token-seconds", type=int, default=3600, help="Seconds an access token lasts")
 parser.add_argument("--token-path", default="/token", help="Where tokens are issued")
 parser.add_argument("--deny", action="store_true", help="Turn every sign-in down, as a person might")
+parser.add_argument("--context", action="store_true", help="Have resources and prompts")
 parser.add_argument("mode", nargs="?", default="stdio")
 parser.add_argument("port", nargs="?", type=int)
 arguments = parser.parse_args()
@@ -285,6 +289,40 @@ async def visit(ctx: Context) -> str:
     before 2026, which lets a server send a request of its own while a tool runs."""
     answer = await ctx.elicit_url("Pay for the test at this page.", "https://pay.example.org/test", "payment-1")
     return answer.action
+
+
+if arguments.context:
+
+    @server.resource(
+        "genes://panel",
+        name="panel",
+        title="The gene panel",
+        description="The genes of the test panel",
+        mime_type="text/plain",
+    )
+    def panel() -> str:
+        return "TP53\nBRCA1\n"
+
+    @server.resource("genes://logo", name="logo", mime_type="image/png")
+    def logo() -> bytes:
+        return b"\x89PNG\r\n\x1a\n" + bytes(range(16))
+
+    @server.resource("genes://gene/{symbol}", name="gene-card", description="A gene's card, by its symbol")
+    def gene_card(symbol: str) -> str:
+        if symbol != "TP53":
+            raise ValueError(f"There is no card for {symbol}")
+        return "TP53 is 393 amino acids long."
+
+    @server.prompt(name="summarize_gene", title="Summarize a gene", description="Summarize what is known of a gene")
+    def summarize_gene(symbol: str, depth: str = "short") -> str:
+        return f"Summarize what is known of the gene {symbol}, in a {depth} answer."
+
+    @server.prompt(name="compare-genes")
+    def compare_genes(first: str, second: str) -> list:
+        return [
+            UserMessage(f"Compare the genes {first} and {second}."),
+            AssistantMessage("I will compare what each does, and where they differ."),
+        ]
 
 
 @server.custom_route("/oauth-stats", methods=["GET"])

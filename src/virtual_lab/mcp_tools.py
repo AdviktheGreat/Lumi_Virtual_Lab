@@ -54,12 +54,24 @@ from virtual_lab.constants import (
     MCP_CALL_TIMEOUT,
     MCP_LOG_TAIL_CHARS,
     MCP_MAX_INSTRUCTIONS_CHARS,
+    MCP_MAX_LISTED,
     MCP_MAX_TOOL_PAGES,
     MCP_START_TIMEOUT,
     MCP_STOP_TIMEOUT,
 )
 from virtual_lab.custom_tools import clean_schema, inline_references
 from virtual_lab.mcp_auth import PausedClock, SignIn
+from virtual_lab.mcp_context import (
+    RESOURCE_READ,
+    MCPPrompt,
+    MCPResource,
+    RenderedPrompt,
+    check_prompt_arguments,
+    prompts_of,
+    read_resource_description,
+    read_resource_parameters,
+    resource_of,
+)
 from virtual_lab.mcp_presets import MCP_PRESETS, preset_entry
 from virtual_lab.records import truncate_text
 from virtual_lab.tools import Tool
@@ -87,6 +99,7 @@ SERVER_KEYS = frozenset(
         "preset",
         "approval",
         "instructions",
+        "resources",
     }
 )
 
@@ -160,6 +173,9 @@ class MCPServerConfig:
         server says itself, or None.
     :param setup: What to do before the server can be connected to, said when it cannot be, as a
         preset says it; or None.
+    :param resources: Whether the lead is given a tool for reading the server's resources, where it has
+        any: True or False as the config says, or None where it does not, which gives one unless the
+        config chose which tools to offer.
     """
 
     name: str
@@ -180,6 +196,7 @@ class MCPServerConfig:
     allow: tuple[str, ...] = ()
     instructions: str | None = field(default=None, repr=False)
     setup: str | None = field(default=None, repr=False)
+    resources: bool | None = None
 
     def needs_approval(self, tool: str) -> bool:
         """Whether each call to a tool, by its name on the server, waits for a person's approval."""
@@ -465,6 +482,9 @@ def parse_entry(name: str, entry: Mapping[str, Any]) -> MCPServerConfig | None:
     if instructions is not None and not isinstance(instructions, str):
         raise TypeError(f"The instructions of the MCP server {name} are text, not {type(instructions).__name__}")
     notes = (instructions or "").strip() or None
+    resources = entry.get("resources")
+    if resources is not None and not isinstance(resources, bool):
+        raise TypeError(f"resources of the MCP server {name} must be true or false, not {resources!r}")
     auth = entry.get("auth")
     if auth is not None and auth != "oauth":
         raise ValueError(
@@ -517,6 +537,7 @@ def parse_entry(name: str, entry: Mapping[str, Any]) -> MCPServerConfig | None:
             ask=ask,
             allow=allow,
             instructions=notes,
+            resources=resources,
         )
 
     if not isinstance(url, str):
@@ -547,6 +568,7 @@ def parse_entry(name: str, entry: Mapping[str, Any]) -> MCPServerConfig | None:
         ask=ask,
         allow=allow,
         instructions=notes,
+        resources=resources,
     )
 
 
@@ -628,6 +650,25 @@ def content_text(content: Iterable[Any]) -> str:
             parts.append(f"[Content of the type {kind}, which cannot be shown as text]")
 
     return "\n".join(parts)
+
+
+def resource_text(result: Any) -> str:
+    """What reading a resource gave, as text: the words of a text, and a note of what a file is that cannot be words. A
+    resource that comes in several parts has each part's address before its words."""
+    parts = []
+    for item in result.contents:
+        if isinstance(getattr(item, "text", None), str):
+            parts.append(item.text)
+        else:
+            kind_of_file = item.mime_type or "binary"
+            parts.append(
+                f"[A file at {item.uri} ({kind_of_file}, {decoded_size(getattr(item, 'blob', ''))}), "
+                "which cannot be shown as text]"
+            )
+    if len(parts) > 1:
+        parts = [f"[{item.uri}]\n{part}" for item, part in zip(result.contents, parts, strict=True)]
+
+    return "\n\n".join(parts)
 
 
 def tool_result(result: Any, name: str, wrapped: bool) -> Any:
@@ -727,6 +768,22 @@ class Holding:
             self.scope.cancel()
 
 
+@dataclass(frozen=True)
+class Held:
+    """What a server listed besides its tools, when it was connected to.
+
+    :param resources: Its resources and the templates of its addresses, in the order it listed them.
+    :param prompts: Its prompts.
+    :param problems: What could not be listed, and why, in words, which does not keep its tools from being given.
+    :param more: Whether it has more resources than are kept.
+    """
+
+    resources: tuple[MCPResource, ...] = ()
+    prompts: tuple[MCPPrompt, ...] = ()
+    problems: tuple[str, ...] = ()
+    more: bool = False
+
+
 class MCPConnection:
     """A connection to one MCP server, made again if the server stops."""
 
@@ -766,8 +823,11 @@ class MCPConnection:
         self.wrapped: dict[str, bool] = {}
         # What the server says of how to use its tools, when it is connected to
         self.instructions: str | None = None
-        # Each tool offered, by its name on the server, with its name and description here
+        # Each tool offered, by its name on the server, with its name and description here. Reading a resource is one,
+        # under the name that approval gives it
         self.offered: dict[str, tuple[str, str]] = {}
+        # What the server lists besides tools, when it is connected to
+        self.held = Held()
         # The time spent waiting for a person to sign in, which no time limit counts
         self.signing_in = PausedClock()
         # The SDK's OAuth provider, for a server signed in to, kept across connections so that
@@ -931,6 +991,68 @@ class MCPConnection:
 
         raise MCPServerError(f"{self.described} lists its tools in more than {MCP_MAX_TOOL_PAGES:,} pages")
 
+    async def list_pages(self, client: Any, method: str, what: str, items: str) -> tuple[list[Any], bool]:
+        """Everything the server lists that is kept, as a method of the client pages it: the first MCP_MAX_LISTED.
+
+        :return: What was listed, and whether the server has more.
+        """
+        found: list[Any] = []
+        cursor = None
+        seen: set[str] = set()
+        for _ in range(MCP_MAX_TOOL_PAGES):
+            page = await getattr(client, method)(cursor=cursor)
+            found.extend(getattr(page, items))
+            cursor = page.next_cursor
+            if len(found) > MCP_MAX_LISTED or (len(found) == MCP_MAX_LISTED and cursor is not None):
+                return found[:MCP_MAX_LISTED], True
+            if cursor is None:
+                return found, False
+            if cursor in seen:
+                raise MCPServerError(f"{self.described} lists its {what} in pages that repeat")
+            seen.add(cursor)
+
+        raise MCPServerError(f"{self.described} lists its {what} in more than {MCP_MAX_TOOL_PAGES:,} pages")
+
+    async def list_held(self, client: Any) -> Held:
+        """Lists the resources, the templates of their addresses, and the prompts of a server that says it has them.
+        What cannot be listed is said, and left out, since the server's tools do not depend on it."""
+        from mcp import MCPError
+        from mcp_types import INVALID_PARAMS, METHOD_NOT_FOUND
+
+        capabilities = getattr(client, "server_capabilities", None)
+        resources: list[MCPResource] = []
+        prompts: tuple[MCPPrompt, ...] = ()
+        problems: list[str] = []
+        more = False
+        name = self.server.name
+        if getattr(capabilities, "resources", None) is not None:
+            try:
+                listed, more = await self.list_pages(client, "list_resources", "resources", "resources")
+                resources.extend(resource_of(name, item) for item in listed)
+            except Exception as error:  # noqa: BLE001
+                problems.append(f"Its resources could not be listed: {self.server.redact(failure_text(error))}")
+            try:
+                listed, more_templates = await self.list_pages(
+                    client, "list_resource_templates", "resource templates", "resource_templates"
+                )
+                resources.extend(resource_of(name, item, template=True) for item in listed)
+                more = more or more_templates
+            except Exception as error:  # noqa: BLE001
+                # Optional in the protocol, and not said of in its capabilities, so a server without them may refuse
+                if not (isinstance(error, MCPError) and error.code in (METHOD_NOT_FOUND, INVALID_PARAMS)):
+                    problems.append(
+                        f"Its resource templates could not be listed: {self.server.redact(failure_text(error))}"
+                    )
+        if getattr(capabilities, "prompts", None) is not None:
+            try:
+                listed, _ = await self.list_pages(client, "list_prompts", "prompts", "prompts")
+                prompts, left_out = prompts_of(name, self.server.prefix, listed, tool_name)
+                problems.extend(left_out)
+            except Exception as error:  # noqa: BLE001
+                problems.append(f"Its prompts could not be listed: {self.server.redact(failure_text(error))}")
+
+        return Held(tuple(resources), prompts, tuple(problems), more)
+
     def wait(self, future: concurrent.futures.Future[Any], timeout: float | None) -> Any:
         """The future's result, waited for for at most timeout seconds, besides any spent waiting
         for a person to sign in, which may take them a while.
@@ -964,6 +1086,14 @@ class MCPConnection:
             except concurrent.futures.TimeoutError:
                 listing.cancel()
                 raise
+            holding_more = self.loop.submit(self.list_held(client))
+            try:
+                held = self.wait(holding_more, self.start_timeout)
+            except concurrent.futures.TimeoutError:
+                holding_more.cancel()
+                held = Held(
+                    problems=(f"It did not list its resources and prompts within {self.start_timeout:g} seconds",)
+                )
         except concurrent.futures.TimeoutError:
             self.end(holding, graceful=False)
             if log is not None:
@@ -987,6 +1117,7 @@ class MCPConnection:
         self.generation += 1
         self.stopped = False
         self.listed = tools
+        self.held = held
         self.wrapped = {tool.name: wraps_result(tool) for tool in tools}
         instructions = getattr(client, "instructions", None)
         self.instructions = (instructions.strip() or None) if isinstance(instructions, str) else None
@@ -1054,26 +1185,43 @@ class MCPConnection:
             connected to again, at the next call to one of its tools.
         :raises TimeoutError: If the tool did not answer within the time limit.
         """
+        if self.server.needs_approval(name):
+            self.approved(name, arguments)
+        result = self.send(lambda client: client.call_tool(name, arguments, read_timeout_seconds=self.timeout), "call")
+
+        try:
+            return tool_result(result, name, self.wrapped.get(name, False))
+        except MCPToolError as error:
+            # A server's error can quote what it was given, such as a URL with its API key
+            raise MCPToolError(self.server.redact(str(error))) from None
+
+    def send(self, request: Callable[[Any], Any], what: str) -> Any:
+        """Sends the server a request on its connection, which is made again first if the server has stopped.
+
+        :param request: Makes the request from the connection's client, as a coroutine.
+        :param what: What is asked, for the words that a refusal is told in: "call", "read", or "prompt".
+        :raises MCPToolError: If the server refuses it.
+        :raises MCPServerError: If the server stopped before it answered.
+        :raises TimeoutError: If the server did not answer within the time limit.
+        """
         import anyio
         from mcp import MCPError
         from mcp_types import CONNECTION_CLOSED, REQUEST_TIMEOUT
 
-        if self.server.needs_approval(name):
-            self.approved(name, arguments)
         client, generation = self.connected()
-        call = self.loop.submit(client.call_tool(name, arguments, read_timeout_seconds=self.timeout))
+        sent = self.loop.submit(request(client))
         too_slow = TimeoutError(f"The MCP server {self.server.name} did not answer within {self.timeout} seconds")
         try:
-            result = self.wait(call, None if self.timeout is None else self.timeout + CALL_TIMEOUT_MARGIN)
+            return self.wait(sent, None if self.timeout is None else self.timeout + CALL_TIMEOUT_MARGIN)
         except concurrent.futures.TimeoutError:
-            call.cancel()
+            sent.cancel()
             raise too_slow from None
         except MCPError as error:
             if error.code == REQUEST_TIMEOUT:
                 raise too_slow from None
             if error.code != CONNECTION_CLOSED:
                 raise MCPToolError(
-                    f"The MCP server {self.server.name} refused the call: {self.server.redact(error.message)}"
+                    f"The MCP server {self.server.name} refused the {what}: {self.server.redact(error.message)}"
                 ) from None
             self.lost(generation)
             raise self.stopped_error() from None
@@ -1081,11 +1229,46 @@ class MCPConnection:
             self.lost(generation)
             raise self.stopped_error() from None
 
-        try:
-            return tool_result(result, name, self.wrapped.get(name, False))
-        except MCPToolError as error:
-            # A server's error can quote what it was given, such as a URL with its API key
-            raise MCPToolError(self.server.redact(str(error))) from None
+    def read(self, uri: str) -> str:
+        """Reads one of the server's resources, or one that a template of its addresses makes.
+
+        :param uri: Its address, as the server lists it.
+        :return: What it holds as text, where it is text, and where it is not, what it is in words.
+        :raises ApprovalDeclined: If each read waits for a person's approval, and they decline.
+        :raises MCPToolError: If the server refuses, as it does for an address it does not have.
+        :raises MCPServerError: If the server stopped during the read.
+        :raises TimeoutError: If the server did not answer within the time limit.
+        """
+        if not isinstance(uri, str) or not uri.strip():
+            raise ValueError("The address of a resource is text, such as one the server lists")
+        if self.server.needs_approval(RESOURCE_READ):
+            self.approved(RESOURCE_READ, {"uri": uri})
+        result = self.send(lambda client: client.read_resource(uri), "read")
+
+        return self.server.redact(resource_text(result))
+
+    def render(self, prompt: MCPPrompt, arguments: Mapping[str, Any] | None = None) -> RenderedPrompt:
+        """Asks the server to write a prompt out for the arguments it is given.
+
+        :raises ValueError: If an argument is not one the prompt takes, or one it needs is not given.
+        :raises MCPToolError: If the server refuses.
+        :raises MCPServerError: If the server stopped before it answered.
+        :raises TimeoutError: If the server did not answer within the time limit.
+        """
+        given = check_prompt_arguments(prompt, arguments)
+        result = self.send(lambda client: client.get_prompt(prompt.name, given), "prompt")
+        messages = tuple(
+            (str(message.role), self.server.redact(content_text([message.content]))) for message in result.messages
+        )
+        if not any(words.strip() for _, words in messages):
+            raise MCPToolError(f"The prompt {prompt.name} of the MCP server {self.server.name} said nothing")
+
+        return RenderedPrompt(
+            server=self.server.name,
+            name=prompt.name,
+            messages=messages,
+            description=" ".join(str(result.description or "").split()),
+        )
 
     def approved(self, name: str, arguments: dict[str, Any]) -> None:
         """Asks a person whether a call may be made.
@@ -1146,6 +1329,11 @@ class MCPTools:
 
     :param tools: Every server's tools, to give a meeting or a session.
     :param servers: Each server's tools, by the server's name in the config.
+
+    Besides tools, a server may have resources, which are documents and data it can be asked for, and prompts, which are
+    workflows it offers a person to start. They are listed when it is connected to, as `resources` and `prompts`, each
+    with the name of the server it is of. The lead is given a tool for reading a server's resources among its tools,
+    and a prompt is rendered, with `render_prompt`, into the words that begin a message.
     """
 
     def __init__(
@@ -1158,10 +1346,43 @@ class MCPTools:
         self.connections = connections
         self.servers = tools
         self.tools: tuple[Tool, ...] = tuple(tool for server in tools.values() for tool in server)
+        self.resources: tuple[MCPResource, ...] = ()
+        self.prompts: tuple[MCPPrompt, ...] = ()
+        # What could not be listed of what the servers hold besides tools, by the server's name
+        self.problems: dict[str, tuple[str, ...]] = {}
         self.loop = loop
         self.log_dir = log_dir
         self.closed = False
         atexit.register(self.close)
+
+    def read_resource(self, server: str, uri: str) -> str:
+        """Reads a resource of one of the servers, as the lead's tool for it does.
+
+        :param server: The server's name in the config.
+        :param uri: The resource's address, as the server lists it, or one that a template of its addresses makes.
+        :raises ValueError: If there is no such server.
+        :raises ApprovalDeclined: If each read waits for a person's approval, and they decline.
+        :raises MCPToolError: If the server refuses.
+        :return: What it holds as text, and where it is not text, what it is in words.
+        """
+        return self.connection_of(server).read(uri)
+
+    def render_prompt(self, prompt: MCPPrompt, arguments: Mapping[str, Any] | None = None) -> RenderedPrompt:
+        """Asks the server a prompt is of to write it out for the arguments it is given.
+
+        :param prompt: One of `prompts`.
+        :param arguments: Its arguments by name, as text. Those it needs must be given.
+        :raises ValueError: If an argument is not one it takes, or one it needs is not given.
+        :raises MCPToolError: If the server refuses.
+        """
+        return self.connection_of(prompt.server).render(prompt, arguments)
+
+    def connection_of(self, server: str) -> MCPConnection:
+        for connection in self.connections:
+            if connection.server.name == server:
+                return connection
+        names = ", ".join(connection.server.name for connection in self.connections) or "none"
+        raise ValueError(f"There is no MCP server {server}: the servers are {names}")
 
     def close(self) -> None:
         """Stops the servers started here, and closes the connections to the others."""
@@ -1215,6 +1436,39 @@ def server_instructions(connection: MCPConnection) -> str | None:
     heading = f"The tools of the MCP server {server.name}, named {server.prefix}_ and then their names on the server:"
 
     return heading + "\n" + "\n\n".join(parts)
+
+
+def read_resource_tool(connection: MCPConnection, taken: Mapping[str, str], instructions: str | None) -> Tool | None:
+    """The tool that reads a server's resources, which the lead is given when the server has some, unless the config
+    turns it off or chose which tools to offer, or the server has a tool of that name itself.
+
+    :param taken: The names of the tools given so far.
+    """
+    server = connection.server
+    resources = connection.held.resources
+    if not resources or server.resources is False or (server.resources is None and server.tools is not None):
+        return None
+    name = tool_name(server.prefix, "read_resource")
+    if name in taken:
+        warnings.warn(
+            f"The MCP server {server.name} has a tool called {name}, so the lead is not given a tool for reading its "
+            "resources.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return None
+    description = read_resource_description(
+        server.name, resources, connection.held.more, approval=server.needs_approval(RESOURCE_READ)
+    )
+    connection.offered[RESOURCE_READ] = (name, description)
+
+    return Tool(
+        name=name,
+        description=description,
+        parameters=read_resource_parameters(),
+        function=connection.read,
+        instructions=instructions,
+    )
 
 
 def unused_approvals(server: MCPServerConfig, listed: Iterable[str]) -> list[str]:
@@ -1470,6 +1724,9 @@ def connect_mcp(
                         instructions=instructions,
                     )
                 )
+            if (reading := read_resource_tool(connection, names, instructions)) is not None:
+                names[reading.name] = RESOURCE_READ
+                made.append(reading)
             by_server[parsed.name] = tuple(made)
     except BaseException:
         opened.close()
@@ -1477,5 +1734,10 @@ def connect_mcp(
 
     opened.servers = by_server
     opened.tools = tuple(tool for server in by_server.values() for tool in server)
+    opened.resources = tuple(resource for connection in connections for resource in connection.held.resources)
+    opened.prompts = tuple(prompt for connection in connections for prompt in connection.held.prompts)
+    opened.problems = {
+        connection.server.name: connection.held.problems for connection in connections if connection.held.problems
+    }
 
     return opened
