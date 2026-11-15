@@ -5,6 +5,7 @@ import type { GivenTool, PaperAgent, PaperAgentGiven } from "@/lib/types";
 const TIER_TITLES: Record<string, string> = {
   A: "Runs the authors' code",
   D: "Reads the paper",
+  Imported: "Made by someone else, and not checked here",
 };
 
 export function describeTier(tier: string | null): string {
@@ -15,16 +16,28 @@ export function describeTier(tier: string | null): string {
 
 // What a tool does, in words
 export function describeKind(kind: GivenTool["kind"]): string {
+  if (kind === "imported") return "Calls the server that someone else runs, and asks you first";
+
   return kind === "run" ? "Runs the authors' own function" : "Reads what was found in the paper";
 }
 
 // How many tools of each kind, in a line
 export function describeTools(tools: readonly GivenTool[]): string {
   const reading = tools.filter((tool) => tool.kind === "reading").length;
-  const running = tools.length - reading;
+  const imported = tools.filter((tool) => tool.kind === "imported").length;
+  const running = tools.length - reading - imported;
   if (tools.length === 0) return "No tool is given.";
-  const parts = [`${count(reading, "tool")} that read${reading === 1 ? "s" : ""} the paper`];
-  if (running > 0) parts.push(`${running} that run${running === 1 ? "s" : ""} its code`);
+  const kinds: [number, string][] = [];
+  // The tools that read are always counted for an agent that was made here, even when there are none, as they are the first thing
+  // said of it
+  if (reading > 0 || imported === 0) kinds.push([reading, "read{s} the paper"]);
+  if (running > 0) kinds.push([running, "run{s} its code"]);
+  if (imported > 0) kinds.push([imported, "call{s} the server it was imported from"]);
+  const parts = kinds.map(([number, what], position) => {
+    const phrase = what.replace("{s}", number === 1 ? "s" : "");
+
+    return position === 0 ? `${count(number, "tool")} that ${phrase}` : `${number} that ${phrase}`;
+  });
 
   return `${parts.join(" and ")}.`;
 }

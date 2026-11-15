@@ -181,7 +181,9 @@ The Tools page (`/tools`, the Tools Nexus) shows what the lead can call besides 
   its card, since the one it was on is gone. A server that was added by another page since the catalog was read is refused
   with `exists`, which the page says before it reads both lists again. **Add MCP server** (the button of the page, and the one
   under the catalog) opens `ToolsAdd`, which is `AddServer` in a dialog, and returns the focus to the new card, or to the
-  button that opened it.
+  button that opened it. A note under the catalog (`data-testid="tools-agents"`) says that an agent that someone else made of a
+  paper, such as Paper2Agent's three, is not added here but imported under PaperAgents, where it is shown as imported and not
+  checked.
 
 Adaptyv's servers are not listed (the server leaves them out until they are ready, see `NOT_OFFERED` in
 `server/mcp.py`). A server of one's own is removed from its card after asking (`RemoveServer`).
@@ -195,7 +197,16 @@ is `aria-current`):
 - **Agents** (`/papers`) lists the PaperAgents, the latest first, each with which paper it is of, where its code is, and how
   many of its steps are done, and makes one: of a DOI, of a link, or of a file that is uploaded afterwards, with where its
   code is if that is known (checked where it is written, as the server checks it). With none yet, it says so, and points to
-  the surveys. An agent is named in the address's query (`/papers?agent=...`), as a run is.
+  the surveys. An agent is named in the address's query (`/papers?agent=...`), as a run is. An agent that was imported is
+  marked in the list (Imported, not checked here), and under Make an agent there is **Import an agent**
+  (`components/paper-agents-import.tsx`): the servers that Paper2Agent hosts, from the `importable` the server lists, each
+  said to be made by Paper2Agent and run on a Space on Hugging Face that Lumi does not run, with a button that imports it
+  (`POST /api/paperagents/import`), or adds it to the agent of its paper that there is, or, once an agent has it, a link to
+  that agent; and a form (`ImportForm`, which shares the fields of the paper, the title, and the code with Make an agent in
+  `components/paper-agent-fields.tsx`) for a server that is not listed. `src/lib/imported.ts` checks the address where it is
+  written, as the server does (no spaces, http or https, no `$`, `{`, or `}`, which a config would read as a variable, and no
+  name, password, query, or fragment, since a key belongs where keys are kept), and says in words who made an agent, where it
+  runs, and what is known of using the servers that Paper2Agent hosts.
 - **Surveys** (`/papers?view=surveys`) is where the lab reads many papers, and writes functions from what they share. It
   lists the runs, the latest first, each with where its papers come from and how far its reading has got, and makes one:
   from papers that are uploaded to it afterwards, from a folder on the server's machine, or from bioRxiv (a period, a
@@ -247,6 +258,18 @@ part says so and does not offer to fetch. Changing the agent in any way looks at
 takes the fetched code away. `src/lib/paperagents.ts` has the words the part uses (`stockRows`, `orderedChecks`,
 `describeEstimate`, and the rest), and `src/lib/use-paperagents.ts` its `usePaperAgentRepository`, which is looked at again as
 a fetching goes on and ends (`readingKey`).
+
+The Imported server part (`components/paper-agent-imported.tsx`, after the Tools part) is for an agent that someone else made, and
+for the way to make one of an agent made here. The header of an imported agent has the badges Imported and Not checked here. The
+part shows the tier, that nothing of Lumi's was done to it (the server's own words, `meaning`), who made it (only as far as the
+server says: `origin` is Paper2Agent only for the three addresses it knows), where it runs and its address, when it was
+imported and last connected to, and the tools the server listed, each with the names of what it is passed, as the server named
+them. **Connect again** (`POST /api/paperagents/{id}/imported/check`) lists them again, and if the server cannot be connected to
+says why and that what was kept is as it was; **Remove the server** asks first, and leaves the agent of the paper. An agent that
+was made here has a form to import a server for it (`POST /api/paperagents/import` with the agent's id). The In conversations
+part then shows the tier Imported (`describeTier`), the imported tools named as a conversation would call them (`kind:
+"imported"`, each said to call a server that someone else runs and to ask first), and what the tier means, from the server's
+`given` view.
 
 A survey run's page (`/papers?id=...`, whose link back goes to the surveys) has four parts.
 
@@ -518,7 +541,11 @@ The Tools page is tested in two places: the search of the web, which is one of t
 tried on the first scripted server beside the Tools settings (`e2e/own-server/tools-nexus.spec.ts`), and the servers and the
 catalog are tried here (`e2e/mcp/tools-nexus.spec.ts`), with servers of its own that are named for it, since the files run
 beside each other and the settings change the library's servers. A server of the catalog is added and shown, never asked
-for anything, since it is another person's.
+for anything, since it is another person's. The import of an agent that someone else made is tested there too
+(`e2e/mcp/imported.spec.ts`), against the test server over HTTP: the form and its refusals (a variable or a key in the address,
+a server that is not there, one that was imported already), the page of the imported agent, connecting again with the server
+stopped and started, removing the server, adding a server to an agent made here, and the three servers that Paper2Agent hosts,
+which the tests do not reach, so what the buttons send is looked at and the agent that is answered with is a real one.
 
 The scripted model answers a question with a short reply that repeats it. What else a message makes it do depends on
 a word in it:

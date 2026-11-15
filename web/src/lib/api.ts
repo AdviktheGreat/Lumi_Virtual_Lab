@@ -24,6 +24,7 @@ import type {
   Models,
   NewCampaign,
   NewChat,
+  NewImport,
   NewPaperAgent,
   NewPaperRun,
   OpenRouterList,
@@ -38,6 +39,7 @@ import type {
   PaperAgentBuildOptions,
   PaperAgentChange,
   PaperAgentGiven,
+  PaperAgentImportCheck,
   PaperAgentData,
   PaperAgentDataFetch,
   PaperAgentEnvironment,
@@ -490,6 +492,11 @@ export const api = {
   // The PaperAgents, and what a new one is asked for
   paperAgents: (signal?: AbortSignal) => request<PaperAgentsList>("GET", "/paperagents", undefined, signal),
   makePaperAgent: (agent: NewPaperAgent) => request<PaperAgent>("POST", "/paperagents", agent),
+  // Brings in an agent that someone else made, from the server that hosts it, which is connected to for a look and nothing is called
+  importPaperAgent: (agent: NewImport) => request<PaperAgent>("POST", "/paperagents/import", agent),
+  checkPaperAgentImport: (id: string) =>
+    request<PaperAgentImportCheck>("POST", `/paperagents/${encodeURIComponent(id)}/imported/check`),
+  removePaperAgentImport: (id: string) => request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/imported`),
   paperAgent: (id: string, signal?: AbortSignal) =>
     request<PaperAgent>("GET", `/paperagents/${encodeURIComponent(id)}`, undefined, signal),
   changePaperAgent: (id: string, change: PaperAgentChange) =>
