@@ -68,6 +68,12 @@ export function GivenSection({
           {describeGiving(agent.given)} {describeTools(given.tools)}
         </p>
       </div>
+      {given.imported !== null && (
+        <Aside tone="warning">
+          <span data-testid="given-imported">{given.imported.meaning}</span> The lead is told so, and is told to give a call only what you asked it to
+          analyse.
+        </Aside>
+      )}
       {given.problem !== null && (
         <Aside tone="warning">
           <span data-testid="given-problem">{given.problem}</span>

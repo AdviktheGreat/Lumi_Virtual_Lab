@@ -6,15 +6,13 @@ import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Looked } from "@/components/looked";
 import { ProblemNotice } from "@/components/messages";
+import { AgentFields } from "@/components/paper-agent-fields";
+import { ImportAgents } from "@/components/paper-agents-import";
 import { PageSection } from "@/components/page-section";
 import { useServer } from "@/components/server-provider";
-import { describedBy, Field } from "@/components/settings-fields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Radio } from "@/components/ui/radio";
 import { api } from "@/lib/api";
-import { formatBytes } from "@/lib/files";
 import {
   agentAddress,
   AGENTS_ADDRESS,
@@ -23,9 +21,6 @@ import {
   describeSteps,
   EMPTY_AGENT,
   existingOf,
-  MAX_AGENT_TITLE,
-  PAPER_KIND_LABELS,
-  PAPER_KINDS,
   repoName,
   type AgentDraft,
 } from "@/lib/paperagents";
@@ -78,6 +73,7 @@ function AgentRow({ agent }: { agent: PaperAgent }) {
           </Link>
         </h3>
         {agent.given && <Badge variant="secondary">Given to conversations</Badge>}
+        {agent.imported !== null && <Badge variant="outline">Imported, not checked here</Badge>}
       </div>
       <p className="break-all text-xs text-muted-foreground">{describePaper(agent.paper)}</p>
       {agent.repo !== null && <p className="break-all text-xs text-muted-foreground">Code: {repoName(agent.repo.url)}</p>}
@@ -154,89 +150,7 @@ function NewAgent({ list }: { list: PaperAgentsList }) {
       }}
       className="flex flex-col gap-4 rounded-lg border border-border p-3"
     >
-      <fieldset className="flex flex-wrap gap-x-5 gap-y-2" disabled={attempt.busy}>
-        <legend className="mb-1.5 text-sm font-medium">Which paper</legend>
-        {PAPER_KINDS.map((kind) => (
-          <label key={kind} className="flex items-center gap-2 text-sm">
-            <Radio name={field("kind")} checked={draft.kind === kind} onChange={() => change({ kind })} />
-            {PAPER_KIND_LABELS[kind]}
-          </label>
-        ))}
-      </fieldset>
-
-      {draft.kind === "doi" && (
-        <Field id={field("doi")} label="DOI" hint="Such as 10.1038/s41586-020-2649-2. A link to a DOI works too." problem={problems.doi}>
-          <Input
-            id={field("doi")}
-            value={draft.doi}
-            onChange={(event) => change({ doi: event.target.value })}
-            autoComplete="off"
-            spellCheck={false}
-            readOnly={attempt.busy}
-            aria-invalid={problems.doi !== undefined}
-            aria-describedby={describedBy(field("doi"), { hint: true, problem: problems.doi !== undefined })}
-          />
-        </Field>
-      )}
-
-      {draft.kind === "url" && (
-        <Field id={field("url")} label="Link to the paper" hint="Where it can be read on the web." problem={problems.url}>
-          <Input
-            id={field("url")}
-            value={draft.url}
-            onChange={(event) => change({ url: event.target.value })}
-            placeholder="https://"
-            autoComplete="off"
-            spellCheck={false}
-            readOnly={attempt.busy}
-            aria-invalid={problems.url !== undefined}
-            aria-describedby={describedBy(field("url"), { hint: true, problem: problems.url !== undefined })}
-          />
-        </Field>
-      )}
-
-      {draft.kind === "file" && (
-        <p className="text-xs text-muted-foreground">
-          You upload it to the agent once it is made. {list.suffixes.join(", ")} files are read, of up to {formatBytes(list.max_paper_bytes)}.
-        </p>
-      )}
-
-      <Field
-        id={field("title")}
-        label="Title"
-        hint={draft.kind === "file" ? "What the agent is called." : "What the agent is called. If it is left blank, the DOI or the link is used."}
-        problem={problems.title}
-      >
-        <Input
-          id={field("title")}
-          value={draft.title}
-          onChange={(event) => change({ title: event.target.value })}
-          maxLength={MAX_AGENT_TITLE * 4}
-          autoComplete="off"
-          readOnly={attempt.busy}
-          aria-invalid={problems.title !== undefined}
-          aria-describedby={describedBy(field("title"), { hint: true, problem: problems.title !== undefined })}
-        />
-      </Field>
-
-      <Field
-        id={field("repo")}
-        label="Where its code is"
-        hint={`Optional. The address of the project, such as https://github.com/owner/name, at ${list.repo_hosts.join(", ")}.`}
-        problem={problems.repo}
-      >
-        <Input
-          id={field("repo")}
-          value={draft.repo}
-          onChange={(event) => change({ repo: event.target.value })}
-          placeholder="https://github.com/owner/name"
-          autoComplete="off"
-          spellCheck={false}
-          readOnly={attempt.busy}
-          aria-invalid={problems.repo !== undefined}
-          aria-describedby={describedBy(field("repo"), { hint: true, problem: problems.repo !== undefined })}
-        />
-      </Field>
+      <AgentFields draft={draft} change={change} problems={problems} busy={attempt.busy} list={list} field={field} />
 
       {attempt.problem && (
         <div className="flex flex-col gap-1.5">
@@ -276,6 +190,14 @@ export function Agents() {
       <PageSection title="Make an agent">
         <Looked state={list.value} label="Looking at what an agent takes" failure="What an agent takes could not be looked at." onRetry={list.reload}>
           {(value) => <NewAgent list={value} />}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Import an agent"
+        intro="An agent that someone else made of a paper, which runs on a server of theirs, is brought in, to be used as one is. Nothing of the lab's is done to it, so it is shown as imported and not checked, and every call it is given waits for you."
+      >
+        <Looked state={list.value} label="Looking at what can be imported" failure="What can be imported could not be looked at." onRetry={list.reload}>
+          {(value) => <ImportAgents list={value} />}
         </Looked>
       </PageSection>
     </>

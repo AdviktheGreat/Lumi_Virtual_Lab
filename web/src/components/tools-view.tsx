@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Given } from "@/components/given";
 import { RemoveServer } from "@/components/mcp-add";
@@ -218,6 +219,19 @@ export function ToolsView() {
                     <Plus aria-hidden />
                     Add any MCP server
                   </Button>
+                </div>
+                <div className="flex flex-col gap-1 rounded-2xl border border-dashed border-border px-4 py-3" data-testid="tools-agents">
+                  <p className="text-sm text-muted-foreground">
+                    An agent that someone else made of a paper, such as the ones that Paper2Agent hosts for Scanpy, TISSUE, and AlphaGenome, is not
+                    added here. It is imported under{" "}
+                    <Link
+                      href="/papers"
+                      className="rounded-sm underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      PaperAgents
+                    </Link>
+                    , where it is shown as imported and not checked, and every call it is given waits for you.
+                  </p>
                 </div>
               </div>
             );

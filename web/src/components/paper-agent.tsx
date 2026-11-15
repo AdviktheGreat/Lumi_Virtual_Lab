@@ -11,6 +11,7 @@ import { CodeSection } from "@/components/paper-agent-code";
 import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
+import { ImportedSection } from "@/components/paper-agent-imported";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { ReferenceSection } from "@/components/paper-agent-reference";
 import { ToolsSection } from "@/components/paper-agent-tools";
@@ -28,6 +29,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -123,6 +125,12 @@ function AgentHeader({ agent, working }: { agent: PaperAgent; working: boolean }
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <h2 className="break-words font-serif text-2xl font-medium tracking-tight">{agent.title}</h2>
+          {agent.imported !== null && (
+            <div className="my-1 flex flex-wrap gap-2" data-testid="imported-badges">
+              <Badge variant="secondary">Imported</Badge>
+              <Badge variant="outline">Not checked here</Badge>
+            </div>
+          )}
           <p className="break-all text-sm text-muted-foreground">
             {link === null ? (
               describePaper(agent.paper)
@@ -757,6 +765,16 @@ function Agent({
             />
           )}
         </Looked>
+      </PageSection>
+      <PageSection
+        title={agent.imported === null ? "Import a server" : "Imported server"}
+        intro={
+          agent.imported === null
+            ? "An agent that someone else made of this paper runs on a server of theirs. Bringing it in lets you give it to conversations, shown as imported and not checked, with every call waiting for you."
+            : "This agent was made by someone else, and runs on a server of theirs. Nothing of the lab's has been done to it: what it says of itself is what its maker says."
+        }
+      >
+        <ImportedSection key={agent.id} agent={agent} onChanged={changed} />
       </PageSection>
       <PageSection
         title="In conversations"

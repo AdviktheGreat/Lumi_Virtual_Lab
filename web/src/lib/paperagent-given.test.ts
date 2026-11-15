@@ -3,7 +3,7 @@ import { describeGiving, describeKind, describeLimits, describeTier, describeToo
 import type { GivenTool, PaperAgent, PaperAgentGiven } from "./types";
 
 function tool(name: string, kind: GivenTool["kind"]): GivenTool {
-  return { name, kind, tier: kind === "run" ? "A" : "D", summary: "Does it.", parameters: [] };
+  return { name, kind, tier: kind === "run" ? "A" : kind === "imported" ? "Imported" : "D", summary: "Does it.", parameters: [] };
 }
 
 function agentOf(changes: Partial<PaperAgent> = {}): PaperAgent {
@@ -15,6 +15,7 @@ function agentOf(changes: Partial<PaperAgent> = {}): PaperAgent {
     repo: { url: "https://github.com/example/cell" },
     steps: { reading: "done", repository: "done", environment: "done", data: "skipped", tools: "done" },
     given: false,
+    imported: null,
     ...changes,
   } as PaperAgent;
 }
@@ -23,10 +24,11 @@ function givenOf(tools: GivenTool[], changes: Partial<PaperAgentGiven> = {}): Pa
   return {
     id: "cell",
     given: false,
-    tier: tools.some((one) => one.kind === "run") ? "A" : tools.length > 0 ? "D" : null,
+    tier: tools.some((one) => one.kind === "run") ? "A" : tools.some((one) => one.kind === "reading") ? "D" : tools.length > 0 ? "Imported" : null,
     tools,
     problem: null,
     meaning: "",
+    imported: null,
     limits: { call_seconds: 300, memory: "8g", cpus: "4" },
     ...changes,
   };
@@ -36,6 +38,7 @@ describe("describeTier", () => {
   it("says what a tier is, and that there is none when there is nothing to give", () => {
     expect(describeTier("A")).toBe("Tier A: runs the authors' code");
     expect(describeTier("D")).toBe("Tier D: reads the paper");
+    expect(describeTier("Imported")).toBe("Tier Imported: made by someone else, and not checked here");
     expect(describeTier(null)).toBe("Nothing to give yet");
   });
 
@@ -48,6 +51,7 @@ describe("describeKind", () => {
   it("says what a tool does", () => {
     expect(describeKind("run")).toBe("Runs the authors' own function");
     expect(describeKind("reading")).toBe("Reads what was found in the paper");
+    expect(describeKind("imported")).toBe("Calls the server that someone else runs, and asks you first");
   });
 });
 
@@ -59,6 +63,15 @@ describe("describeTools", () => {
       "2 tools that read the paper and 1 that runs its code.",
     );
     expect(describeTools([tool("a", "reading"), tool("c", "run"), tool("d", "run")])).toBe("1 tool that reads the paper and 2 that run its code.");
+  });
+
+  it("counts the tools of a server that was imported, which neither read the paper nor run its code", () => {
+    expect(describeTools([tool("a", "imported")])).toBe("1 tool that calls the server it was imported from.");
+    expect(describeTools([tool("a", "imported"), tool("b", "imported")])).toBe("2 tools that call the server it was imported from.");
+    expect(describeTools([tool("a", "reading"), tool("b", "imported"), tool("c", "imported")])).toBe(
+      "1 tool that reads the paper and 2 that call the server it was imported from.",
+    );
+    expect(describeTools([tool("a", "run"), tool("b", "imported")])).toBe("1 tool that runs its code and 1 that calls the server it was imported from.");
   });
 });
 

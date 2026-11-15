@@ -887,6 +887,72 @@ export interface PaperAgent {
   steps: Record<PaperAgentStep, PaperAgentStatus>;
   // Whether the conversations that are made from now on are given the agent, which only the person says
   given: boolean;
+  // What it was imported from, for an agent that someone else made of the paper, and null for one that was made here
+  imported: PaperAgentImported | null;
+}
+
+// One tool that the server of an imported agent listed when it was last connected to
+export interface ImportedTool {
+  // Its name on the server
+  name: string;
+  // What it is for, in a line
+  summary: string;
+  // The names of what it is passed
+  parameters: string[];
+}
+
+// An agent that someone else made, reached at a server that they run. Nothing of the lab's has been done to it, which is its tier.
+export interface PaperAgentImported {
+  kind: "hosted";
+  // Who made it, as far as is known: only the servers that Paper2Agent hosts say so, since a host's name does not show who made what it holds
+  origin: string | null;
+  url: string;
+  // The machine that runs it, which is not this one
+  host: string;
+  imported_at: string;
+  // When its server was last connected to, which is when its tools were listed
+  checked_at: string;
+  tier: string;
+  checked: false;
+  // Whether each call waits for the person's approval, which it always does
+  asks: true;
+  // What the tier says, in words
+  meaning: string;
+  tools: ImportedTool[];
+}
+
+// A server that others host, which is known to be an agent of a paper, and that can be imported with a click
+export interface ImportableAgent {
+  key: string;
+  title: string;
+  about: string;
+  made_by: string;
+  url: string;
+  // Where to read more of it
+  site: string;
+  paper: { kind: "doi"; doi: string };
+  // The paper's code, which it was made from
+  repo: string;
+  // The agent that has this server already, if one does
+  agent: string | null;
+  // The agent of its paper, if there is one, which the server could be added to
+  paper_agent: string | null;
+}
+
+// What to ask of the server to import an agent: the server and either the paper it is of, or the agent to add it to
+export interface NewImport {
+  url: string;
+  title?: string;
+  paper?: NewPaperAgent["paper"];
+  repo?: string;
+  agent?: string;
+}
+
+// Whether the server of an imported agent could be connected to again, and why not, with the agent as it is kept now
+export interface PaperAgentImportCheck {
+  ok: boolean;
+  reason: string | null;
+  agent: PaperAgent;
 }
 
 export interface PaperAgentRepo {
@@ -903,6 +969,8 @@ export interface PaperAgentsList {
   suffixes: string[];
   // The hosts the code of a paper may be at
   repo_hosts: string[];
+  // The servers that others host, which can be imported
+  importable: ImportableAgent[];
 }
 
 // Where a fact was found in the paper: the characters it is from and to in the text that was read, and the page of a PDF
@@ -1038,8 +1106,9 @@ export interface PaperAgentChange {
 // authors' code
 export interface GivenTool {
   name: string;
-  kind: "reading" | "run";
-  // D for one that reads, and for one that runs, the tier it was made as
+  // One of an imported agent calls the server that someone else runs, and was not checked here
+  kind: "reading" | "run" | "imported";
+  // D for one that reads, and for one that runs, the tier it was made as, and Imported for one of an imported agent
   tier: string;
   // What it does, in a line
   summary: string;
@@ -1051,13 +1120,16 @@ export interface GivenTool {
 export interface PaperAgentGiven {
   id: string;
   given: boolean;
-  // A if it has tools that run, D if it has only tools that read, and null if it has none
+  // A if it has tools that run, D if it has only tools that read, Imported if it has only those of the server it was imported from, and
+  // null if it has none
   tier: string | null;
   tools: GivenTool[];
   // Why the tools that run are not given, if they would be and cannot be, such as Docker not running
   problem: string | null;
   // What the tiers say, in words
   meaning: string;
+  // What the agent was imported from, if it was
+  imported: PaperAgentImported | null;
   limits: { call_seconds: number; memory: string; cpus: string };
 }
 
