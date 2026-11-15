@@ -48,17 +48,23 @@ function Imported({ agent, imported, onChanged }: { agent: PaperAgent; imported:
   const attempt = useAttempt(report);
   const [asking, setAsking] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // What the last connecting came to, in a live region, so that it is heard as well as seen
+  const [done, setDone] = useState("");
 
   async function again() {
     setFailure(null);
+    setDone("");
     const result = await attempt.run(() => api.checkPaperAgentImport(agent.id));
     if (!result) return;
-    if (result.ok) onChanged(result.agent);
-    else setFailure(result.reason ?? "The server could not be connected to.");
+    if (result.ok) {
+      onChanged(result.agent);
+      setDone(`Connected again. ${describeListed(result.agent.imported?.tools ?? [])}`);
+    } else setFailure(result.reason ?? "The server could not be connected to.");
   }
 
   async function remove() {
     setFailure(null);
+    setDone("");
     const next = await attempt.run(() => api.removePaperAgentImport(agent.id));
     if (next) onChanged(next);
   }
@@ -94,9 +100,14 @@ function Imported({ agent, imported, onChanged }: { agent: PaperAgent; imported:
       </p>
       {failure !== null && (
         <Aside tone="warning">
-          <span data-testid="imported-failure">{failure}</span> What was kept of the server is as it was.
+          <span role="alert" data-testid="imported-failure">
+            {failure} What was kept of the server is as it was.
+          </span>
         </Aside>
       )}
+      <p role="status" className="text-xs text-muted-foreground" data-testid="imported-done">
+        {done}
+      </p>
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" onClick={() => void again()} disabled={attempt.busy}>

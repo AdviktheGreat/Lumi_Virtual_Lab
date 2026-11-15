@@ -164,6 +164,7 @@ test("connects to the server again, says if it cannot be, and keeps what it had 
 
     own.stop();
     await section.getByRole("button", { name: "Connect again" }).click();
+    await expect(section.getByRole("alert")).toContainText("could not be connected to");
     await expect(section.getByTestId("imported-failure")).toContainText("could not be connected to");
     await expect(section).toContainText("What was kept of the server is as it was.");
     await expect(tools).toHaveCount(listed);
@@ -171,6 +172,7 @@ test("connects to the server again, says if it cannot be, and keeps what it had 
     await own.start();
     await section.getByRole("button", { name: "Connect again" }).click();
     await expect(section.getByTestId("imported-failure")).toHaveCount(0);
+    await expect(section.getByTestId("imported-done")).toContainText("Connected again. It listed");
     await expect(tools).toHaveCount(listed);
     expect(await accessibilityProblems(page)).toEqual([]);
   } finally {

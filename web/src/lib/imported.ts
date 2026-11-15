@@ -14,7 +14,8 @@ const KEY_PROBLEM =
 export function addressProblem(text: string): string | null {
   const typed = text.trim();
   if (typed === "") return "Give the address of the server.";
-  if (typed.length > MAX_ADDRESS_CHARS || /\s/.test(typed)) return `The address is up to ${MAX_ADDRESS_CHARS} characters, with no spaces.`;
+  // The server refuses a control character as well as a space
+  if (typed.length > MAX_ADDRESS_CHARS || /[\s\u0000-\u001f\u007f]/.test(typed)) return `The address is up to ${MAX_ADDRESS_CHARS} characters, with no spaces.`;
   if (!/^https?:\/\//i.test(typed)) return "The address begins with http:// or https://.";
   // A config puts the value of a variable that is named in an address in its place, which would send it to the server
   if (/[${}]/.test(typed)) return "The address has no $, {, or } in it, which would be read as the name of a variable.";
@@ -25,7 +26,9 @@ export function addressProblem(text: string): string | null {
     return "That is not a web address.";
   }
   if (link.hostname === "") return "That is not a web address.";
-  if (link.username !== "" || link.password !== "" || link.search !== "" || link.hash !== "") return KEY_PROBLEM;
+  // An @ before the host is a name, even an empty one, which `new URL` leaves as an empty username
+  const authority = typed.replace(/^https?:\/\//i, "").split(/[/?#]/, 1)[0];
+  if (authority.includes("@") || link.username !== "" || link.password !== "" || link.search !== "" || link.hash !== "") return KEY_PROBLEM;
 
   return null;
 }

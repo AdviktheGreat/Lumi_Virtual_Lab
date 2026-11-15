@@ -13,14 +13,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { checkImport, describeHosted, describeNote, EMPTY_IMPORT, importState, quickImport, titleOf, type ImportDraft } from "@/lib/imported";
-import { agentAddress, existingOf } from "@/lib/paperagents";
+import { agentAddress, existingOf, isLink } from "@/lib/paperagents";
 import type { ImportableAgent, PaperAgentsList } from "@/lib/types";
 import { useAttempt } from "@/lib/use-looked";
 import { cn } from "@/lib/utils";
 
 const LINK = "rounded-sm underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
 
+// A link to somewhere on the web, which opens in a new tab. What is not a web address is shown as the words and not a link, since it
+// is from the server.
 function Outside({ href, children }: { href: string; children: React.ReactNode }) {
+  if (!isLink(href)) return <span>{children}</span>;
+
   return (
     <a href={href} target="_blank" rel="noreferrer noopener" className={cn("inline-flex items-center gap-1", LINK)}>
       {children}

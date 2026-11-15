@@ -54,9 +54,25 @@ describe("addressProblem", () => {
   });
 
   it("sends a key that is in the address to where keys are kept", () => {
-    for (const address of ["https://person:secret@example.org/mcp", "https://example.org/mcp?key=secret", "https://example.org/mcp#top"]) {
+    for (const address of [
+      "https://person:secret@example.org/mcp",
+      "https://person@example.org/mcp",
+      "http://@example.org/mcp",
+      "https://:@example.org/mcp",
+      "https://example.org/mcp?key=secret",
+      "https://example.org/mcp#top",
+    ]) {
       expect(addressProblem(address), address).toContain("where keys are kept");
     }
+  });
+
+  it("takes an @ that is in the path, which is not a name", () => {
+    expect(addressProblem("https://example.org/@scope/mcp")).toBeNull();
+  });
+
+  it("refuses a control character, which the server refuses as well as a space", () => {
+    expect(addressProblem("https://example.org/mcp\u0000")).toContain("no spaces");
+    expect(addressProblem("https://example.org/m\u007fcp")).toContain("no spaces");
   });
 
   it("refuses what is not an address", () => {
