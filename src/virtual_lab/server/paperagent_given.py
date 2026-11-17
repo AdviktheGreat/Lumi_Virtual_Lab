@@ -13,8 +13,9 @@ given an agent is given tools, named from the agent so that they cannot be taken
   agent's code (paperagent_tools.py), which calls the authors' own function in a container made from the image of the
   agent's environment, with no network, as the tool was called when it was made, and gives back what came of it. A call
   is one call, in a process of its own, on a copy of the code of its own. What the tutorial got is not given to it. A
-  tool that has also passed two kinds of checks that its tutorial did not give it, and failed none, is of tier B
-  (paperagent_checks.py), which is worked out from what is kept each time, as the rest is.
+  tool that has also passed checks that its tutorial did not give it against two different things (the code's function
+  with other inputs, its tests, the paper's numbers), and failed none, is of tier B (paperagent_checks.py), which is
+  worked out from what is kept each time, as the rest is.
 
 What is given is worked out from what is kept now, each time a conversation is made, and again when a tool is called:
 an agent that is gone, tools that were taken away or made again, and an image that is not in Docker leave no tool that
@@ -83,10 +84,11 @@ LISTED_QUOTE_CHARS = 240
 
 MEANING = (
     "A tool of tier A calls the authors' own code in a sandbox with no network, and gave again what the tutorials got "
-    "for the arguments they passed. A tool of tier B has also passed two kinds of checks that its tutorial did not "
-    "give it, and failed none; of those, the checks with other inputs and with the paper's numbers call the tool, and "
-    "the code's own tests are of the code's function. A tool of tier D only reads what was found in the paper. None of "
-    "them shows that what it says or gives is right."
+    "for the arguments they passed. A tool of tier B has also passed checks that its tutorial did not give it against "
+    "two different things (the code's own function with other inputs, the code's own tests, the paper's numbers), and "
+    "failed none; of those, the checks with other inputs and with the paper's numbers call the tool, and the code's "
+    "own tests are of the code's function. A tool of tier D only reads what was found in the paper. None of them shows "
+    "that what it says or gives is right."
 )
 
 

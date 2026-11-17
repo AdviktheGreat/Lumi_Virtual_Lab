@@ -19,21 +19,16 @@ passed. A number can still be the same by chance, and a quantity can still be on
 """
 
 import json
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from virtual_lab.constants import CONSISTENT_TEMPERATURE
-from virtual_lab.export import money
-from virtual_lab.llm import ModelSource, resolve_chat_models
 from virtual_lab.paperagents import checking, wrappers, written
 from virtual_lab.paperagents import toolmaking as making
+from virtual_lab.paperagents.asking import Asker, neutralize
 from virtual_lab.paperagents.comparing import shown
-from virtual_lab.structured import StructuredOutputError, request_structured_output
-from virtual_lab.utils import CostUnknownError, MeetingUsage
 
 # How many of the paper's numbers are looked for, how many calls of a tool are looked in, in how many places a number
 # may be in one result before it is too common there to say anything, and how many candidates a model is asked of
@@ -46,7 +41,6 @@ MAX_SHOWN_CHARS = 300
 MAX_QUOTE_CHARS = 400
 MAX_DESCRIPTION_CHARS = 400
 MAX_ANSWER_TOKENS = 1500
-MAX_NOTE_CHARS = 300
 
 CANDIDATES_TAG = "candidates"
 
@@ -70,11 +64,6 @@ JUDGE_PROMPT = "\n".join(
 )
 
 
-def neutralize(text: str, tag: str) -> str:
-    """Text that cannot close the tags it is given in, so that nothing in it is taken for what follows them."""
-    return re.sub(rf"<\s*(/?)\s*{tag}", rf"<\1 {tag}", text, flags=re.IGNORECASE)
-
-
 class CandidateAnswer(BaseModel):
     """A model's answer for one candidate."""
 
@@ -89,11 +78,6 @@ class Judgement(BaseModel):
     field required."""
 
     answers: list[CandidateAnswer] = Field(description="One answer for each candidate.")
-
-
-class LimitReached(RuntimeError):
-    """Raised before a request, when asking a model again would go beyond what may be spent, or when what has been spent
-    can no longer be told."""
 
 
 @dataclass(frozen=True)
@@ -219,69 +203,19 @@ class Judge(Protocol):
     def spent(self) -> float | None: ...
 
 
-class ModelJudge:
-    """A model that is asked of the candidates of one tool at a time, within a limit on what is spent.
-
-    :param model: The model to ask.
-    :param max_cost: The most to spend, in USD, over all of the requests, checked before every one.
-    :param chat_models: The chat model to ask, as hold_meeting takes it.
-    :param client: An OpenAI client, as hold_meeting takes it.
-    """
-
-    def __init__(
-        self,
-        model: str,
-        max_cost: float,
-        chat_models: ModelSource | None = None,
-        client: Any = None,
-        usage: MeetingUsage | None = None,
-    ) -> None:
-        self.model = model
-        self.max_cost = max_cost
-        self.usage = usage if usage is not None else MeetingUsage()
-        self.llm = resolve_chat_models([model], chat_models=chat_models, client=client)[model]
-
-    def spent(self) -> float | None:
-        try:
-            return self.usage.compute_cost()
-        except CostUnknownError:
-            return None
-
-    def check_limit(self) -> None:
-        """:raises LimitReached: If the limit has been reached, or what has been spent cannot be told."""
-        spent = self.spent()
-        if spent is None:
-            raise LimitReached("A response did not report what it used, so the limit on spending can no longer be kept")
-        if spent >= self.max_cost:
-            raise LimitReached(
-                f"The limit on spending was reached: {money(spent)} of the {money(self.max_cost)} allowed"
-            )
+class ModelJudge(Asker):
+    """A model that is asked of the candidates of one tool at a time, within a limit on what is spent (asking.py)."""
 
     def judge(self, tool: dict[str, Any], candidates: Sequence[Candidate], calls: Sequence[dict[str, Any]]) -> Judged:
         """Asks whether each candidate is the same quantity, and keeps only yes to a candidate that was found.
 
-        :raises LimitReached: Before a request, if the limit has been reached.
+        :raises asking.LimitReached: Before a request, if the limit has been reached.
         """
-        self.check_limit()
-        try:
-            answer, reply = request_structured_output(
-                llm=self.llm,
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": JUDGE_PROMPT},
-                    {"role": "user", "content": describe_candidates(tool, candidates, calls)},
-                ],
-                schema=Judgement,
-                temperature=CONSISTENT_TEMPERATURE,
-                max_completion_tokens=MAX_ANSWER_TOKENS,
-            )
-        except StructuredOutputError as error:
-            self.usage.add(self.model, error.usage)
-            return Judged(set(), str(error)[:MAX_NOTE_CHARS])
-        except Exception as error:
-            # A failure to reach the model, such as a key that is refused, is this kind's alone, and not the job's
-            return Judged(set(), f"The request failed: {type(error).__name__}: {str(error)[:MAX_NOTE_CHARS]}")
-        self.usage.add(self.model, reply.usage)
+        answer, note = self.ask(
+            JUDGE_PROMPT, describe_candidates(tool, candidates, calls), Judgement, MAX_ANSWER_TOKENS
+        )
+        if answer is None:
+            return Judged(set(), note)
 
         return Judged(accepted_of(answer, candidates))
 
@@ -330,7 +264,7 @@ def check_paper_numbers(
     :param claims: The claims of the paper, as they are kept.
     :param judge: What says whether a paper's sentence is about what a result holds.
     :param seconds: How long the calls may take together.
-    :raises LimitReached: If the limit on spending was reached before a model could be asked.
+    :raises asking.LimitReached: If the limit on spending was reached before a model could be asked.
     :raises StoppedError: If whoever started the runs asked to stop them.
     :raises DockerUnavailableError: If Docker did not run them.
     """

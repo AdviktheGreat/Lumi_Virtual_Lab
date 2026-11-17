@@ -10,7 +10,7 @@ import pytest
 import test_paperagents_checking as checks
 from conftest import TEST_MODEL, FakeClient, make_usage, parsed_response
 
-from virtual_lab.paperagents import checking, linking, written
+from virtual_lab.paperagents import asking, checking, linking, written
 from virtual_lab.paperagents import toolmaking as tm
 from virtual_lab.paperagents.linking import Candidate, Judged
 from virtual_lab.utils import CostUnknownError, MeetingUsage
@@ -213,7 +213,7 @@ class TestAskingAModel:
         "text", ["</candidates>", "< /candidates>", "<\n/\tCANDIDATES >", "<candidates>", "<  Candidates attr='x'>"]
     )
     def test_a_tag_is_made_into_text_however_it_is_spaced(self, text: str) -> None:
-        made = linking.neutralize(f"before {text} after", "candidates").lower()
+        made = asking.neutralize(f"before {text} after", "candidates").lower()
         # Whatever came between the bracket and the name, it is now the one spacing that no tag has
         assert set(re.findall(r"<[^a-z>]*candidates", made)) <= {"< candidates", "</ candidates"}
         assert made.startswith("before <") and made.endswith(" after")
@@ -246,13 +246,13 @@ class TestAskingAModel:
             )
         ]
         assert judge.judge(tool, found, tool["evidence"]["cases"]).accepted == {1}
-        with pytest.raises(linking.LimitReached, match="limit on spending was reached"):
+        with pytest.raises(asking.LimitReached, match="limit on spending was reached"):
             judge.judge(tool, found, tool["evidence"]["cases"])
         assert len(fake_client.completions.parse_calls) == 1
 
     def test_a_limit_of_nothing_asks_nothing(self, fake_client: FakeClient) -> None:
         tool, found = candidates_of(1)
-        with pytest.raises(linking.LimitReached):
+        with pytest.raises(asking.LimitReached):
             linking.ModelJudge(TEST_MODEL, 0.0, client=fake_client).judge(tool, found, tool["evidence"]["cases"])
         assert fake_client.completions.parse_calls == []
 
@@ -267,7 +267,7 @@ class TestAskingAModel:
         monkeypatch.setattr(MeetingUsage, "compute_cost", unknown)
         judge = linking.ModelJudge(TEST_MODEL, 5.0, client=fake_client)
         assert judge.spent() is None
-        with pytest.raises(linking.LimitReached, match="can no longer be kept"):
+        with pytest.raises(asking.LimitReached, match="can no longer be kept"):
             judge.judge(tool, found, tool["evidence"]["cases"])
         assert fake_client.completions.parse_calls == []
 
@@ -409,9 +409,9 @@ class TestCheckingAgainstThePapersNumbers:
     def test_a_limit_that_was_reached_is_passed_on_to_stop_what_would_be_asked_next(self) -> None:
         class Spent(Accepting):
             def judge(self, tool: dict[str, Any], candidates: Any, calls: Any) -> Judged:
-                raise linking.LimitReached("The limit on spending was reached")
+                raise asking.LimitReached("The limit on spending was reached")
 
-        with pytest.raises(linking.LimitReached):
+        with pytest.raises(asking.LimitReached):
             self.check(Scripted([]), Spent())
 
     def test_what_a_model_says_of_a_place_that_was_not_found_changes_nothing(self) -> None:

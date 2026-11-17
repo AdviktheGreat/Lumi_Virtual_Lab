@@ -2,10 +2,10 @@
 keeps it as it is made.
 
 This is what PaperAgents does with the pieces: the tools that are kept are called with inputs that no tutorial chose,
-the tests that the code came with are run, and, if it is asked for, the numbers that the paper reports are looked for in
-what the tools gave and the tools are called again for them, in the environment's image (paperagents/checking.py,
-paperagents/linking.py), and each check is kept, bound to what it was made of (paperagent_checks.py). A tool's tier is
-worked out from what is kept, and not here.
+the tests that the code came with are run, and, if they are asked for, the numbers that the paper reports are looked for
+in what the tools gave and the tools are called again for them, and inputs that a model of another family chose are
+tried, in the environment's image (paperagents/checking.py, linking.py, proposing.py), and each check is kept, bound to
+what it was made of (paperagent_checks.py). A tool's tier is worked out from what is kept, and not here.
 """
 
 import tempfile
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from virtual_lab.export import money
-from virtual_lab.paperagents import checking, linking
+from virtual_lab.paperagents import asking, checking, linking, proposing
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents.comparing import Tolerance
@@ -74,26 +74,35 @@ def run_kind(
     seconds: float,
     claims: Sequence[dict[str, Any]],
     judge: linking.Judge | None,
+    verifier: proposing.Verifier | None = None,
 ) -> checking.Outcome:
     """Makes one kind of check of one tool.
 
     :param claims: The claims of the paper, which the paper's numbers are taken from.
     :param judge: What says whether a number of the paper's is the quantity that a result holds, for that kind.
-    :raises linking.LimitReached: If the limit on what a model may cost was reached before it was asked.
+    :param verifier: What proposes inputs to try, for the kind that a model of another family chooses.
+    :raises asking.LimitReached: If the limit on what a model may cost was reached before it was asked.
+    :raises ValueError: If the kind needs a model and none was given.
     :raises StoppedError: If the job was stopped.
     :raises DockerUnavailableError: If Docker did not run a call.
     """
     if kind == checking.HELDOUT:
-        tolerance = Tolerance(**tool["evidence"]["tolerance"])
-
-        return checking.check_held_out(runner, tool, repo, seconds, tolerance)
+        return checking.check_held_out(runner, tool, repo, seconds, Tolerance(**tool["evidence"]["tolerance"]))
     if kind == checking.PAPER_NUMBERS:
         if judge is None:
             raise ValueError("Checking against the numbers that the paper reports needs a model to ask")
 
         return linking.check_paper_numbers(runner, tool, claims, judge, seconds)
+    if kind == checking.VERIFIER:
+        if verifier is None:
+            raise ValueError("Checking with inputs that a model of another family chose needs a model to ask")
+        tolerance = Tolerance(**tool["evidence"]["tolerance"])
 
-    return checking.check_repo_tests(runner, tool, repo, seconds)
+        return proposing.check_verifier(runner, tool, repo, verifier, seconds, tolerance)
+    if kind == checking.REPO_TESTS:
+        return checking.check_repo_tests(runner, tool, repo, seconds)
+
+    raise ValueError(f"{kind} is not a kind of check")
 
 
 def check_all(
@@ -110,6 +119,7 @@ def check_all(
     docker_command: tuple[str, ...],
     claims: Sequence[dict[str, Any]] = (),
     judge: linking.Judge | None = None,
+    verifier: proposing.Verifier | None = None,
 ) -> tuple[str, dict[str, int]]:
     """Makes the checks one after another, keeping each as it is made, so that a job that is stopped keeps what it had
     made. A check that is made again takes the place of the one that was kept.
@@ -120,8 +130,10 @@ def check_all(
     :param repo: The code that was fetched, which is read for what each function takes and never run.
     :param data: The folder of the data that the tutorials were given, if they were, which the calls are given too.
     :param claims: The claims of the paper, kept as read, which the check against its numbers is bound to.
-    :param judge: What a model is asked through, which the check against the paper's numbers needs. A limit that it
-        reaches stops that kind, and not the others.
+    :param judge: What a model is asked through, which the check against the paper's numbers needs.
+    :param verifier: What a model of another family is asked through, which the check with inputs that it chose needs.
+        The two are given the same record of what was used, so that they keep to one limit, which stops the kinds that
+        ask a model, and not the others.
     :return: What it came to, in a sentence, and how many checks came to each status.
     :raises StoppedError: If the job was stopped.
     :raises DockerUnavailableError: If Docker did not run a call.
@@ -151,14 +163,14 @@ def check_all(
             if left < referencing.LEAST_SECONDS:
                 unreached = len(work) - number + 1
                 break
-            if kind == checking.PAPER_NUMBERS and limit is not None:
+            if kind in checking.MODEL_KINDS and limit is not None:
                 unasked += 1
                 continue
             job.update(f"Checking the tools: {tool['name']} ({number} of {len(work)})")
             started = time.monotonic()
             try:
-                outcome = run_kind(runner, tool, kind, repo, min(limits.minutes * 60, left), claims, judge)
-            except linking.LimitReached as error:
+                outcome = run_kind(runner, tool, kind, repo, min(limits.minutes * 60, left), claims, judge, verifier)
+            except asking.LimitReached as error:
                 limit = str(error)
                 unasked += 1
                 job.log(f"{tool['name']}: {limit}")
@@ -174,9 +186,15 @@ def check_all(
             job.log(describe_check(tool["name"], kind, outcome))
     said = f" {unreached} were not made, as the time was used." if unreached else ""
     if limit is not None:
-        said += f" {unasked} of the checks against the paper's numbers were not made. {limit}."
-    if judge is not None and checking.PAPER_NUMBERS in kinds and (spent := judge.spent()):
-        said += f" Asking {judge.model} about the paper's numbers cost {money(spent)}."
+        said += f" {unasked} of the checks that ask a model were not made. {limit}."
+    asked = [
+        asker
+        for kind, asker in ((checking.PAPER_NUMBERS, judge), (checking.VERIFIER, verifier))
+        if kind in kinds and asker is not None
+    ]
+    # What they were given to keep one limit on is one record, which any of them tells the total of
+    if asked and (spent := asked[0].spent()):
+        said += f" Asking {' and '.join(dict.fromkeys(asker.model for asker in asked))} cost {money(spent)}."
 
     return (
         f"Made {done} check{'s' if done != 1 else ''} of {len(tools)} tool{'s' if len(tools) != 1 else ''}: "

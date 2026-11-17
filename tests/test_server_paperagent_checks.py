@@ -1,6 +1,7 @@
 """Tests of checking a PaperAgent's tools by what their tutorials did not give them: what would be checked, the job that
 checks and what it is given, what is kept for which wrapper, commit, image, and reference run and what is shown when it
-is not what is kept now, that a tool is of tier B only when two kinds passed and none failed and only by what is kept,
+is not what is kept now, that a tool is of tier B only when checks against two different bases passed and none failed
+and only by what is kept,
 what the other operations do while the checks are made and after, and the tier that a conversation is given. Docker and
 its containers are replaced by stand-ins, so what the server does is what is looked at here; the real checks are in
 test_paperagents_checking."""
@@ -65,7 +66,7 @@ def test_tally():
 DIRECT = re.compile(r"import_module\('([\w.]+)'\), '(\w+)'")
 # The kinds that are made when none are named, and all of them, with the one that asks a model last
 RUN = ("heldout", "repo_tests")
-ALL = (*RUN, "paper_numbers")
+ALL = (*RUN, "paper_numbers", "verifier")
 
 
 def passed_tests(ids: list[str]) -> dict[str, Any]:
@@ -215,7 +216,10 @@ class TestWhatCanBeChecked:
         assert found["docker"] == {"ready": True, "message": None}
         assert [kind["kind"] for kind in found["kinds"]] == list(ALL)
         assert all(kind["title"] and "not show" in kind["what"] for kind in found["kinds"])
-        assert found["kinds_for_b"] == 2 and "does not show that what the tool gives is right" in found["meaning"]
+        assert found["bases_for_b"] == 2 and "does not show that what the tool gives is right" in found["meaning"]
+        assert found["bases"] == checking.BASES
+        assert [kind["basis"] for kind in found["kinds"]] == ["function", "tests", "paper", "function"]
+        assert [kind["model"] for kind in found["kinds"]] == [False, False, True, True]
         limits = found["limits"]
         assert (limits["default_minutes"], limits["max_total_minutes"], limits["default_repeats"]) == (5, 180, 2)
         assert (limits["max_gigabytes"], limits["memory"], limits["pids"]) == (20, "8g", 1024)
@@ -244,6 +248,7 @@ class TestWhatCanBeChecked:
                 ("heldout", "not_run", None),
                 ("repo_tests", "not_run", None),
                 ("paper_numbers", "not_run", None),
+                ("verifier", "not_run", None),
             ]
             assert all("details" not in entry for entry in tool["evidence"])
         json.dumps(found)
@@ -525,7 +530,7 @@ class TestWhenItGoesWrong:
         assert job.state == "stopped"
         found = tools_of(agents, made)
         assert found["map_cells"]["evidence"][0]["status"] == "passed"
-        assert [entry["status"] for entry in found["tally"]["evidence"]] == ["not_run", "not_run", "not_run"]
+        assert [entry["status"] for entry in found["tally"]["evidence"]] == ["not_run"] * 4
         assert found["tally"]["tier"] == "A"
         del replays.gates["tally"]
         check(agents, made)
@@ -605,11 +610,7 @@ class TestWhatTheyBelongTo:
 
         assert not (directory / "checks" / "independent").exists()
         make(agents, made)
-        assert [entry["status"] for entry in tools_of(agents, made)["tally"]["evidence"]] == [
-            "not_run",
-            "not_run",
-            "not_run",
-        ]
+        assert [entry["status"] for entry in tools_of(agents, made)["tally"]["evidence"]] == ["not_run"] * 4
 
     @pytest.mark.parametrize("operation", ["clear_reference", "clear_environment", "clear_repository"])
     def test_checks_go_with_what_the_tools_were_made_from(
@@ -673,8 +674,8 @@ class TestWhatIsNotWhatIsKeptNow:
 
         found = tools_of(agents, made)["tally"]
         assert found["tier"] == "A" and found["passed"] == []
-        assert [entry["status"] for entry in found["evidence"]] == ["stale", "stale", "not_run"]
-        assert [entry["was"] for entry in found["evidence"]] == ["passed", "passed", None]
+        assert [entry["status"] for entry in found["evidence"]] == ["stale", "stale", "not_run", "not_run"]
+        assert [entry["was"] for entry in found["evidence"]] == ["passed", "passed", None, None]
         assert "counts for nothing" in found["evidence"][0]["summary"]
         assert tools_of(agents, made)["map_cells"]["tier"] == "B"
         check(agents, made, tools=["tally"])
@@ -694,7 +695,7 @@ class TestWhatIsNotWhatIsKeptNow:
         rewrite(workspace, made, "tally", "heldout", {key: value})
 
         found = tools_of(agents, made)["tally"]
-        assert [entry["status"] for entry in found["evidence"]] == ["stale", "passed", "not_run"]
+        assert [entry["status"] for entry in found["evidence"]] == ["stale", "passed", "not_run", "not_run"]
         assert found["tier"] == "A"
 
     @pytest.mark.parametrize(
@@ -719,7 +720,7 @@ class TestWhatIsNotWhatIsKeptNow:
         rewrite(workspace, made, "tally", "heldout", change)
 
         found = tools_of(agents, made)["tally"]
-        assert [entry["status"] for entry in found["evidence"]] == ["not_run", "passed", "not_run"]
+        assert [entry["status"] for entry in found["evidence"]] == ["not_run", "passed", "not_run", "not_run"]
         assert found["tier"] == "A"
 
     def test_a_file_that_is_not_json_or_is_a_link_or_too_big_is_not_read(
@@ -748,11 +749,7 @@ class TestWhatIsNotWhatIsKeptNow:
         folder.rename(outside)
         folder.symlink_to(outside)
 
-        assert [entry["status"] for entry in tools_of(agents, made)["tally"]["evidence"]] == [
-            "not_run",
-            "not_run",
-            "not_run",
-        ]
+        assert [entry["status"] for entry in tools_of(agents, made)["tally"]["evidence"]] == ["not_run"] * 4
         assert tools_of(agents, made)["tally"]["tier"] == "A"
 
     def test_a_tool_that_says_it_is_of_tier_b_is_not_shown_and_its_tier_is_what_its_checks_come_to(
@@ -837,8 +834,10 @@ class TestWhatIsAsked:
 
         assert (found["name"], found["made_as"], found["tier"]) == ("tally", "A", "B")
         assert "does not show that what the tool gives is right" in found["meaning"]
-        heldout, tests, numbers = found["evidence"]
+        heldout, tests, numbers, verifier = found["evidence"]
         assert (numbers["kind"], numbers["status"], numbers["file"]) == ("paper_numbers", "not_run", None)
+        assert (verifier["kind"], verifier["status"], verifier["file"]) == ("verifier", "not_run", None)
+        assert [entry["basis"] for entry in found["evidence"]] == ["function", "tests", "paper", "function"]
         assert heldout["details"]["counts"]["agree"] == 1 and heldout["limits"]["repeats"] == 2
         assert tests["details"]["ids"] == ["tests/test_mapping.py::test_tally"]
         assert heldout["seconds"] >= 0 and heldout["file"].endswith("tally/heldout.json")
