@@ -72,7 +72,7 @@ JUDGE_PROMPT = "\n".join(
 
 def neutralize(text: str, tag: str) -> str:
     """Text that cannot close the tags it is given in, so that nothing in it is taken for what follows them."""
-    return re.sub(rf"<(/?)\s*{tag}", rf"<\1 {tag}", text, flags=re.IGNORECASE)
+    return re.sub(rf"<\s*(/?)\s*{tag}", rf"<\1 {tag}", text, flags=re.IGNORECASE)
 
 
 class CandidateAnswer(BaseModel):
@@ -160,7 +160,7 @@ def find_candidates(tool: dict[str, Any], claims: Sequence[dict[str, Any]]) -> F
     found = Found(len(numbers))
     calls = tool["evidence"]["cases"][:MOST_CALLS]
     places = [written.numbers_in(call.get("expected")) for call in calls]
-    taken: set[tuple[str, str, tuple[str | int, ...]]] = set()
+    taken: set[tuple[str, str, str, written.Path]] = set()
     for claim, number in numbers:
         for index, call in enumerate(calls):
             near = [
@@ -170,7 +170,12 @@ def find_candidates(tool: dict[str, Any], claims: Sequence[dict[str, Any]]) -> F
                 found.ambiguous += 1
                 continue
             for path, value, how in near:
-                key = (claim["id"], json.dumps(call["args"], sort_keys=True, default=repr), path)
+                key = (
+                    claim["id"],
+                    str(claim.get("quote", "")),
+                    json.dumps(call["args"], sort_keys=True, default=repr),
+                    path,
+                )
                 if key in taken or len(found.candidates) >= MOST_CANDIDATES:
                     continue
                 taken.add(key)
@@ -273,6 +278,9 @@ class ModelJudge:
         except StructuredOutputError as error:
             self.usage.add(self.model, error.usage)
             return Judged(set(), str(error)[:MAX_NOTE_CHARS])
+        except Exception as error:
+            # A failure to reach the model, such as a key that is refused, is this kind's alone, and not the job's
+            return Judged(set(), f"The request failed: {type(error).__name__}: {str(error)[:MAX_NOTE_CHARS]}")
         self.usage.add(self.model, reply.usage)
 
         return Judged(accepted_of(answer, candidates))
@@ -302,7 +310,8 @@ def describe_candidates(tool: dict[str, Any], candidates: Sequence[Candidate], c
             f'Sentence from the paper: "{clean(candidate.quote, MAX_QUOTE_CHARS)}"',
             f"The number in it: {clean(candidate.number.text, MAX_SHOWN_CHARS)}",
             f"The call: {clean(shown(call['args'], MAX_SHOWN_CHARS), MAX_SHOWN_CHARS)}",
-            f"Where in the result: {written.path_text(candidate.path)}, which held {candidate.value!r}",
+            f"Where in the result: {clean(written.path_text(candidate.path), MAX_SHOWN_CHARS)}, which held "
+            f"{candidate.value!r}",
             "",
         ]
 

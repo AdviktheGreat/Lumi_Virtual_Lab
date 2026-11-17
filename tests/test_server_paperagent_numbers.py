@@ -241,6 +241,19 @@ class TestChecking:
         # The tool that has no place where a number of the paper's was found needs no model, and is made
         assert numbers(agents, read, "map_cells")["status"] == "not_obtained"
 
+    def test_a_request_that_fails_ends_this_kind_for_the_tool_and_not_the_job(
+        self, agents: PaperAgents, read: str, fake_client: FakeClient
+    ) -> None:
+        fake_client.completions.parsed_responses.append(RuntimeError("connection reset"))
+
+        job = check(agents, read, kinds=["heldout", KIND], max_cost=1)
+
+        assert job.state == "succeeded"
+        found = numbers(agents, read)
+        assert found["status"] == "not_obtained" and "The request failed" in found["summary"]
+        assert statuses(agents, read, "tally")["heldout"] == "passed"
+        assert tools_of(agents, read)["tally"]["tier"] == "A"
+
     def test_a_check_that_is_made_again_takes_the_place_of_the_one_that_was_kept(
         self, agents: PaperAgents, read: str, fake_client: FakeClient
     ) -> None:

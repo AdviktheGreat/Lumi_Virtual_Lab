@@ -113,8 +113,9 @@ KIND_INFO: dict[str, dict[str, str]] = {
         "title": "Numbers the paper reports",
         "said": "gave a number that the paper reports, for the arguments its tutorial passed",
         "what": (
-            "A number that the paper reports (from its claims, with digits enough to be told from chance) was found, "
-            "by a program, in what a call of the tutorial gave, within how the paper rounded it; a model was asked "
+            "A number that the paper reports (from its claims, with digits enough and a rounding narrow enough to be "
+            "told from chance) was found, by a program, in what a call of the tutorial gave, within how the paper "
+            "rounded it; a model was asked "
             "only whether the paper's sentence is about the same quantity as that place in the result, and could not "
             "add a number; and the tool was called again with the same arguments and gave it, compared by a program. "
             "It shows that the tool gives a number that the paper reports for the arguments of its tutorial. It does "

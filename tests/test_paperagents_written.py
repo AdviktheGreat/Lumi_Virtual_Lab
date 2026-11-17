@@ -50,12 +50,20 @@ class TestReadingANumberAsWritten:
         ("text", "specific"),
         [
             ("0.93", True),
-            ("4.5", True),
+            ("9.5", True),
+            ("1.25", True),
+            ("104", True),
+            ("1.00", True),
             ("0.930", True),
             ("1,234", True),
             ("812", True),
             ("0.05", False),
             ("0.5", False),
+            ("1.0", False),
+            ("2.5", False),
+            ("4.5", False),
+            ("0.10", False),
+            ("-1.0", False),
             ("12%", False),
             ("95", False),
             ("100", False),
@@ -162,6 +170,14 @@ class TestWhereANumberIsInAResult:
         for _ in range(written.MAX_DEPTH + 2):
             deep = [deep]
         assert written.numbers_in({"type": "list", "plain": True, "value": deep}) == []
+
+    def test_a_key_that_is_longer_than_a_name_is_not_followed(self) -> None:
+        long = "k" * (written.MAX_KEY_CHARS + 1)
+        named = "k" * written.MAX_KEY_CHARS
+        result = {"type": "dict", "plain": True, "value": {long: 1.5, named: 2.5, "short": 3.5}}
+
+        assert dict(written.numbers_in(result)) == {(named,): 2.5, ("short",): 3.5}
+        assert written.valid_path([named]) and not written.valid_path([long])
 
     def test_a_number_too_big_to_be_a_float_is_not_a_number(self) -> None:
         assert not written.is_number(10**400)
