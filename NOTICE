@@ -69,7 +69,22 @@ license applies to that material only. Nothing here changes it.
    Huang, K., Zhang, S., Wang, H. et al. Biomni: A General-Purpose Biomedical AI Agent.
    bioRxiv (2025).
 
-3. Scientific Agent Skills
+3. Paper2Agent
+   https://github.com/jmiao24/Paper2Agent
+   MIT License, Copyright (c) 2025 Jiacheng Miao
+
+   No file of Paper2Agent's is copied into Lumi. PaperAgents follows its central idea, that a
+   paper and the code that came with it can be made into tools that an agent calls, and Lumi
+   makes and checks them in its own way. Lumi also lists the addresses of the three servers that
+   Paper2Agent hosts on Hugging Face (Scanpy, TISSUE, and AlphaGenome), in
+   src/virtual_lab/server/imported_agents.py, so that a person can import one as an agent. Those
+   servers are run by Paper2Agent. They are not part of Lumi, and nothing of theirs is shipped or
+   run by it. The software and services they are made from have licenses and terms of their own.
+
+   Miao, J., Davis, J.R., Zhang, Y., Pritchard, J.K. & Zou, J. Reimagining research papers as
+   interactive and reliable AI agents. Nature (2026). https://doi.org/10.1038/s41586-026-11044-y
+
+4. Scientific Agent Skills
    https://github.com/K-Dense-AI/scientific-agent-skills, version 2.72.0,
    commit 526ebce143bc326f44471554e33d66a19c840360
    MIT License, Copyright (c) 2025 K-Dense Inc.
@@ -104,13 +119,13 @@ license applies to that material only. Nothing here changes it.
    The skills tell the lead how to use other people's software, data, and services, which have
    licenses of their own, and some need an account or a key.
 
-4. Fonts in the pages of the interface
+5. Fonts in the pages of the interface
    Inter (Copyright 2016 The Inter Project Authors), JetBrains Mono (Copyright 2020 The
    JetBrains Mono Project Authors), and Newsreader (Copyright 2020 The Newsreader Project
    Authors), through Fontsource. Each is under the SIL Open Font License, Version 1.1,
    https://openfontlicense.org.
 
-5. Software Lumi installs and does not copy
+6. Software Lumi installs and does not copy
    The Python and JavaScript packages Lumi depends on are installed from their registries,
    not copied into this repository, and are under their own licenses. Nearly all are
    permissive (MIT, BSD, ISC, Apache-2.0). The exceptions are used unmodified as libraries:
@@ -123,5 +138,5 @@ license applies to that material only. Nothing here changes it.
    their own machine, under its own licenses. The image is not distributed.
 
 Lumi is an independent project. It is not affiliated with or endorsed by the authors of the
-Virtual Lab, Biomni, or any model provider or service it connects to. Their names
+Virtual Lab, Biomni, Paper2Agent, or any model provider or service it connects to. Their names
 are their owners' trademarks.
