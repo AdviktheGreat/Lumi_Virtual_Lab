@@ -69,6 +69,10 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}/tools  which would be made, which would not and why, what was made, and what is allowed
     GET    /api/paperagents/{id}/tools/{name}  one tool: its wrapper, its signature, and each call that was made again
     DELETE /api/paperagents/{id}/tools  takes away the tools, so that they can be made again
+    POST   /api/paperagents/{id}/checks  starts checking the tools by what their tutorials did not give them
+    GET    /api/paperagents/{id}/checks  each tool, its tier, and how each kind of check of it went, and what is allowed
+    GET    /api/paperagents/{id}/checks/{name}  one tool's checks, each with what it was made of
+    DELETE /api/paperagents/{id}/checks  takes away the checks, so that the tools are of the tier they were made as
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -132,6 +136,7 @@ from virtual_lab.constants import (
     MAX_CHAT_DELEGATION_ROUNDS,
     MAX_CHAT_DELEGATIONS,
     MAX_CHAT_TITLE_CHARS,
+    MAX_FUNCTION_NAME_CHARS,
     MAX_PROGRAM_INSTRUCTION_CHARS,
     MAX_UPLOAD_BYTES,
 )
@@ -438,6 +443,21 @@ class PaperAgentToolsBody(RequestModel):
     repeats: StrictInt | None = None
     repairs: StrictInt | None = None
     gigabytes: StrictInt | None = None
+
+
+class PaperAgentChecksBody(RequestModel):
+    """How to check the tools: the most minutes that one check of a tool may take, and that all of the checks may, how
+    many times each call is made, the most gigabytes that one run may write, which kinds of check to make, and which
+    tools to check, by name. Of the last two, all are checked if none are named."""
+
+    minutes: StrictInt | None = None
+    total_minutes: StrictInt | None = None
+    repeats: StrictInt | None = None
+    gigabytes: StrictInt | None = None
+    kinds: list[Annotated[str, StringConstraints(max_length=40)]] | None = Field(default=None, max_length=10)
+    tools: list[Annotated[str, StringConstraints(max_length=MAX_FUNCTION_NAME_CHARS)]] | None = Field(
+        default=None, max_length=100
+    )
 
 
 class PaperAgentDataBody(RequestModel):
@@ -1358,6 +1378,28 @@ def create_app(
         paperagents.clear_tools(agent_id)
 
         return paperagents.tools(agent_id)
+
+    @api.post("/paperagents/{agent_id}/checks", status_code=202)
+    def check_paperagent_tools(agent_id: str, body: PaperAgentChecksBody) -> dict[str, Any]:
+        job = paperagents.start_checks(
+            agent_id, body.minutes, body.total_minutes, body.repeats, body.gigabytes, body.kinds, body.tools
+        )
+
+        return job.snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/checks")
+    def get_paperagent_checks(agent_id: str) -> dict[str, Any]:
+        return paperagents.checks(agent_id)
+
+    @api.get("/paperagents/{agent_id}/checks/{name}")
+    def get_paperagent_tool_checks(agent_id: str, name: str) -> dict[str, Any]:
+        return paperagents.check_of_tool(agent_id, name)
+
+    @api.delete("/paperagents/{agent_id}/checks")
+    def delete_paperagent_checks(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_checks(agent_id)
+
+        return paperagents.checks(agent_id)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:

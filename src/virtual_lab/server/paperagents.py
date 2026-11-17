@@ -40,6 +40,13 @@ of the code. A tool that gives again what the tutorial got is of tier A, and is 
 evidence. One that does not is dropped, with why, and is not changed to fit. Tier A says that a tool gives again what
 the tutorials got, and does not say that what it gives is right.
 
+Tools are checked, when the person asks, by what their tutorials did not give them: each tool and the code's own
+function are called with arguments that the tutorial did not pass, and the tests that the code came with that call the
+function are run, in the same kind of container. Each check is kept as it is made, bound to the wrapper, the commit, the
+image, and the reference run it was made of (paperagent_checks.py). A tool of tier A that has passed two kinds and
+failed none is of tier B, which follows from what is kept and from nothing else, and is not said to show that what the
+tool gives is right.
+
 An agent is given to conversations when the person says so (the flag `given` in its agent.json), or when they name it
 for one. What a conversation is then given of it is in paperagent_given.py: tools that read what was found in the
 paper, which are of tier D, and its tools of tier A, which run the authors' code where the conversation may run code.
@@ -76,6 +83,7 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
+from virtual_lab.paperagents import checking as verifying
 from virtual_lab.paperagents import data as finding
 from virtual_lab.paperagents import datahosts as hosting
 from virtual_lab.paperagents import environment as building
@@ -90,6 +98,8 @@ from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_s
 from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
 from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server import imported_agents as importing
+from virtual_lab.server import paperagent_checks as kept_checks
+from virtual_lab.server import paperagent_checkwork as checkwork
 from virtual_lab.server import paperagent_data as kept_data
 from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
@@ -137,6 +147,9 @@ DATA_JOB = "paperagent-data"
 REFERENCE_JOB = "paperagent-reference"
 # The job that makes tools from what the tutorials did, which is not done to an agent while another job is
 TOOLS_JOB = "paperagent-tools"
+# The job that checks the tools by what their tutorials did not give them, which is not done to an agent while another
+# job is
+CHECKS_JOB = "paperagent-checks"
 # What is left free on the disk when data is fetched, and the longest that a note of which data stands in for what is
 DISK_RESERVE_BYTES = 1 << 30
 MAX_DATASET_CHARS = 200
@@ -615,7 +628,11 @@ class PaperAgents:
             steps["environment"] = "running"
         if self.downloading(agent_id) is not None:
             steps["data"] = "running"
-        if self.reference_job(agent_id) is not None or self.tools_job(agent_id) is not None:
+        if (
+            self.reference_job(agent_id) is not None
+            or self.tools_job(agent_id) is not None
+            or self.checks_job(agent_id) is not None
+        ):
             steps["tools"] = "running"
 
         return {
@@ -653,11 +670,15 @@ class PaperAgents:
         """The job that is making an agent's tools, if one is."""
         return next((job for job in self.jobs.active(TOOLS_JOB) if job.subject == agent_id), None)
 
+    def checks_job(self, agent_id: str) -> Job | None:
+        """The job that is checking an agent's tools, if one is."""
+        return next((job for job in self.jobs.active(CHECKS_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
-            fetched, its tutorials run, or its tools made, which what is done to them must wait for.
+            fetched, its tutorials run, its tools made, or its tools checked, which what is done to them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -666,6 +687,7 @@ class PaperAgents:
             or self.downloading(agent_id)
             or self.reference_job(agent_id)
             or self.tools_job(agent_id)
+            or self.checks_job(agent_id)
         )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
@@ -2288,6 +2310,167 @@ class PaperAgents:
             kept_tools.forget(directory)
             if steps_of(agent)["tools"] in ("done", "failed"):
                 self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": "pending"}})
+
+    # The checks of the tools, by what their tutorials did not give them
+
+    def checkable(self, directory: Path, agent: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        """The account of the tools that are kept, if they came to the end of their making, and each of them as it is
+        kept, with its wrapper's code, which are those that can be checked."""
+        _, kept = kept_tools_of(directory, agent)
+        if kept is None or not kept["complete"]:
+            return None, []
+        tools = [tool for one in kept["tools"] if (tool := kept_tools.load_tool(directory, one["name"])) is not None]
+
+        return kept, tools
+
+    def checks(self, agent_id: str) -> dict[str, Any]:
+        """What there is of the checks of an agent's tools: each tool, its tier as it was made and its tier now, and
+        how each kind of check of it went, with what is allowed and what each kind shows.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        usable, problem = building.ready(self.docker_command)
+        kept, tools = self.checkable(directory, agent)
+        job = self.checks_job(agent_id)
+
+        return {
+            "id": agent_id,
+            "docker": {"ready": usable, "message": problem},
+            "made": kept is not None,
+            "tools": [kept_checks.tool_summary(directory, tool, kept) for tool in tools] if kept is not None else [],
+            "kinds": [{"kind": kind, **verifying.KIND_INFO[kind]} for kind in verifying.KINDS],
+            "job": job.snapshot() if job is not None else None,
+            "meaning": verifying.MEANING,
+            "kinds_for_b": verifying.KINDS_FOR_B,
+            "limits": checkwork.limits_of(),
+        }
+
+    def check_of_tool(self, agent_id: str, name: str) -> dict[str, Any]:
+        """The checks of one tool, each with what it was made of, and the tier that they come to.
+
+        :raises ApiError: If there is no agent with this id, or it has no tool of that name that is as it was made.
+        """
+        directory, agent = self.lookup(agent_id)
+        kept, tools = self.checkable(directory, agent)
+        tool = next((one for one in tools if one["name"] == name), None)
+        if kept is None or tool is None:
+            raise not_found("tool of that PaperAgent")
+
+        return {**kept_checks.tool_summary(directory, tool, kept, details=True), "meaning": verifying.MEANING}
+
+    def start_checks(
+        self,
+        agent_id: str,
+        minutes: Any = None,
+        total_minutes: Any = None,
+        repeats: Any = None,
+        gigabytes: Any = None,
+        kinds: Any = None,
+        tools: Any = None,
+    ) -> Job:
+        """Starts checking the tools by what their tutorials did not give them: each is called, and the code's own
+        function with it, with inputs that the tutorial did not pass, and the tests that the code came with that call
+        the function are run, all in the environment, in containers that have none of this machine in it and no network.
+        Each check is kept as it is made. A tool that has passed two kinds and failed none is of tier B.
+
+        :param minutes: The most time that one check of one tool may take.
+        :param total_minutes: The most time all of the checks may take together.
+        :param repeats: How many times each call is made, to see that it gives the same each time.
+        :param gigabytes: The most that one run may write.
+        :param kinds: Which kinds of check to make, which are all of them if none are named.
+        :param tools: Which tools to check, by name, which are all of them if none are named.
+        :raises ApiError: If there is no agent with this id, what is given is not fit, Docker is not running, the code
+            has not been fetched or its environment not built or its image is not in Docker, no tools were made, or the
+            agent's paper, code, environment, data, tutorials, tools, or checks are being worked on.
+        """
+        self.lookup(agent_id)
+        try:
+            limits = verifying.check_limits(minutes, total_minutes, repeats, gigabytes)
+            chosen = checkwork.kinds_of(kinds)
+            if tools is not None and (
+                not isinstance(tools, list)
+                or not tools
+                or any(not isinstance(name, str) for name in tools)
+                or len(set(tools)) != len(tools)
+            ):
+                raise ValueError("The tools to check are a list of names of tools, each named once")
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        usable, problem = building.ready(self.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and checking tools takes it")
+
+        with self._lock:
+            directory, agent, _, _, _ = self.image_for_runs(agent_id, "the tools are checked")
+            kept, found = self.checkable(directory, agent)
+            if kept is None or not found:
+                raise ApiError(422, "no_tools", "Make the tools first, as it is tools that are checked")
+            if tools is not None:
+                known = {tool["name"] for tool in found}
+                if any(name not in known for name in tools):
+                    raise not_found("tool of that PaperAgent")
+                found = [tool for tool in found if tool["name"] in tools]
+            folder, _ = data_to_give(directory) if kept["data"] else (None, None)
+            if kept["data"] and folder is None:
+                raise ApiError(409, "no_data", "The data that the tutorials were given has been taken away.")
+            try:
+                return self.jobs.start(
+                    CHECKS_JOB,
+                    agent_id,
+                    f"Checking the tools: {agent['title']}",
+                    self.checker(agent_id, kept, found, chosen, limits, folder),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def checker(
+        self,
+        agent_id: str,
+        kept: dict[str, Any],
+        tools: list[dict[str, Any]],
+        kinds: Sequence[str],
+        limits: verifying.CheckLimits,
+        folder: Path | None,
+    ) -> Callable[[Job], str | None]:
+        """What a job does to check the tools: makes the checks one after another, and keeps each as it is made, so
+        that a job that is stopped keeps what it had made."""
+        directory = self.workspace.paperagents_dir / agent_id
+
+        def work(job: Job) -> str | None:
+            summary, _ = checkwork.check_all(
+                job,
+                directory,
+                self.workspace.root,
+                agent_id,
+                kept,
+                tools,
+                kinds,
+                limits,
+                kept_repository.repo_path(directory),
+                folder,
+                self.docker_command,
+            )
+
+            return summary
+
+        return work
+
+    def clear_checks(self, agent_id: str) -> None:
+        """Takes away the checks that were made of the tools, so that they are of the tier they were made as until they
+        are checked again. The tools are kept.
+
+        :raises ApiError: If there is no agent with this id, or its paper is being read, its code fetched, its
+            environment built, its data fetched, its tutorials run, its tools made, or its tools checked.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            referencing.remove_runs(agent_id, self.docker_command)
+            kept_checks.forget(directory)
 
     # The data that the paper used
 

@@ -37,6 +37,7 @@ function givenOf(tools: GivenTool[], changes: Partial<PaperAgentGiven> = {}): Pa
 describe("describeTier", () => {
   it("says what a tier is, and that there is none when there is nothing to give", () => {
     expect(describeTier("A")).toBe("Tier A: runs the authors' code");
+    expect(describeTier("B")).toBe("Tier B: runs the authors' code, and passed checks that its tutorial did not give it");
     expect(describeTier("D")).toBe("Tier D: reads the paper");
     expect(describeTier("Imported")).toBe("Tier Imported: made by someone else, and not checked here");
     expect(describeTier(null)).toBe("Nothing to give yet");

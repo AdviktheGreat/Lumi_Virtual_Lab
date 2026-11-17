@@ -732,7 +732,8 @@ class TestTheApi:
         ]
         assert found["tools"][4]["parameters"] == ["counts", "scale"]
         assert all(tool["summary"] for tool in found["tools"])
-        assert "Neither shows that what it says or gives is right." in found["meaning"]
+        assert "None of them shows that what it says or gives is right." in found["meaning"]
+        assert "tier B" in found["meaning"]
         assert found["limits"] == {"call_seconds": 300, "memory": "8g", "cpus": "4"}
 
     def test_an_agent_with_nothing_to_give_has_no_tier(self, client: TestClient) -> None:

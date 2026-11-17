@@ -4,6 +4,7 @@ import type { GivenTool, PaperAgent, PaperAgentGiven } from "@/lib/types";
 // What each tier is, in a few words
 const TIER_TITLES: Record<string, string> = {
   A: "Runs the authors' code",
+  B: "Runs the authors' code, and passed checks that its tutorial did not give it",
   D: "Reads the paper",
   Imported: "Made by someone else, and not checked here",
 };

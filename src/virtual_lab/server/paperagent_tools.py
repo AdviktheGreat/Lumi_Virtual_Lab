@@ -30,6 +30,8 @@ CHECKS_DIR = "checks"
 RECORD_FILE = "tools.json"
 TOOLS_DIR = "tools"
 TOOL_FILE = "tool.json"
+# Where the checks that are made of the tools are kept, below checks/ (paperagent_checks.py)
+INDEPENDENT_DIR = "independent"
 
 # What a record says of how it is kept, so that a later version can read what an earlier one wrote
 SCHEMA = 1
@@ -276,8 +278,14 @@ def finish(directory: Path, record: dict[str, Any], not_tried: list[dict[str, An
     return kept
 
 
+def forget_independent(directory: Path) -> None:
+    """Removes every check that was made of the tools."""
+    shutil.rmtree(checks_path(directory) / INDEPENDENT_DIR, ignore_errors=True)
+
+
 def forget(directory: Path) -> None:
-    """Removes the account of the making of tools, and the tools. The account goes first, so that it never names what
-    is gone."""
+    """Removes the account of the making of tools, and the tools, and with them the checks that were made of them. The
+    account goes first, so that it never names what is gone."""
     (checks_path(directory) / RECORD_FILE).unlink(missing_ok=True)
     shutil.rmtree(tools_path(directory), ignore_errors=True)
+    forget_independent(directory)
