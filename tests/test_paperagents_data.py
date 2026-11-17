@@ -233,6 +233,57 @@ class TestThePlacesAPaperAndItsCodePointTo:
     def test_a_paper_that_has_not_been_read_has_none(self) -> None:
         assert find({}, {}, None) == {"candidates": [], "datasets": []}
 
+    def test_a_dataset_that_a_person_added_points_to_its_place_and_the_paper_is_not_said_to_give_it(self) -> None:
+        own = {
+            "id": "ds-own00000001",
+            "name": "Our reads",
+            "accession": "GSE99999",
+            "quote": "",
+            "anchor": None,
+            "by": "person",
+            "read_as": None,
+        }
+
+        found = find({"datasets": [*self.CARD["datasets"], own]}, self.RESOURCES, None)
+
+        by_key = {candidate["key"]: candidate for candidate in found["candidates"]}
+        assert by_key["geo:GSE99999"]["facts"] == [] and by_key["geo:GSE99999"]["in_code"] is False
+        row = found["datasets"][-1]
+        assert (row["key"], row["anchor"], row["by"], row["candidate"]) == (
+            "ds-own00000001",
+            None,
+            "person",
+            "geo:GSE99999",
+        )
+        assert [candidate["key"] for candidate in found["candidates"]].index("geo:GSE99999") > 0
+
+    def test_a_dataset_whose_accession_a_person_changed_is_not_given_by_the_words_that_it_was_read_from(self) -> None:
+        reads = self.CARD["datasets"][0]
+        changed = {
+            **reads,
+            "accession": "GSE77777",
+            "by": "person",
+            "read_as": {"name": "Cell reads", "accession": "GSE12345"},
+        }
+
+        found = find({"datasets": [changed]}, {}, None)
+
+        assert [(candidate["key"], candidate["facts"]) for candidate in found["candidates"]] == [("geo:GSE77777", [])]
+        assert found["datasets"][0]["anchor"] == reads["anchor"] and found["datasets"][0]["by"] == "person"
+
+    def test_a_dataset_whose_name_a_person_changed_still_has_the_accession_that_the_paper_gave(self) -> None:
+        reads = self.CARD["datasets"][0]
+        renamed = {
+            **reads,
+            "name": "Cell reads, mouse",
+            "by": "person",
+            "read_as": {"name": "Cell reads", "accession": "GSE12345"},
+        }
+
+        found = find({"datasets": [renamed]}, {}, None)
+
+        assert [place["id"] for place in found["candidates"][0]["facts"]] == [reads["id"]]
+
 
 class TestNamesAHostGives:
     @pytest.mark.parametrize(

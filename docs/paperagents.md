@@ -140,6 +140,8 @@ The card is a draft that a model made from the paper. All that was checked of a 
 
 **What stays when the paper is read again.** What a person did is kept when the reading is cleared, and is put over the next reading: a fact is told by its id, which is the same when the same fact is found again, and what a person changed of a fact that the reading no longer finds stays on the card as theirs. An approval holds for a card that comes out the same. Changing the paper, or taking it away, takes away what a person did to the card of the one before, since it was done to that paper's card.
 
+**What the data part and the checks make of it.** The datasets of the card, as a person has put them, are the datasets that the data part lists (`GET /api/paperagents/{id}/data`, each with `by`, and `anchor` that is `null` for one a person added). A dataset that a person added, or whose accession they changed, still points to its place, but no place in the paper is said to give it, since its words are not of what the person put, and the check of whether the data can be found does not count its accession as one in the paper.
+
 **What a conversation is told.** `show_method_card` gives the card with `by` on each fact and says in its notes whether it is approved (as what a person did, and not that it is right), a draft that nobody has approved, or a draft that was approved and has changed since, and which facts are a person's.
 
 ## Fetching the paper

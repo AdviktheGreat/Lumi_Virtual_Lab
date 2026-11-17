@@ -116,6 +116,20 @@ def is_empty(edits: Mapping[str, Any]) -> bool:
     return not (edits["facts"] or edits["removed"] or edits["approval"])
 
 
+def accession_is_read(fact: Mapping[str, Any]) -> bool:
+    """Whether the accession of a dataset on the card is what the paper's words gave, and so whether the places in the
+    paper that the fact has are places that say it. It is not if a person added the dataset, or changed its accession:
+    the words are still the paper's, and are not of what they put.
+
+    A fact that has not said whose it is, as a reading made it before edits were kept, is the reading's.
+    """
+    if fact.get("by") != BY_PERSON:
+        return True
+    read_as = fact.get("read_as")
+
+    return isinstance(read_as, Mapping) and read_as.get("accession") == fact.get("accession")
+
+
 def fields_of(kind: str, fact: Mapping[str, Any]) -> dict[str, str]:
     return {name: fact[name] for name in FIELDS[kind]}
 

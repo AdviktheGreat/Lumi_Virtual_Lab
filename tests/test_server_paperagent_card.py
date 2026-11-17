@@ -579,6 +579,30 @@ class TestAsTheApiHasIt:
         discarded = client.delete(f"{base}/card/edits")
         assert discarded.json()["card"]["edited"] is False
 
+    def test_a_dataset_that_a_person_adds_is_in_the_data_of_the_agent_as_theirs_and_is_not_said_to_be_the_paper_s(
+        self, client: TestClient, agent_id: str
+    ) -> None:
+        base = f"/api/paperagents/{agent_id}"
+        added = client.post(
+            f"{base}/card/facts", json={"kind": "datasets", "fields": {"name": "Ours", "accession": "GSE5"}}
+        )
+        gse = fact_of(added.json()["card"], "datasets", "GEO")
+        client.put(f"{base}/card/facts/{gse['id']}", json={"fields": {"name": "GEO", "accession": "GSE7"}})
+
+        found = client.get(f"{base}/data")
+
+        assert added.status_code == found.status_code == 200
+        rows = {row["name"]: row for row in found.json()["datasets"]}
+        assert (rows["Ours"]["by"], rows["Ours"]["anchor"], rows["Ours"]["candidate"]) == ("person", None, "geo:GSE5")
+        assert (rows["GEO"]["by"], rows["GEO"]["anchor"] is None, rows["GEO"]["candidate"]) == (
+            "person",
+            False,
+            "geo:GSE7",
+        )
+        places = {place["key"]: place for place in found.json()["candidates"]}
+        assert places["geo:GSE5"]["facts"] == [] and places["geo:GSE7"]["facts"] == []
+        assert "geo:GSE123456" not in places
+
     def test_what_is_wrong_is_told_as_the_api_tells_it(self, client: TestClient, agent_id: str) -> None:
         base = f"/api/paperagents/{agent_id}"
 

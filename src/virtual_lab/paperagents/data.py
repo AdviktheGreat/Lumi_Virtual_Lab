@@ -16,6 +16,7 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from virtual_lab.paperagents.card import accession_is_read
 from virtual_lab.paperagents.stock import URL, leads_to_data
 
 MEGABYTE = 1024 * 1024
@@ -439,7 +440,9 @@ def find(card: dict[str, Any], resources: dict[str, Any], stock_data: dict[str, 
     :param resources: What reading found of the links and statements of where data is.
     :param stock_data: What was found of the data in the code, which is none if the code was not fetched.
     :return: "candidates", each place once, with the places in the paper that give it and whether the code does; and
-        "datasets", each dataset the paper names, with the candidate it points to, if its accession does.
+        "datasets", each dataset on the card, with whose it is, where in the paper it is if it is, and the candidate it
+        points to, if its accession does. A dataset that a person added, or whose accession they changed, still points
+        to its place, but no place in the paper is said to give it.
     """
     candidates: dict[str, dict[str, Any]] = {}
 
@@ -467,8 +470,9 @@ def find(card: dict[str, Any], resources: dict[str, Any], stock_data: dict[str, 
     datasets = []
     for fact in card.get("datasets", []):
         pointed = None
+        in_paper = accession_is_read(fact)
         for item in references_in(fact.get("accession", ""), from_paper=False):
-            add(item, fact)
+            add(item, fact if in_paper else None)
             pointed = pointed or item.key
         datasets.append(
             {
@@ -476,7 +480,8 @@ def find(card: dict[str, Any], resources: dict[str, Any], stock_data: dict[str, 
                 "name": fact["name"],
                 "accession": fact["accession"],
                 "quote": fact["quote"],
-                "anchor": fact["anchor"],
+                "anchor": fact.get("anchor"),
+                "by": fact.get("by", "reading"),
                 "candidate": pointed,
             }
         )

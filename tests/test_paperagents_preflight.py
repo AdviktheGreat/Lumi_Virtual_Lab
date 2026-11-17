@@ -256,6 +256,16 @@ class TestWhetherTheDataCanBeFound:
         assert "1 accession in the paper" in detail and "1 link to data in the paper" in detail
         assert "statement of where the data is in the paper" in detail
 
+    def test_an_accession_that_a_person_put_on_the_card_is_not_one_that_the_paper_has(self, tmp_path: Path) -> None:
+        own = {"name": "Ours", "accession": "GSE1", "by": "person", "read_as": None, "anchor": None}
+        changed = {"name": "PBMC", "accession": "GSE2", "by": "person", "read_as": {"name": "PBMC", "accession": ""}}
+        kept = {"name": "Brain", "accession": "GSE3", "by": "person", "read_as": {"name": "B", "accession": "GSE3"}}
+        said = {"datasets": [own, changed], "links": [], "availability": [], "licenses": []}
+
+        assert statuses(checked(tmp_path, self.BARE, paper=said))["data"] == "unknown"
+        said["datasets"].append(kept)
+        assert "1 accession in the paper" in checks_of(checked(tmp_path, self.BARE, paper=said))["data"]["detail"]
+
     def test_data_in_the_code_and_links_in_it_make_it_ok_with_the_size(self, tmp_path: Path) -> None:
         result = checked(tmp_path, {**self.BARE, "data/cells.h5ad": bytes(2_000_000)})
 
