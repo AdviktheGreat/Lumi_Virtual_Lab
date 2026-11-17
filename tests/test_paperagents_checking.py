@@ -290,6 +290,92 @@ class TestFindingTheTestsOfAFunction:
     ) -> None:
         assert not any("test_unrelated" in item for item in checking.ids_of_tests(made["repo"], "fixture.core", "mean"))
 
+    def test_a_test_of_another_librarys_function_of_the_same_name_is_not_taken_for_it(self, tmp_path: Path) -> None:
+        repo = tree(
+            tmp_path / "repo",
+            {
+                "pkg/__init__.py": "",
+                "pkg/core.py": "def mean(values):\n    return 1\n",
+                "tests/test_a.py": (
+                    "import numpy as np\nfrom pkg import other\n\n\n"
+                    "def test_unrelated():\n    assert np.mean([1, 2]) == 1.5\n\n\n"
+                    "def test_a_parameter(runner):\n    assert runner.mean([1]) == 1\n"
+                ),
+                "tests/test_b.py": "import pkg\n\n\ndef test_the_project_one():\n    assert pkg.core.mean([1]) == 1\n",
+            },
+        )
+        assert checking.ids_of_tests(repo, "pkg.core", "mean") == ["tests/test_b.py::test_the_project_one"]
+
+    def test_only_what_is_imported_from_the_defining_module_or_a_package_above_it_is_the_function(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tree(
+            tmp_path / "repo",
+            {
+                "pkg/__init__.py": "",
+                "tests/test_ways.py": """
+import pkg
+import pkg.core as c
+import pkg.other
+from pkg import core, run as again
+from pkg.core import run as direct
+from pkg.other import run as another
+from other import run as foreign
+from .helpers import run as helper
+from .core import run as near
+
+
+def test_by_the_package():
+    pkg.run()
+
+
+def test_by_an_alias_of_the_module():
+    c.run()
+
+
+def test_by_a_module_of_the_package():
+    core.run()
+
+
+def test_by_a_name_of_the_package_under_another():
+    again()
+
+
+def test_by_the_module():
+    direct()
+
+
+def test_by_another_module_of_the_project():
+    another()
+    pkg.other.run()
+
+
+def test_by_another_library():
+    foreign()
+
+
+def test_by_a_helper_of_the_tests():
+    helper()
+
+
+def test_by_a_relative_import_of_the_module():
+    near()
+
+
+def test_by_a_name_that_was_not_imported():
+    run()
+""",
+            },
+        )
+        assert sorted(checking.ids_of_tests(repo, "pkg.core", "run")) == [
+            "tests/test_ways.py::test_by_a_module_of_the_package",
+            "tests/test_ways.py::test_by_a_name_of_the_package_under_another",
+            "tests/test_ways.py::test_by_a_relative_import_of_the_module",
+            "tests/test_ways.py::test_by_an_alias_of_the_module",
+            "tests/test_ways.py::test_by_the_module",
+            "tests/test_ways.py::test_by_the_package",
+        ]
+
     def test_nothing_is_found_for_a_function_no_test_calls(self, made: dict[str, Any]) -> None:
         assert checking.ids_of_tests(made["repo"], "fixture.core", "jitter") == []
 

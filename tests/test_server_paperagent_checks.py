@@ -841,10 +841,10 @@ class TestWhatAConversationIsGiven:
         tally = self.tools(workspace, made)[f"{made}_tally"]
         assert tally.description.startswith('[Tier B] From the PaperAgent "CellMapper". Runs the authors\' own code')
         assert (
-            "and passed checks that its tutorial did not give it (inputs the tutorial did not use and"
-            in tally.description
+            "and passed checks that its tutorial did not give it (gave the same as the code's own function for inputs "
+            "the tutorial did not use; the code's own tests of the function pass here, which are tests of the code "
+            "and not of the tool)" in tally.description
         )
-        assert "the code's own tests)" in tally.description
         assert "does not show that what it gives is right" in tally.description
         view = given.view(workspace, made)
         assert view["tier"] == "B"

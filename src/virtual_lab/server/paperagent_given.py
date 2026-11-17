@@ -84,7 +84,8 @@ LISTED_QUOTE_CHARS = 240
 MEANING = (
     "A tool of tier A calls the authors' own code in a sandbox with no network, and gave again what the tutorials got "
     "for the arguments they passed. A tool of tier B has also passed two kinds of checks that its tutorial did not "
-    "give it, and failed none. A tool of tier D only reads what was found in the paper. None of them shows that what "
+    "give it, and failed none; of those, only the check with other inputs calls the tool, and the code's own tests are "
+    "of the code's function. A tool of tier D only reads what was found in the paper. None of them shows that what "
     "it says or gives is right."
 )
 
@@ -551,7 +552,7 @@ def running_tools(
             continue
         also = (
             ", and passed checks that its tutorial did not give it ("
-            + " and ".join(checking.KIND_INFO[kind]["title"].lower() for kind in kept["passed"])
+            + "; ".join(checking.KIND_INFO[kind]["said"] for kind in kept["passed"])
             + ")"
             if kept["tier"] == checking.TIER_B
             else ""

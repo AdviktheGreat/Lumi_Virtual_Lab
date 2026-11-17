@@ -9,8 +9,9 @@ environment:
   lists thinned), and the tool and the code's own function are called with them, each in a process of its own, as many
   times as asked. They must give the same, and the same each time. That is what the tool adds nothing to, and it is
   held to inputs that no tutorial chose.
-- the tests that the code comes with. Those that call the function are run, in the environment, with no network, by
-  pytest if the environment has it. They must pass.
+- the tests that the code comes with. Those that call the function (by what they imported from the module that
+  defines it, or a package above it) are run, in the environment, with no network, by pytest if the environment has
+  it. They must pass. They are tests of the code's function, and the tool's wrapper is not called in them.
 
 Each ends as passed, failed, or not obtained: a check that could not be made, such as one for a function that no test
 calls, is not a failure, and is not evidence either. What each shows is said, and none shows that what the tool gives
@@ -80,6 +81,7 @@ NUMBER = (int, float)
 KIND_INFO: dict[str, dict[str, str]] = {
     HELDOUT: {
         "title": "Inputs the tutorial did not use",
+        "said": "gave the same as the code's own function for inputs the tutorial did not use",
         "what": (
             "The tool and the code's own function were called with the arguments of a tutorial's call changed (numbers "
             "nudged, lists thinned), each in a process of its own, and gave the same, each time. This shows that the "
@@ -89,18 +91,21 @@ KIND_INFO: dict[str, dict[str, str]] = {
     },
     REPO_TESTS: {
         "title": "The code's own tests",
+        "said": "the code's own tests of the function pass here, which are tests of the code and not of the tool",
         "what": (
             "The tests in the code that call the function were run in the environment, with no network, and passed. "
-            "They are the authors' own, and are what they chose to check. They do not show that what the tool gives is "
-            "right for other arguments."
+            "They are tests of the code's function, and do not call the tool, so they show that the function works "
+            "here and not that the tool does. They are the authors' own, and are what they chose to check. They do "
+            "not show that what the tool gives is right for other arguments."
         ),
     },
 }
 
 MEANING = (
     "A tool of tier B is of tier A and has also passed two kinds of checks that its tutorial did not give it, and "
-    "failed none. That lowers the chance that it is right only for its tutorial. It does not make that chance nothing, "
-    "and it does not show that what the tool gives is right."
+    "failed none. Only the check with inputs that the tutorial did not use calls the tool; the code's own tests are "
+    "of the code's function. That lowers the chance that the tool is right only for its tutorial. It does not make "
+    "that chance nothing, and it does not show that what the tool gives is right."
 )
 
 TESTS_RESULT = {
@@ -413,13 +418,60 @@ def held_out_outcome(cases: Sequence[dict[str, Any]], repeats: int, tolerance: T
 # The tests that the code comes with
 
 
-def mentions(node: ast.AST, function: str) -> bool:
-    """Whether the code of a test names the function, as a name or as what follows a dot."""
-    return any(
-        (isinstance(part, ast.Name) and part.id == function)
-        or (isinstance(part, ast.Attribute) and part.attr == function)
-        for part in ast.walk(node)
-    )
+def bindings_of(tree: ast.Module) -> dict[str, tuple[tuple[str, ...], bool]]:
+    """What each name that a file imports stands for: the dotted path of it, and whether that path was given relative
+    to the file (`from .core import run`), so that it cannot be told from the project's own by its first part."""
+    bound: dict[str, tuple[tuple[str, ...], bool]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = tuple(alias.name.split("."))
+                bound[alias.asname or parts[0]] = (parts if alias.asname else parts[:1], False)
+        elif isinstance(node, ast.ImportFrom):
+            base = tuple(node.module.split(".")) if node.module else ()
+            for alias in node.names:
+                if alias.name != "*":
+                    bound[alias.asname or alias.name] = ((*base, alias.name), node.level > 0)
+
+    return bound
+
+
+def reaches(path: tuple[str, ...], relative: bool, module: str, function: str) -> bool:
+    """Whether a path that a test names is the function: its last part is the function's name, and what comes before is
+    the module that defines it, or a package above it that holds it (which is how a project makes a function easy to
+    import), and not a module of another library or another module of the project, whose function of the same name is
+    another function."""
+    held, name = path[:-1], path[-1]
+    if name != function:
+        return False
+    where = tuple(module.split("."))
+    if relative:
+        return not held or where[-len(held) :] == held
+
+    return bool(held) and where[: len(held)] == held
+
+
+def mentions(node: ast.AST, bound: dict[str, tuple[tuple[str, ...], bool]], module: str, function: str) -> bool:
+    """Whether the code of a test names the function as the project's, by a name that the file imported for it, or by
+    what follows a dot after one. A name that the file did not import (a parameter, a local, a built-in) is not
+    known to be the project's, and one that follows a dot after something that is not the project's is not either."""
+    inner = set()
+    for part in ast.walk(node):
+        if isinstance(part, ast.Attribute):
+            inner.add(id(part.value))
+        if id(part) in inner or not isinstance(part, (ast.Name, ast.Attribute)):
+            continue
+        rest: list[str] = []
+        top: ast.AST = part
+        while isinstance(top, ast.Attribute):
+            rest.append(top.attr)
+            top = top.value
+        if isinstance(top, ast.Name) and top.id in bound:
+            path, relative = bound[top.id]
+            if reaches((*path, *reversed(rest)), relative, module, function):
+                return True
+
+    return False
 
 
 def is_test_class(node: ast.ClassDef) -> bool:
@@ -430,27 +482,18 @@ def is_test_class(node: ast.ClassDef) -> bool:
     )
 
 
-def imports_package(tree: ast.Module, package: str) -> bool:
-    """Whether a file of tests imports the project's package, or something of its own folder, which is how a test that
-    calls a function of the project is told from one that calls another library's function of the same name."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import) and any(alias.name.split(".")[0] == package for alias in node.names):
-            return True
-        if isinstance(node, ast.ImportFrom) and (node.level > 0 or (node.module or "").split(".")[0] == package):
-            return True
-
-    return False
-
-
-def names_of_tests(tree: ast.Module, function: str) -> list[str]:
+def names_of_tests(tree: ast.Module, module: str, function: str) -> list[str]:
     """The tests of a file that call the function: those named test_ at its top, and those of a class of tests, as
-    pytest names them below the file."""
+    pytest names them below the file.
+
+    :param module: The module that defines the function, which a test must have imported it from, or a package above."""
+    bound = bindings_of(tree)
     found = []
     for node in tree.body:
         if (
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name.startswith("test")
-            and mentions(node, function)
+            and mentions(node, bound, module, function)
         ):
             found.append(node.name)
         elif isinstance(node, ast.ClassDef) and is_test_class(node):
@@ -459,7 +502,7 @@ def names_of_tests(tree: ast.Module, function: str) -> list[str]:
                 for method in node.body
                 if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and method.name.startswith("test")
-                and mentions(method, function)
+                and mentions(method, bound, module, function)
             ]
 
     return found
@@ -473,10 +516,12 @@ def is_test_file(path: str) -> bool:
 
 def ids_of_tests(repo: Path, module: str, function: str) -> list[str]:
     """The tests of the project's own that call the function, by the names pytest knows them by, found by reading the
-    files of tests, which import the project, and never running them. A test that calls the function through another
+    files of tests and never running them. A test is found only if it names the function by what it imported for it
+    from the module that defines it, or from a package above that, so that a test of another library's function (or
+    another of the project's) of the same name is not taken for it. A test that calls the function through another
     is not found.
 
-    :param module: The module that the function is defined in, whose first part is the project's package."""
+    :param module: The module that the function is defined in."""
     files, _ = walk(repo)
     ids: list[str] = []
     looked = 0
@@ -490,9 +535,7 @@ def ids_of_tests(repo: Path, module: str, function: str) -> list[str]:
             tree = ast.parse((repo / path).read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, SyntaxError, ValueError, RecursionError, MemoryError):
             continue
-        if not imports_package(tree, module.split(".")[0]):
-            continue
-        ids += [f"{path}::{name}" for name in names_of_tests(tree, function)]
+        ids += [f"{path}::{name}" for name in names_of_tests(tree, module, function)]
         if len(ids) >= MOST_TESTS:
             break
 
