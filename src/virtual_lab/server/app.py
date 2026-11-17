@@ -447,8 +447,10 @@ class PaperAgentToolsBody(RequestModel):
 
 class PaperAgentChecksBody(RequestModel):
     """How to check the tools: the most minutes that one check of a tool may take, and that all of the checks may, how
-    many times each call is made, the most gigabytes that one run may write, which kinds of check to make, and which
-    tools to check, by name. Of the last two, all are checked if none are named."""
+    many times each call is made, the most gigabytes that one run may write, which kinds of check to make, which tools
+    to check, by name, and the most that asking a model may spend, in USD. All of the tools are checked if none are
+    named, and the kinds that need no model if no kinds are. The limit on spending is said when the check against the
+    paper's numbers is asked for, and not given otherwise."""
 
     minutes: StrictInt | None = None
     total_minutes: StrictInt | None = None
@@ -458,6 +460,7 @@ class PaperAgentChecksBody(RequestModel):
     tools: list[Annotated[str, StringConstraints(max_length=MAX_FUNCTION_NAME_CHARS)]] | None = Field(
         default=None, max_length=100
     )
+    max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
 
 
 class PaperAgentDataBody(RequestModel):
@@ -1382,7 +1385,14 @@ def create_app(
     @api.post("/paperagents/{agent_id}/checks", status_code=202)
     def check_paperagent_tools(agent_id: str, body: PaperAgentChecksBody) -> dict[str, Any]:
         job = paperagents.start_checks(
-            agent_id, body.minutes, body.total_minutes, body.repeats, body.gigabytes, body.kinds, body.tools
+            agent_id,
+            body.minutes,
+            body.total_minutes,
+            body.repeats,
+            body.gigabytes,
+            body.kinds,
+            body.tools,
+            body.max_cost,
         )
 
         return job.snapshot(0)

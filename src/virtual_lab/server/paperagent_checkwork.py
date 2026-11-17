@@ -2,9 +2,10 @@
 keeps it as it is made.
 
 This is what PaperAgents does with the pieces: the tools that are kept are called with inputs that no tutorial chose,
-and the tests that the code came with are run, in the environment's image (paperagents/checking.py), and each check is
-kept, bound to what it was made of (paperagent_checks.py). A tool's tier is worked out from what is kept, and not
-here.
+the tests that the code came with are run, and, if it is asked for, the numbers that the paper reports are looked for in
+what the tools gave and the tools are called again for them, in the environment's image (paperagents/checking.py,
+paperagents/linking.py), and each check is kept, bound to what it was made of (paperagent_checks.py). A tool's tier is
+worked out from what is kept, and not here.
 """
 
 import tempfile
@@ -13,7 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from virtual_lab.paperagents import checking
+from virtual_lab.export import money
+from virtual_lab.paperagents import checking, linking
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents.comparing import Tolerance
@@ -40,12 +42,13 @@ def limits_of() -> dict[str, int | str]:
 
 
 def kinds_of(kinds: Any) -> tuple[str, ...]:
-    """The kinds of check that were asked for, in the order that they are made, which is all of them if none were named.
+    """The kinds of check that were asked for, in the order that they are made, which are those that need no model and
+    cost nothing if none were named.
 
     :raises ValueError: If it is not a list of kinds of check, each named once.
     """
     if kinds is None:
-        return checking.KINDS
+        return checking.DEFAULT_KINDS
     if (
         not isinstance(kinds, (list, tuple))
         or not kinds
@@ -64,10 +67,19 @@ def describe_check(name: str, kind: str, outcome: checking.Outcome) -> str:
 
 
 def run_kind(
-    runner: checking.CheckRunner, tool: dict[str, Any], kind: str, repo: Path, seconds: float
+    runner: checking.CheckRunner,
+    tool: dict[str, Any],
+    kind: str,
+    repo: Path,
+    seconds: float,
+    claims: Sequence[dict[str, Any]],
+    judge: linking.Judge | None,
 ) -> checking.Outcome:
     """Makes one kind of check of one tool.
 
+    :param claims: The claims of the paper, which the paper's numbers are taken from.
+    :param judge: What says whether a number of the paper's is the quantity that a result holds, for that kind.
+    :raises linking.LimitReached: If the limit on what a model may cost was reached before it was asked.
     :raises StoppedError: If the job was stopped.
     :raises DockerUnavailableError: If Docker did not run a call.
     """
@@ -75,6 +87,11 @@ def run_kind(
         tolerance = Tolerance(**tool["evidence"]["tolerance"])
 
         return checking.check_held_out(runner, tool, repo, seconds, tolerance)
+    if kind == checking.PAPER_NUMBERS:
+        if judge is None:
+            raise ValueError("Checking against the numbers that the paper reports needs a model to ask")
+
+        return linking.check_paper_numbers(runner, tool, claims, judge, seconds)
 
     return checking.check_repo_tests(runner, tool, repo, seconds)
 
@@ -91,6 +108,8 @@ def check_all(
     repo: Path,
     data: Path | None,
     docker_command: tuple[str, ...],
+    claims: Sequence[dict[str, Any]] = (),
+    judge: linking.Judge | None = None,
 ) -> tuple[str, dict[str, int]]:
     """Makes the checks one after another, keeping each as it is made, so that a job that is stopped keeps what it had
     made. A check that is made again takes the place of the one that was kept.
@@ -100,6 +119,9 @@ def check_all(
     :param tools: The tools to check, each as it is kept, with its wrapper's code.
     :param repo: The code that was fetched, which is read for what each function takes and never run.
     :param data: The folder of the data that the tutorials were given, if they were, which the calls are given too.
+    :param claims: The claims of the paper, kept as read, which the check against its numbers is bound to.
+    :param judge: What a model is asked through, which the check against the paper's numbers needs. A limit that it
+        reaches stops that kind, and not the others.
     :return: What it came to, in a sentence, and how many checks came to each status.
     :raises StoppedError: If the job was stopped.
     :raises DockerUnavailableError: If Docker did not run a call.
@@ -111,6 +133,9 @@ def check_all(
     work = [(tool, kind) for tool in tools for kind in kinds]
     began = time.monotonic()
     done = 0
+    unreached = 0
+    limit: str | None = None
+    unasked = 0
     with tempfile.TemporaryDirectory(prefix="paperagent.", dir=scratch_root) as scratch:
         runner = checking.CheckRunner(
             building.tag_of(agent_id, kept["commit"]),
@@ -124,21 +149,34 @@ def check_all(
         for number, (tool, kind) in enumerate(work, 1):
             left = limits.total_minutes * 60 - (time.monotonic() - began)
             if left < referencing.LEAST_SECONDS:
+                unreached = len(work) - number + 1
                 break
+            if kind == checking.PAPER_NUMBERS and limit is not None:
+                unasked += 1
+                continue
             job.update(f"Checking the tools: {tool['name']} ({number} of {len(work)})")
             started = time.monotonic()
-            outcome = run_kind(runner, tool, kind, repo, min(limits.minutes * 60, left))
+            try:
+                outcome = run_kind(runner, tool, kind, repo, min(limits.minutes * 60, left), claims, judge)
+            except linking.LimitReached as error:
+                limit = str(error)
+                unasked += 1
+                job.log(f"{tool['name']}: {limit}")
+                continue
             kept_checks.keep(
                 directory,
                 kept_checks.record_of(
-                    tool, kept, kind, outcome, utc_timestamp(), time.monotonic() - started, limits.to_dict()
+                    tool, kept, kind, outcome, utc_timestamp(), time.monotonic() - started, limits.to_dict(), claims
                 ),
             )
             counts[outcome.status] += 1
             done += 1
             job.log(describe_check(tool["name"], kind, outcome))
-    left_over = len(work) - done
-    said = f" {left_over} were not made, as the time was used." if left_over else ""
+    said = f" {unreached} were not made, as the time was used." if unreached else ""
+    if limit is not None:
+        said += f" {unasked} of the checks against the paper's numbers were not made. {limit}."
+    if judge is not None and checking.PAPER_NUMBERS in kinds and (spent := judge.spent()):
+        said += f" Asking {judge.model} about the paper's numbers cost {money(spent)}."
 
     return (
         f"Made {done} check{'s' if done != 1 else ''} of {len(tools)} tool{'s' if len(tools) != 1 else ''}: "

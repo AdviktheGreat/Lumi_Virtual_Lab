@@ -84,9 +84,9 @@ LISTED_QUOTE_CHARS = 240
 MEANING = (
     "A tool of tier A calls the authors' own code in a sandbox with no network, and gave again what the tutorials got "
     "for the arguments they passed. A tool of tier B has also passed two kinds of checks that its tutorial did not "
-    "give it, and failed none; of those, only the check with other inputs calls the tool, and the code's own tests are "
-    "of the code's function. A tool of tier D only reads what was found in the paper. None of them shows that what "
-    "it says or gives is right."
+    "give it, and failed none; of those, the checks with other inputs and with the paper's numbers call the tool, and "
+    "the code's own tests are of the code's function. A tool of tier D only reads what was found in the paper. None of "
+    "them shows that what it says or gives is right."
 )
 
 

@@ -3,7 +3,9 @@
 checks/independent/<tool>/<kind>.json is one check of one tool: which kind of evidence it is, whether it passed, failed,
 or was not obtained, what it came to in a sentence, and what it was made of. Each is bound to what it was made of: the
 tool's wrapper (by its hash), the commit of the code, the image of the environment, and the reference run. A check that
-is bound to something that is not what is kept now is stale, is shown as stale, and counts for nothing.
+is bound to something that is not what is kept now is stale, is shown as stale, and counts for nothing. A check against
+the numbers that the paper reports is also bound to those numbers, by a hash of them with the sentences they are from,
+so that a paper that is read again, and gives other numbers, leaves it stale.
 
 The tier of a tool follows from these files and from nothing else. A tool of tier A that has two kinds of checks that
 passed and none that failed, all of them of what is kept now, is of tier B. No model decides it: a model says nothing
@@ -12,14 +14,17 @@ nothing. What tier B says is that the tool did more than give again what its tut
 the tool gives is right.
 """
 
+import hashlib
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from virtual_lab.paperagents import checking, wrappers
 from virtual_lab.paperagents.repository import COMMIT
 from virtual_lab.paperagents.stock import matches
+from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_tools as kept_tools
 from virtual_lab.server.workspace import read_json
 from virtual_lab.utils import write_atomically
@@ -77,6 +82,7 @@ def is_record(value: Any, name: str, kind: str) -> bool:
         and COMMIT.fullmatch(value["commit"]) is not None
         and value["image_id"].startswith("sha256:")
         and SHA256.fullmatch(value["wrapper_sha256"]) is not None
+        and (value["kind"] != checking.PAPER_NUMBERS or SHA256.fullmatch(str(value.get("claims_sha256"))) is not None)
     )
 
 
@@ -118,6 +124,13 @@ def made_of(tool: dict[str, Any], kept: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def numbers_sha256(claims: Sequence[dict[str, Any]]) -> str:
+    """What a check against the paper's numbers is bound to: each number that the paper reports, with its sentence."""
+    shown = sorted((claim["id"], claim["value"], claim["quote"]) for claim in claims)
+
+    return hashlib.sha256(json.dumps(shown).encode("utf-8")).hexdigest()
+
+
 def record_of(
     tool: dict[str, Any],
     kept: dict[str, Any],
@@ -126,8 +139,12 @@ def record_of(
     at: str,
     seconds: float,
     limits: dict[str, int],
+    claims: Sequence[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """A check as it is kept, bound to what it was made of."""
+    """A check as it is kept, bound to what it was made of.
+
+    :param claims: The numbers that the paper reports, which a check against them was made with.
+    """
     return {
         "schema": SCHEMA,
         "tool": tool["name"],
@@ -139,12 +156,22 @@ def record_of(
         "seconds": round(seconds, 1),
         "limits": limits,
         **made_of(tool, kept),
+        **({"claims_sha256": numbers_sha256(claims)} if kind == checking.PAPER_NUMBERS and claims is not None else {}),
     }
 
 
-def is_current(record: dict[str, Any], tool: dict[str, Any], kept: dict[str, Any]) -> bool:
-    """Whether a check is bound to the tool as it is, in the commit, the image, and the reference run that are kept."""
-    return all(record[key] == value for key, value in made_of(tool, kept).items())
+def is_current(
+    record: dict[str, Any], tool: dict[str, Any], kept: dict[str, Any], claims_sha256: str | None = None
+) -> bool:
+    """Whether a check is bound to the tool as it is, in the commit, the image, and the reference run that are kept, and
+    if it is against the numbers that the paper reports, to the numbers that are read from it now.
+
+    :param claims_sha256: What the numbers that the paper reports are now, which is none if there are none.
+    """
+    return all(record[key] == value for key, value in made_of(tool, kept).items()) and (
+        record["kind"] != checking.PAPER_NUMBERS
+        or (claims_sha256 is not None and record.get("claims_sha256") == claims_sha256)
+    )
 
 
 def evidence_of(
@@ -158,6 +185,8 @@ def evidence_of(
     :param details: Whether what each check was made of is given, which is much more than what it came to.
     """
     found = []
+    claims = kept_reading.number_claims(directory)
+    numbers = numbers_sha256(claims) if claims else None
     for kind in checking.KINDS:
         record = load(directory, tool["name"], kind)
         entry: dict[str, Any] = {
@@ -171,14 +200,15 @@ def evidence_of(
             "was": None,
         }
         if record is not None:
-            current = is_current(record, tool, kept)
+            current = is_current(record, tool, kept, numbers)
             entry.update(
                 status=record["status"] if current else STALE,
                 summary=(
                     record["summary"]
                     if current
-                    else "It was checked for a wrapper, a commit of the code, an image of the environment, or a "
-                    "reference run that is not what is kept now, so it counts for nothing. Check again."
+                    else "It was checked for a wrapper, a commit of the code, an image of the environment, a "
+                    "reference run, or numbers of the paper that are not what is kept now, so it counts for nothing. "
+                    "Check again."
                 ),
                 file=f"{kept_tools.CHECKS_DIR}/{kept_tools.INDEPENDENT_DIR}/{tool['name']}/{kind}.json",
                 checked_at=record["checked_at"],
