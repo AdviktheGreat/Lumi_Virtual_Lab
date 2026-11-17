@@ -1890,3 +1890,108 @@ export interface ToolDetail {
     repairs: { change: string; because: string[] }[];
   };
 }
+
+// How one kind of check of a tool stands: it passed, failed, or could not be made (not obtained), it was made for something that is not
+// kept now (stale, which counts for nothing), or it has not been made
+export type CheckStatus = "passed" | "failed" | "not_obtained" | "stale" | "not_run";
+
+// One kind of check of one tool, with how it went
+export interface CheckEvidence {
+  kind: string;
+  title: string;
+  // What it holds the tool to: the code's own function, the code's own tests, or the numbers that the paper reports
+  basis: string;
+  // What it shows, and what it does not
+  what: string;
+  status: CheckStatus;
+  summary: string;
+  // Where it is kept, relative to the agent, or null if it was not made
+  file: string | null;
+  checked_at: string | null;
+  // What a stale check came to when it was made
+  was: string | null;
+  // What it was made of, which is only given when one tool's checks are asked for
+  details?: Record<string, unknown>;
+  limits?: Record<string, number>;
+  seconds?: number;
+}
+
+// A tool as the checks list it: the tier it was made as, the tier that its checks come to now, and each kind of check
+export interface CheckedTool {
+  name: string;
+  module: string;
+  function: string;
+  made_as: string;
+  tier: string;
+  // The kinds of check that passed, and the bases that they are against
+  passed: string[];
+  bases: string[];
+  evidence: CheckEvidence[];
+}
+
+// One tool's checks, with what each was made of and what the tier means
+export interface CheckedToolDetail extends CheckedTool {
+  meaning: string;
+}
+
+// A kind of check that can be asked for
+export interface CheckKind {
+  kind: string;
+  title: string;
+  // What a tool that passed it is said to have done, in words that follow "passed checks that its tutorial did not give it ("
+  said: string;
+  what: string;
+  basis: string;
+  // Whether it is made when no kind is named, which is so of those that need no model and cost nothing
+  default: boolean;
+  // Whether it asks a model, which costs what the model charges
+  model: boolean;
+}
+
+// What there is of the checks of an agent's tools: each tool and how its checks went, what can be asked for, and what is allowed
+export interface PaperAgentChecks {
+  id: string;
+  docker: { ready: boolean; message: string | null };
+  // Whether the tools were made to their end, which is what is checked
+  made: boolean;
+  tools: CheckedTool[];
+  // The model in the settings, and whose it is, which a model that chooses inputs must not be of, or null if that is not known
+  settings_model: string;
+  settings_family: string | null;
+  kinds: CheckKind[];
+  // How many numbers of the paper have digits enough to be looked for in what the tools gave
+  numbers: number;
+  // The checking that is at work, if there is one
+  job: Job | null;
+  // What tier B is, in words, which is said wherever it is shown
+  meaning: string;
+  // What a check can be against, by name, with what each is
+  bases: Record<string, string>;
+  // How many bases a tool must have a check that passed against to be of tier B
+  bases_for_b: number;
+  limits: {
+    default_minutes: number;
+    max_minutes: number;
+    default_total_minutes: number;
+    max_total_minutes: number;
+    default_repeats: number;
+    max_repeats: number;
+    default_gigabytes: number;
+    max_gigabytes: number;
+    memory: string;
+    cpus: string;
+    pids: number;
+  };
+}
+
+// What to say of checking tools. What is left out is what the server defaults to, which is the kinds that need no model; the most
+// that asking a model may spend is said if one of them is asked for, and the model that chooses inputs if that kind is
+export interface PaperAgentChecksOptions {
+  minutes?: number;
+  total_minutes?: number;
+  repeats?: number;
+  gigabytes?: number;
+  kinds?: string[];
+  max_cost?: number;
+  verifier_model?: string;
+}

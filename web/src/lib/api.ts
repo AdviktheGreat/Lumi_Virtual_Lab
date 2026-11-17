@@ -8,6 +8,7 @@ import type {
   ChatSummary,
   Campaign,
   CampaignChange,
+  CheckedToolDetail,
   DataLake,
   DataListing,
   Health,
@@ -38,6 +39,8 @@ import type {
   PaperAgent,
   PaperAgentBuildOptions,
   PaperAgentChange,
+  PaperAgentChecks,
+  PaperAgentChecksOptions,
   PaperAgentGiven,
   PaperAgentImportCheck,
   PaperAgentData,
@@ -583,6 +586,15 @@ export const api = {
   clearPaperAgentTools: (id: string) => request<PaperAgentTools>("DELETE", `/paperagents/${encodeURIComponent(id)}/tools`),
   paperAgentTool: (id: string, name: string, signal?: AbortSignal) =>
     request<ToolDetail>("GET", `/paperagents/${encodeURIComponent(id)}/tools/${encodeURIComponent(name)}`, undefined, signal),
+  // The same of checking the tools by what their tutorials did not give them: how each tool stands, checking them, which goes on as a
+  // job, taking the checks away, and what one tool's checks were made of
+  paperAgentChecks: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentChecks>("GET", `/paperagents/${encodeURIComponent(id)}/checks`, undefined, signal),
+  checkPaperAgentTools: (id: string, options: PaperAgentChecksOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/checks`, options),
+  clearPaperAgentChecks: (id: string) => request<PaperAgentChecks>("DELETE", `/paperagents/${encodeURIComponent(id)}/checks`),
+  paperAgentToolChecks: (id: string, name: string, signal?: AbortSignal) =>
+    request<CheckedToolDetail>("GET", `/paperagents/${encodeURIComponent(id)}/checks/${encodeURIComponent(name)}`, undefined, signal),
   paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
     request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,

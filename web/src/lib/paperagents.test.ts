@@ -33,6 +33,7 @@ import {
   lastEnvironmentJob,
   lastReadingJob,
   lastReferenceJob,
+  lastChecksJob,
   lastToolsJob,
   lastRepositoryJob,
   orderedChecks,
@@ -49,6 +50,7 @@ import {
   stockRows,
   STOCK_ITEMS_SHOWN,
   titleProblem,
+  checksJob,
   toolsJob,
   type AgentDraft,
 } from "./paperagents";
@@ -795,5 +797,34 @@ describe("the job that makes the tools of an agent", () => {
     expect(readingKey([making()], 0, "cells")).not.toBe(readingKey([job({ id: "t1", kind: "paperagent-reference" })], 0, "cells"));
     expect(readingKey([making({ subject: "dogs" })], 0, "cells")).toBe("0|");
     expect(readingKey([making({ state: "succeeded" })], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the job that checks the tools of an agent", () => {
+  const checking = (changes: Partial<Job> = {}) => job({ id: "c1", kind: "paperagent-checks", ...changes });
+
+  it("is the one at work on that agent, and not the one that makes its tools or another agent's", () => {
+    const jobs = [job({ kind: "paperagent-tools" }), checking({ id: "other", subject: "dogs" }), checking({ id: "old", state: "failed" }), checking()];
+
+    expect(checksJob(jobs, "cells")?.id).toBe("c1");
+    expect(checksJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(checksJob([job({ kind: "paperagent-tools" })], "cells")).toBeUndefined();
+    expect(toolsJob([checking()], "cells")).toBeUndefined();
+  });
+
+  it("is, when none is at work, the latest that is over", () => {
+    const jobs = [checking({ id: "new", state: "stopped" }), checking({ id: "old", state: "failed" }), job({ state: "failed" })];
+
+    expect(lastChecksJob(jobs, "cells")?.id).toBe("new");
+    expect(lastChecksJob([checking()], "cells")).toBeUndefined();
+    expect(lastChecksJob([job({ kind: "paperagent-tools", state: "failed" })], "cells")).toBeUndefined();
+  });
+
+  it("changes the key that the page looks again by, and says nothing of another agent's or of one that is over", () => {
+    expect(readingKey([checking()], 0, "cells")).toBe("0||checks:c1");
+    expect(readingKey([checking()], 0, "cells")).not.toBe(readingKey([], 0, "cells"));
+    expect(readingKey([checking()], 0, "cells")).not.toBe(readingKey([job({ id: "c1", kind: "paperagent-tools" })], 0, "cells"));
+    expect(readingKey([checking({ subject: "dogs" })], 0, "cells")).toBe("0|");
+    expect(readingKey([checking({ state: "succeeded" })], 0, "cells")).toBe("0|");
   });
 });
