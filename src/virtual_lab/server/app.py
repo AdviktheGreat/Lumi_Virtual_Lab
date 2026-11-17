@@ -400,6 +400,20 @@ class PaperAgentReadBody(RequestModel):
     retry_failed: StrictBool = False
 
 
+class PaperAgentCardFieldsBody(RequestModel):
+    """What a fact of the method card says, by field name, with its words as quote where a person may give them."""
+
+    fields: dict[
+        Annotated[str, StringConstraints(max_length=20)], Annotated[str, StringConstraints(max_length=2000)]
+    ] = Field(max_length=10)
+
+
+class PaperAgentCardFactBody(PaperAgentCardFieldsBody):
+    """A fact to add to the method card: which sort it is, and what it says."""
+
+    kind: str = Field(max_length=20)
+
+
 class PaperAgentRepositoryBody(RequestModel):
     """Which code to fetch, if it is not what the agent has already, at which branch, tag, or commit, and the most of it
     to fetch, in megabytes."""
@@ -1300,6 +1314,34 @@ def create_app(
         paperagents.clear_reading(agent_id)
 
         return paperagents.reading(agent_id)
+
+    @api.post("/paperagents/{agent_id}/card/facts")
+    def add_paperagent_card_fact(agent_id: str, body: PaperAgentCardFactBody) -> dict[str, Any]:
+        return paperagents.add_card_fact(agent_id, body.kind, body.fields)
+
+    @api.put("/paperagents/{agent_id}/card/facts/{fact_id}")
+    def change_paperagent_card_fact(agent_id: str, fact_id: str, body: PaperAgentCardFieldsBody) -> dict[str, Any]:
+        return paperagents.change_card_fact(agent_id, fact_id, body.fields)
+
+    @api.delete("/paperagents/{agent_id}/card/facts/{fact_id}")
+    def delete_paperagent_card_fact(agent_id: str, fact_id: str) -> dict[str, Any]:
+        return paperagents.remove_card_fact(agent_id, fact_id)
+
+    @api.post("/paperagents/{agent_id}/card/facts/{fact_id}/restore")
+    def restore_paperagent_card_fact(agent_id: str, fact_id: str) -> dict[str, Any]:
+        return paperagents.restore_card_fact(agent_id, fact_id)
+
+    @api.post("/paperagents/{agent_id}/card/approval")
+    def approve_paperagent_card(agent_id: str) -> dict[str, Any]:
+        return paperagents.approve_card(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/card/approval")
+    def withdraw_paperagent_card_approval(agent_id: str) -> dict[str, Any]:
+        return paperagents.withdraw_card_approval(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/card/edits")
+    def discard_paperagent_card_edits(agent_id: str) -> dict[str, Any]:
+        return paperagents.discard_card_edits(agent_id)
 
     @api.post("/paperagents/{agent_id}/repository", status_code=202)
     def fetch_paperagent_repository(agent_id: str, body: PaperAgentRepositoryBody) -> dict[str, Any]:

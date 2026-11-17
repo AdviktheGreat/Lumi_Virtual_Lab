@@ -62,6 +62,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import threading
@@ -84,6 +85,7 @@ from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
 from virtual_lab.paperagents import asking, linking, proposing, toolmaking
+from virtual_lab.paperagents import card as method_card
 from virtual_lab.paperagents import checking as verifying
 from virtual_lab.paperagents import data as finding
 from virtual_lab.paperagents import datahosts as hosting
@@ -1091,8 +1093,88 @@ class PaperAgents:
         with self._lock:
             directory, agent = self.lookup(agent_id)
             self.check_idle(agent_id)
-            kept_reading.forget(directory)
+            # What a person did to the card is theirs, and is of the paper, which stays
+            kept_reading.forget(directory, edits=False)
             self.save(directory, self.unread(agent, agent["paper"]))
+
+    # The method card, which a person reads, corrects, and approves
+
+    def edit_card(
+        self,
+        agent_id: str,
+        operation: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
+        reading_blocks: bool = False,
+    ) -> dict[str, Any]:
+        """Does something to what a person has done to the card of an agent's paper, and gives the reading as it is
+        after.
+
+        :param operation: Given the card that the reading made and the edits that were, and gives the edits that are.
+        :param reading_blocks: Whether it waits for a reading of the paper to end, as approving does, since the card is
+            still being made while the paper is read.
+        :raises ApiError: If there is no agent with this id, it has no paper, what is said is not something the card
+            takes, or there is no such fact.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            file = agent["paper"].get("file")
+            if file is None:
+                raise ApiError(
+                    409, "no_paper", "The agent has no paper yet, so it has no card. Upload the paper first."
+                )
+            if reading_blocks and (job := self.running(agent_id)) is not None:
+                raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
+            read = kept_reading.read_card(directory, file["sha256"], made_with())
+            edits = kept_reading.load_edits(directory, file["sha256"])
+            try:
+                edits = operation(read, edits)
+            except method_card.NoSuchFactError as error:
+                raise not_found("fact on that card") from error
+            except ValueError as error:
+                raise ApiError(422, "invalid", str(error)) from error
+            kept_reading.save_edits(directory, file["sha256"], edits)
+
+        return self.reading(agent_id)
+
+    def add_card_fact(self, agent_id: str, kind: Any, fields: Any) -> dict[str, Any]:
+        """Adds a fact to an agent's method card, which is the person's own.
+
+        :param kind: Which sort of fact: methods, datasets, scope, or limitations.
+        :param fields: What the fact says, by name, and its words as quote.
+        """
+        return self.edit_card(
+            agent_id,
+            lambda read, edits: method_card.add(read, edits, kind, fields, utc_timestamp(), secrets.token_hex(4)),
+        )
+
+    def change_card_fact(self, agent_id: str, fact_id: str, fields: Any) -> dict[str, Any]:
+        """Changes a fact of an agent's method card to say what the person says, which makes it theirs."""
+        return self.edit_card(
+            agent_id, lambda read, edits: method_card.change(read, edits, fact_id, fields, utc_timestamp())
+        )
+
+    def remove_card_fact(self, agent_id: str, fact_id: str) -> dict[str, Any]:
+        """Takes a fact off an agent's method card. One that was read can be put back."""
+        return self.edit_card(agent_id, lambda read, edits: method_card.remove(read, edits, fact_id, utc_timestamp()))
+
+    def restore_card_fact(self, agent_id: str, fact_id: str) -> dict[str, Any]:
+        """Puts back a fact that was taken off an agent's method card, or has it say what it was read as."""
+        return self.edit_card(agent_id, lambda read, edits: method_card.restore(read, edits, fact_id))
+
+    def approve_card(self, agent_id: str) -> dict[str, Any]:
+        """Says that a person read an agent's method card as it is and lets it stand, which is not that it is right. Any
+        change to it makes it a draft again."""
+        return self.edit_card(
+            agent_id, lambda read, edits: method_card.approve(read, edits, utc_timestamp()), reading_blocks=True
+        )
+
+    def withdraw_card_approval(self, agent_id: str) -> dict[str, Any]:
+        """Takes back the approval of an agent's method card, which makes it a draft."""
+        return self.edit_card(agent_id, lambda read, edits: method_card.withdraw(edits))
+
+    def discard_card_edits(self, agent_id: str) -> dict[str, Any]:
+        """Takes away all that a person did to an agent's method card, and the approval, so that it is as it was
+        read."""
+        return self.edit_card(agent_id, lambda read, edits: method_card.empty_edits())
 
     def read(self, agent_id: str, max_cost: Any, retry_failed: Any = False) -> Job:
         """Starts reading an agent's paper, for the claims in it, the methods and data and software it names, what the

@@ -238,6 +238,31 @@ def partial_note(found: dict[str, Any]) -> str | None:
     )
 
 
+def card_note(card: dict[str, Any]) -> str:
+    """What the model is told of how far the method card is to be trusted: whose it is, and whether a person approved
+    it, which is that they read it and let it stand, and not that it is right."""
+    own = (
+        " A fact with by: person was changed or added by a person, and one with by: reading was read by a model."
+        if card["edited"]
+        else ""
+    )
+    if card["status"] == "approved":
+        return (
+            f"A person approved this card on {card['approved_at']}, which means they read it and let it stand, and not "
+            f"that it is right. A fact that was read has the paper's own words for it and where they are.{own}"
+        )
+    since = (
+        " It was approved before, and has changed since, so it is not approved now."
+        if card["changed_since_approval"]
+        else ""
+    )
+
+    return (
+        "This is a draft that a model made from the paper, and that nobody has approved. A fact that was read has the "
+        f"paper's own words for it and where they are.{since}{own}"
+    )
+
+
 def reading_tools(workspace: Workspace, agent_id: str, title: str) -> list[Entry]:
     """The tools that read what was kept of an agent's paper. Each looks at what is kept when it is called, and so says
     when there is nothing now."""
@@ -331,8 +356,9 @@ def reading_tools(workspace: Workspace, agent_id: str, title: str) -> list[Entry
         }
 
     def show_method_card() -> dict[str, Any]:
-        """Shows the draft of the method card, which is what the paper says the method was used on, with the data and
-        software it names, where it falls short, and the places the paper says its code and data are."""
+        """Shows the method card, which is what the paper says the method was used on, with the data and software it
+        names, where it falls short, and the places the paper says its code and data are. It is a draft until a person
+        has approved it, and what a person changed or added is marked as theirs."""
         _, found = reading()
 
         def facts(kind: str, group: dict[str, Any]) -> dict[str, Any]:
@@ -343,15 +369,7 @@ def reading_tools(workspace: Workspace, agent_id: str, title: str) -> list[Entry
             **{kind: facts(kind, found["card"]) for kind in CARD_KINDS},
             "resources": {kind: facts(kind, found["resources"]) for kind in RESOURCE_KINDS},
             "reading": how_far(found),
-            "notes": [
-                note
-                for note in (
-                    "This is a draft that a model made from the paper, and that nobody has approved. Each fact has "
-                    "the paper's own words for it and where they are.",
-                    partial_note(found),
-                )
-                if note
-            ],
+            "notes": [note for note in (card_note(found["card"]), partial_note(found)) if note],
         }
 
     entries = []

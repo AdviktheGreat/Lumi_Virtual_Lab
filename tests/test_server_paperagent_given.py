@@ -301,6 +301,35 @@ class TestTheToolsThatRead:
         assert set(card) >= {"methods", "datasets", "scope", "limitations", "resources", "reading"}
         json.dumps(card)
 
+    def test_what_a_person_did_to_the_card_is_in_what_the_tool_gives_and_marked_as_theirs(
+        self, agents: PaperAgents, workspace: Workspace, read: str
+    ) -> None:
+        method = call(workspace, read, "show_method_card")["methods"]
+        assert method["facts"] == [] and "by: person" not in call(workspace, read, "show_method_card")["notes"][0]
+
+        agents.add_card_fact(read, "methods", {"name": "Our own method", "quote": "From the lab's notebook"})
+        card = call(workspace, read, "show_method_card")
+
+        assert [(fact["name"], fact["by"]) for fact in card["methods"]["facts"]] == [("Our own method", "person")]
+        assert card["status"] == "draft" and "nobody has approved" in card["notes"][0]
+        assert "by: person" in card["notes"][0]
+        json.dumps(card)
+
+    def test_an_approval_is_said_as_what_a_person_did_and_not_as_what_is_so(
+        self, agents: PaperAgents, workspace: Workspace, read: str
+    ) -> None:
+        agents.add_card_fact(read, "methods", {"name": "Our own method"})
+        agents.approve_card(read)
+
+        approved = call(workspace, read, "show_method_card")
+        assert approved["status"] == "approved"
+        assert "approved this card on" in approved["notes"][0] and "not that it is right" in approved["notes"][0]
+
+        agents.add_card_fact(read, "methods", {"name": "Another"})
+        changed = call(workspace, read, "show_method_card")
+        assert changed["status"] == "draft" and "nobody has approved" in changed["notes"][0]
+        assert "has changed since" in changed["notes"][0]
+
     def test_a_reading_that_did_not_come_to_its_end_says_so_in_what_it_gives(
         self, agents: PaperAgents, workspace: Workspace, docker: tools.Docker, fake_client: FakeClient
     ) -> None:

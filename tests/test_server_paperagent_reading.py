@@ -229,7 +229,13 @@ class TestReadingThePaper:
         resources = json.loads((folder / "resources.json").read_text())
 
         assert claims == {"schema": 1, "claims": found["claims"]}
-        assert {key: value for key, value in card.items() if key != "schema"} == found["card"]
+        # The card that is shown is the file's, with whose each fact is, since nobody has changed any
+        assert card["status"] == found["card"]["status"] == "draft"
+        for kind in ("methods", "datasets", "scope", "limitations"):
+            assert card[kind] == [
+                {name: value for name, value in fact.items() if name != "by"} for fact in found["card"][kind]
+            ]
+            assert all(fact["by"] == "reading" for fact in found["card"][kind])
         assert {key: value for key, value in resources.items() if key != "schema"} == found["resources"]
         assert {path.name for path in folder.iterdir()} == {
             AGENT_FILE,

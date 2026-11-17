@@ -15,6 +15,7 @@ from collections.abc import Callable
 from typing import Any
 
 from virtual_lab.chat import describe_size
+from virtual_lab.paperagents.card import accession_is_read
 
 # What the sandbox runs, so that code in anything else is not something tools can be made from
 RUNNABLE = ("Python", "R")
@@ -226,7 +227,7 @@ def data_check(stock: dict[str, Any], paper: dict[str, Any] | None) -> dict[str,
     if data["accessions"]:
         signals.append(f"accessions {', '.join(data['accessions'][:3])}")
     if paper is not None:
-        accessions = [fact for fact in paper.get("datasets", []) if fact.get("accession")]
+        accessions = [fact for fact in paper.get("datasets", []) if fact.get("accession") and accession_is_read(fact)]
         places = [fact for fact in paper.get("links", []) if fact.get("role") == "data"]
         statements = [fact for fact in paper.get("availability", []) if fact.get("kind") == "data"]
         if accessions:
