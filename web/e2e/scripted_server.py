@@ -65,6 +65,13 @@ from a script: no key is needed, and every run says the same. What it says depen
   stand-in for the container that calls it again, which gives what the tutorial got: scale is made into a tool, and
   embed is not, as only how its array looks was kept. "tedious" makes the calls take a while, so that the making can
   be followed and stopped, and "brittle" makes scale give other than it did, so that it is not made either.
+- The checks of those tools are made by the same stand-ins: calling scale or the code's own function with inputs that no
+  tutorial passed gives what scale does for them, which is the same from both, so that the check against the function
+  passes. "differing" makes the code's own function give one more than the tool does, so that it fails. The tests that
+  the code comes with are found by reading its files, which have one that calls scale if "tested" is in the address, and
+  a stand-in for the container runs them: they pass, and "unsound" makes one fail. "unhurried" makes each check take a
+  while, so that the checking can be followed and stopped. A model of another family that is asked for inputs to try
+  proposes three, of which one names a parameter that scale does not take.
 - The data of a PaperAgent is listed and fetched by stand-ins for the places it is kept at, which have a few records,
   named by their keys: Zenodo record 1000001 has files of which one is corrupt (what it sends is not what its checksum
   says), one gives no checksum, and one is restricted; 1000002 has a file larger than the most that is fetched at first;
@@ -129,10 +136,12 @@ from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab import openrouter  # noqa: E402
 from virtual_lab.environment import StoppedError  # noqa: E402
+from virtual_lab.paperagents import checking  # noqa: E402
 from virtual_lab.paperagents import data as finding  # noqa: E402
 from virtual_lab.paperagents import datahosts as hosting  # noqa: E402
 from virtual_lab.paperagents import environment as building  # noqa: E402
 from virtual_lab.paperagents import fetch as fetching  # noqa: E402
+from virtual_lab.paperagents import proposing  # noqa: E402
 from virtual_lab.paperagents import reference as referencing  # noqa: E402
 from virtual_lab.paperagents import repository as cloning  # noqa: E402
 from virtual_lab.paperagents import toolmaking as making  # noqa: E402
@@ -683,6 +692,11 @@ def stand_in_clone(
     if not needs_gpu:
         files["tutorials/quickstart.ipynb"] = NOTEBOOK
         files["tests/test_core.py"] = "def test_nothing():\n    assert True\n"
+        if "tested" in url:
+            files["tests/test_scale.py"] = (
+                "from cellmapper.core import scale\n\n\n"
+                "def test_scale_doubles():\n    assert scale([1.0], 2.0) == [2.0]\n"
+            )
     if "many" in url:
         files["examples/demo.py"] = "import cellmapper\nprint(cellmapper.scale([1, 2, 3], 2.5))\n"
         files["examples/second.py"] = "import cellmapper\nprint(cellmapper.scale([4], 2.0))\n"
@@ -1117,8 +1131,53 @@ class StandInRunner:
         return referencing.Outcome(stand_in_detail(item, self.label, self.limits), None)
 
 
-# How long the calls of a tool that is "tedious" take, which is long enough for the making to be followed and stopped
+# How long the calls of a tool that is "tedious" take, which is long enough for the making to be followed and stopped,
+# and how long a check of tools that is "unhurried" takes, which is long enough for the checking to be
 TOOL_DELAY = 6.0
+CHECK_DELAY = 6.0
+
+
+def wait_for_checks(runner: making.ToolRunner) -> None:
+    """Takes a while, which a stop ends."""
+    for _ in range(int(CHECK_DELAY * 10)):
+        if runner.stop.is_set():
+            raise StoppedError("Stopped.")
+        time.sleep(0.1)
+
+
+def scaled(function: str, args: dict[str, Any], label: str) -> dict[str, Any]:
+    """What scale gives for arguments, as a call of it is recorded. The tool and the code's own function give the same,
+    unless the agent is "differing", whose code's own function gives one more."""
+    more = 1 if "differing" in label and function == checking.DIRECT_NAME else 0
+    factor = args.get("factor", 1.0)
+
+    return {"type": "list", "plain": True, "value": [value * factor + more for value in args.get("values", [])]}
+
+
+def stand_in_run_tests(
+    self: checking.CheckRunner, ids: Sequence[str], seconds: float
+) -> tuple[str, dict[str, Any] | None, list[str]]:
+    """What running the tests of the code in a container gives: each passes, unless the agent is "unsound", whose first
+    does not."""
+    if "unhurried" in self.label:
+        wait_for_checks(self)
+    failed = 1 if "unsound" in self.label else 0
+    failures = [{"name": ids[0], "message": "assert [2.5] == [2.0]"}] if failed else []
+    result = {
+        "schema": 1,
+        "ran": True,
+        "reason": None,
+        "tests": len(ids),
+        "passed": len(ids) - failed,
+        "failed": failed,
+        "errors": 0,
+        "skipped": 0,
+        "failures": failures,
+        "seconds": 0.2,
+        "output": f"collected {len(ids)} items\n",
+    }
+
+    return "done", result, [f"collected {len(ids)} items"]
 
 
 def stand_in_replay(
@@ -1134,8 +1193,14 @@ def stand_in_replay(
                 raise StoppedError("Stopped.")
             time.sleep(0.1)
 
+    if "unhurried" in self.label and isinstance(self, checking.CheckRunner):
+        wait_for_checks(self)
+
     def gave(case: wrappers.Case) -> dict[str, Any]:
         value = case.expected
+        if not value:
+            # A call that no tutorial made, of scale, which is all that is made into a tool
+            value = scaled(function, case.args, self.label)
         if "brittle" in self.label and value.get("plain") and isinstance(value["value"], list):
             value = {**value, "value": [item + 1 for item in value["value"]]}
 
@@ -1233,6 +1298,22 @@ def reply_to(question: str) -> str:
     )
 
 
+def stand_in_proposals() -> proposing.Proposals:
+    """The inputs that a model of another family proposes for scale: one of fractions, an empty list, and one that names
+    a parameter that scale does not take, which is not run."""
+    return proposing.Proposals(
+        inputs=[
+            proposing.ProposedInput(
+                arguments='{"values": [0.5, 1.5, 2.5, 3.5], "factor": 2.0}',
+                reason="A longer list of fractions than the tutorial passed.",
+            ),
+            proposing.ProposedInput(arguments='{"values": [], "factor": 1.0}', reason="An empty list, at the edge."),
+            proposing.ProposedInput(arguments='{"values": [1.0], "scale": 2}', reason="Another name for the factor."),
+        ],
+        gaps=["The wrapper gives factor a default that the code may not have."],
+    )
+
+
 class ScriptedCompletions(FakeCompletions):
     def __init__(self, delay: float) -> None:
         super().__init__()
@@ -1295,6 +1376,8 @@ class ScriptedCompletions(FakeCompletions):
 
     def parse(self, **kwargs: Any) -> Any:
         schema = kwargs["response_format"]
+        if schema is proposing.Proposals:
+            return parsed_response(stand_in_proposals())
         if schema is not PaperFindings and schema is not ChunkReading:
             return super().parse(**kwargs)
         text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")
@@ -1544,6 +1627,7 @@ def main() -> None:
     referencing.Runner = StandInRunner  # type: ignore[misc,assignment]
     referencing.remove_runs = stand_in_remove_runs
     making.ToolRunner.replay = stand_in_replay  # type: ignore[method-assign]
+    checking.CheckRunner.run_tests = stand_in_run_tests  # type: ignore[method-assign]
     openrouter.fetch_models = stand_in_openrouter_models
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened

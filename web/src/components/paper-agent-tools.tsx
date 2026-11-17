@@ -372,7 +372,7 @@ function Tool({ agent, tool, onStale }: { agent: PaperAgent; tool: ToolSummary; 
         <code className="break-all font-mono text-sm font-medium">
           {tool.name}({tool.parameters.join(", ")})
         </code>
-        <Badge variant="secondary">Tier {tool.tier}</Badge>
+        <Badge variant="secondary">Made as tier {tool.tier}</Badge>
       </div>
       <p className="break-words text-xs text-muted-foreground">
         It calls {tool.module}.{tool.function}. {describeChecked(tool)}.

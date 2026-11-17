@@ -16,7 +16,7 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools"];
+  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools", "paperagent-checks"];
   for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
@@ -2403,8 +2403,8 @@ const toolsOf = async (page: Page, id: string) => (await page.request.get(`/api/
 const MAKE = "Make the tools";
 
 // Makes an agent whose tutorials have been run, so that what a test is about is its tools, and opens it
-async function agentWithTutorials(page: Page, title: string, paper: Record<string, unknown> = { kind: "file" }): Promise<string> {
-  const id = await agentWithEnvironment(page, title, CODE_ADDRESS, paper);
+async function agentWithTutorials(page: Page, title: string, paper: Record<string, unknown> = { kind: "file" }, repo = CODE_ADDRESS): Promise<string> {
+  const id = await agentWithEnvironment(page, title, repo, paper);
   const started = await page.request.post(`/api/paperagents/${id}/reference`, { data: {} });
   expect(started.status()).toBe(202);
   await expect.poll(async () => (await referenceOf(page, id)).job, { timeout: 30_000 }).toBeNull();
@@ -2495,7 +2495,7 @@ test("says what would be made, asks for what is wrong with the asking to be put 
   await expect(page.getByTestId("tool")).toHaveCount(1);
   const scale = toolNamed(page, "scale");
   await expect(scale).toContainText("scale(values, factor)");
-  await expect(scale).toContainText("Tier A");
+  await expect(scale).toContainText("Made as tier A");
   await expect(scale).toContainText("It calls cellmapper.core.scale.");
   await expect(scale).toContainText("1 call, each made again 2 times, gave what the tutorial got every time");
   // The function that gave an array is not a tool, with why, and what was found
@@ -2730,6 +2730,374 @@ test("says why the server refused to make the tools, and looks again when what t
   await page.unroute("**/api/paperagents/*/tools");
 });
 
+// The code of an agent that has a test that calls scale, which is what the tests that come with the code are looked for in
+const TESTED_ADDRESS = "https://github.com/example/tested-cellmapper";
+const checksForm = (page: Page) => form(page, "Check the tools");
+const checkingTools = (page: Page) => page.getByRole("region", { name: "Checking the tools" });
+const keptChecks = (page: Page) => page.getByTestId("checks-kept");
+const checkedTool = (page: Page, name: string) => page.locator(`[data-testid=checked-tool][data-name=${name}]`);
+const checksOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/checks`)).json();
+const CHECK = "Check the tools";
+const kindNamed = (page: Page, kind: string) => checksForm(page).locator(`[data-testid=check-kind][data-kind=${kind}]`);
+const checkOf = (page: Page, tool: string, kind: string) => checkedTool(page, tool).locator(`[data-testid=check][data-kind=${kind}]`);
+
+// Makes an agent whose tools are made, so that what a test is about is their checks, and opens it
+async function agentWithTools(page: Page, title: string, paper: Record<string, unknown> = { kind: "file" }, repo = TESTED_ADDRESS): Promise<string> {
+  const id = await agentWithTutorials(page, title, paper, repo);
+  const started = await page.request.post(`/api/paperagents/${id}/tools`, { data: {} });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await toolsOf(page, id)).job, { timeout: 30_000 }).toBeNull();
+  expect((await toolsOf(page, id)).kept).toMatchObject({ complete: true });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Checks", level: 2, exact: true })).toBeVisible();
+
+  return id;
+}
+
+test("says that there is nothing to check until tools are made, and offers the checks once there are", async ({ page }) => {
+  const id = await agentWithTutorials(page, "Unmade checks", { kind: "file" }, TESTED_ADDRESS);
+  await expect(page.getByRole("heading", { name: "Checks", level: 2, exact: true })).toBeVisible();
+  await expect(page.getByTestId("checks-no-tools")).toHaveText("Make the tools first. Checks are of the tools that were made.");
+  await expect(checksForm(page)).toHaveCount(0);
+  const asked = await page.request.post(`/api/paperagents/${id}/checks`, { data: {} });
+  expect(asked.status()).toBe(422);
+  expect((await asked.json()).error.code).toBe("no_tools");
+  expect(await checksOf(page, id)).toMatchObject({ made: false, tools: [], job: null });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Once the tools are made the page looks again, and they can be checked
+  await toolsForm(page).getByRole("button", { name: MAKE }).click();
+  await expect(keptTools(page)).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByTestId("checks-no-tools")).toHaveCount(0);
+  await expect(checksForm(page)).toBeVisible();
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "A");
+});
+
+test("says what each kind of check is against, asks for what is wrong with the asking to be put right, checks the tools, which makes one of tier B, shows how each check went and what it was made of, and takes the checks away", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const id = await agentWithTools(page, "Tested checks");
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "A");
+  await expect(page.getByTestId("checks-tiers")).toHaveText("1 tool: 1 of tier A.");
+  await expect(checkedTool(page, "scale")).toContainText("Made as tier A. No check of it has passed.");
+  await expect(page.getByTestId("checks-needs")).toContainText("To be of tier B it needs a check that passes against 2 more of:");
+  await expect(page.getByTestId("checks-meaning")).toContainText("A check that is not obtained could not be made, which is neither for the tool nor against it.");
+  await expect(keptChecks(page).getByRole("button", { name: "Take the checks away" })).toHaveCount(0);
+
+  // The kinds are said, with what each is against, and those that ask a model are told from those that do not
+  await expect(checksForm(page).getByTestId("check-kind")).toHaveCount(4);
+  await expect(kindNamed(page, "heldout").getByRole("checkbox")).toBeChecked();
+  await expect(kindNamed(page, "repo_tests").getByRole("checkbox")).toBeChecked();
+  await expect(kindNamed(page, "paper_numbers").getByRole("checkbox")).not.toBeChecked();
+  await expect(kindNamed(page, "verifier").getByRole("checkbox")).not.toBeChecked();
+  await expect(kindNamed(page, "heldout")).not.toContainText("Asks a model");
+  await expect(kindNamed(page, "paper_numbers")).toContainText("Asks a model");
+  await expect(kindNamed(page, "verifier")).toContainText("Asks a model");
+  await expect(kindNamed(page, "heldout")).toContainText("Against the code's own function, called with inputs that the tutorial did not pass.");
+  await expect(kindNamed(page, "repo_tests")).toContainText("Against the tests that come with the code.");
+  // The paper was not read, so it has no number to look for
+  await expect(kindNamed(page, "paper_numbers").getByRole("checkbox")).toBeDisabled();
+  await expect(kindNamed(page, "paper_numbers")).toContainText("Not available: The paper has no number that it reports with digits enough to be looked for.");
+  await expect(checksForm(page).getByLabel("Most it may spend, in dollars")).toHaveCount(0);
+  await expect(checksForm(page).getByLabel("The model that chooses the inputs")).toHaveCount(0);
+  await expect(checksForm(page)).toContainText("no network");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What is wrong with the asking is said before it is sent
+  await checksForm(page).getByLabel("Most time for one check of one tool, in minutes").fill("0");
+  await checksForm(page).getByLabel("Most time for all of the checks, in minutes").fill("500");
+  await checksForm(page).getByLabel("How many times each call is made").fill("9");
+  await checksForm(page).getByLabel("Most one run may write, in gigabytes").fill("many");
+  await kindNamed(page, "heldout").getByRole("checkbox").uncheck();
+  await kindNamed(page, "repo_tests").getByRole("checkbox").uncheck();
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect(checksForm(page).getByText(/for one check of one tool, in minutes, is a whole number from 1 to 30/)).toBeVisible();
+  await expect(checksForm(page).getByText(/for all of the checks, in minutes, is a whole number from 1 to 180/)).toBeVisible();
+  await expect(checksForm(page).getByText(/How many times each call is made is a whole number from 1 to 3/)).toBeVisible();
+  await expect(checksForm(page).getByText(/in gigabytes, is a whole number from 1 to 20/)).toBeVisible();
+  await expect(checksForm(page).getByText("Choose at least one kind of check.")).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await checksOf(page, id)).tools[0].evidence.every((entry: { file: string | null }) => entry.file === null)).toBe(true);
+
+  // A kind that asks a model asks what it may spend, and the one that chooses inputs asks which model does
+  await kindNamed(page, "verifier").getByRole("checkbox").check();
+  await expect(checksForm(page).getByLabel("Most it may spend, in dollars")).toBeVisible();
+  await expect(checksForm(page).getByLabel("The model that chooses the inputs")).toBeVisible();
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect(checksForm(page).getByText(/most it may spend/i).first()).toBeVisible();
+  await expect(checksForm(page).getByText("Name the model that chooses the inputs, of another family than the one in the settings.")).toBeVisible();
+  await checksForm(page).getByLabel("The model that chooses the inputs").fill("GPT-5.2");
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect(checksForm(page).getByText(/is the model in the settings/)).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await kindNamed(page, "verifier").getByRole("checkbox").uncheck();
+  await expect(checksForm(page).getByLabel("Most it may spend, in dollars")).toHaveCount(0);
+  await kindNamed(page, "heldout").getByRole("checkbox").check();
+  await kindNamed(page, "repo_tests").getByRole("checkbox").check();
+  await checksForm(page).getByLabel("Most time for one check of one tool, in minutes").fill("5");
+  await checksForm(page).getByLabel("Most time for all of the checks, in minutes").fill("30");
+  await checksForm(page).getByLabel("How many times each call is made").fill("2");
+  await checksForm(page).getByLabel("Most one run may write, in gigabytes").fill("2");
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+
+  // Two kinds that need no model are made, which are against two different things, so the tool is of tier B
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "B", { timeout: 40_000 });
+  await expect(checksForm(page).getByRole("button", { name: CHECK })).toBeEnabled();
+  await expect(page.getByTestId("checks-tiers")).toHaveText("1 tool: 1 of tier B.");
+  await expect(checkedTool(page, "scale")).toContainText("Made as tier A. It passed checks against 2 different things:");
+  await expect(checkedTool(page, "scale")).toContainText("2 of 4 kinds of check passed");
+  await expect(page.getByTestId("checks-needs")).toHaveCount(0);
+  await expect(step(page, "Build the tools")).toContainText("Done");
+  // The tools section still says what each was made as, and not what it has become
+  await expect(toolNamed(page, "scale")).toContainText("Made as tier A");
+  const kept = await checksOf(page, id);
+  expect(kept.tools[0]).toMatchObject({ name: "scale", tier: "B", made_as: "A", passed: ["heldout", "repo_tests"] });
+
+  // How each kind went is opened by the tier, and what it was made of is got when it is asked for
+  const tier = checkedTool(page, "scale").getByRole("button", { name: /Tier B/ });
+  await expect(tier).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("check")).toHaveCount(0);
+  await tier.click();
+  await expect(tier).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("check")).toHaveCount(4);
+  await expect(checkOf(page, "scale", "heldout")).toHaveAttribute("data-status", "passed");
+  await expect(checkOf(page, "scale", "repo_tests")).toHaveAttribute("data-status", "passed");
+  await expect(checkOf(page, "scale", "paper_numbers")).toHaveAttribute("data-status", "not_run");
+  await expect(checkOf(page, "scale", "verifier")).toHaveAttribute("data-status", "not_run");
+  await expect(checkOf(page, "scale", "heldout").getByTestId("check-status")).toHaveText("Passed");
+  await expect(checkOf(page, "scale", "heldout")).toContainText("gave the same through the tool as from the code's own function");
+  await expect(checkOf(page, "scale", "heldout")).toContainText("Against the code's own function");
+  await expect(checkOf(page, "scale", "repo_tests")).toContainText("1 test of the code that call the function passed");
+  await expect(checkOf(page, "scale", "paper_numbers")).toContainText("Not made");
+  await expect(page.getByTestId("check-detail")).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await checkedTool(page, "scale").getByRole("button", { name: "Show what each check was made of" }).click();
+  await expect(checkedTool(page, "scale").getByRole("button", { name: "Hide what each check was made of" })).toBeVisible();
+  const heldout = checkOf(page, "scale", "heldout");
+  await expect(heldout.getByTestId("check-detail").filter({ hasText: "How the calls went" })).toContainText("1 call gave the same through the tool as from the code's own function. Each call was made 2 times.");
+  await expect(heldout.getByRole("list", { name: "Calls that were changed" })).toContainText(/nudged: \{'values': \[2, 3, 4\], 'factor': 3\.85\d*\}: the tool and the code's own function gave the same/);
+  await expect(checkOf(page, "scale", "repo_tests").getByRole("list", { name: "Tests that call the function" })).toContainText("tests/test_scale.py::test_scale_doubles");
+  await expect(checkOf(page, "scale", "repo_tests")).toContainText("1 test ran: 1 passed, 0 failed, 0 stopped with an error, and 0 were skipped.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await checkedTool(page, "scale").getByRole("button", { name: "Hide what each check was made of" }).click();
+  await expect(page.getByTestId("check-detail")).toHaveCount(0);
+  await tier.click();
+  await expect(page.getByTestId("check")).toHaveCount(0);
+
+  // It is the same after the page is looked at again
+  await page.reload();
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "B");
+
+  // Taking them away asks first, and leaves the tools, which are of the tier they were made as
+  await keptChecks(page).getByRole("button", { name: "Take the checks away" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Take away the checks of the tools of Tested checks?" });
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "B");
+  await keptChecks(page).getByRole("button", { name: "Take the checks away" }).click();
+  await page.getByRole("alertdialog", { name: "Take away the checks of the tools of Tested checks?" }).getByRole("button", { name: "Take away" }).click();
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "A");
+  await expect(keptChecks(page).getByRole("button", { name: "Take the checks away" })).toHaveCount(0);
+  await expect(page.getByTestId("tool")).toHaveCount(1);
+  expect((await checksOf(page, id)).tools[0]).toMatchObject({ tier: "A", passed: [] });
+});
+
+test("a check that fails keeps a tool from tier B, and says which and why", async ({ page }) => {
+  test.setTimeout(90_000);
+  const id = await agentWithTools(page, "Differing unsound checks");
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect(checkedTool(page, "scale")).toContainText("A check failed, which keeps it from tier B until it is checked again and none fails.", { timeout: 40_000 });
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "A");
+  await expect(page.getByTestId("checks-tiers")).toHaveText("1 tool: 1 of tier A.");
+  await expect(page.getByTestId("checks-needs")).toHaveCount(0);
+  await expect(checkedTool(page, "scale")).toContainText("0 of 4 kinds of check passed");
+  expect((await checksOf(page, id)).tools[0].evidence.filter((entry: { status: string }) => entry.status === "failed").map((entry: { kind: string }) => entry.kind)).toEqual(["heldout", "repo_tests"]);
+
+  await checkedTool(page, "scale").getByRole("button", { name: /Tier A/ }).click();
+  await expect(checkOf(page, "scale", "heldout")).toHaveAttribute("data-status", "failed");
+  await expect(checkOf(page, "scale", "heldout").getByTestId("check-status")).toHaveText("Failed");
+  await expect(checkOf(page, "scale", "heldout")).toContainText("1 of 1 changed calls did not give the same through the tool as from the code's own function.");
+  await expect(checkOf(page, "scale", "repo_tests")).toHaveAttribute("data-status", "failed");
+  await expect(checkOf(page, "scale", "repo_tests")).toContainText("1 of the 1 tests of the code that call the function did not pass.");
+  await checkedTool(page, "scale").getByRole("button", { name: "Show what each check was made of" }).click();
+  await expect(checkOf(page, "scale", "repo_tests").getByRole("list", { name: "Tests that did not pass" })).toContainText("tests/test_scale.py::test_scale_doubles: assert [2.5] == [2.0]");
+  await expect(checkOf(page, "scale", "heldout").getByRole("list", { name: "Calls that were changed" })).toContainText("they gave something else");
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("follows the checking while it goes on, waits for it before anything else is done to the agent, and keeps what it had made when it is stopped", async ({ page }) => {
+  test.setTimeout(90_000);
+  const id = await agentWithTools(page, "Unhurried checks", { kind: "doi", doi: "10.1000/unhurried-paper" });
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+
+  const stop = checkingTools(page).getByRole("button", { name: "Stop: Checking the tools: Unhurried checks" });
+  await expect(stop).toBeVisible();
+  await expect(step(page, "Build the tools")).toContainText("Going on");
+  await expect(checkingTools(page)).toContainText("Checking the tools: scale (1 of 2)");
+  // What is kept is shown when the checking is over, and the form is not offered again while it goes on
+  await expect(keptChecks(page)).toHaveCount(0);
+  await expect(checksForm(page)).toHaveCount(0);
+  expect((await checksOf(page, id)).job).not.toBeNull();
+  await page.reload();
+  await expect(stop).toBeVisible();
+  await expect(keptChecks(page)).toHaveCount(0);
+  // Nothing else is done to the agent while it goes on, and its paper is not read
+  await expect(fetchAndRead(page)).toBeDisabled();
+  await expect(reading(page)).toContainText("The tools are being checked. Reading waits for that.");
+  await expect(page.getByRole("button", { name: "Delete Unhurried checks" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Take the tools away" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Take the code away" })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  const refused = await page.request.post(`/api/paperagents/${id}/checks`, { data: {} });
+  expect(refused.status()).toBe(409);
+
+  await stop.click();
+
+  await expect(checkingTools(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(keptChecks(page)).toBeVisible();
+  await expect(step(page, "Build the tools")).toContainText("Done");
+  // Nothing was made before it was stopped, which is said by the tool being as it was
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "A");
+  await expect(checkedTool(page, "scale")).toContainText("No check of it has passed.");
+  await expect(checksForm(page).getByRole("button", { name: CHECK })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Take the tools away" })).toBeEnabled();
+  expect((await checksOf(page, id)).job).toBeNull();
+});
+
+test("asks a model of another family for inputs to try, within what it may spend, and says that its words are no part of how a check came out", async ({ page }) => {
+  test.setTimeout(120_000);
+  const id = await agentWithTools(page, "Modelled checks", { kind: "doi", doi: "10.1000/checks-paper" });
+  await readTheAgent(page, id);
+  await page.reload();
+  const numbers = (await checksOf(page, id)).numbers;
+  expect(numbers).toBeGreaterThan(0);
+  await expect(kindNamed(page, "paper_numbers").getByRole("checkbox")).toBeEnabled();
+
+  // Only the one that asks for inputs, which is against what the tests that come with the code are not
+  await kindNamed(page, "heldout").getByRole("checkbox").uncheck();
+  await kindNamed(page, "repo_tests").getByRole("checkbox").uncheck();
+  await kindNamed(page, "verifier").getByRole("checkbox").check();
+  await checksForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  // The server tells which families are which, and the page shows what it says
+  await checksForm(page).getByLabel("The model that chooses the inputs").fill("gpt-4o");
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect(checksForm(page).getByRole("alert")).toContainText("is of the same family as gpt-5.2");
+  await checksForm(page).getByLabel("The model that chooses the inputs").fill("my-own-model");
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect(checksForm(page).getByRole("alert")).toContainText("It is not known whose model my-own-model is");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await checksOf(page, id)).job).toBeNull();
+
+  await checksForm(page).getByLabel("The model that chooses the inputs").fill("claude-sonnet-4-5");
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect.poll(async () => (await checksOf(page, id)).tools[0].passed, { timeout: 40_000 }).toEqual(["verifier"]);
+  // One check against the code's own function is one thing, so the tool is not yet of tier B
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "A");
+  await expect(checkedTool(page, "scale")).toContainText("It passed checks against 1 thing");
+  await expect(page.getByTestId("checks-needs")).toContainText("To be of tier B it needs a check that passes against one more of:");
+  await checkedTool(page, "scale").getByRole("button", { name: /Tier A/ }).click();
+  await expect(checkOf(page, "scale", "verifier")).toHaveAttribute("data-status", "passed");
+  await checkedTool(page, "scale").getByRole("button", { name: "Show what each check was made of" }).click();
+  const verifier = checkOf(page, "scale", "verifier");
+  await expect(verifier.getByRole("list", { name: "The model", exact: true })).toContainText("Asked claude-sonnet-4-5");
+  await expect(verifier.getByRole("list", { name: "The model", exact: true })).toContainText("It proposed 3 inputs, and 2 could be run.");
+  await expect(verifier.getByRole("list", { name: "Proposed inputs that were not run" })).toContainText("It names scale, which the tool does not take.");
+  await expect(verifier.getByRole("list", { name: "Inputs the model proposed that were run" })).toContainText("'factor': 2.0}: the tool and the code's own function gave the same. Its reason: A longer list of fractions than the tutorial passed.");
+  const gaps = verifier.getByTestId("check-detail").filter({ hasText: "Where the model thought the wrapper and the code might differ" });
+  await expect(gaps).toContainText("These are the model's words. They are no part of how the check came out.");
+  await expect(gaps).toContainText("The wrapper gives factor a default that the code may not have.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A check of another basis, made next, takes it to tier B, and the one before it is kept
+  await kindNamed(page, "verifier").getByRole("checkbox").uncheck();
+  await kindNamed(page, "repo_tests").getByRole("checkbox").check();
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "B", { timeout: 40_000 });
+  expect((await checksOf(page, id)).tools[0].passed).toEqual(["repo_tests", "verifier"]);
+
+  // The paper's numbers are looked for in what the tools gave. None of them is there, which is neither for the tool nor against it
+  await kindNamed(page, "repo_tests").getByRole("checkbox").uncheck();
+  await kindNamed(page, "paper_numbers").getByRole("checkbox").check();
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect.poll(async () => (await checksOf(page, id)).tools[0].evidence.find((entry: { kind: string }) => entry.kind === "paper_numbers").status, { timeout: 40_000 }).toBe("not_obtained");
+  await checkedTool(page, "scale").getByRole("button", { name: /Tier B/ }).click();
+  await expect(checkOf(page, "scale", "paper_numbers").getByTestId("check-status")).toHaveText("Not obtained");
+  await expect(checkOf(page, "scale", "paper_numbers")).toContainText("Against the numbers that the paper reports.");
+  await expect(checkedTool(page, "scale")).toHaveAttribute("data-tier", "B");
+});
+
+test("says when Docker is not running, why the server refused to check, and looks again when what the page shows is out of date", async ({ page }) => {
+  test.setTimeout(90_000);
+  const id = await agentWithTools(page, "Refused checks");
+  await page.route("**/api/paperagents/*/checks", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+
+    return route.fulfill({ response, json: { ...body, docker: { ready: false, message: "Docker is installed but is not running." } } });
+  });
+  await page.reload();
+  await expect(page.getByText("Docker is installed but is not running. Checking tools takes it. They cannot be checked until it is.")).toBeVisible();
+  await expect(checksForm(page).getByRole("button", { name: CHECK })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await page.unroute("**/api/paperagents/*/checks");
+  await page.reload();
+  await expect(checksForm(page).getByRole("button", { name: CHECK })).toBeEnabled();
+
+  await page.route("**/api/paperagents/*/checks", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "docker_missing", message: "Docker is not installed on this machine, and checking tools takes it." } }),
+        })
+      : route.fallback(),
+  );
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect(checksForm(page).getByRole("alert")).toContainText("Docker is not installed on this machine");
+  await page.unroute("**/api/paperagents/*/checks");
+
+  // Tools that were taken away a moment before the page looked are not a reason to refuse: the page looks again
+  let looked = 0;
+  await page.route("**/api/paperagents/*/checks", (route) => {
+    if (route.request().method() === "GET") looked += 1;
+
+    return route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "no_tools", message: "Make the tools first, as it is tools that are checked" } }),
+        })
+      : route.fallback();
+  });
+  const before = looked;
+  await checksForm(page).getByRole("button", { name: CHECK }).click();
+  await expect.poll(() => looked).toBeGreaterThan(before);
+  await expect(checksForm(page).getByRole("alert")).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/checks");
+
+  // What was kept of a tool is gone when it is asked for, which is as the tools were taken away, and the page looks again
+  let seen = 0;
+  await page.route("**/api/paperagents/*/checks", (route) => {
+    if (route.request().method() === "GET") seen += 1;
+
+    return route.fallback();
+  });
+  await page.route("**/api/paperagents/*/checks/*", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: { code: "not_found", message: "There is no such tool." } }) }),
+  );
+  await checkedTool(page, "scale").getByRole("button", { name: /Tier A/ }).click();
+  const again = seen;
+  await checkedTool(page, "scale").getByRole("button", { name: "Show what each check was made of" }).click();
+  await expect.poll(() => seen).toBeGreaterThan(again);
+  await expect(page.getByTestId("check-detail")).toHaveCount(0);
+  await expect(keptChecks(page)).toBeVisible();
+  await page.unroute("**/api/paperagents/*/checks/*");
+  await page.unroute("**/api/paperagents/*/checks");
+  expect((await checksOf(page, id)).tools).toHaveLength(1);
+});
+
 const inConversations = (page: Page) => page.getByRole("region", { name: "In conversations" });
 const givenTools = (page: Page) => inConversations(page).getByTestId("given-tool");
 const giveBox = (page: Page) => page.getByLabel("Give this agent to the conversations I start");
@@ -2780,7 +3148,7 @@ test("gives an agent to conversations, shows what a conversation is given of it 
   await expect(runs).toContainText("Tier A");
   await expect(runs).toContainText("scale(values, factor)");
   await expect(runs).toContainText("Runs the authors' own function");
-  await expect(page.getByTestId("given-meaning")).toContainText("Neither shows that what it says or gives is right.");
+  await expect(page.getByTestId("given-meaning")).toContainText("None of them shows that what it says or gives is right.");
   await expect(inConversations(page)).toContainText("A call may take up to 5 minutes, in a container with no network");
   await expect(page.getByTestId("given-why")).toHaveCount(0);
   expect(await givenOf(page, id)).toMatchObject({ given: false, tier: "A", problem: null });

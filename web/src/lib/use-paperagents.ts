@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { api } from "./api";
 import type {
   PaperAgent,
+  PaperAgentChecks,
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentGiven,
@@ -72,6 +73,14 @@ export function usePaperAgentReference(id: string, report: (error: unknown) => v
 // which is what the tools are made from, and as the tools are made
 export function usePaperAgentTools(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentTools> {
   const look = useCallback(() => api.paperAgentTools(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+// What there is of the checks of an agent's tools, looked at again when it may have changed: as the tools are made or taken away, which
+// is what is checked, and as they are checked
+export function usePaperAgentChecks(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentChecks> {
+  const look = useCallback(() => api.paperAgentChecks(id), [id]);
 
   return useLooked(look, report, again);
 }

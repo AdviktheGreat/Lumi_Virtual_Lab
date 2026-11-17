@@ -8,6 +8,7 @@ import { Looked } from "@/components/looked";
 import { ProblemNotice } from "@/components/messages";
 import { PageSection } from "@/components/page-section";
 import { CodeSection } from "@/components/paper-agent-code";
+import { ChecksSection } from "@/components/paper-agent-checks";
 import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
@@ -39,6 +40,7 @@ import { formatBytes } from "@/lib/files";
 import {
   agentAddress,
   AGENTS_ADDRESS,
+  checksJob,
   dataJob,
   describePaper,
   describeSource,
@@ -46,6 +48,7 @@ import {
   environmentJob,
   existingOf,
   isLink,
+  lastChecksJob,
   lastDataJob,
   lastEnvironmentJob,
   lastReadingJob,
@@ -67,10 +70,12 @@ import {
   titleProblem,
   toolsJob,
 } from "@/lib/paperagents";
+import { hasChecks } from "@/lib/paperagent-checks";
 import { uploadProblem } from "@/lib/papers";
 import { tidy } from "@/lib/scientists";
 import type {
   PaperAgent,
+  PaperAgentChecks,
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentGiven,
@@ -85,6 +90,7 @@ import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
 import {
   usePaperAgent,
+  usePaperAgentChecks,
   usePaperAgentData,
   usePaperAgentEnvironment,
   usePaperAgentGiven,
@@ -451,6 +457,7 @@ function Agent({
   data,
   reference,
   tools,
+  checks,
   given,
   onChanged,
   onReload,
@@ -462,6 +469,7 @@ function Agent({
   data: LookedAt<PaperAgentData>;
   reference: LookedAt<PaperAgentReference>;
   tools: LookedAt<PaperAgentTools>;
+  checks: LookedAt<PaperAgentChecks>;
   given: LookedAt<PaperAgentGiven>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
@@ -500,7 +508,9 @@ function Agent({
   // have been looked at it is not known which of the two it is
   const running = referenceJob(all, agent.id);
   const makingTools = toolsJob(all, agent.id);
-  const runningTutorials = running !== undefined || (agent.steps.tools === "running" && makingTools === undefined);
+  const checkingTools = checksJob(all, agent.id);
+  const runningTutorials =
+    running !== undefined || (agent.steps.tools === "running" && makingTools === undefined && checkingTools === undefined);
   const ranReference = reference.value.kind === "ready" ? reference.value.value : null;
   const lastRun = lastReferenceJob(all, agent.id);
   // How the last run ended is said if it did not end well, and while what it gave is kept
@@ -516,7 +526,14 @@ function Agent({
   const lastMakingShown = lastMaking !== undefined && (lastMaking.state !== "succeeded" || madeTools?.kept != null) ? lastMaking : undefined;
   // A making that is over, and succeeded, while what the page has of it is from before it ended
   const settlingTools = lastMaking?.state === "succeeded" && madeTools?.kept != null && !madeTools.kept.complete;
-  const idle = !working && !fetchingCode && !makingEnvironment && !fetchingData && !runningTutorials && makingTools === undefined;
+  // The same of the checks of the tools, which are made of the tools, and which the agent says go on under the step of its tools
+  const madeChecks = checks.value.kind === "ready" ? checks.value.value : null;
+  const lastChecking = lastChecksJob(all, agent.id);
+  // How the last checking ended is said if it did not end well, and while there is anything that it made
+  const lastCheckingShown =
+    lastChecking !== undefined && (lastChecking.state !== "succeeded" || (madeChecks !== null && hasChecks(madeChecks.tools))) ? lastChecking : undefined;
+  const idle =
+    !working && !fetchingCode && !makingEnvironment && !fetchingData && !runningTutorials && makingTools === undefined && checkingTools === undefined;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
   const changed = (next: PaperAgent) => {
@@ -526,6 +543,7 @@ function Agent({
     data.reload();
     reference.reload();
     tools.reload();
+    checks.reload();
     given.reload();
   };
   const shared = { agent, list, working: !idle, onChanged: changed };
@@ -576,9 +594,11 @@ function Agent({
                         ? "The tutorials are being run. Reading waits for that."
                         : makingTools !== undefined
                           ? "The tools are being made. Reading waits for that."
-                          : runningTutorials
-                            ? "The tutorials are being run or the tools made. Reading waits for that."
-                            : null
+                          : checkingTools !== undefined
+                            ? "The tools are being checked. Reading waits for that."
+                            : runningTutorials
+                              ? "The tutorials are being run or the tools made. Reading waits for that."
+                              : null
               }
               jobs={jobs}
               onCleared={(cleared) => {
@@ -624,6 +644,7 @@ function Agent({
                 data.reload();
                 reference.reload();
                 tools.reload();
+                checks.reload();
                 given.reload();
                 onReload();
               }}
@@ -634,6 +655,7 @@ function Agent({
                 data.reload();
                 reference.reload();
                 tools.reload();
+                checks.reload();
                 given.reload();
               }}
             />
@@ -664,6 +686,7 @@ function Agent({
                 // What was run in the image goes with it
                 reference.reload();
                 tools.reload();
+                checks.reload();
                 given.reload();
                 onReload();
               }}
@@ -672,6 +695,7 @@ function Agent({
                 environment.reload();
                 reference.reload();
                 tools.reload();
+                checks.reload();
                 given.reload();
               }}
             />
@@ -697,6 +721,7 @@ function Agent({
                 // What the tutorials are given to read is what was fetched
                 reference.reload();
                 tools.reload();
+                checks.reload();
                 given.reload();
                 onReload();
               }}
@@ -723,6 +748,7 @@ function Agent({
                 reference.set(cleared);
                 // The tools are made of what the tutorials gave
                 tools.reload();
+                checks.reload();
                 given.reload();
                 onReload();
               }}
@@ -730,6 +756,7 @@ function Agent({
                 onReload();
                 reference.reload();
                 tools.reload();
+                checks.reload();
                 given.reload();
               }}
             />
@@ -753,6 +780,8 @@ function Agent({
               jobs={jobs}
               onCleared={(cleared) => {
                 tools.set(cleared);
+                // The checks are of the tools, so they go with them
+                checks.reload();
                 given.reload();
                 onReload();
               }}
@@ -760,6 +789,38 @@ function Agent({
                 onReload();
                 reference.reload();
                 tools.reload();
+                checks.reload();
+                given.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Checks"
+        intro="What the tools gave again for inputs that their tutorials did not pass, what the code's own tests say, and, where you ask for it, what the paper reports. A tool that passed checks against two different things is of tier B. This does not show that what a tool gives is right."
+      >
+        <WorkStatus job={checkingTools} last={lastCheckingShown} jobs={jobs} label="Checking the tools" />
+        <Looked state={checks.value} label="Looking at the checks" failure="The checks could not be looked at." onRetry={checks.reload}>
+          {(value) => (
+            <ChecksSection
+              key={agent.id}
+              agent={agent}
+              checks={value}
+              busy={!idle}
+              checking={checkingTools}
+              jobs={jobs}
+              onCleared={(cleared) => {
+                checks.set(cleared);
+                // What a conversation is given says the tier of each tool
+                given.reload();
+                onReload();
+              }}
+              onStale={() => {
+                onReload();
+                reference.reload();
+                tools.reload();
+                checks.reload();
                 given.reload();
               }}
             />
@@ -818,6 +879,7 @@ export function AgentPage({ id }: { id: string }) {
   const data = usePaperAgentData(id, report, again);
   const reference = usePaperAgentReference(id, report, again);
   const tools = usePaperAgentTools(id, report, again);
+  const checks = usePaperAgentChecks(id, report, again);
   const given = usePaperAgentGiven(id, report, again);
   const list = usePaperAgentsList(report, "");
 
@@ -849,6 +911,7 @@ export function AgentPage({ id }: { id: string }) {
                 data={data}
                 reference={reference}
                 tools={tools}
+                checks={checks}
                 given={given}
                 onChanged={agent.set}
                 onReload={agent.reload}
