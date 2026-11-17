@@ -13,6 +13,12 @@ environment:
   defines it, or a package above it) are run, in the environment, with no network, by pytest if the environment has
   it. They must pass. They are tests of the code's function, and the tool's wrapper is not called in them.
 
+A third kind needs a model, and so is made only when it is asked for, within a limit on spending (linking.py):
+
+- numbers that the paper reports. A number in the paper's claims is looked for, by a program, in what the tutorial's
+  calls gave; a model is asked only whether the paper's sentence is about the same quantity; the tool is called again
+  and the number is compared, by a program, within how the paper rounded it.
+
 Each ends as passed, failed, or not obtained: a check that could not be made, such as one for a function that no test
 calls, is not a failure, and is not evidence either. What each shows is said, and none shows that what the tool gives
 is right.
@@ -40,7 +46,11 @@ from virtual_lab.paperagents.stock import matches, walk
 SCHEMA = 1
 HELDOUT = "heldout"
 REPO_TESTS = "repo_tests"
-KINDS = (HELDOUT, REPO_TESTS)
+PAPER_NUMBERS = "paper_numbers"
+KINDS = (HELDOUT, REPO_TESTS, PAPER_NUMBERS)
+# The kinds that are made when none are named, which need no model, and so cost nothing, and those that need one
+DEFAULT_KINDS = (HELDOUT, REPO_TESTS)
+MODEL_KINDS = (PAPER_NUMBERS,)
 PASSED = "passed"
 FAILED = "failed"
 NOT_OBTAINED = "not_obtained"
@@ -99,11 +109,24 @@ KIND_INFO: dict[str, dict[str, str]] = {
             "not show that what the tool gives is right for other arguments."
         ),
     },
+    PAPER_NUMBERS: {
+        "title": "Numbers the paper reports",
+        "said": "gave a number that the paper reports, for the arguments its tutorial passed",
+        "what": (
+            "A number that the paper reports (from its claims, with digits enough to be told from chance) was found, "
+            "by a program, in what a call of the tutorial gave, within how the paper rounded it; a model was asked "
+            "only whether the paper's sentence is about the same quantity as that place in the result, and could not "
+            "add a number; and the tool was called again with the same arguments and gave it, compared by a program. "
+            "It shows that the tool gives a number that the paper reports for the arguments of its tutorial. It does "
+            "not show that the paper's number is right, or that the tool gives it for other arguments; the number "
+            "can still be the same by chance, and the model's reading of the words can still be wrong."
+        ),
+    },
 }
 
 MEANING = (
     "A tool of tier B is of tier A and has also passed two kinds of checks that its tutorial did not give it, and "
-    "failed none. Only the check with inputs that the tutorial did not use calls the tool; the code's own tests are "
+    "failed none. The checks with other inputs and with the paper's numbers call the tool; the code's own tests are "
     "of the code's function. That lowers the chance that the tool is right only for its tutorial. It does not make "
     "that chance nothing, and it does not show that what the tool gives is right."
 )

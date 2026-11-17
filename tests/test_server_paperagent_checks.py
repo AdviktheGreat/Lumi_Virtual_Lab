@@ -63,7 +63,9 @@ def test_tally():
     assert tally([1, 2]) == 3
 """
 DIRECT = re.compile(r"import_module\('([\w.]+)'\), '(\w+)'")
-ALL = ("heldout", "repo_tests")
+# The kinds that are made when none are named, and all of them, with the one that asks a model last
+RUN = ("heldout", "repo_tests")
+ALL = (*RUN, "paper_numbers")
 
 
 def passed_tests(ids: list[str]) -> dict[str, Any]:
@@ -183,8 +185,12 @@ def tools_of(agents: PaperAgents, agent_id: str) -> dict[str, dict[str, Any]]:
     return {tool["name"]: tool for tool in agents.checks(agent_id)["tools"]}
 
 
-def statuses(agents: PaperAgents, agent_id: str, name: str) -> dict[str, str]:
-    return {entry["kind"]: entry["status"] for entry in tools_of(agents, agent_id)[name]["evidence"]}
+def statuses(agents: PaperAgents, agent_id: str, name: str, kinds: tuple[str, ...] = RUN) -> dict[str, str]:
+    return {
+        entry["kind"]: entry["status"]
+        for entry in tools_of(agents, agent_id)[name]["evidence"]
+        if entry["kind"] in kinds
+    }
 
 
 def record_of(workspace: Workspace, agent_id: str, name: str, kind: str) -> dict[str, Any]:
@@ -237,6 +243,7 @@ class TestWhatCanBeChecked:
             assert [(entry["kind"], entry["status"], entry["file"]) for entry in tool["evidence"]] == [
                 ("heldout", "not_run", None),
                 ("repo_tests", "not_run", None),
+                ("paper_numbers", "not_run", None),
             ]
             assert all("details" not in entry for entry in tool["evidence"])
         json.dumps(found)
@@ -292,7 +299,7 @@ class TestChecking:
         directory = directory_of(workspace, made)
 
         for name, tool in tools_of(agents, made).items():
-            for entry in tool["evidence"]:
+            for entry in (each for each in tool["evidence"] if each["kind"] in RUN):
                 path = directory / entry["file"]
                 assert path == kept_checks.record_path(directory, name, entry["kind"]) and path.is_file()
                 assert entry["file"] == f"checks/independent/{name}/{entry['kind']}.json"
@@ -518,7 +525,7 @@ class TestWhenItGoesWrong:
         assert job.state == "stopped"
         found = tools_of(agents, made)
         assert found["map_cells"]["evidence"][0]["status"] == "passed"
-        assert [entry["status"] for entry in found["tally"]["evidence"]] == ["not_run", "not_run"]
+        assert [entry["status"] for entry in found["tally"]["evidence"]] == ["not_run", "not_run", "not_run"]
         assert found["tally"]["tier"] == "A"
         del replays.gates["tally"]
         check(agents, made)
@@ -598,7 +605,11 @@ class TestWhatTheyBelongTo:
 
         assert not (directory / "checks" / "independent").exists()
         make(agents, made)
-        assert [entry["status"] for entry in tools_of(agents, made)["tally"]["evidence"]] == ["not_run", "not_run"]
+        assert [entry["status"] for entry in tools_of(agents, made)["tally"]["evidence"]] == [
+            "not_run",
+            "not_run",
+            "not_run",
+        ]
 
     @pytest.mark.parametrize("operation", ["clear_reference", "clear_environment", "clear_repository"])
     def test_checks_go_with_what_the_tools_were_made_from(
@@ -662,8 +673,8 @@ class TestWhatIsNotWhatIsKeptNow:
 
         found = tools_of(agents, made)["tally"]
         assert found["tier"] == "A" and found["passed"] == []
-        assert [entry["status"] for entry in found["evidence"]] == ["stale", "stale"]
-        assert [entry["was"] for entry in found["evidence"]] == ["passed", "passed"]
+        assert [entry["status"] for entry in found["evidence"]] == ["stale", "stale", "not_run"]
+        assert [entry["was"] for entry in found["evidence"]] == ["passed", "passed", None]
         assert "counts for nothing" in found["evidence"][0]["summary"]
         assert tools_of(agents, made)["map_cells"]["tier"] == "B"
         check(agents, made, tools=["tally"])
@@ -683,7 +694,7 @@ class TestWhatIsNotWhatIsKeptNow:
         rewrite(workspace, made, "tally", "heldout", {key: value})
 
         found = tools_of(agents, made)["tally"]
-        assert [entry["status"] for entry in found["evidence"]] == ["stale", "passed"]
+        assert [entry["status"] for entry in found["evidence"]] == ["stale", "passed", "not_run"]
         assert found["tier"] == "A"
 
     @pytest.mark.parametrize(
@@ -708,7 +719,7 @@ class TestWhatIsNotWhatIsKeptNow:
         rewrite(workspace, made, "tally", "heldout", change)
 
         found = tools_of(agents, made)["tally"]
-        assert [entry["status"] for entry in found["evidence"]] == ["not_run", "passed"]
+        assert [entry["status"] for entry in found["evidence"]] == ["not_run", "passed", "not_run"]
         assert found["tier"] == "A"
 
     def test_a_file_that_is_not_json_or_is_a_link_or_too_big_is_not_read(
@@ -737,7 +748,11 @@ class TestWhatIsNotWhatIsKeptNow:
         folder.rename(outside)
         folder.symlink_to(outside)
 
-        assert [entry["status"] for entry in tools_of(agents, made)["tally"]["evidence"]] == ["not_run", "not_run"]
+        assert [entry["status"] for entry in tools_of(agents, made)["tally"]["evidence"]] == [
+            "not_run",
+            "not_run",
+            "not_run",
+        ]
         assert tools_of(agents, made)["tally"]["tier"] == "A"
 
     def test_a_tool_that_says_it_is_of_tier_b_is_not_shown_and_its_tier_is_what_its_checks_come_to(
@@ -822,7 +837,8 @@ class TestWhatIsAsked:
 
         assert (found["name"], found["made_as"], found["tier"]) == ("tally", "A", "B")
         assert "does not show that what the tool gives is right" in found["meaning"]
-        heldout, tests = found["evidence"]
+        heldout, tests, numbers = found["evidence"]
+        assert (numbers["kind"], numbers["status"], numbers["file"]) == ("paper_numbers", "not_run", None)
         assert heldout["details"]["counts"]["agree"] == 1 and heldout["limits"]["repeats"] == 2
         assert tests["details"]["ids"] == ["tests/test_mapping.py::test_tally"]
         assert heldout["seconds"] >= 0 and heldout["file"].endswith("tally/heldout.json")
@@ -936,6 +952,10 @@ class TestOverHttp:
         assert tool.json()["evidence"][0]["details"]["counts"]["agree"] == 1
         assert client.get(f"{base}/checks/nothing").status_code == 404
         assert client.get(f"{base}/given").json()["tier"] == "B"
+        # The check against the paper's numbers asks a model, so it says what it may spend, and the paper is unread
+        assert client.post(f"{base}/checks", json={"kinds": ["paper_numbers"]}).json()["error"]["code"] == "invalid"
+        numbers = client.post(f"{base}/checks", json={"kinds": ["paper_numbers"], "max_cost": 1})
+        assert (numbers.status_code, numbers.json()["error"]["code"]) == (422, "no_numbers")
 
         removed = client.delete(f"{base}/checks")
         assert removed.status_code == 200 and [tool["tier"] for tool in removed.json()["tools"]] == ["A", "A"]
@@ -956,6 +976,9 @@ class TestOverHttp:
             {"kinds": [1]},
             {"tools": "tally"},
             {"tools": ["a" * 65]},
+            {"max_cost": "1"},
+            {"max_cost": -1},
+            {"max_cost": True},
             {"tools": ["a"] * 101},
             {"surprise": 1},
         ):

@@ -161,6 +161,24 @@ def forget(directory: Path) -> None:
         (directory / "paper" / name).unlink(missing_ok=True)
 
 
+def number_claims(directory: Path) -> list[dict[str, Any]]:
+    """The claims of the paper that are numbers, as the file of the claims that a reading left holds them: none if
+    there is no such file, or it is not in the shape that a reading writes. A file of the claims is taken away with the
+    reading, so these are of the paper that is kept."""
+    record = read_json(directory / CLAIMS_FILE)
+    claims = record.get("claims") if isinstance(record, dict) else None
+    if not isinstance(claims, list):
+        return []
+
+    return [
+        claim
+        for claim in claims
+        if isinstance(claim, dict)
+        and claim.get("kind") == "number"
+        and all(isinstance(claim.get(key), str) for key in ("id", "value", "quote"))
+    ]
+
+
 def whole(value: Any) -> int:
     """A count that a record says, or none if what it says is not a whole number, as it may not be if it was edited."""
     return value if isinstance(value, int) and not isinstance(value, bool) else 0

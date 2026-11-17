@@ -88,11 +88,11 @@ from virtual_lab.paperagents import data as finding
 from virtual_lab.paperagents import datahosts as hosting
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import fetch as fetching
+from virtual_lab.paperagents import linking, toolmaking
 from virtual_lab.paperagents import preflight as checking
 from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import repository as cloning
 from virtual_lab.paperagents import stock as stocking
-from virtual_lab.paperagents import toolmaking
 from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import READING_VERSION, plan_chunks, read_structure
 from virtual_lab.papers import PaperBudgetExceededError, read_paper_pages
@@ -2339,7 +2339,16 @@ class PaperAgents:
             "docker": {"ready": usable, "message": problem},
             "made": kept is not None,
             "tools": [kept_checks.tool_summary(directory, tool, kept) for tool in tools] if kept is not None else [],
-            "kinds": [{"kind": kind, **verifying.KIND_INFO[kind]} for kind in verifying.KINDS],
+            "kinds": [
+                {
+                    "kind": kind,
+                    **verifying.KIND_INFO[kind],
+                    "default": kind in verifying.DEFAULT_KINDS,
+                    "model": kind in verifying.MODEL_KINDS,
+                }
+                for kind in verifying.KINDS
+            ],
+            "numbers": len(linking.usable_numbers(kept_reading.number_claims(directory))),
             "job": job.snapshot() if job is not None else None,
             "meaning": verifying.MEANING,
             "kinds_for_b": verifying.KINDS_FOR_B,
@@ -2368,20 +2377,27 @@ class PaperAgents:
         gigabytes: Any = None,
         kinds: Any = None,
         tools: Any = None,
+        max_cost: Any = None,
     ) -> Job:
         """Starts checking the tools by what their tutorials did not give them: each is called, and the code's own
         function with it, with inputs that the tutorial did not pass, and the tests that the code came with that call
         the function are run, all in the environment, in containers that have none of this machine in it and no network.
-        Each check is kept as it is made. A tool that has passed two kinds and failed none is of tier B.
+        If it is asked for, the numbers that the paper reports are looked for in what the tutorials' calls gave, a model
+        is asked which of what was found are the quantity that the paper's sentence is about, and the tool is called
+        again for those. Each check is kept as it is made. A tool that has passed two kinds and failed none is of tier
+        B.
 
         :param minutes: The most time that one check of one tool may take.
         :param total_minutes: The most time all of the checks may take together.
         :param repeats: How many times each call is made, to see that it gives the same each time.
         :param gigabytes: The most that one run may write.
-        :param kinds: Which kinds of check to make, which are all of them if none are named.
+        :param kinds: Which kinds of check to make, which are those that need no model if none are named.
         :param tools: Which tools to check, by name, which are all of them if none are named.
+        :param max_cost: The most that asking a model may spend, in USD, which is said when the check against the
+            paper's numbers is asked for, and is not given otherwise.
         :raises ApiError: If there is no agent with this id, what is given is not fit, Docker is not running, the code
-            has not been fetched or its environment not built or its image is not in Docker, no tools were made, or the
+            has not been fetched or its environment not built or its image is not in Docker, no tools were made, the
+            paper's numbers are asked for and the paper has none to check against or a key or a price is missing, or the
             agent's paper, code, environment, data, tutorials, tools, or checks are being worked on.
         """
         self.lookup(agent_id)
@@ -2397,6 +2413,12 @@ class PaperAgents:
                 raise ValueError("The tools to check are a list of names of tools, each named once")
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
+        asks_a_model = any(kind in verifying.MODEL_KINDS for kind in chosen)
+        budget = check_budget(max_cost, "The most it may spend", required=asks_a_model)
+        if budget is not None and not asks_a_model:
+            raise ApiError(
+                422, "invalid", "A limit on spending is for the check against the paper's numbers, which asks a model"
+            )
         usable, problem = building.ready(self.docker_command)
         if not usable:
             raise ApiError(422, "docker_missing", problem or "Docker is not running, and checking tools takes it")
@@ -2406,6 +2428,15 @@ class PaperAgents:
             kept, found = self.checkable(directory, agent)
             if kept is None or not found:
                 raise ApiError(422, "no_tools", "Make the tools first, as it is tools that are checked")
+            claims = kept_reading.number_claims(directory)
+            if asks_a_model and not linking.usable_numbers(claims):
+                raise ApiError(
+                    422,
+                    "no_numbers",
+                    "The paper has no number that it reports with digits enough to check against. Read the paper first "
+                    "if it has not been read.",
+                )
+            judge = self.judge_of(budget) if budget is not None else None
             if tools is not None:
                 known = {tool["name"] for tool in found}
                 if any(name not in known for name in tools):
@@ -2419,7 +2450,7 @@ class PaperAgents:
                     CHECKS_JOB,
                     agent_id,
                     f"Checking the tools: {agent['title']}",
-                    self.checker(agent_id, kept, found, chosen, limits, folder),
+                    self.checker(agent_id, kept, found, chosen, limits, folder, claims, judge),
                     exclusive=f"paperagent:{agent_id}",
                 )
             except JobConflictError as error:
@@ -2435,6 +2466,8 @@ class PaperAgents:
         kinds: Sequence[str],
         limits: verifying.CheckLimits,
         folder: Path | None,
+        claims: Sequence[dict[str, Any]] = (),
+        judge: linking.Judge | None = None,
     ) -> Callable[[Job], str | None]:
         """What a job does to check the tools: makes the checks one after another, and keeps each as it is made, so
         that a job that is stopped keeps what it had made."""
@@ -2453,11 +2486,25 @@ class PaperAgents:
                 kept_repository.repo_path(directory),
                 folder,
                 self.docker_command,
+                claims,
+                judge,
             )
 
             return summary
 
         return work
+
+    def judge_of(self, max_cost: float) -> linking.ModelJudge:
+        """What asks the model in the settings which of the paper's numbers are the quantity that a result holds, within
+        a limit on what it may cost.
+
+        :raises ApiError: If a key it needs is not set, or its price is not known.
+        """
+        model = self.usable_model()
+        try:
+            return linking.ModelJudge(model, max_cost, self.chat_models, self.client)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
 
     def clear_checks(self, agent_id: str) -> None:
         """Takes away the checks that were made of the tools, so that they are of the tier they were made as until they
