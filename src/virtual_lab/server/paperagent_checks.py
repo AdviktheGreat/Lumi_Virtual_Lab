@@ -7,11 +7,13 @@ is bound to something that is not what is kept now is stale, is shown as stale, 
 the numbers that the paper reports is also bound to those numbers, by a hash of them with the sentences they are from,
 so that a paper that is read again, and gives other numbers, leaves it stale.
 
-The tier of a tool follows from these files and from nothing else. A tool of tier A that has two kinds of checks that
-passed and none that failed, all of them of what is kept now, is of tier B. No model decides it: a model says nothing
-that is kept here, and a record that is not in the shape that is written, or is of another tool or kind, counts for
-nothing. What tier B says is that the tool did more than give again what its tutorial got; it does not say that what
-the tool gives is right.
+The tier of a tool follows from these files and from nothing else. A tool of tier A that has checks that passed against
+two different bases (checking.BASIS: the code's own function, its tests, the paper's numbers) and none that failed, all
+of them of what is kept now, is of tier B. Two kinds that hold the tool to the same basis, as the inputs that a rule
+changes and those that a model of another family chose both hold it to the code's function, are one basis. No model
+decides it: a model says nothing that is kept here that counts, and a record that is not in the shape that is written,
+or is of another tool or kind, counts for nothing. What tier B says is that the tool did more than give again what its
+tutorial got; it does not say that what the tool gives is right.
 """
 
 import hashlib
@@ -192,6 +194,7 @@ def evidence_of(
         entry: dict[str, Any] = {
             "kind": kind,
             "title": checking.KIND_INFO[kind]["title"],
+            "basis": checking.BASIS[kind],
             "what": checking.KIND_INFO[kind]["what"],
             "status": NOT_RUN,
             "summary": "It has not been checked this way.",
@@ -224,11 +227,11 @@ def evidence_of(
 
 
 def tier_of(tool: dict[str, Any], evidence: list[dict[str, Any]]) -> str:
-    """The tier that a tool is of, from how its checks went: B if it is of tier A and two kinds passed and none failed,
-    and what it was made as if not. Checks that are stale are not counted, either way."""
-    passed = sum(1 for entry in evidence if entry["status"] == checking.PASSED)
+    """The tier that a tool is of, from how its checks went: B if it is of tier A and checks against two different bases
+    passed and none failed, and what it was made as if not. Checks that are stale are not counted, either way."""
+    bases = {checking.BASIS[entry["kind"]] for entry in evidence if entry["status"] == checking.PASSED}
     failed = any(entry["status"] == checking.FAILED for entry in evidence)
-    if tool["tier"] == wrappers.TIER and passed >= checking.KINDS_FOR_B and not failed:
+    if tool["tier"] == wrappers.TIER and len(bases) >= checking.BASES_FOR_B and not failed:
         return checking.TIER_B
 
     return str(tool["tier"])
@@ -245,6 +248,7 @@ def tool_summary(directory: Path, tool: dict[str, Any], kept: dict[str, Any], de
         "made_as": tool["tier"],
         "tier": tier_of(tool, evidence),
         "passed": [entry["kind"] for entry in evidence if entry["status"] == checking.PASSED],
+        "bases": sorted({entry["basis"] for entry in evidence if entry["status"] == checking.PASSED}),
         "evidence": evidence,
     }
 

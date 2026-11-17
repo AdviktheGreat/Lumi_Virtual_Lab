@@ -448,9 +448,11 @@ class PaperAgentToolsBody(RequestModel):
 class PaperAgentChecksBody(RequestModel):
     """How to check the tools: the most minutes that one check of a tool may take, and that all of the checks may, how
     many times each call is made, the most gigabytes that one run may write, which kinds of check to make, which tools
-    to check, by name, and the most that asking a model may spend, in USD. All of the tools are checked if none are
-    named, and the kinds that need no model if no kinds are. The limit on spending is said when the check against the
-    paper's numbers is asked for, and not given otherwise."""
+    to check, by name, the most that asking a model may spend, in USD, and the model of another family than the one in
+    the settings that chooses inputs to try. All of the tools are checked if none are named, and the kinds that need no
+    model if no kinds are. The limit on spending is said when a kind that asks a model is asked for, and not given
+    otherwise; the model is named when the check with inputs that a model chose is asked for, and not given
+    otherwise."""
 
     minutes: StrictInt | None = None
     total_minutes: StrictInt | None = None
@@ -461,6 +463,7 @@ class PaperAgentChecksBody(RequestModel):
         default=None, max_length=100
     )
     max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+    verifier_model: str | None = Field(None, max_length=200)
 
 
 class PaperAgentDataBody(RequestModel):
@@ -1393,6 +1396,7 @@ def create_app(
             body.kinds,
             body.tools,
             body.max_cost,
+            body.verifier_model,
         )
 
         return job.snapshot(0)

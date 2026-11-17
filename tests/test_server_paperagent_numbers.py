@@ -95,6 +95,7 @@ class TestAskingForIt:
             "heldout": (True, False),
             "repo_tests": (True, False),
             KIND: (False, True),
+            "verifier": (False, True),
         }
         assert shown["numbers"] == 1
         check(agents, read)
@@ -103,6 +104,7 @@ class TestAskingForIt:
             "heldout": "passed",
             "repo_tests": "passed",
             KIND: "not_run",
+            "verifier": "not_run",
         }
 
     def test_what_it_may_spend_is_said_for_it_and_for_nothing_else(

@@ -2,22 +2,29 @@
 
 A tool of tier A gave again what its tutorial got, for the arguments the tutorial passed. Of that, the tutorial is both
 the source and the test, so it shows little. Tier B asks for more: kinds of evidence that the making of the tool did not
-produce, of which two must pass and none fail. Here are the kinds that need only the tool, the code, and the
-environment:
+produce, from two different bases (what each is held against), and none that fails. Here are the kinds that need only
+the tool, the code, and the environment:
 
 - inputs that the tutorial did not use. The arguments of a call that the tutorial made are changed (numbers nudged,
   lists thinned), and the tool and the code's own function are called with them, each in a process of its own, as many
   times as asked. They must give the same, and the same each time. That is what the tool adds nothing to, and it is
-  held to inputs that no tutorial chose.
+  held to inputs that no tutorial chose. Its basis is the code's own function.
 - the tests that the code comes with. Those that call the function (by what they imported from the module that
   defines it, or a package above it) are run, in the environment, with no network, by pytest if the environment has
-  it. They must pass. They are tests of the code's function, and the tool's wrapper is not called in them.
+  it. They must pass. They are tests of the code's function, and the tool's wrapper is not called in them. Its basis is
+  the code's own tests.
 
-A third kind needs a model, and so is made only when it is asked for, within a limit on spending (linking.py):
+Two kinds need a model, and so are made only when they are asked for, within a limit on spending that they share:
 
-- numbers that the paper reports. A number in the paper's claims is looked for, by a program, in what the tutorial's
-  calls gave; a model is asked only whether the paper's sentence is about the same quantity; the tool is called again
-  and the number is compared, by a program, within how the paper rounded it.
+- numbers that the paper reports (linking.py). A number in the paper's claims is looked for, by a program, in what the
+  tutorial's calls gave; a model is asked only whether the paper's sentence is about the same quantity; the tool is
+  called again and the number is compared, by a program, within how the paper rounded it. Its basis is the paper.
+- inputs that a model of another family chose (proposing.py). A model that is not of the family of the one in the
+  settings reads the tool's wrapper, the code's function, and what the tutorial passed, and proposes inputs that might
+  tell them apart. A program keeps those that the tool could be given and that the tutorial did not pass, and calls the
+  tool and the code's own function with them, as for the inputs above. A model can only choose what is tried, never
+  whether it passed. Its basis is the code's own function, the same as that of the inputs that a rule changes: the two
+  are not two bases, since both hold the tool to the code's function.
 
 Each ends as passed, failed, or not obtained: a check that could not be made, such as one for a function that no test
 calls, is not a failure, and is not evidence either. What each shows is said, and none shows that what the tool gives
@@ -47,16 +54,28 @@ SCHEMA = 1
 HELDOUT = "heldout"
 REPO_TESTS = "repo_tests"
 PAPER_NUMBERS = "paper_numbers"
-KINDS = (HELDOUT, REPO_TESTS, PAPER_NUMBERS)
+VERIFIER = "verifier"
+KINDS = (HELDOUT, REPO_TESTS, PAPER_NUMBERS, VERIFIER)
 # The kinds that are made when none are named, which need no model, and so cost nothing, and those that need one
 DEFAULT_KINDS = (HELDOUT, REPO_TESTS)
-MODEL_KINDS = (PAPER_NUMBERS,)
+MODEL_KINDS = (PAPER_NUMBERS, VERIFIER)
+# What each kind holds a tool against. Two kinds that hold it against the same are one basis, so that two ways of
+# calling the tool and the code's function with other inputs do not make tier B between them
+FUNCTION = "function"
+TESTS = "tests"
+PAPER = "paper"
+BASIS = {HELDOUT: FUNCTION, REPO_TESTS: TESTS, PAPER_NUMBERS: PAPER, VERIFIER: FUNCTION}
+BASES = {
+    FUNCTION: "the code's own function, called with inputs that the tutorial did not pass",
+    TESTS: "the tests that come with the code",
+    PAPER: "the numbers that the paper reports",
+}
 PASSED = "passed"
 FAILED = "failed"
 NOT_OBTAINED = "not_obtained"
 STATUSES = (PASSED, FAILED, NOT_OBTAINED)
-# How many kinds must pass for tier B, and the tier that a tool is of with fewer
-KINDS_FOR_B = 2
+# How many bases must have a check that passed for tier B, and the tier that a tool is of with fewer
+BASES_FOR_B = 2
 TIER_B = "B"
 
 CHECK_RUNNER_FILE = "check_runner.py"
@@ -90,6 +109,7 @@ NUMBER = (int, float)
 
 KIND_INFO: dict[str, dict[str, str]] = {
     HELDOUT: {
+        "basis": FUNCTION,
         "title": "Inputs the tutorial did not use",
         "said": "gave the same as the code's own function for inputs the tutorial did not use",
         "what": (
@@ -100,6 +120,7 @@ KIND_INFO: dict[str, dict[str, str]] = {
         ),
     },
     REPO_TESTS: {
+        "basis": TESTS,
         "title": "The code's own tests",
         "said": "the code's own tests of the function pass here, which are tests of the code and not of the tool",
         "what": (
@@ -110,6 +131,7 @@ KIND_INFO: dict[str, dict[str, str]] = {
         ),
     },
     PAPER_NUMBERS: {
+        "basis": PAPER,
         "title": "Numbers the paper reports",
         "said": "gave a number that the paper reports, for the arguments its tutorial passed",
         "what": (
@@ -123,13 +145,32 @@ KIND_INFO: dict[str, dict[str, str]] = {
             "can still be the same by chance, and the model's reading of the words can still be wrong."
         ),
     },
+    VERIFIER: {
+        "basis": FUNCTION,
+        "title": "Inputs that a model of another family chose",
+        "said": (
+            "gave the same as the code's own function for inputs that a model of another family chose to try to tell "
+            "them apart"
+        ),
+        "what": (
+            "A model that is not of the family of the one in the settings read the tool's wrapper, the code's "
+            "function, and what the tutorial passed, and proposed inputs for which the two might differ. A program "
+            "kept those that the tool could be given and that the tutorial did not pass, and the tool and the code's "
+            "own function were called with them, each in a process of its own, and gave the same, each time. The "
+            "model chose what was tried and could not say that anything passed. It holds the tool to the code's "
+            "function, as the inputs that a rule changes do, so the two are one basis for tier B. It does not show "
+            "that what is given is right, and the model's notes of where the wrapper and the code might differ are "
+            "its words, not findings."
+        ),
+    },
 }
 
 MEANING = (
-    "A tool of tier B is of tier A and has also passed two kinds of checks that its tutorial did not give it, and "
-    "failed none. The checks with other inputs and with the paper's numbers call the tool; the code's own tests are "
-    "of the code's function. That lowers the chance that the tool is right only for its tutorial. It does not make "
-    "that chance nothing, and it does not show that what the tool gives is right."
+    "A tool of tier B is of tier A and has also passed checks that its tutorial did not give it against two different "
+    "things (the code's own function with other inputs, the code's own tests, the paper's numbers), and failed none. "
+    "The checks with other inputs, whether a rule or a model chose them, and with the paper's numbers call the tool; "
+    "the code's own tests are of the code's function. That lowers the chance that the tool is right only for its "
+    "tutorial. It does not make that chance nothing, and it does not show that what the tool gives is right."
 )
 
 TESTS_RESULT = {
@@ -693,6 +734,26 @@ def check_held_out(
             "Nothing that the tutorial passed can be changed here: it has no number and no list of four or more, which "
             "are what are changed.",
         )
+
+    return compare_with_code(runner, tool, repo, changed, seconds, tolerance)
+
+
+def compare_with_code(
+    runner: CheckRunner,
+    tool: dict[str, Any],
+    repo: Path,
+    calls: Sequence[dict[str, Any]],
+    seconds: float,
+    tolerance: Tolerance,
+) -> Outcome:
+    """Calls a tool and the code's own function with each of some arguments, each in a process of its own and as many
+    times as asked, and says whether they gave the same, each time. Whatever chose the arguments, this is what judges.
+
+    :param calls: What to call them with: each has the tutorial and the folder to call from, the arguments by the name
+        of each parameter, and how they were chosen (`from`, `change`), and may have the reason that they were chosen.
+    :raises StoppedError: If whoever started the runs asked to stop them.
+    :raises DockerUnavailableError: If Docker did not run them.
+    """
     module, function = tool["repo"]["module"], tool["repo"]["function"]
     positional = positional_of(repo, module, function)
     if positional is None:
@@ -700,8 +761,7 @@ def check_held_out(
             NOT_OBTAINED, "The code's own function cannot be read from the code, so it was not called directly."
         )
     cases = [
-        wrappers.Case(index, one["tutorial"], None, {}, one["cwd"], one["args"], {})
-        for index, one in enumerate(changed)
+        wrappers.Case(index, one["tutorial"], None, {}, one["cwd"], one["args"], {}) for index, one in enumerate(calls)
     ]
     each = seconds / 2
     through_tool = runner.replay(tool["source"], tool["name"], cases, each)
@@ -712,10 +772,11 @@ def check_held_out(
             "from": one["from"],
             "tutorial": one["tutorial"],
             "change": one["change"],
+            **({"reason": one["reason"]} if "reason" in one else {}),
             "args": shown(one["args"], 2 * MAX_TEXT_CHARS),
             **judge_held_out(through_tool.results[index], from_code.results[index], tolerance),
         }
-        for index, one in enumerate(changed)
+        for index, one in enumerate(calls)
     ]
     for ended, replay in (("the tool", through_tool), ("the code's own function", from_code)):
         why = making.failed_whole(replay)

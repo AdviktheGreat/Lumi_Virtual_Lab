@@ -43,9 +43,9 @@ the tutorials got, and does not say that what it gives is right.
 Tools are checked, when the person asks, by what their tutorials did not give them: each tool and the code's own
 function are called with arguments that the tutorial did not pass, and the tests that the code came with that call the
 function are run, in the same kind of container. Each check is kept as it is made, bound to the wrapper, the commit, the
-image, and the reference run it was made of (paperagent_checks.py). A tool of tier A that has passed two kinds and
-failed none is of tier B, which follows from what is kept and from nothing else, and is not said to show that what the
-tool gives is right.
+image, and the reference run it was made of (paperagent_checks.py). A tool of tier A that has passed checks against two
+different bases (the code's function, the code's tests, the paper's numbers) and failed none is of tier B, which follows
+from what is kept and from nothing else, and is not said to show that what the tool gives is right.
 
 An agent is given to conversations when the person says so (the flag `given` in its agent.json), or when they name it
 for one. What a conversation is then given of it is in paperagent_given.py: tools that read what was found in the
@@ -83,12 +83,12 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
+from virtual_lab.paperagents import asking, linking, proposing, toolmaking
 from virtual_lab.paperagents import checking as verifying
 from virtual_lab.paperagents import data as finding
 from virtual_lab.paperagents import datahosts as hosting
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import fetch as fetching
-from virtual_lab.paperagents import linking, toolmaking
 from virtual_lab.paperagents import preflight as checking
 from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import repository as cloning
@@ -123,7 +123,7 @@ from virtual_lab.server.papers import (
     money,
 )
 from virtual_lab.server.workspace import Workspace, claim_directory, has_control_character, read_json
-from virtual_lab.utils import compute_token_cost, write_atomically
+from virtual_lab.utils import MeetingUsage, compute_token_cost, write_atomically
 from virtual_lab.webpages import is_public_address
 
 # What an agent is, and where the paper uploaded to it is kept
@@ -2334,11 +2334,15 @@ class PaperAgents:
         kept, tools = self.checkable(directory, agent)
         job = self.checks_job(agent_id)
 
+        settings_model = self.workspace.load_settings().model
+
         return {
             "id": agent_id,
             "docker": {"ready": usable, "message": problem},
             "made": kept is not None,
             "tools": [kept_checks.tool_summary(directory, tool, kept) for tool in tools] if kept is not None else [],
+            "settings_model": settings_model,
+            "settings_family": asking.family_of(settings_model),
             "kinds": [
                 {
                     "kind": kind,
@@ -2351,7 +2355,8 @@ class PaperAgents:
             "numbers": len(linking.usable_numbers(kept_reading.number_claims(directory))),
             "job": job.snapshot() if job is not None else None,
             "meaning": verifying.MEANING,
-            "kinds_for_b": verifying.KINDS_FOR_B,
+            "bases": verifying.BASES,
+            "bases_for_b": verifying.BASES_FOR_B,
             "limits": checkwork.limits_of(),
         }
 
@@ -2378,14 +2383,16 @@ class PaperAgents:
         kinds: Any = None,
         tools: Any = None,
         max_cost: Any = None,
+        verifier_model: Any = None,
     ) -> Job:
         """Starts checking the tools by what their tutorials did not give them: each is called, and the code's own
         function with it, with inputs that the tutorial did not pass, and the tests that the code came with that call
         the function are run, all in the environment, in containers that have none of this machine in it and no network.
         If it is asked for, the numbers that the paper reports are looked for in what the tutorials' calls gave, a model
         is asked which of what was found are the quantity that the paper's sentence is about, and the tool is called
-        again for those. Each check is kept as it is made. A tool that has passed two kinds and failed none is of tier
-        B.
+        again for those; and a model of another family than the one in the settings is asked for inputs that might tell
+        the tool and the code's function apart, which are then tried by a program. Each check is kept as it is made. A
+        tool that has passed checks against two different bases and failed none is of tier B.
 
         :param minutes: The most time that one check of one tool may take.
         :param total_minutes: The most time all of the checks may take together.
@@ -2393,12 +2400,16 @@ class PaperAgents:
         :param gigabytes: The most that one run may write.
         :param kinds: Which kinds of check to make, which are those that need no model if none are named.
         :param tools: Which tools to check, by name, which are all of them if none are named.
-        :param max_cost: The most that asking a model may spend, in USD, which is said when the check against the
-            paper's numbers is asked for, and is not given otherwise.
+        :param max_cost: The most that asking a model may spend, in USD, over all of the kinds that ask one, which is
+            said when one of them is asked for, and is not given otherwise.
+        :param verifier_model: The model that chooses inputs to try, which is named when the check with inputs that it
+            chose is asked for, and is not given otherwise. It must be of a family that is known and is not the one of
+            the model in the settings.
         :raises ApiError: If there is no agent with this id, what is given is not fit, Docker is not running, the code
             has not been fetched or its environment not built or its image is not in Docker, no tools were made, the
-            paper's numbers are asked for and the paper has none to check against or a key or a price is missing, or the
-            agent's paper, code, environment, data, tutorials, tools, or checks are being worked on.
+            paper's numbers are asked for and the paper has none to check against, a key or a price is missing, the
+            model that chooses inputs is not of another family, or the agent's paper, code, environment, data,
+            tutorials, tools, or checks are being worked on.
         """
         self.lookup(agent_id)
         try:
@@ -2417,8 +2428,9 @@ class PaperAgents:
         budget = check_budget(max_cost, "The most it may spend", required=asks_a_model)
         if budget is not None and not asks_a_model:
             raise ApiError(
-                422, "invalid", "A limit on spending is for the check against the paper's numbers, which asks a model"
+                422, "invalid", "A limit on spending is for the checks that ask a model, and none is asked for"
             )
+        verifier_name = self.verifier_named(verifier_model, verifying.VERIFIER in chosen)
         usable, problem = building.ready(self.docker_command)
         if not usable:
             raise ApiError(422, "docker_missing", problem or "Docker is not running, and checking tools takes it")
@@ -2429,14 +2441,21 @@ class PaperAgents:
             if kept is None or not found:
                 raise ApiError(422, "no_tools", "Make the tools first, as it is tools that are checked")
             claims = kept_reading.number_claims(directory)
-            if asks_a_model and not linking.usable_numbers(claims):
+            if verifying.PAPER_NUMBERS in chosen and not linking.usable_numbers(claims):
                 raise ApiError(
                     422,
                     "no_numbers",
                     "The paper has no number that it reports with digits enough to check against. Read the paper first "
                     "if it has not been read.",
                 )
-            judge = self.judge_of(budget) if budget is not None else None
+            # Askers that are given one record of what was used keep to one limit
+            usage = MeetingUsage()
+            judge = self.judge_of(budget, usage) if budget is not None and verifying.PAPER_NUMBERS in chosen else None
+            verifier = (
+                self.verifier_of(verifier_name, budget, usage)
+                if budget is not None and verifier_name is not None
+                else None
+            )
             if tools is not None:
                 known = {tool["name"] for tool in found}
                 if any(name not in known for name in tools):
@@ -2450,7 +2469,7 @@ class PaperAgents:
                     CHECKS_JOB,
                     agent_id,
                     f"Checking the tools: {agent['title']}",
-                    self.checker(agent_id, kept, found, chosen, limits, folder, claims, judge),
+                    self.checker(agent_id, kept, found, chosen, limits, folder, claims, judge, verifier),
                     exclusive=f"paperagent:{agent_id}",
                 )
             except JobConflictError as error:
@@ -2468,6 +2487,7 @@ class PaperAgents:
         folder: Path | None,
         claims: Sequence[dict[str, Any]] = (),
         judge: linking.Judge | None = None,
+        verifier: proposing.Verifier | None = None,
     ) -> Callable[[Job], str | None]:
         """What a job does to check the tools: makes the checks one after another, and keeps each as it is made, so
         that a job that is stopped keeps what it had made."""
@@ -2488,21 +2508,81 @@ class PaperAgents:
                 self.docker_command,
                 claims,
                 judge,
+                verifier,
             )
 
             return summary
 
         return work
 
-    def judge_of(self, max_cost: float) -> linking.ModelJudge:
+    def judge_of(self, max_cost: float, usage: MeetingUsage) -> linking.ModelJudge:
         """What asks the model in the settings which of the paper's numbers are the quantity that a result holds, within
         a limit on what it may cost.
 
+        :param usage: What has been used, to which what it uses is added, so that what else is asked keeps to one limit.
         :raises ApiError: If a key it needs is not set, or its price is not known.
         """
         model = self.usable_model()
         try:
-            return linking.ModelJudge(model, max_cost, self.chat_models, self.client)
+            return linking.ModelJudge(model, max_cost, self.chat_models, self.client, usage)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+
+    def verifier_named(self, name: Any, asked: bool) -> str | None:
+        """The model that is to choose inputs to try, if the check that asks it is asked for: it must be named, and be
+        of a family that is known and is not that of the model in the settings, which is the one that read the paper and
+        that the person works with, so that what it misses is not what the verifier misses.
+
+        :raises ApiError: If it is named and the check is not asked for, or is not named and the check is asked for, or
+            is of the same family as the model in the settings, or of one that is not known, or a key it needs is not
+            set, or its price is not known.
+        """
+        if name is None:
+            if asked:
+                raise ApiError(
+                    422, "invalid", "Name the model of another family that chooses the inputs to try (verifier_model)"
+                )
+            return None
+        if not asked:
+            raise ApiError(
+                422,
+                "invalid",
+                "A model to choose inputs is for the check with inputs that a model chose, which is not asked for",
+            )
+        if not isinstance(name, str) or not name.strip() or has_control_character(name):
+            raise ApiError(422, "invalid", "The model that chooses inputs is a name of a model")
+        name = name.strip()
+        family = asking.family_of(name)
+        settings_model = self.workspace.load_settings().model
+        settings_family = asking.family_of(settings_model)
+        if family is None:
+            raise ApiError(
+                422,
+                "invalid",
+                f"It is not known whose model {name} is, so it cannot be told that it is of another family than "
+                f"{settings_model}. Name a model of Anthropic, OpenAI, Google, Meta, Mistral, DeepSeek, Qwen, xAI, or "
+                "Cohere.",
+            )
+        if settings_family is None or family == settings_family:
+            why = (
+                f"{name} is of the same family as {settings_model}, the model in the settings"
+                if settings_family is not None
+                else f"It is not known whose model {settings_model}, the one in the settings, is"
+            )
+            raise ApiError(
+                422, "invalid", f"{why}, so it would not see what that one does not. Name a model of another family."
+            )
+
+        return check_model(name, self.missing_keys)
+
+    def verifier_of(self, model: str, max_cost: float, usage: MeetingUsage) -> proposing.ModelVerifier:
+        """What asks a model of another family for inputs to try, within a limit on what it may cost.
+
+        :param usage: What has been used, to which what it uses is added, so that what else is asked keeps to one limit.
+        :raises ApiError: If the model cannot be asked.
+        """
+        try:
+            return proposing.ModelVerifier(model, max_cost, self.chat_models, self.client, usage)
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
 
