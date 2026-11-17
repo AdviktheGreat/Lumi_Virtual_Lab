@@ -6,6 +6,10 @@ that is stopped, or ends at its limit, or is cut off, has lost only the chunk it
 last one. The claims, the draft of the method card, and the resources the paper names are written from those when a
 reading ends, as claims.json, method_card.json, and resources.json.
 
+What a person does to the card is kept beside them, in method_card_edits.json, and put over the draft when the card is
+asked for (paperagents/card.py), so that a reading never loses it, and it is of the file that the card was read from,
+as a reading is.
+
 A reading belongs to the file it was made from, which is told by the file's hash, so that what was read of one paper is
 never shown as what another says: a reading of a file that is not the agent's is not seen, and is started again.
 """
@@ -17,6 +21,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from virtual_lab.paperagents import card as method_card
 from virtual_lab.paperagents.anchors import Document, document_of
 from virtual_lab.paperagents.reading import assemble, reading_of
 from virtual_lab.provenance import utc_timestamp
@@ -33,6 +38,7 @@ LAYOUT_FILE = "layout.json"
 CLAIMS_FILE = "claims.json"
 CARD_FILE = "method_card.json"
 RESOURCES_FILE = "resources.json"
+CARD_EDITS_FILE = "method_card_edits.json"
 
 # What a record of a reading says of how it is kept, so that a later version can read what an earlier one wrote
 SCHEMA = 1
@@ -147,15 +153,46 @@ def write_files(directory: Path, results: dict[int, dict[str, Any]]) -> None:
         write_atomically(directory / name, json.dumps(files[key], indent=4).encode("utf-8"))
 
 
-def forget(directory: Path) -> None:
-    """Removes everything that was kept of a reading, and of the text it was made from."""
+def load_edits(directory: Path, file_sha256: str | None) -> dict[str, Any]:
+    """What a person did to the card of this file, which is none if they did nothing, or it was of another file."""
+    record = read_json(directory / CARD_EDITS_FILE)
+    if isinstance(record, dict) and file_sha256 is not None and record.get("file_sha256") == file_sha256:
+        return method_card.edits_of(record)
+
+    return method_card.empty_edits()
+
+
+def save_edits(directory: Path, file_sha256: str, edits: dict[str, Any]) -> None:
+    """Keeps what a person did to the card of a file, or nothing if they have done nothing."""
+    if method_card.is_empty(edits):
+        (directory / CARD_EDITS_FILE).unlink(missing_ok=True)
+
+        return
+    record = {"schema": method_card.SCHEMA, "file_sha256": file_sha256, **edits}
+    write_atomically(directory / CARD_EDITS_FILE, json.dumps(record, indent=4).encode("utf-8"))
+
+
+def read_card(directory: Path, file_sha256: str | None, expected: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The draft of the card that the reading made, as it is before a person's edits are put over it."""
+    run = saved_run(directory, file_sha256, expected)
+    results = saved_chunks(directory) if run is not None else {}
+
+    return assemble(results.values(), SCHEMA)["method_card"]
+
+
+def forget(directory: Path, edits: bool = True) -> None:
+    """Removes everything that was kept of a reading, and of the text it was made from.
+
+    :param edits: Whether what a person did to the card goes too, which it does when the paper is not the same, and not
+        when the reading alone is cleared, since what they did is theirs and is of the paper.
+    """
     shutil.rmtree(reading_dir(directory), ignore_errors=True)
     # The log has more in it when more of the steps are done, so it is only taken away if this was all there was
     try:
         (directory / LOG_DIR).rmdir()
     except OSError:
         pass
-    for name in (CLAIMS_FILE, CARD_FILE, RESOURCES_FILE):
+    for name in (CLAIMS_FILE, CARD_FILE, RESOURCES_FILE, *((CARD_EDITS_FILE,) if edits else ())):
         (directory / name).unlink(missing_ok=True)
     for name in (TEXT_FILE, LAYOUT_FILE):
         (directory / "paper" / name).unlink(missing_ok=True)
@@ -203,6 +240,7 @@ def describe(directory: Path, file_sha256: str | None, expected: dict[str, Any] 
     }
     costs = [record["usage"].get("cost") for record in results.values()]
     files = assemble(results.values(), SCHEMA)
+    card = method_card.shown(files["method_card"], load_edits(directory, file_sha256))
 
     return {
         "chunks": run["chunks"] if run is not None else None,
@@ -222,7 +260,7 @@ def describe(directory: Path, file_sha256: str | None, expected: dict[str, Any] 
         "truncated_from": run.get("truncated_from") if run is not None else None,
         "finished_at": run.get("finished_at") if run is not None else None,
         "claims": files["claims"]["claims"],
-        "card": {key: value for key, value in files["method_card"].items() if key != "schema"},
+        "card": card,
         "resources": {key: value for key, value in files["resources"].items() if key != "schema"},
     }
 
