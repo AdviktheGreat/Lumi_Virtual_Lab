@@ -27,10 +27,11 @@ means, or that the paper is right.
 """
 
 import bisect
+import hashlib
 import json
 import re
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
@@ -84,7 +85,8 @@ QUESTIONS_TAG = "claims"
 MEANING = (
     "Each claim of the paper that is a number is held to what the code's tutorials gave when they were run here. "
     "Reproduced: a number that the tutorials gave rounds to the paper's, as the paper rounded it, and the runs of the "
-    "tutorial agree. Partly: the number is within "
+    "tutorial did not disagree (they agreed, or it was run once, or they could not be compared, which is said). "
+    "Partly: the number is within "
     f"{round(PARTLY_SHARE * 100)}% of the paper's and does not round to it, or it does and the runs of the tutorial "
     "did not agree with each other. Not reproduced: the tutorial gave another number. Not attempted: nothing was "
     "compared, and the reason says why, as when no code could be linked to the claim. Which of the code's numbers a "
@@ -123,6 +125,7 @@ REFERENCE = re.compile(
 )
 LABEL = re.compile(r"s?\d+", re.IGNORECASE)
 WORD = re.compile(r"[a-z]{3,}")
+NUMBER = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w.])")
 
 PICK_PROMPT = "\n".join(
     [
@@ -318,12 +321,19 @@ class Found:
         return f'a printed line "{self.label}"'
 
 
-def args_text(args: Mapping[str, Any]) -> str:
-    """What a call was given, as short as it can be said: the values that were plain, and the types of the others."""
+def args_text(args: Mapping[str, Any], hide: Collection[float] = ()) -> str:
+    """What a call was given, as short as it can be said: the values that were plain, and the types of the others.
+
+    :param hide: Numbers that are not to be shown, which are those that the call gave, so that what it was given cannot
+        tell a model what it gave: a number that is one of them is shown as #.
+    """
     parts = []
     for name, value in args.items():
         if isinstance(value, dict) and value.get("plain") is True:
-            parts.append(f"{name}={value.get('value')!r}")
+            shown = repr(value.get("value"))
+            if hide:
+                shown = NUMBER.sub(lambda each: "#" if float(each.group(0)) in hide else each.group(0), shown)
+            parts.append(f"{name}={shown}")
         else:
             parts.append(f"{name}=<{value.get('type', '?') if isinstance(value, dict) else '?'}>")
 
@@ -340,8 +350,9 @@ def numbers_of(position: int, tutorial: Tutorial) -> list[Found]:
     for index, call in enumerate(detail["calls"]):
         if call["result"] is None or not call["returned"]:
             continue
-        head = f"{call['module']}.{call['qualname']}({args_text(call['args'])})"
-        for path, value in written.numbers_in(call["result"]):
+        gave = list(written.numbers_in(call["result"]))
+        head = f"{call['module']}.{call['qualname']}({args_text(call['args'], {value for _, value in gave})})"
+        for path, value in gave:
             named = not path or isinstance(path[-1], str)
             found.append(Found(position, CALL, f"{CALL}:{index}", call["id"], path, None, value, named, head))
             if len(found) >= MOST_FOUND:
@@ -417,15 +428,19 @@ class Index:
 class Located:
     """The places that a claim may be held to.
 
-    :param places: The places, those whose value rounds to the number first, then the named results of the tutorials
-        that refer to what the sentence refers to, those with words of the sentence in their name first.
-    :param near: How many of the places are of the first kind.
+    :param places: The places that a model is shown, which are those whose value rounds to the number, and the named
+        results of the tutorials that refer to what the sentence refers to, those with words of the sentence in their
+        name first when there are too many. They are in an order that is not that: it is fixed by what each place is,
+        so that where a place is among them does not tell a model that its value rounds to the number.
+    :param near: How many of the places are of the first kind, which are in `matched`.
+    :param matched: The places that were shown whose value rounds to the number.
     :param ambiguous: How many groups of places were left out, as the number was in too many places of one result.
     :param linked: The tutorials that refer to a figure or table that the sentence does.
     """
 
     places: list[Found]
     near: int
+    matched: frozenset[Found]
     ambiguous: int
     linked: list[int]
 
@@ -455,8 +470,17 @@ def locate(
         if len(places) >= MOST_SHOWN:
             break
         places.append(each)
+    matched = frozenset(places[: min(len(near), MOST_SHOWN)])
+    places.sort(key=lambda each: place_key(each, tutorials))
 
-    return Located(places, min(len(near), MOST_SHOWN), ambiguous, linked)
+    return Located(places, len(matched), matched, ambiguous, linked)
+
+
+def place_key(place: Found, tutorials: Sequence[Tutorial]) -> str:
+    """What fixes where a place is among those that a model is shown: a hash of what it is, and nothing of its value."""
+    name = [tutorials[place.tutorial].path, place.source, place.unit, place.at, list(place.path), place.line]
+
+    return hashlib.sha256(json.dumps(name).encode("utf-8")).hexdigest()
 
 
 # Asking a model which place a sentence is about
@@ -653,8 +677,8 @@ def attempt(
     basis = ("both" if shared else "number") if found_by_number else "figure"
     others = [
         {"tutorial": tutorials[each.tutorial].path, "where": each.where(), "value": each.value}
-        for each in located.places[: located.near]
-        if each != place
+        for each in located.places
+        if each in located.matched and each != place
     ][:MOST_OTHERS]
     at = written.path_text(place.path) if place.source == CALL else None
     where = place.where() if place.source == CALL else f'a printed line "{place.line}"'

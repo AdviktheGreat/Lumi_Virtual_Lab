@@ -8,6 +8,7 @@ tests of running the tutorials, so what is looked at is what the server does wit
 
 import io
 import json
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -79,6 +80,10 @@ CLAIMS = [
     ("qualitative", "", WORDS),
 ]
 PAPER = "\n\n".join(["CellMapper: mapping cell types", "Results", RESULT, BASELINE, ATLAS, SILHOUETTE, WORDS])
+# Parts of the names of the places that a model is told to choose by, as the order that they are shown in is fixed by
+# a hash of what they are and so is not one to choose by
+TALLY = "tally("
+AUROC = "auroc("
 
 
 @pytest.fixture(autouse=True)
@@ -145,10 +150,47 @@ def read_paper(
     assert job.state == "succeeded", job.error
 
 
-def pick(fake_client: FakeClient, *places: int) -> None:
-    """What a model will say of the claims of one request: for each claim, in order, the place that it chose."""
+class Named:
+    """What a model will say of the claims of a request that it chooses the places of by a part of their names, which
+    is made of the request when it is made, as only then is it known what number each place was shown with."""
+
+    def __init__(self, places: tuple[int | str, ...]) -> None:
+        self.places = places
+
+    def answer(self, request: dict[str, Any]) -> Any:
+        shown = re.split(r"^Claim (\d+)$", request["messages"][1]["content"], flags=re.MULTILINE)
+        blocks = dict(zip(map(int, shown[1::2]), shown[2::2], strict=True))
+        picks = []
+        for number, choice in enumerate(self.places, 1):
+            lines = re.findall(r"^ +(\d+)\. In (.*)$", blocks[number], flags=re.MULTILINE)
+            chosen = choice if isinstance(choice, int) else next(int(at) for at, line in lines if choice in line)
+            picks.append(reproducing.Pick(claim=number, place=chosen))
+
+        return parsed_response(reproducing.Picks(picks=picks))
+
+
+def pick(fake_client: FakeClient, *places: int | str) -> None:
+    """What a model will say of the claims of one request: for each claim, in order, the place that it chose, by its
+    number among those shown or by a part of its name."""
+    completions = fake_client.completions
+    if any(isinstance(each, str) for each in places):
+        if not hasattr(completions, "chooses_by_name"):
+            ask = completions.parse
+
+            def parse(**request: Any) -> Any:
+                waiting: list[Any] = completions.parsed_responses
+                if waiting and isinstance(waiting[0], Named) and request["response_format"] is reproducing.Picks:
+                    waiting[0] = waiting[0].answer(request)
+
+                return ask(**request)
+
+            completions.parse = parse  # type: ignore[method-assign]
+            completions.chooses_by_name = True  # type: ignore[attr-defined]
+        completions.parsed_responses.append(Named(places))  # type: ignore[arg-type]
+
+        return
     picks = [reproducing.Pick(claim=number, place=place) for number, place in enumerate(places, 1)]
-    fake_client.completions.parsed_responses.append(parsed_response(reproducing.Picks(picks=picks)))
+    completions.parsed_responses.append(parsed_response(reproducing.Picks(picks=picks)))
 
 
 def asked(fake_client: FakeClient) -> list[dict[str, Any]]:
@@ -303,7 +345,7 @@ class TestTrying:
     def test_a_claim_that_reproduces_and_one_that_does_not_come_out_so_and_say_where_they_were_held(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
 
         job = reproduce(agents, ready)
 
@@ -343,7 +385,7 @@ class TestTrying:
     def test_a_claim_that_no_code_was_linked_to_is_not_attempted_and_not_said_to_have_failed(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
 
         reproduce(agents, ready)
 
@@ -356,7 +398,7 @@ class TestTrying:
     def test_a_claim_of_a_figure_whose_tutorial_was_not_run_says_that(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
 
         reproduce(agents, ready)
 
@@ -367,7 +409,7 @@ class TestTrying:
     def test_a_claim_that_is_not_a_number_is_not_attempted(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
 
         reproduce(agents, ready)
 
@@ -377,7 +419,7 @@ class TestTrying:
     def test_a_model_is_shown_the_sentences_and_the_places_by_name_and_never_their_values(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
 
         reproduce(agents, ready)
 
@@ -394,8 +436,9 @@ class TestTrying:
     def test_a_model_chooses_a_place_and_the_comparison_is_not_its_to_make(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient
     ) -> None:
-        # It is shown the places of claim 2 by name, and the second is the number that the tutorial gave for tally
-        pick(fake_client, 1, 2)
+        # What is chosen for claim 2 is the number that the tutorial gave for tally, which is not the one that its
+        # sentence is of, and it is held to the number as the paper wrote it
+        pick(fake_client, TALLY, TALLY)
 
         reproduce(agents, ready)
 
@@ -448,7 +491,7 @@ class TestTrying:
         )(count, folder, item)
         run(agents, built, repeats=2)
         read_paper(agents, built, fake_client, [("number", "0.93", RESULT)])
-        pick(fake_client, 1)
+        pick(fake_client, TALLY)
 
         reproduce(agents, built)
 
@@ -459,7 +502,7 @@ class TestTrying:
     def test_what_was_kept_is_bound_to_what_it_was_made_from(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient, workspace: Workspace
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, ready)
         claims = kept_reading.claims_of(directory_of(workspace, ready))
 
@@ -476,7 +519,7 @@ class TestTrying:
     def test_a_trying_that_is_made_again_takes_the_place_of_the_one_that_was_kept(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, ready)
         assert statuses(agents, ready)["0.93"] == "reproduced"
         pick(fake_client, 0, 0)
@@ -505,7 +548,7 @@ class TestTrying:
 
 class TestWhenWhatWasKeptIsNotWhatItIsHeldTo:
     def tried_once(self, agents: PaperAgents, agent_id: str, fake_client: FakeClient) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, agent_id)
         assert statuses(agents, agent_id)["0.93"] == "reproduced"
 
@@ -618,12 +661,34 @@ class TestWhenWhatWasKeptIsNotWhatItIsHeldTo:
         rewrite(workspace, ready, claims=record["claims"])
         assert agents.reproduction(ready)["kept"] is not None
 
+    def test_a_claim_that_was_tried_without_what_it_was_held_to_or_one_that_was_not_with_it_is_not_an_account(
+        self, agents: PaperAgents, ready: str, fake_client: FakeClient, workspace: Workspace
+    ) -> None:
+        self.tried_once(agents, ready, fake_client)
+        record = record_of(workspace, ready)
+        link = record["claims"][0]["link"]
+        made_up = (
+            (0, {"link": None}),
+            (0, {"link": {**link, "got": "0.931"}}),
+            (0, {"link": {**link, "got": True}}),
+            (0, {"link": {**link, "tutorial": {"path": 3}}}),
+            (0, {"link": {**link, "tutorial": None}}),
+            (0, {"link": {**link, "number": {}}}),
+            (2, {"link": link}),
+        )
+        for index, change in made_up:
+            claims = [{**claim, **(change if at == index else {})} for at, claim in enumerate(record["claims"])]
+            rewrite(workspace, ready, claims=claims)
+            assert agents.reproduction(ready)["kept"] is None, change
+        rewrite(workspace, ready, claims=record["claims"])
+        assert agents.reproduction(ready)["kept"] is not None
+
 
 class TestWhatItBelongsTo:
     def test_taking_away_the_run_of_the_tutorials_takes_away_the_trying_that_was_held_to_it(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient, workspace: Workspace
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, ready)
         assert kept_reproduction.load(directory_of(workspace, ready)) is not None
 
@@ -636,7 +701,7 @@ class TestWhatItBelongsTo:
     def test_running_the_tutorials_again_takes_away_the_trying_that_was_held_to_the_run_before(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient, workspace: Workspace
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, ready)
         # What was kept of the run is gone, as it is if the server stopped after taking it away and before the rest
         kept_reference.forget(directory_of(workspace, ready))
@@ -645,7 +710,7 @@ class TestWhatItBelongsTo:
         run(agents, ready, repeats=1)
 
         assert kept_reproduction.load(directory_of(workspace, ready)) is None
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, ready)
         assert statuses(agents, ready)["0.93"] == "reproduced"
 
@@ -653,7 +718,7 @@ class TestWhatItBelongsTo:
     def test_taking_away_the_environment_or_the_code_takes_it_away_too(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient, workspace: Workspace, taken: str
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, ready)
 
         getattr(agents, taken)(ready)
@@ -663,7 +728,7 @@ class TestWhatItBelongsTo:
     def test_a_person_can_take_it_away_and_nothing_else_goes_with_it(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient, workspace: Workspace
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, ready)
 
         agents.clear_reproduction(ready)
@@ -676,7 +741,7 @@ class TestWhatItBelongsTo:
     def test_deleting_the_agent_takes_all_of_it_away(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient, workspace: Workspace
     ) -> None:
-        pick(fake_client, 1, 1)
+        pick(fake_client, TALLY, AUROC)
         reproduce(agents, ready)
 
         agents.delete(ready)

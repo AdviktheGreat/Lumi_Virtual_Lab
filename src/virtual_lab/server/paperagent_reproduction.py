@@ -90,8 +90,26 @@ def is_record(value: Any) -> bool:
             entry["status"] in reproducing.STATUSES
             and (entry["reason"] is None or entry["reason"] in reproducing.REASONS)
             and (entry["status"] == reproducing.NOT_ATTEMPTED) == (entry["reason"] is not None)
+            and has_link(entry)
             for entry in value["claims"]
         )
+    )
+
+
+def has_link(entry: dict[str, Any]) -> bool:
+    """Whether a claim says what it was held to if it was, and nothing if it was not attempted: one that was tried has
+    the tutorial, the value that was kept, and the number as written, and one that was not has none of them."""
+    link = entry["link"]
+    if entry["status"] == reproducing.NOT_ATTEMPTED:
+        return link is None
+    tutorial = link.get("tutorial") if isinstance(link, dict) else None
+    return (
+        isinstance(tutorial, dict)
+        and isinstance(tutorial.get("path"), str)
+        and isinstance(link.get("got"), int | float)
+        and not isinstance(link.get("got"), bool)
+        and isinstance(link.get("number"), dict)
+        and isinstance(link["number"].get("text"), str)
     )
 
 

@@ -62,7 +62,9 @@ class Scripted:
 
     model = "scripted-model"
 
-    def __init__(self, choices: dict[str, int] | None = None, note: str | None = None, limit_after: int | None = None):
+    def __init__(
+        self, choices: dict[str, int | str] | None = None, note: str | None = None, limit_after: int | None = None
+    ):
         self.choices = choices or {}
         self.note = note
         self.limit_after = limit_after
@@ -75,7 +77,17 @@ class Scripted:
         if self.note is not None:
             return Picked({}, self.note)
 
-        return Picked({q.id: self.choices[q.quote] for q in questions if q.quote in self.choices})
+        return Picked({q.id: self.number_of(q, tutorials) for q in questions if q.quote in self.choices})
+
+    def number_of(self, question: Question, tutorials: Any) -> int:
+        """The place that is chosen: its number among those shown, or, if what is said is words, the first whose name
+        has them, as the places are in an order that is not one to choose by."""
+        choice = self.choices[question.quote]
+        if isinstance(choice, int):
+            return choice
+        names = [f"{tutorials[place.tutorial].path}: {place.where()}" for place in question.places]
+
+        return next(number for number, name in enumerate(names, 1) if choice in name)
 
     def spent(self) -> float | None:
         return 0.0
@@ -242,6 +254,16 @@ class TestWhereANumberIs:
         args = {"n": value_of(5), "m": {"type": "DataFrame", "plain": False}, "odd": "not described"}
         assert reproducing.args_text(args) == "n=5, m=<DataFrame>, odd=<?>"
 
+    def test_a_number_that_a_call_gave_is_not_said_in_what_it_was_given(self) -> None:
+        args = {"x": value_of(0.931), "n": value_of(5), "xs": value_of([0.931, 2, -1.5]), "s": value_of("v0.931")}
+        shown = reproducing.args_text(args, {0.931, -1.5})
+        assert shown == "x=#, n=5, xs=[#, 2, #], s='v0.931'"
+
+    def test_what_a_model_is_shown_of_a_call_has_none_of_what_it_gave_even_if_it_was_given_it(self) -> None:
+        run = tutorial(detail=detail_of([call_of("echo", {"x": 0.9312, "k": 3}, {"auc": 0.9312})]))
+        [place] = reproducing.Index([run]).near(written.parse("0.93"))  # type: ignore[arg-type]
+        assert "0.9312" not in place.where() and "echo(x=#, k=3)" in place.where()
+
 
 class TestWhereAClaimMayBeHeldToWhatTheCodeGave:
     def locate(self, text: str, quote: str, *tutorials: Tutorial) -> reproducing.Located:
@@ -251,13 +273,27 @@ class TestWhereAClaimMayBeHeldToWhatTheCodeGave:
 
         return reproducing.locate(number, figures, quote, reproducing.Index(tutorials), tutorials)
 
-    def test_the_places_are_those_whose_value_rounds_to_the_number_and_then_those_of_the_figure_it_refers_to(
+    def test_the_places_are_those_whose_value_rounds_to_the_number_and_those_of_the_figure_it_refers_to(
         self,
     ) -> None:
         run = tutorial(detail=detail_of([score({"auc": 0.9312, "f1": 0.5, "recall": 0.7, "n": 812})]))
         located = self.locate("0.93", "AUC of 0.93 (Fig. 3).", run)
-        assert [each.path for each in located.places] == [("auc",), ("f1",), ("recall",), ("n",)]
+        assert sorted(each.path for each in located.places) == [("auc",), ("f1",), ("n",), ("recall",)]
+        assert [each.path for each in located.matched] == [("auc",)]
         assert located.near == 1 and located.linked == [0] and located.ambiguous == 0
+
+    def test_where_a_place_is_among_them_does_not_say_whether_its_value_rounds_to_the_number(self) -> None:
+        run = tutorial(detail=detail_of([score({"auc": 0.9312, "f1": 0.81, "recall": 0.7, "n": 812})]))
+        first = self.locate("0.93", "AUC of 0.93 (Fig. 3).", run)
+        second = self.locate("0.81", "F1 of 0.81 (Fig. 3).", run)
+        third = self.locate("0.70", "Recall of 0.70 (Fig. 3).", run)
+        assert [each.path for each in first.places] == [each.path for each in second.places]
+        assert [each.path for each in first.places] == [each.path for each in third.places]
+        assert [[each.path for each in one.matched] for one in (first, second, third)] == [
+            [("auc",)],
+            [("f1",)],
+            [("recall",)],
+        ]
 
     def test_a_tutorial_that_refers_to_another_figure_adds_nothing_but_what_rounds_to_the_number(self) -> None:
         run = tutorial(detail=detail_of([score({"auc": 0.81, "f1": 0.5})]), refers=("figure 4",))
@@ -284,7 +320,7 @@ class TestWhereAClaimMayBeHeldToWhatTheCodeGave:
             )
         )
         located = self.locate("0.93", "The auc score was 0.93 (Fig. 3).", run)
-        assert [each.path for each in located.places if each.source == "call"] == [("auc_score",), ("loss",)]
+        assert sorted(each.path for each in located.places if each.source == "call") == [("auc_score",), ("loss",)]
         assert all(each.named for each in located.places)
         assert [each.line for each in located.places if each.source == "line"] == ["nothing here: 7"]
 
@@ -292,6 +328,13 @@ class TestWhereAClaimMayBeHeldToWhatTheCodeGave:
         many = {f"key{number}": number + 100.5 for number in range(100)}
         run = tutorial(detail=detail_of([score(many)]))
         assert len(self.locate("0.93", "Fig. 3 says 0.93.", run).places) == reproducing.MOST_SHOWN
+
+    def test_when_there_are_more_than_the_most_those_with_the_sentence_words_are_shown(self) -> None:
+        many = {f"key{number}": number + 100.5 for number in range(100)}
+        run = tutorial(detail=detail_of([score({**many, "auc_score": 0.8})]))
+        located = self.locate("0.93", "The auc score was 0.93 (Fig. 3).", run)
+        assert len(located.places) == reproducing.MOST_SHOWN
+        assert ("auc_score",) in [each.path for each in located.places]
 
 
 class TestWhatAValueComesTo:
@@ -450,7 +493,7 @@ class TestTryingTheClaims:
 
     def test_the_statuses_are_right_for_a_claim_that_the_code_gives_and_one_that_it_does_not(self) -> None:
         claims, tutorials = self.paper()
-        picker = Scripted({claims[0]["quote"]: 1, claims[1]["quote"]: 1})
+        picker = Scripted({claims[0]["quote"]: "result['auc']", claims[1]["quote"]: "result['specificity']"})
 
         done = reproducing.reproduce(claims, tutorials, picker)
 
@@ -478,7 +521,7 @@ class TestTryingTheClaims:
 
     def test_a_claim_that_reproduces_says_against_what(self) -> None:
         claims, tutorials = self.paper()
-        done = reproducing.reproduce(claims[:1], tutorials, Scripted({claims[0]["quote"]: 1}))
+        done = reproducing.reproduce(claims[:1], tutorials, Scripted({claims[0]["quote"]: "result['auc']"}))
         [made] = done.claims
         link = made["link"]
         assert link["basis"] == "both" and link["figures"] == ["figure 3"] and link["chosen_by"] == "scripted-model"
@@ -502,7 +545,7 @@ class TestTryingTheClaims:
 
     def test_a_claim_that_does_not_reproduce_says_what_the_code_gave_and_how_far_it_is(self) -> None:
         claims, tutorials = self.paper()
-        done = reproducing.reproduce(claims[1:2], tutorials, Scripted({claims[1]["quote"]: 1}))
+        done = reproducing.reproduce(claims[1:2], tutorials, Scripted({claims[1]["quote"]: "result['specificity']"}))
         [made] = done.claims
         assert made["status"] == "not_reproduced" and made["link"]["basis"] == "figure"
         assert made["link"]["got"] == 0.812 and made["link"]["share"] == pytest.approx(0.0773, abs=1e-4)
@@ -532,7 +575,8 @@ class TestTryingTheClaims:
 
     def test_a_model_cannot_make_a_claim_reproduce_by_choosing_a_place_that_does_not_have_the_number(self) -> None:
         claims, tutorials = self.paper()
-        [made] = reproducing.reproduce(claims[:1], tutorials, Scripted({claims[0]["quote"]: 2})).claims
+        picker = Scripted({claims[0]["quote"]: "result['specificity']"})
+        [made] = reproducing.reproduce(claims[:1], tutorials, picker).claims
         assert made["status"] == "not_reproduced" and made["link"]["got"] == 0.812
 
     def test_a_choice_of_a_place_that_was_not_shown_or_of_none_is_no_quantity_and_not_a_status(self) -> None:
@@ -544,12 +588,15 @@ class TestTryingTheClaims:
 
     def test_other_places_that_hold_the_number_are_named_beside_the_one_that_was_chosen(self) -> None:
         run = tutorial(
-            detail=detail_of([score({"auc_train": 0.99, "auc_test": 0.9312}), call_of("again", {}, 0.93, 2)])
+            detail=detail_of(
+                [score({"auc_train": 0.99, "auc_test": 0.9312, "loss": 0.21}), call_of("again", {}, 0.93, 2)]
+            )
         )
         quote = "The test AUC was 0.93 (Fig. 3)."
-        [made] = reproducing.reproduce([claim("0.93", quote)], [run], Scripted({quote: 3})).claims
+        [made] = reproducing.reproduce([claim("0.93", quote)], [run], Scripted({quote: "result['auc_train']"})).claims
         assert made["status"] == "not_reproduced" and made["link"]["got"] == 0.99
-        assert [other["value"] for other in made["link"]["others"]] == [0.9312, 0.93]
+        # Of the places that were shown, only those whose value rounds to the number are named, and not the loss
+        assert sorted(other["value"] for other in made["link"]["others"]) == [0.93, 0.9312]
 
     def test_a_tutorial_whose_runs_did_not_agree_is_at_best_partly(self) -> None:
         run = tutorial(detail=detail_of([score({"auc": 0.9312})], stable=False))
@@ -579,7 +626,7 @@ class TestTryingTheClaims:
             claim(f"{0.5 + number:.2f}", f"Claim {number} was {0.5 + number:.2f} (Fig. 3).", f"c{number}")
             for number in range(12)
         ]
-        picker = Scripted({each["quote"]: 1 for each in claims})
+        picker = Scripted({each["quote"]: f"result['k{number}']" for number, each in enumerate(claims)})
         kept: list[int] = []
 
         done = reproducing.reproduce(claims, [run], picker, keep=lambda made: kept.append(len(made)))
@@ -637,7 +684,8 @@ class TestTryingTheClaims:
 
     def test_counts_are_of_each_status(self) -> None:
         claims, tutorials = self.paper()
-        done = reproducing.reproduce(claims, tutorials, Scripted({claims[0]["quote"]: 1, claims[1]["quote"]: 1}))
+        picker = Scripted({claims[0]["quote"]: "result['auc']", claims[1]["quote"]: "result['specificity']"})
+        done = reproducing.reproduce(claims, tutorials, picker)
         assert reproducing.counts_of(done.claims) == {
             "reproduced": 1,
             "partly": 0,
