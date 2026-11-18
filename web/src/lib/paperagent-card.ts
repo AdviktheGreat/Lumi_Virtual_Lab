@@ -112,7 +112,7 @@ export interface CardStatusText {
 
 // What the card is, as it is: a draft that nobody has approved, an approval of the card as it is, or a draft that was approved
 // and has changed. An approval is said to be a person's reading and letting it stand, and never that the card is right.
-export function describeStatus(card: MethodCard, now: Date = new Date()): CardStatusText {
+export function describeStatus(card: Pick<MethodCard, "status" | "approved_at" | "changed_since_approval">, now: Date = new Date()): CardStatusText {
   if (card.status === "approved") {
     const when = timeAgo(card.approved_at, now);
 

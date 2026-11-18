@@ -1051,6 +1051,65 @@ export interface MethodCard {
 // What a person says of a fact of the card, by field, with the words of a fact that is their own as quote
 export type CardFields = Record<string, string>;
 
+// Whether data is inside what the card says the method was used on, outside it, or the card does not say enough to tell. Only outside
+// is warned of.
+export type ScopeOutcome = "inside" | "outside" | "not covered";
+
+// What a person says their data is, any of it, to be put against the card. The size is a whole number, and unit is what it counts.
+export interface ScopeData {
+  species?: string;
+  tissue?: string;
+  assay?: string;
+  input_format?: string;
+  sample_size?: number;
+  sample_unit?: string;
+}
+
+// A statement of scope on the card that data was put against, as the answer gives it, with the place in the paper that it has if
+// it has one
+export interface ScopeStatement {
+  id: string;
+  value: string;
+  quote: string;
+  by: CardBy;
+  // Whether a person changed it, which has it say what they say with the paper's words beside it
+  changed: boolean;
+  page: number | null;
+  section: string | null;
+}
+
+// The answer for one thing that was said of the data
+export interface ScopeAnswer {
+  aspect: ScopeAspect;
+  // What was said of the data, as the server has it
+  given: string;
+  outcome: ScopeOutcome;
+  // The statements it was put against: those that cover it if it is inside, and those of its sort otherwise
+  says: ScopeStatement[];
+  reason: string;
+}
+
+// What the card says of a sort that nothing was said of
+export interface ScopeNotChecked {
+  aspect: ScopeAspect;
+  says: ScopeStatement[];
+}
+
+// Data put against the card. The whole is outside if anything is, and inside only if everything that was said is.
+export interface ScopeCheck {
+  id: string;
+  outcome: ScopeOutcome;
+  aspects: ScopeAnswer[];
+  // One for each thing that is outside, with the card's words and the paper's
+  warnings: string[];
+  not_checked: ScopeNotChecked[];
+  // How far the card is to be trusted
+  card: Pick<MethodCard, "status" | "approved_at" | "changed_since_approval" | "edited"> & { scope_facts: number };
+  // How far the paper was read, where chunks is null if it was not
+  reading: { complete: boolean; chunks: number | null; read: number; failed: number };
+  notes: string[];
+}
+
 export interface ReadSoftware extends ReadFact {
   name: string;
   version: string;

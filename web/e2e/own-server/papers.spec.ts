@@ -881,6 +881,155 @@ test("lets a person correct the method card and approve it, with what they did m
   expect(await accessibilityProblems(page)).toEqual([]);
 });
 
+const scopeCheck = (page: Page) => page.getByTestId("scope-check");
+const checkingData = (page: Page) => form(page, "Check my data against the card");
+const scopeResult = (page: Page) => scopeCheck(page).getByTestId("scope-result");
+const scopeWarnings = (page: Page) => scopeCheck(page).getByTestId("scope-warning");
+const scopeAnswer = (page: Page, aspect: string) => scopeResult(page).locator(`[data-testid="scope-answer"][data-aspect="${aspect}"]`);
+
+// Says what the data is, and asks for it to be put against the card, which clears what was said before
+async function checkData(page: Page, said: Record<string, string>) {
+  const checking = checkingData(page);
+  for (const label of ["Species", "Tissue", "Assay", "Input format", "Sample size", "What the size counts"]) {
+    await checking.getByLabel(label).fill(said[label] ?? "");
+  }
+  await checking.getByRole("button", { name: "Check it" }).click();
+}
+
+test("puts a person's data against the method card, with a warning that quotes the card where it is outside", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Scope checker", paper: { kind: "file" } });
+  await openAgent(page, id, "Scope checker");
+  // An agent with no file has no card, and so nothing to check against
+  await expect(scopeCheck(page)).toHaveCount(0);
+  await page.getByLabel("Upload the paper").setInputFiles({ name: "cells.txt", mimeType: "text/plain", buffer: Buffer.from(CELLS) });
+  await expect(page.getByTestId("paper-agent-file")).toContainText("cells.txt");
+
+  // Before the paper is read the card has nothing on it, so nothing is outside and nothing is inside, and it says so
+  await expect(scopeCheck(page).getByRole("heading", { name: "Check my data against the card", level: 3 })).toBeVisible();
+  await expect(scopeCheck(page)).toContainText("The card has no statement of what the method was tested on yet");
+  await checkData(page, { Species: "human" });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "not covered");
+  await expect(scopeAnswer(page, "species")).toContainText("The card has no statement of the species.");
+  await expect(scopeWarnings(page)).toHaveCount(0);
+  await expect(scopeResult(page)).toContainText("The paper has not been read, so the card is what a person put on it.");
+
+  await reading(page).getByLabel("Most it may spend, in dollars").fill("2");
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+  // The card is of what the paper said, and the answer that was given before it is not
+  await expect(scopeCheck(page).getByTestId("scope-stale")).toContainText("The card has changed since you checked");
+  await expect(scopeResult(page)).toHaveCount(0);
+
+  // Nothing said of the data is not checked, and what cannot be sent is said where it is typed, and nothing is sent
+  const sent: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith(`/paperagents/${id}/scope-check`)) sent.push(request.postData() ?? "");
+  });
+  const checking = checkingData(page);
+  await checkData(page, {});
+  await expect(checking.getByRole("alert")).toContainText("Say something of your data");
+  await checkData(page, { "Sample size": "many", "What the size counts": "cells" });
+  await expect(checking.getByText("The sample size is a whole number, one or more.")).toBeVisible();
+  expect(sent).toEqual([]);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Data outside what the card says is warned of, with the card's words and the paper's, and the person can go on
+  await checkData(page, { Species: "  human " });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "outside");
+  await expect(scopeResult(page)).toContainText("One thing is outside.");
+  await expect(scopeResult(page)).toContainText("You can go on.");
+  await expect(scopeWarnings(page)).toHaveCount(1);
+  await expect(scopeWarnings(page).first()).toHaveText(
+    `Outside what the card says: the data's species is “human”, and the card gives the species as “mouse” (the paper: “${LIMIT}”).`,
+  );
+  await expect(scopeAnswer(page, "species")).toHaveAttribute("data-outcome", "outside");
+  await expect(scopeAnswer(page, "species").getByTestId("scope-statement")).toContainText("Read by the model");
+  await expect(scopeAnswer(page, "species").getByRole("blockquote")).toHaveText(LIMIT);
+  // What was sent is what was said, with nothing that was left blank
+  expect(sent.map((body) => JSON.parse(body))).toEqual([{ species: "human" }]);
+  await expect(scopeResult(page)).toContainText("A model made this from the paper");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Data that is inside gets no warning, whatever the name that it is given
+  await checkData(page, { Species: "Mus musculus" });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "inside");
+  await expect(scopeWarnings(page)).toHaveCount(0);
+  await expect(scopeResult(page)).toContainText("not that it works on yours");
+  await expect(scopeAnswer(page, "species")).toHaveAttribute("data-outcome", "inside");
+
+  // What the card does not say of is not called inside, and not warned of, and what it does say is shown
+  await checkData(page, { Species: "mouse", Tissue: "liver" });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "not covered");
+  await expect(scopeAnswer(page, "tissue")).toContainText("The card has no statement of the tissue.");
+  await expect(scopeWarnings(page)).toHaveCount(0);
+  await checkData(page, { Tissue: "liver" });
+  await expect(scopeResult(page).getByText("What else the card says (1)")).toBeVisible();
+  await scopeResult(page).getByText("What else the card says (1)").click();
+  await expect(scopeResult(page).getByRole("list", { name: "What else the card says" })).toContainText("mouse");
+
+  // A statement that a person adds is put against the data and is said to be theirs, with their words
+  await page.getByRole("button", { name: "Add what it was tested on" }).click();
+  const adding = form(page, "Add what it was tested on");
+  await adding.getByLabel("What it is about").selectOption("sample size");
+  await adding.getByLabel("What it was tested on").fill("at least 500 nuclei");
+  await adding.getByLabel("Your words for it, if you have some").fill("Our protocol needs this");
+  await adding.getByRole("button", { name: "Add it" }).click();
+  await expect(cardList(page, "What the method was tested on").getByTestId("card-fact")).toHaveCount(2);
+  await expect(scopeCheck(page).getByTestId("scope-stale")).toBeVisible();
+  await checkData(page, { Species: "human", "Sample size": "1,200", "What the size counts": "nuclei" });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "outside");
+  await expect(scopeAnswer(page, "sample size")).toHaveAttribute("data-outcome", "inside");
+  await expect(scopeAnswer(page, "sample size")).toContainText("1,200 nuclei");
+  await expect(scopeWarnings(page)).toHaveCount(1);
+  await checkData(page, { "Sample size": "120", "What the size counts": "nuclei" });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "outside");
+  await expect(scopeWarnings(page).first()).toHaveText(
+    "Outside what the card says: the data's sample size is “120 nuclei”, and the card gives the sample size as " +
+      "“at least 500 nuclei” (added by a person: “Our protocol needs this”).",
+  );
+  await expect(scopeAnswer(page, "sample size").getByTestId("scope-statement")).toHaveAttribute("data-by", "person");
+  await expect(scopeAnswer(page, "sample size")).toContainText("Added by you");
+  // A size with nothing said of what it counts is not put against a size that counts something
+  await checkData(page, { "Sample size": "120" });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "not covered");
+  await expect(scopeAnswer(page, "sample size")).toContainText("Say what the size counts.");
+  await expect(scopeWarnings(page)).toHaveCount(0);
+
+  // A person's change to a statement is what the data is put against, with the paper's words beside it
+  await page.getByRole("button", { name: "Change: mouse" }).click();
+  const changing = form(page, "Change: mouse");
+  await changing.getByLabel("What it was tested on").fill("rat");
+  await changing.getByRole("button", { name: "Save it" }).click();
+  await expect(scopeCheck(page).getByTestId("scope-stale")).toBeVisible();
+  await checkData(page, { Species: "mouse" });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "outside");
+  await expect(scopeWarnings(page).first()).toHaveText(
+    `Outside what the card says: the data's species is “mouse”, and the card gives the species as “rat” (changed by a person; the paper's words: “${LIMIT}”).`,
+  );
+  await expect(scopeAnswer(page, "species")).toContainText("Changed by you");
+  await checkData(page, { Species: "rat" });
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "inside");
+  await expect(scopeWarnings(page)).toHaveCount(0);
+
+  // An answer is of the card as it was, so it is gone when the card is approved, and says that it is a person's
+  await page.getByRole("button", { name: "Approve the card" }).click();
+  await expect(card(page)).toHaveAttribute("data-status", "approved");
+  await expect(scopeCheck(page).getByTestId("scope-stale")).toBeVisible();
+  await checkData(page, { Species: "human" });
+  await expect(scopeResult(page)).toContainText("You approved this card");
+  await expect(scopeResult(page)).toContainText("which is not that it is right");
+  await expect(scopeResult(page)).toHaveAttribute("data-outcome", "outside");
+  await expect(scopeWarnings(page)).toHaveCount(1);
+  // The button was switched on and off a moment ago, and its colours are not looked at while they change
+  await page.waitForTimeout(400);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Checking changes nothing on the card
+  const kept = await cardOf(page, id);
+  expect(kept.scope).toHaveLength(2);
+  expect(kept.status).toBe("approved");
+});
+
 test("reads the file that is uploaded beside a DOI, which is then not fetched", async ({ page }) => {
   const id = await makeAgent(page, { title: "By DOI", paper: { kind: "doi", doi: "10.1000/beside" } });
   await openAgent(page, id, "By DOI");

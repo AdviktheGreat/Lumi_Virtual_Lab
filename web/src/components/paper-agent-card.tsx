@@ -1,9 +1,10 @@
 "use client";
 
-import { useId, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import { Check, Plus, Undo2 } from "lucide-react";
 import { ProblemNotice } from "@/components/messages";
 import { Place } from "@/components/paper-agent-place";
+import { ScopeCheckSection } from "@/components/paper-agent-scope";
 import { useServer } from "@/components/server-provider";
 import { describedBy, Field } from "@/components/settings-fields";
 import {
@@ -441,7 +442,10 @@ export function CardSection({
       <Status reading={reading} working={working} {...shared} />
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}
       {CARD_KINDS.map((kind) => (
-        <Group key={kind} kind={kind} lines={lines[kind]} off={off[kind]} onTakeOff={takeOff} {...shared} />
+        <Fragment key={kind}>
+          <Group kind={kind} lines={lines[kind]} off={off[kind]} onTakeOff={takeOff} {...shared} />
+          {kind === "scope" && <ScopeCheckSection agent={agent} card={reading.card} />}
+        </Fragment>
       ))}
       <AlertDialog open={taking !== null} onOpenChange={(open) => !open && setTaking(null)}>
         <AlertDialogContent>

@@ -255,6 +255,20 @@ reading, which is what the page shows from then on, and the Data and Code parts 
 is shown for an agent that has a paper file, whether or not it has been read, so that one can be made by hand. The Data part shows a
 dataset that the person added as theirs, with no words of the paper for it.
 
+Under what the method was tested on, the Method card part has a form, Check my data against the card (`components/paper-agent-scope.tsx`,
+with `src/lib/paperagent-scope.ts`), where a person says what their data is (species, tissue, assay, input format, and a sample size
+with what it counts, any of them) and has it put against the card's statements of scope (`api.checkPaperAgentScope`, which changes
+nothing). What was typed is checked before anything is sent, as the server checks it: a part left blank is left out, a size is a whole
+number (with commas between thousands allowed), what it counts needs a size, and something must be said. The answer is the whole
+(inside, outside, or not covered, and for outside how many things) and one row for each thing that was said, with the statements of
+the card that it was put against: whose each is, its place in the paper, and its words. Each warning is shown as the server gives it,
+quoting the card, and the page says that the person can go on, since nothing is stopped. Inside is said not to be that the method works
+on the data, and outside not to be that it fails; not covered is never called inside and is not warned of, and says why, and the
+statements of the sorts that nothing was said of are listed beside it. It says whether the card is a draft or approved, and how far the
+paper was read, where it was not read to its end. An answer is kept only while the card is as it was when it was given (the statements
+of scope with what they say and whose they are, and whether it is approved), so after a person changes the card it is gone, and the
+page says to check again.
+
 The Code part (`components/paper-agent-code.tsx`) is where the agent's code is fetched and looked at, and nothing in it is run.
 Once the paper is read it lists the projects the paper's links lead to (`candidates`), each with the paper's words that give it
 and a button to use it as the agent's code, which asks first if that takes away code that was fetched from another address. An
