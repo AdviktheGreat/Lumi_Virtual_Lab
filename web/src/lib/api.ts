@@ -65,6 +65,8 @@ import type {
   PapersList,
   RenderedPrompt,
   Scientist,
+  ScopeCheck,
+  ScopeData,
   Settings,
   SettingsChange,
   SetupStatus,
@@ -611,6 +613,9 @@ export const api = {
   withdrawPaperAgentCardApproval: (id: string) =>
     request<PaperAgentReading>("DELETE", `/paperagents/${encodeURIComponent(id)}/card/approval`),
   discardPaperAgentCardEdits: (id: string) => request<PaperAgentReading>("DELETE", `/paperagents/${encodeURIComponent(id)}/card/edits`),
+  // What a person's data is, put against what the card says the method was used on. It changes nothing.
+  checkPaperAgentScope: (id: string, data: ScopeData) =>
+    request<ScopeCheck>("POST", `/paperagents/${encodeURIComponent(id)}/scope-check`, data),
   paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
     request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
