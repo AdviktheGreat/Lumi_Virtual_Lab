@@ -240,6 +240,17 @@ function CardFact({
                 Change
               </Button>
             )}
+            {line.changed && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => void shared.act(() => api.restorePaperAgentCardFact(shared.agent.id, line.fact.id))}
+                disabled={shared.busy}
+                aria-label={`Change back: ${name}`}
+              >
+                Change back
+              </Button>
+            )}
             <Button variant="ghost" size="xs" onClick={() => onTakeOff(line)} disabled={shared.busy} aria-label={`Take off: ${name}`}>
               Take off
             </Button>
@@ -277,7 +288,9 @@ function Group({
       ) : (
         <ul aria-label={text.label} className="flex flex-col gap-2">
           {shown.map((line) => (
-            <CardFact key={line.fact.id} kind={kind} line={line} onTakeOff={onTakeOff} {...shared} />
+            // Whose a fact is is in its key, so that a form that is open on it is closed when a person's change to it is gone,
+            // since what it was begun from is not what the fact is
+            <CardFact key={`${line.fact.id}:${line.fact.by}:${line.changed}`} kind={kind} line={line} onTakeOff={onTakeOff} {...shared} />
           ))}
         </ul>
       )}

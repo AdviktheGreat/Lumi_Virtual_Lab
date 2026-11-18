@@ -64,6 +64,8 @@ describe("the facts of the card", () => {
     ]);
     expect(lines.limitations.map(({ title, tag }) => [title, tag])).toEqual([[null, null]]);
     expect(lines.scope[0].fields).toEqual({ aspect: "species", value: "rat" });
+    expect(lines.scope.map((line) => line.changed)).toEqual([true, false]);
+    expect(lines.methods[0].changed).toBe(false);
   });
 
   it("are counted, and are the same shape when they were taken off", () => {

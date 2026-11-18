@@ -853,15 +853,26 @@ test("lets a person correct the method card and approve it, with what they did m
   await expect(species).toContainText("The model read it as: species: mouse");
   await expect(species.getByTestId("card-fact")).toHaveCount(1);
 
+  // A fact that a person changed is changed back to what was read, which is then no change at all
+  await page.getByRole("button", { name: "Change back: rat" }).click();
+  await expect(species).toContainText("mouse");
+  await expect(species).toContainText("Read by the model");
+  await expect(page.getByRole("button", { name: "Discard what I did" })).toHaveCount(0);
+  expect((await cardOf(page, id)).edited).toBe(false);
+
   // Discarding what a person did gives back the card that the reading made
+  await page.getByRole("button", { name: "Add a method" }).click();
+  await form(page, "Add a method").getByLabel("What it is called").fill("Our method");
+  await form(page, "Add a method").getByRole("button", { name: "Add it" }).click();
+  const methods = page.locator('[data-kind="methods"]');
+  await expect(methods).toContainText("Our method");
   await page.getByRole("button", { name: "Discard what I did" }).click();
   const discarding = page.getByRole("alertdialog", { name: "Discard what you did to the card?" });
   await discarding.getByRole("button", { name: "Keep" }).click();
-  await expect(species).toContainText("rat");
+  await expect(methods).toContainText("Our method");
   await page.getByRole("button", { name: "Discard what I did" }).click();
   await page.getByRole("alertdialog", { name: "Discard what you did to the card?" }).getByRole("button", { name: "Discard" }).click();
-  await expect(species).toContainText("mouse");
-  await expect(species).not.toContainText("Changed by you");
+  await expect(methods).toContainText("No method is on the card.");
   await expect(page.getByRole("button", { name: "Discard what I did" })).toHaveCount(0);
   expect((await cardOf(page, id)).edited).toBe(false);
   // The button to approve has just been switched on, and its colours are not looked at while they change

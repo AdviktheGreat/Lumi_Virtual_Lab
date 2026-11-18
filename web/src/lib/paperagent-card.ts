@@ -38,6 +38,8 @@ export interface CardLine {
   title: string | null;
   tag: string | null;
   fields: CardFields;
+  // Whether a person changed it, so that it can be changed back to what was read
+  changed: boolean;
   // What a fact that a person changed was read as, in words, or null if it was not changed
   readAs: string | null;
 }
@@ -63,7 +65,9 @@ function wasChanged(fact: CardFact): fact is CardFact & { read_as: Record<string
 }
 
 function lineOf(kind: CardKind, fact: CardFact, title: string | null, tag: string | null, fields: CardFields): CardLine {
-  return { fact, title, tag, fields, readAs: wasChanged(fact) ? describeFields(kind, fact.read_as) : null };
+  const changed = wasChanged(fact);
+
+  return { fact, title, tag, fields, changed, readAs: changed ? describeFields(kind, fact.read_as) : null };
 }
 
 // The facts of each sort, as they are shown. Those that were taken off are of the same shape, so the same is made of them.
