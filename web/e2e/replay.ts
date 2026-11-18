@@ -58,6 +58,29 @@ export const approval = (state: string, request = "r1"): Told => ({
       : {}),
   },
 });
+// A run of a PaperAgent's tool on data that is outside what its method card says, which waits for the researcher to go on
+export const SCOPE_WARNINGS = [
+  "Outside what the card says: the data's tissue is “liver”, and the card gives the tissue as “mouse brain” (the paper: “CellMapper was only tested on mouse brain tissue.”).",
+  "Outside what the card says: the data's sample size is 90 nuclei, and the card says at least 500 nuclei.",
+];
+export const scopeApproval = (state: string, request = "r1"): Told => ({
+  kind: "approval",
+  data: {
+    request,
+    state,
+    server: "paperagent:cellmapper",
+    title: "CellMapper",
+    ...(state === "waiting"
+      ? {
+          about: "scope",
+          tool: "cellmapper_tally",
+          description: SCOPE_WARNINGS.join(" "),
+          warnings: SCOPE_WARNINGS,
+          arguments: JSON.stringify({ counts: [1, 2], scale: 2 }, null, 2),
+        }
+      : {}),
+  },
+});
 export const asked = (over: { fields?: object; required?: string[]; url?: string | null; text?: string; request?: string } = {}): Told => ({
   kind: "question",
   text: over.text ?? "What is to be ordered?",

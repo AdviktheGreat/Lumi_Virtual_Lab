@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { Ban, Check, CircleAlert, ExternalLink, KeyRound, Loader2, MessageCircleQuestion, Minus, ShieldQuestion } from "lucide-react";
+import { Ban, Check, CircleAlert, ExternalLink, KeyRound, Loader2, MessageCircleQuestion, Minus, ShieldQuestion, TriangleAlert } from "lucide-react";
 import { useChatId } from "@/components/chat-files";
 import { CodeBlock } from "@/components/code";
 import { useSettings } from "@/components/settings-provider";
@@ -88,12 +88,17 @@ function useSending() {
 
 const APPROVAL_END = { approved: "Allowed", declined: "Declined", withdrawn: "Not answered, so not called" } as const;
 
-// A call to a tool that waits for the researcher to allow it
+// A run on data that is outside what the card says is one that the researcher went on with, or did not
+const SCOPE_END = { approved: "You went on", declined: "You did not go on, so not run", withdrawn: "Not answered, so not run" } as const;
+
+// A call to a tool that waits for the researcher to allow it, or a run of a PaperAgent's tool on data outside what its
+// method card says, which waits for the researcher to go on
 export function ApprovalCard({ approval }: { approval: Approval }) {
   const id = useChatId();
   const { sending, problem, send } = useSending();
   const heading = useId();
   const shown = approval.arguments.trim();
+  const scope = approval.about === "scope";
 
   if (approval.state !== "waiting") {
     const icon = approval.state === "approved" ? <Check className="size-3.5" /> : approval.state === "declined" ? <Ban className="size-3.5" /> : <Minus className="size-3.5" />;
@@ -103,10 +108,65 @@ export function ApprovalCard({ approval }: { approval: Approval }) {
         icon={icon}
         title={approval.tool || "A tool"}
         detail={approval.title}
-        status={APPROVAL_END[approval.state]}
+        status={(scope ? SCOPE_END : APPROVAL_END)[approval.state]}
         testid="approval"
         state={approval.state}
       />
+    );
+  }
+
+  if (scope) {
+    return (
+      <div className={WAITING_CARD} data-testid="approval" data-about="scope" data-state="waiting" role="group" aria-labelledby={heading}>
+        <div className="flex items-center gap-2.5 px-3 py-2">
+          <IconTile icon={<TriangleAlert className="size-3.5" />} />
+          <span id={heading} className="min-w-0 flex-1 truncate text-sm font-medium">
+            Go on with {approval.tool || "this run"}?
+          </span>
+          <span className="shrink-0 text-xs text-muted-foreground">{approval.title}</span>
+        </div>
+        <div className="flex flex-col gap-3 border-t border-border/70 p-3">
+          <p role="status" className="sr-only">
+            Waiting for you to say whether to go on with {approval.tool}
+          </p>
+          <p className="text-sm">
+            {approval.tool ? <span className="font-mono text-[13px]">{approval.tool}</span> : "This tool"} is to be run on data that is outside what the
+            method card of {approval.title} says:
+          </p>
+          {approval.warnings.length > 0 ? (
+            <ul className="flex flex-col gap-1.5" aria-label="What the card says">
+              {approval.warnings.map((warning, at) => (
+                <li key={at} className="border-l-2 border-warning/60 pl-2.5 text-sm text-muted-foreground">
+                  {warning}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            approval.description !== "" && <p className="text-sm text-muted-foreground">{approval.description}</p>
+          )}
+          <p className="text-sm text-muted-foreground">
+            This is a warning, and it does not stop you: you can go on. It does not mean that the tool will fail on this data, only that the card does not
+            say it was used on data like this. If you go on, the run says that you did, and so do the runs of this agent&apos;s other tools on the same
+            data, which you are not asked about again unless the data or the card&apos;s words change.
+          </p>
+          {shown !== "" && shown !== "{}" && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">It is to be run with</span>
+              <CodeBlock code={approval.arguments} language="json" foldAfter={12} />
+            </div>
+          )}
+          {problem !== null && <Problem>{problem}</Problem>}
+          <div className="flex gap-2">
+            <Button type="button" size="sm" disabled={sending} onClick={() => void send(() => api.approve(id, approval.request, true))}>
+              Go on
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={sending} onClick={() => void send(() => api.approve(id, approval.request, false))}>
+              Do not run it
+            </Button>
+            {sending && <Loader2 className="size-4 animate-spin self-center text-muted-foreground" aria-label="Sending" role="status" />}
+          </div>
+        </div>
+      </div>
     );
   }
 

@@ -22,13 +22,17 @@ an agent that is gone, tools that were taken away or made again, and an image th
 does something, only one that says why it cannot. The tier of a tool is said in its description, which the model reads,
 and in what the page shows. It says that the tool gave again what the tutorials got, and what else was checked of it,
 and not that what it gives is right.
+
+A tool that runs does not run on data that is outside what the agent's method card says until the person has said to
+go on (paperagent_hold.py). What it gives says what the data was put against the card with, and that the person went
+on if they did.
 """
 
 import hashlib
 import math
 import tempfile
 import threading
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -50,6 +54,7 @@ from virtual_lab.server import paperagent_checks as kept_checks
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_tools as kept_tools
 from virtual_lab.server.errors import not_found
+from virtual_lab.server.paperagent_hold import Compare, GoOn, Hold, NotRun
 from virtual_lab.server.paperagents import (
     AGENT_FILE,
     PAPER_DIR,
@@ -216,8 +221,9 @@ def note_of(title: str, paper: dict[str, Any], scope_tool: str | None = None) ->
     scope = (
         f" Before you run a tool of the authors' code on the person's own data, call {scope_tool} with what that data "
         "is, as far as you know it, and tell the person what it says before you run anything. If it says that the "
-        "data is outside what the card says, give them the card's words that it quotes, and let them decide whether "
-        "to go on."
+        "data is outside what the card says, give them the card's words that it quotes. A tool is not run on data "
+        "that is outside until the person has gone on, which they are asked, and only they can say: do not take "
+        "anything else for it, and if they do not go on, do not run it."
         if scope_tool
         else ""
     )
@@ -271,9 +277,30 @@ def card_note(card: dict[str, Any]) -> str:
     )
 
 
-def reading_tools(workspace: Workspace, agent_id: str, title: str) -> list[Entry]:
+def compare_with_card(workspace: Workspace, agent_id: str) -> Compare:
+    """What puts what was said of the data against the card of an agent's paper as it is kept now."""
+
+    def compare(described: Mapping[str, Any]) -> dict[str, Any]:
+        found = find(workspace, agent_id)
+        if found is None:
+            raise PaperAgentToolError("That PaperAgent has been deleted, so it says nothing now.")
+        directory, agent = found
+        file = agent["paper"].get("file")
+
+        return kept_reading.scope_check(
+            kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with()), described
+        )
+
+    return compare
+
+
+def reading_tools(workspace: Workspace, agent_id: str, title: str, hold: Hold | None = None) -> list[Entry]:
     """The tools that read what was kept of an agent's paper. Each looks at what is kept when it is called, and so says
-    when there is nothing now."""
+    when there is nothing now.
+
+    :param hold: What the conversation keeps of what was said of the person's data, which the tool that checks it
+        tells, so that a tool that runs is put against the card with it.
+    """
     head = f"[Tier {TIER_READ}, reading only] From {whose(title)}."
 
     def current() -> tuple[Path, dict[str, Any]]:
@@ -390,10 +417,10 @@ def reading_tools(workspace: Workspace, agent_id: str, title: str) -> list[Entry
     ) -> dict[str, Any]:
         """Puts what the person's data is against what the method card says the method was used on. Call it before you
         run one of this PaperAgent's tools on the person's own data, and tell the person what it says before you run
-        anything. Where it says the data is outside, give the person the card's words that it quotes and let them
-        decide whether to go on. A program compares the words and the numbers that you give it and does not look at
-        the data, so give each thing in plain words as the person or the data's description says it, and leave out
-        what you do not know.
+        anything. Where it says the data is outside, give the person the card's words that it quotes. The tool is
+        then not run until the person has been asked and has gone on. A program compares the words and the numbers
+        that you give it and does not look at the data, so give each thing in plain words as the person or the data's
+        description says it, and leave out what you do not know.
 
         :param species: What species the data is of, such as human or Mus musculus.
         :param tissue: What tissue it is of, such as liver or PBMC.
@@ -405,20 +432,20 @@ def reading_tools(workspace: Workspace, agent_id: str, title: str) -> list[Entry
         directory, agent = current()
         file = agent["paper"].get("file")
         found = kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with())
+        described = {
+            "species": species,
+            "tissue": tissue,
+            "assay": assay,
+            "sample_size": sample_size,
+            "sample_unit": sample_unit,
+            "input_format": input_format,
+        }
         try:
-            result = kept_reading.scope_check(
-                found,
-                {
-                    "species": species,
-                    "tissue": tissue,
-                    "assay": assay,
-                    "sample_size": sample_size,
-                    "sample_unit": sample_unit,
-                    "input_format": input_format,
-                },
-            )
+            result = kept_reading.scope_check(found, described)
         except ValueError as error:
             raise PaperAgentToolError(str(error)) from None
+        if hold is not None:
+            hold.remember(agent_id, described)
         notes = [*result["notes"], card_note(found["card"]), partial_note(found)]
 
         return {**result, "notes": [note for note in notes if note]}
@@ -542,6 +569,10 @@ class Caller:
     :param name: The tool's name as its wrapper has it.
     :param docker_command: How Docker is invoked.
     :param stopping: Says whether the conversation is being stopped, which ends a call that is going on.
+    :param hold: What puts what was said of the person's data against the agent's card before a call, and holds it for
+        the person to go on if the data is outside. None where nothing is called, as on the page.
+    :param title: What the agent is called.
+    :param check_tool: The name of the tool that says what the data is, if the agent has one.
     """
 
     def __init__(
@@ -551,12 +582,18 @@ class Caller:
         name: str,
         docker_command: Sequence[str],
         stopping: Callable[[], bool] | None,
+        hold: Hold | None = None,
+        title: str = "",
+        check_tool: str | None = None,
     ) -> None:
         self.workspace = workspace
         self.agent_id = agent_id
         self.name = name
         self.docker_command = tuple(docker_command)
         self.stopping = stopping
+        self.hold = hold
+        self.title = title
+        self.check_tool = check_tool
 
     def __call__(self, **arguments: Any) -> dict[str, Any]:
         found, problem = runnable(self.workspace, self.agent_id, self.docker_command)
@@ -569,6 +606,19 @@ class Caller:
             sent = encode(to_jsonable_python(arguments))
         except PydanticSerializationError as error:
             raise PaperAgentToolError(f"The arguments cannot be sent as JSON: {error}") from None
+        said = None
+        if self.hold is not None:
+            try:
+                said = self.hold.before_run(
+                    self.agent_id,
+                    self.title,
+                    tool_name(self.agent_id, self.name),
+                    arguments,
+                    compare_with_card(self.workspace, self.agent_id),
+                    self.check_tool,
+                )
+            except NotRun as error:
+                raise PaperAgentToolError(str(error)) from None
         cases = tool["evidence"]["cases"]
         where = cases[0]["cwd"] if cases else "."
         case = wrappers.Case(0, "conversation", None, {}, where, sent, {})
@@ -601,6 +651,8 @@ class Caller:
         }
         if call["output"].strip():
             answer["printed"] = cut(call["output"].strip(), MAX_PRINTED_CHARS)
+        if said is not None:
+            answer["scope"] = said
 
         return answer
 
@@ -612,8 +664,14 @@ def running_tools(
     found: Runnable,
     docker_command: Sequence[str],
     stopping: Callable[[], bool] | None,
+    hold: Hold | None = None,
+    check_tool: str | None = None,
 ) -> list[Entry]:
-    """The tools that run, one for each tool that was made, each as the wrapper's own signature and docstring say."""
+    """The tools that run, one for each tool that was made, each as the wrapper's own signature and docstring say.
+
+    :param hold: As Caller takes it.
+    :param check_tool: The name of the tool that says what the data is, if the agent has one.
+    """
     entries = []
     minutes = CALL_SECONDS // 60
     for kept in found.tools:
@@ -621,7 +679,7 @@ def running_tools(
             reading = read_function(kept["source"], kept["name"])
         except FunctionSourceError:
             continue
-        caller = Caller(workspace, agent_id, kept["name"], docker_command, stopping)
+        caller = Caller(workspace, agent_id, kept["name"], docker_command, stopping, hold, title, check_tool)
         try:
             tool = tool_from_function(reading.stand_in(caller), name=tool_name(agent_id, kept["name"]))
         except (TypeError, ValueError):
@@ -651,11 +709,14 @@ def offer_of(
     docker_command: Sequence[str] = ("docker",),
     run: bool = True,
     stopping: Callable[[], bool] | None = None,
+    hold: Hold | None = None,
 ) -> Offer | None:
     """What a conversation is given of an agent, or None if there is no such agent.
 
     :param run: Whether the tools that run are given, which they are where the conversation may run code.
     :param stopping: Says whether the conversation is being stopped, as Caller takes it.
+    :param hold: What the conversation keeps of what was said of the person's data, as Caller takes it. None where
+        nothing is called.
     """
     found = find(workspace, agent_id)
     if found is None:
@@ -663,13 +724,14 @@ def offer_of(
     directory, agent = found
     title = agent["title"]
     has_text = (directory / PAPER_DIR / kept_reading.TEXT_FILE).is_file()
-    entries = reading_tools(workspace, agent_id, title) if has_text else []
+    entries = reading_tools(workspace, agent_id, title, hold) if has_text else []
+    check_tool = tool_name(agent_id, READING_TOOLS[3]) if has_text else None
     problem = None
     if run:
         can, problem = runnable(workspace, agent_id, docker_command)
         if can is not None:
-            entries += running_tools(workspace, agent_id, title, can, docker_command, stopping)
-    note = note_of(title, agent["paper"], tool_name(agent_id, READING_TOOLS[3]) if has_text else None)
+            entries += running_tools(workspace, agent_id, title, can, docker_command, stopping, hold, check_tool)
+    note = note_of(title, agent["paper"], check_tool)
 
     return Offer(
         agent_id,
@@ -687,6 +749,7 @@ def agent_tools(
     prefixes: Collection[str] = (),
     docker_command: Sequence[str] = ("docker",),
     stopping: Callable[[], bool] | None = None,
+    go_on: GoOn | None = None,
 ) -> tuple[Tool, ...]:
     """The tools of these agents, for a conversation.
 
@@ -698,11 +761,14 @@ def agent_tools(
     :param prefixes: What the names of the tools it is yet to be given start with, which are those of its MCP servers'
         tools, and which no tool is named from, since they are not known until the servers are connected to.
     :param stopping: Says whether the conversation is being stopped, which ends a call that is going on.
+    :param go_on: Asks the person whether to go on with a tool that runs on data that is outside what its agent's card
+        says. If there is none, such a tool is not run.
     """
     names = {*taken, *RESERVED_TOOL_NAMES}
     tools: list[Tool] = []
+    hold = Hold(go_on)
     for agent_id in dict.fromkeys(agents):
-        offer = offer_of(workspace, agent_id, docker_command, session is not None, stopping)
+        offer = offer_of(workspace, agent_id, docker_command, session is not None, stopping, hold)
         for entry in offer.entries if offer is not None else ():
             if entry.tool.name in names or entry.tool.name.startswith(tuple(prefixes)):
                 continue

@@ -397,6 +397,12 @@ answered from any window:
   (`POST /api/chats/{id}/approvals/{request}`). It waits for as long as the researcher does, and the badge in the header
   says "Waiting for you". Once answered it is a line, whoever answered it, and a call that was declined is not made, which
   the lead is told so that it does not make it again unchanged.
+- **A run on data that is outside what a PaperAgent's method card says** is asked in the same way (`about: "scope"` on the
+  event) and is a card of its own: Go on with the tool?, the card's words that the data is outside of, as a list with the
+  paper's quotes, that this is a warning and does not stop them and is not that the tool will fail, what it is to be run
+  with, and Go on and Do not run it. Once answered it is a line (You went on, You did not go on, so not run, or Not answered,
+  so not run). Only the person's answer goes on with the run; the run says that they did. It covers the agent's other tools
+  on the same data, which the card says, and they are asked again if the data or the card's words change.
 - **A question a server asks** while a tool runs is a form with a field for each thing it asks (text, numbers, yes or no,
   one choice, several, or a list), checked as it is sent, with what is wrong shown beside the field and the first taken
   to (`POST /api/chats/{id}/questions/{request}`). What was typed is never kept in the conversation. A question that is
