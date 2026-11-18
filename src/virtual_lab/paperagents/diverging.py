@@ -21,7 +21,9 @@ the paper does not say, the code's own defaults, and what is installed under ano
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import cache
 from typing import Any
 
 from virtual_lab.paperagents import reproducing, written
@@ -278,7 +280,12 @@ def plain_numbers(call: Mapping[str, Any]) -> dict[str, float]:
     return found
 
 
-def argument_differences(detail: Mapping[str, Any], until: int | None, paper: str | None) -> list[dict[str, Any]]:
+def argument_differences(
+    detail: Mapping[str, Any],
+    until: int | None,
+    paper: str | None,
+    stated_of: Callable[[str], list[tuple[float, str]]] | None = None,
+) -> list[dict[str, Any]]:
     """The numbers that the paper gives for an argument of a function, by its name, that the tutorial's call was given
     another for: for each such argument of the calls up to the one at the point that was named, if every number that
     the paper gives for it differs from what the call was given.
@@ -286,9 +293,12 @@ def argument_differences(detail: Mapping[str, Any], until: int | None, paper: st
     :param detail: What was kept of the tutorial's runs.
     :param until: The number of the last call that is looked at, or None for all of them.
     :param paper: The text of the paper, or None if it is not kept.
+    :param stated_of: Gives what the paper states for an argument by its name, where that is kept so that the paper is
+        read once for a name however many claims and calls are looked at. By default the paper is read for each.
     """
     if not paper:
         return []
+    lookup = stated_of or (lambda name: stated_for(name, paper))
     calls = [
         call for call in detail["calls"][:MOST_CALLS] if call["returned"] and (until is None or call["id"] <= until)
     ]
@@ -299,7 +309,7 @@ def argument_differences(detail: Mapping[str, Any], until: int | None, paper: st
             if len(name) < LEAST_NAME or (name, value) in seen:
                 continue
             seen.add((name, value))
-            stated = stated_for(name, paper)
+            stated = lookup(name)
             if not stated or any(abs(number - value) <= 1e-9 * max(1.0, abs(value)) for number, _ in stated):
                 continue
             numbers = list(dict.fromkeys(number for number, _ in stated))[:MOST_STATED]
@@ -476,6 +486,10 @@ def diverge(entries: Sequence[Mapping[str, Any]], evidence: Evidence) -> Diverge
         differences=[*software_differences(software), *data_differences(evidence.data, evidence.datasets)],
     )
     points = points_of(entries)
+    # A paper can be long and a tutorial can have many calls, so what it states for a name is read once, and the
+    # arguments of a tutorial up to a point once, whatever the number of claims that come to them
+    stated_of = cache(lambda name: stated_for(name, evidence.paper or ""))
+    arguments: dict[tuple[str, int | None], list[dict[str, Any]]] = {}
     for entry in entries:
         if entry["status"] not in (reproducing.PARTLY, reproducing.NOT_REPRODUCED) or entry["link"] is None:
             continue
@@ -488,7 +502,9 @@ def diverge(entries: Sequence[Mapping[str, Any]], evidence: Evidence) -> Diverge
             until = point["first"]["call"]
         if detail is not None:
             found += runs_differences(detail, evidence.text_of(path))
-            found += argument_differences(detail, until, evidence.paper)
+            if (path, until) not in arguments:
+                arguments[path, until] = argument_differences(detail, until, evidence.paper, stated_of)
+            found += deepcopy(arguments[path, until])
         done.claims.append(
             {
                 "id": entry["id"],

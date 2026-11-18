@@ -514,6 +514,64 @@ class TestPuttingItTogether:
         assert [each["evidence"]["call"] for each in found.claims[0]["differences"]] == [2]
         assert [each["evidence"]["call"] for each in found.claims[1]["differences"]] == [2]
 
+    def test_the_paper_is_read_once_for_a_name_however_many_claims_come_to_the_same_arguments(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        read: list[str] = []
+        original = diverging.stated_for
+
+        def counting(name: str, paper: str) -> list[tuple[float, str]]:
+            read.append(name)
+            return original(name, paper)
+
+        monkeypatch.setattr(diverging, "stated_for", counting)
+        run = three()
+        found = diverging.diverge(three_entries(run), evidence(details=details_of(run), paper=PAPER))
+
+        assert len(found.claims) == 2 and found.claims[0]["differences"] == found.claims[1]["differences"] != []
+        assert read and len(read) == len(set(read))
+
+    def test_the_paper_is_read_once_for_a_name_that_two_tutorials_are_both_given(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        read: list[str] = []
+        original = diverging.stated_for
+        monkeypatch.setattr(diverging, "stated_for", lambda name, paper: read.append(name) or original(name, paper))
+        first = tutorial("examples/figure3.py", detail_with([call_of("auroc", {"alpha": 4}, {"seurat": 0.71}, 1)]))
+        second = tutorial(
+            "examples/figure4.py", detail_with([call_of("recall", {"alpha": 4}, {"recall": 0.5}, 1)]), ("figure 3",)
+        )
+        entries = tried(
+            [claim("0.88", BAD, "b"), claim("0.65", WORSE, "c")], {BAD: "auroc", WORSE: "recall"}, [first, second]
+        )
+
+        found = diverging.diverge(entries, evidence(details=details_of(first, second), paper=PAPER))
+
+        assert [len(claim["differences"]) for claim in found.claims] == [1, 1]
+        assert read == ["alpha"]
+
+    def test_the_arguments_of_a_tutorial_are_looked_at_once_for_the_claims_that_come_to_the_same_point(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        looked: list[tuple[int | None]] = []
+        original = diverging.argument_differences
+        monkeypatch.setattr(
+            diverging,
+            "argument_differences",
+            lambda detail, until, *rest: looked.append((until,)) or original(detail, until, *rest),
+        )
+        run = three()
+
+        diverging.diverge(three_entries(run), evidence(details=details_of(run), paper=PAPER))
+
+        assert looked == [(2,)]
+
+    def test_what_is_found_for_one_claim_is_not_the_same_object_as_what_is_found_for_another(self) -> None:
+        run = three()
+        found = diverging.diverge(three_entries(run), evidence(details=details_of(run), paper=PAPER))
+        first, second = (claim["differences"][0] for claim in found.claims)
+        assert first == second and first is not second and first["evidence"] is not second["evidence"]
+
     def test_a_claim_that_is_partly_for_runs_that_did_not_agree_has_the_runs_and_no_point(self) -> None:
         run = tutorial(detail=detail_with([call_of("tally", {}, 0.931, 1)], stable=False))
         entries = tried([claim("0.93", GOOD)], {GOOD: "tally"}, [run])
