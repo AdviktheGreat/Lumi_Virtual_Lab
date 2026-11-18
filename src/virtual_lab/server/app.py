@@ -84,6 +84,8 @@ and everything else is a request and an answer.
     POST   /api/paperagents/{id}/reproduction  starts trying the claims against what the tutorials gave, within a limit
     GET    /api/paperagents/{id}/reproduction  each claim: reproduced, partly, not, or not attempted, and against what
     DELETE /api/paperagents/{id}/reproduction  takes away what was kept of the trying, so that it can be done again
+    GET    /api/paperagents/{id}/divergence  for each claim that did not reproduce, where its tutorial first parts from
+                                         the paper and what differs that was found, with nothing run
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -1503,6 +1505,10 @@ def create_app(
         paperagents.clear_reproduction(agent_id)
 
         return paperagents.reproduction(agent_id)
+
+    @api.get("/paperagents/{agent_id}/divergence")
+    def get_paperagent_divergence(agent_id: str) -> dict[str, Any]:
+        return paperagents.divergence(agent_id)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:

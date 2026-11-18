@@ -91,7 +91,7 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
-from virtual_lab.paperagents import asking, linking, proposing, reproducing, toolmaking
+from virtual_lab.paperagents import asking, diverging, linking, proposing, reproducing, toolmaking
 from virtual_lab.paperagents import card as method_card
 from virtual_lab.paperagents import checking as verifying
 from virtual_lab.paperagents import data as finding
@@ -110,6 +110,7 @@ from virtual_lab.server import imported_agents as importing
 from virtual_lab.server import paperagent_checks as kept_checks
 from virtual_lab.server import paperagent_checkwork as checkwork
 from virtual_lab.server import paperagent_data as kept_data
+from virtual_lab.server import paperagent_divergence as kept_divergence
 from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_reference as kept_reference
@@ -2837,6 +2838,73 @@ class PaperAgents:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
             kept_reproduction.forget(directory)
+
+    def divergence(self, agent_id: str) -> dict[str, Any]:
+        """Where the tutorials of an agent first part from the paper for each claim that was not reproduced, or only
+        partly, and what differs between what the paper says it used and what was used here. It is made from what is
+        kept each time it is asked for, with nothing run and no model asked, and is only of a trying of the claims that
+        is of the run of the tutorials and the claims that are kept now.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        claims = kept_reading.claims_of(directory)
+        reference, _ = kept_tools_of(directory, agent)
+        tried = kept_reproduction.load(directory)
+        current = tried is not None and kept_reproduction.is_current(tried, reference, claims)
+        problem = None
+        if tried is None:
+            problem = (
+                "no_reproduction",
+                "Try the claims first, as it is the claims that did not reproduce that are looked at",
+            )
+        elif not current:
+            problem = (
+                "stale",
+                "The claims were tried against another run of the tutorials, or other claims, than are kept now. Try "
+                "them again",
+            )
+        base = {
+            "id": agent_id,
+            "ready": problem is None,
+            "problem": {"code": problem[0], "message": problem[1]} if problem is not None else None,
+            "current": current,
+            "reproduction": kept_reproduction.made_of(reference) if reference is not None and current else None,
+            "meaning": diverging.MEANING,
+            "limits": {"most_agreed": diverging.MOST_AGREED, "most_calls": diverging.MOST_CALLS},
+        }
+        if problem is not None or tried is None or reference is None:
+            return {
+                **base,
+                "run": None,
+                "claims": [],
+                "software": [],
+                "differences": [],
+                "counts": {"claims": 0, "points": 0, "differences": diverging.counts_of([])},
+            }
+        evidence = kept_divergence.evidence_of(
+            directory, directory / PAPER_DIR, reference, tried, kept_repository.repo_path(directory)
+        )
+        found = diverging.diverge(tried["claims"], evidence)
+        every = [*found.differences, *(each for claim in found.claims for each in claim["differences"])]
+
+        return {
+            **base,
+            "run": {
+                "python": evidence.python,
+                "packages": len(diverging.installed_of(evidence.lock)),
+                "data": evidence.data,
+                "tutorials": len(evidence.details),
+            },
+            "claims": found.claims,
+            "software": found.software,
+            "differences": found.differences,
+            "counts": {
+                "claims": len(found.claims),
+                "points": sum(1 for claim in found.claims if claim["point"] is not None),
+                "differences": diverging.counts_of(every),
+            },
+        }
 
     def clear_checks(self, agent_id: str) -> None:
         """Takes away the checks that were made of the tools, so that they are of the tier they were made as until they

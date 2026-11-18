@@ -674,6 +674,11 @@ class TestWhenWhatWasKeptIsNotWhatItIsHeldTo:
             (0, {"link": {**link, "tutorial": {"path": 3}}}),
             (0, {"link": {**link, "tutorial": None}}),
             (0, {"link": {**link, "number": {}}}),
+            (0, {"link": {**link, "tutorial": {**link["tutorial"], "id": None}}}),
+            (0, {"link": {**link, "source": "guess"}}),
+            (0, {"link": {**link, "where": None}}),
+            (0, {"link": {**link, "call": "2"}}),
+            (0, {"link": {**link, "call": True}}),
             (2, {"link": link}),
         )
         for index, change in made_up:

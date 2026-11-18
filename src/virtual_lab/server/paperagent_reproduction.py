@@ -96,9 +96,14 @@ def is_record(value: Any) -> bool:
     )
 
 
+def is_whole(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def has_link(entry: dict[str, Any]) -> bool:
     """Whether a claim says what it was held to if it was, and nothing if it was not attempted: one that was tried has
-    the tutorial, the value that was kept, and the number as written, and one that was not has none of them."""
+    the tutorial, where in what it gave, the value that was kept, and the number as written, and one that was not has
+    none of them."""
     link = entry["link"]
     if entry["status"] == reproducing.NOT_ATTEMPTED:
         return link is None
@@ -106,6 +111,10 @@ def has_link(entry: dict[str, Any]) -> bool:
     return (
         isinstance(tutorial, dict)
         and isinstance(tutorial.get("path"), str)
+        and isinstance(tutorial.get("id"), str)
+        and link.get("source") in (reproducing.CALL, reproducing.LINE)
+        and isinstance(link.get("where"), str)
+        and (link.get("call") is None or is_whole(link["call"]))
         and isinstance(link.get("got"), int | float)
         and not isinstance(link.get("got"), bool)
         and isinstance(link.get("number"), dict)
