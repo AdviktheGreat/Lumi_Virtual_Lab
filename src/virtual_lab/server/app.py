@@ -81,6 +81,9 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}/checks  each tool, its tier, and how each kind of check of it went, and what is allowed
     GET    /api/paperagents/{id}/checks/{name}  one tool's checks, each with what it was made of
     DELETE /api/paperagents/{id}/checks  takes away the checks, so that the tools are of the tier they were made as
+    POST   /api/paperagents/{id}/reproduction  starts trying the claims against what the tutorials gave, within a limit
+    GET    /api/paperagents/{id}/reproduction  each claim: reproduced, partly, not, or not attempted, and against what
+    DELETE /api/paperagents/{id}/reproduction  takes away what was kept of the trying, so that it can be done again
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -498,6 +501,12 @@ class PaperAgentChecksBody(RequestModel):
     )
     max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
     verifier_model: str | None = Field(None, max_length=200)
+
+
+class PaperAgentReproductionBody(RequestModel):
+    """How to try the claims: the most that asking a model may spend, in USD, which must be said."""
+
+    max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
 
 
 class PaperAgentDataBody(RequestModel):
@@ -1480,6 +1489,20 @@ def create_app(
         paperagents.clear_checks(agent_id)
 
         return paperagents.checks(agent_id)
+
+    @api.post("/paperagents/{agent_id}/reproduction", status_code=202)
+    def reproduce_paperagent_claims(agent_id: str, body: PaperAgentReproductionBody) -> dict[str, Any]:
+        return paperagents.start_reproduction(agent_id, body.max_cost).snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/reproduction")
+    def get_paperagent_reproduction(agent_id: str) -> dict[str, Any]:
+        return paperagents.reproduction(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/reproduction")
+    def delete_paperagent_reproduction(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_reproduction(agent_id)
+
+        return paperagents.reproduction(agent_id)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:

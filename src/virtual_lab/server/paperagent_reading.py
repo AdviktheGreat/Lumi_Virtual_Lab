@@ -225,6 +225,25 @@ def number_claims(directory: Path) -> list[dict[str, Any]]:
     ]
 
 
+def claims_of(directory: Path) -> list[dict[str, Any]]:
+    """Every claim of the paper, of any kind, as the file of the claims that a reading left holds them: none if there is
+    no such file, or it is not in the shape that a reading writes. A claim that is not in that shape is left out, as it
+    may not be if the file was edited."""
+    record = read_json(directory / CLAIMS_FILE)
+    claims = record.get("claims") if isinstance(record, dict) else None
+    if not isinstance(claims, list):
+        return []
+
+    return [
+        claim
+        for claim in claims
+        if isinstance(claim, dict)
+        and claim.get("kind") in ("number", "comparison", "qualitative")
+        and all(isinstance(claim.get(key), str) for key in ("id", "value", "quote"))
+        and (claim.get("anchor") is None or isinstance(claim.get("anchor"), dict))
+    ]
+
+
 def whole(value: Any) -> int:
     """A count that a record says, or none if what it says is not a whole number, as it may not be if it was edited."""
     return value if isinstance(value, int) and not isinstance(value, bool) else 0

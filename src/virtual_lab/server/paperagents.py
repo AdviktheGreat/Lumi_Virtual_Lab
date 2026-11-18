@@ -47,6 +47,13 @@ image, and the reference run it was made of (paperagent_checks.py). A tool of ti
 different bases (the code's function, the code's tests, the paper's numbers) and failed none is of tier B, which follows
 from what is kept and from nothing else, and is not said to show that what the tool gives is right.
 
+The claims of the paper that are numbers are tried, when the person asks, against what the tutorials gave: a program
+finds where in what each tutorial gave a claim's number may be, by the number as the paper rounded it and by the figures
+and tables that the sentence and the tutorial both refer to, a model chooses which place the sentence is about without
+being shown any value, and a program holds what was kept there to the number (paperagent_reproduction.py). Each claim
+is reproduced, partly, not, or not attempted, with why, and a claim that no code could be linked to is not attempted and
+not failed. It is of the tutorials as they ran here, and does not say that they were run on the paper's data.
+
 An agent is given to conversations when the person says so (the flag `given` in its agent.json), or when they name it
 for one. What a conversation is then given of it is in paperagent_given.py: tools that read what was found in the
 paper, which are of tier D, and its tools of tier A, which run the authors' code where the conversation may run code.
@@ -84,7 +91,7 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
-from virtual_lab.paperagents import asking, linking, proposing, toolmaking
+from virtual_lab.paperagents import asking, linking, proposing, reproducing, toolmaking
 from virtual_lab.paperagents import card as method_card
 from virtual_lab.paperagents import checking as verifying
 from virtual_lab.paperagents import data as finding
@@ -107,6 +114,7 @@ from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_reference as kept_reference
 from virtual_lab.server import paperagent_repository as kept_repository
+from virtual_lab.server import paperagent_reproduction as kept_reproduction
 from virtual_lab.server import paperagent_tools as kept_tools
 from virtual_lab.server import paperagent_toolwork as toolwork
 from virtual_lab.server.errors import ApiError, not_found
@@ -152,6 +160,9 @@ TOOLS_JOB = "paperagent-tools"
 # The job that checks the tools by what their tutorials did not give them, which is not done to an agent while another
 # job is
 CHECKS_JOB = "paperagent-checks"
+# The job that tries the paper's claims against what the tutorials gave, which is not done to an agent while another job
+# is
+REPRODUCTION_JOB = "paperagent-reproduction"
 # What is left free on the disk when data is fetched, and the longest that a note of which data stands in for what is
 DISK_RESERVE_BYTES = 1 << 30
 MAX_DATASET_CHARS = 200
@@ -676,11 +687,16 @@ class PaperAgents:
         """The job that is checking an agent's tools, if one is."""
         return next((job for job in self.jobs.active(CHECKS_JOB) if job.subject == agent_id), None)
 
+    def reproduction_job(self, agent_id: str) -> Job | None:
+        """The job that is trying an agent's claims, if one is."""
+        return next((job for job in self.jobs.active(REPRODUCTION_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
-            fetched, its tutorials run, its tools made, or its tools checked, which what is done to them must wait for.
+            fetched, its tutorials run, its tools made, its tools checked, or its claims tried, which what is done to
+            them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -690,6 +706,7 @@ class PaperAgents:
             or self.reference_job(agent_id)
             or self.tools_job(agent_id)
             or self.checks_job(agent_id)
+            or self.reproduction_job(agent_id)
         )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
@@ -1666,8 +1683,10 @@ class PaperAgents:
                 "something may be using it. Start Docker, stop what uses the image, and try again.",
             )
         kept_environment.forget(directory)
-        # What was run in the image is of no use without it, nor are the tools made from that
+        # What was run in the image is of no use without it, nor are the tools made from that, nor the claims that were
+        # held to what was run
         kept_tools.forget(directory)
+        kept_reproduction.forget(directory)
         kept_reference.forget(directory)
 
     def environment(self, agent_id: str, python: Any = None, system_packages: Any = None) -> dict[str, Any]:
@@ -2156,8 +2175,9 @@ class PaperAgents:
         job.update("Running the tutorials")
         # What an earlier run left of itself, which only a server that was stopped hard would
         referencing.remove_runs(agent_id, self.docker_command)
-        # Tools are made from a reference run, and are of no use once it is taken away
+        # Tools are made from a reference run, and are of no use once it is taken away, nor is the trying of the claims
         kept_tools.forget(directory)
+        kept_reproduction.forget(directory)
         self.settle_tools(agent_id, "pending")
         account = {
             "schema": kept_reference.SCHEMA,
@@ -2219,14 +2239,15 @@ class PaperAgents:
 
         :raises ApiError: If there is no agent with this id, or its paper is being read, its code fetched, its
             environment built, its data fetched, its tutorials run, or its tools made. The tools that were made from
-            them go too.
+            them go too, and so does the trying of the claims that was held to them.
         """
         with self._lock:
             directory, agent = self.lookup(agent_id)
             self.check_idle(agent_id)
             referencing.remove_runs(agent_id, self.docker_command)
-            # The tools were made from what is taken away
+            # The tools were made from what is taken away, and the claims were held to it
             kept_tools.forget(directory)
+            kept_reproduction.forget(directory)
             kept_reference.forget(directory)
             if steps_of(agent)["tools"] in ("done", "failed"):
                 self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": "pending"}})
@@ -2687,6 +2708,135 @@ class PaperAgents:
             return proposing.ModelVerifier(model, max_cost, self.chat_models, self.client, usage)
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
+
+    # The claims of the paper, tried against what the tutorials gave
+
+    def reproduction(self, agent_id: str) -> dict[str, Any]:
+        """What there is of the trying of an agent's claims: each claim of the paper with whether it was reproduced,
+        partly, not, or not attempted, and why, and against what; whether the account is of what is kept now; and what
+        is needed to try them again.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        claims = kept_reading.claims_of(directory)
+        reference, _ = kept_tools_of(directory, agent)
+        record = kept_reproduction.load(directory)
+        current = record is not None and kept_reproduction.is_current(record, reference, claims)
+        shown, more = kept_reproduction.table(claims, record, current)
+        usable = linking.usable_numbers(claims)
+        problem = None
+        if not claims:
+            problem = ("no_claims", "Read the paper first, as it is the claims that were read from it that are tried")
+        elif not usable:
+            problem = ("no_numbers", "The paper reports no number with digits enough to be told from one by chance")
+        elif reference is None:
+            problem = ("no_reference", "Run the tutorials first, as it is what they gave that the claims are held to")
+        job = self.reproduction_job(agent_id)
+        settings_model = self.workspace.load_settings().model
+
+        return {
+            "id": agent_id,
+            "ready": problem is None,
+            "problem": {"code": problem[0], "message": problem[1]} if problem is not None else None,
+            "settings_model": settings_model,
+            "numbers": len(usable),
+            "reference": kept_reproduction.made_of(reference) if reference is not None else None,
+            "kept": (
+                {
+                    key: record[key]
+                    for key in ("started_at", "finished_at", "complete", "model", "cost", "requests", "limit", "notes")
+                }
+                if record is not None
+                else None
+            ),
+            "current": current,
+            "claims": shown,
+            "more": more,
+            "counts": kept_reproduction.counts_of(shown),
+            "job": job.snapshot() if job is not None else None,
+            "meaning": reproducing.MEANING,
+            "limits": {
+                "partly_share": reproducing.PARTLY_SHARE,
+                "most_claims": reproducing.MOST_CLAIMS,
+                "most_asked": reproducing.MOST_ASKED,
+                "batch": reproducing.BATCH,
+            },
+        }
+
+    def start_reproduction(self, agent_id: str, max_cost: Any = None) -> Job:
+        """Starts trying the paper's claims against what the tutorials gave: for each claim that is a number, a program
+        finds where in what a tutorial gave it may be, a model of the settings chooses which place the sentence is about
+        without being shown any value, and a program holds what was kept there to the number. Nothing is run. What was
+        kept of an earlier trying is taken away when the job begins.
+
+        :param max_cost: The most that asking the model may spend, in USD, which must be said.
+        :raises ApiError: If there is no agent with this id, the limit is not fit, a key or a price is missing, the
+            paper has not been read or reports no number to try, the tutorials have not been run to their end, or the
+            agent's paper, code, environment, data, tutorials, tools, or claims are being worked on.
+        """
+        self.lookup(agent_id)
+        budget = check_budget(max_cost, "The most it may spend", required=True)
+        assert budget is not None
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            claims = kept_reading.claims_of(directory)
+            if not claims:
+                raise ApiError(422, "no_claims", "Read the paper first, as it is its claims that are tried")
+            if not linking.usable_numbers(claims):
+                raise ApiError(
+                    422, "no_numbers", "The paper reports no number with digits enough to be told from one by chance"
+                )
+            reference, _ = kept_tools_of(directory, agent)
+            if reference is None:
+                raise ApiError(
+                    422,
+                    "no_reference",
+                    "Run the tutorials, to their end, first, as it is what they gave that the claims are held to",
+                )
+            picker = self.picker_of(budget, MeetingUsage())
+            limits = {"max_cost": budget, "partly_share": reproducing.PARTLY_SHARE}
+            repo = kept_repository.repo_path(directory)
+
+            def work(job: Job) -> str:
+                return kept_reproduction.reproduce_all(job, directory, reference, claims, picker, repo, limits)
+
+            try:
+                return self.jobs.start(
+                    REPRODUCTION_JOB,
+                    agent_id,
+                    f"Trying the claims: {agent['title']}",
+                    work,
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def picker_of(self, max_cost: float, usage: MeetingUsage) -> reproducing.ModelPicker:
+        """What asks the model in the settings which place in what a tutorial gave a claim's sentence is about, within a
+        limit on what it may cost.
+
+        :raises ApiError: If a key it needs is not set, or its price is not known.
+        """
+        model = self.usable_model()
+        try:
+            return reproducing.ModelPicker(model, max_cost, self.chat_models, self.client, usage)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+
+    def clear_reproduction(self, agent_id: str) -> None:
+        """Takes away what was kept of the trying of the claims, so that they are tried again from nothing.
+
+        :raises ApiError: If there is no agent with this id, or its paper is being read, its code fetched, its
+            environment built, its data fetched, its tutorials run, its tools made or checked, or its claims tried.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            kept_reproduction.forget(directory)
 
     def clear_checks(self, agent_id: str) -> None:
         """Takes away the checks that were made of the tools, so that they are of the tier they were made as until they
