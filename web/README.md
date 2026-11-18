@@ -234,11 +234,26 @@ and can be asked for again. A reading that stopped carries on from where it was;
 parts that could not be read are read again only if that is asked for, and a paper that has been read is not read again until
 its reading is cleared, after asking. The reading is a job (`paperagent-reading`), so its progress and the way to stop it are
 at the top of the agent and in the setup's jobs; nothing else is done to the agent while it goes on, and the page looks at
-the reading again as it goes and when it ends. What was read is shown as the claims, the method, the data, the software with
-its versions, the links, the licenses, and what the method was tested on and where it falls short, with how many facts were left
-out because their words are not in the paper. Each fact is with its quote, and "Show in the paper" opens the paper's words at
-the place, with the fact's own words marked (`GET /api/paperagents/{id}/passage`). A group of more than ten facts shows the
-first ten and the rest on asking. The method card is said to be a draft.
+the reading again as it goes and when it ends. What was read is shown as the claims, the software with
+its versions, the links, the licenses, and where the data and code are said to be, with how many facts were left
+out because their words are not in the paper. Each fact is with its quote, and "Show in the paper" (`components/paper-agent-place.tsx`)
+opens the paper's words at the place, with the fact's own words marked (`GET /api/paperagents/{id}/passage`). A group of more than
+ten facts shows the first ten and the rest on asking. What the method was done with and tested on is not here but on the method card.
+
+The Method card part (`components/paper-agent-card.tsx`, with `src/lib/paperagent-card.ts`) is the card that the reading drafted
+(`reading.card`): the methods, the data used, what the method was tested on, and where the authors say it falls short. It says what
+the card is: a draft that a model made, of which all that was checked is that the words are in the paper, an approval of the card as
+it is (which says that a person read it and let it stand, and is never said to be that it is right), or a draft that was approved and
+has changed since. Every fact says whose it is: read by the model, changed by the person (with what it was read as, and the paper's words
+and place kept), or added by the person (with their words, if they gave any, shown as theirs, and no place in the paper). A person
+changes a fact (the words of one that was read are not changed, and a limit that was read, being the authors' sentence, is not changed
+at all), adds one of each sort, takes one off (one they added is gone, which is asked first; one that was read is listed under "Taken
+off" and put back), approves the card (not while the paper is being read, nor with nothing on it), takes the approval back, and
+discards all that they did, after asking. What is wrong with what was typed is said by the field before anything is sent, and what the
+server refuses, such as a fact that the card has already, is said under the form. Each of these is one call (`api.ts`) that gives back the
+reading, which is what the page shows from then on, and the Data and Code parts are looked at again, since they are of the card. The card
+is shown for an agent that has a paper file, whether or not it has been read, so that one can be made by hand. The Data part shows a
+dataset that the person added as theirs, with no words of the paper for it.
 
 The Code part (`components/paper-agent-code.tsx`) is where the agent's code is fetched and looked at, and nothing in it is run.
 Once the paper is read it lists the projects the paper's links lead to (`candidates`), each with the paper's words that give it

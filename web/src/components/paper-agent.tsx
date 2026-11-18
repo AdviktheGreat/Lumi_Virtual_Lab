@@ -13,6 +13,7 @@ import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
 import { ImportedSection } from "@/components/paper-agent-imported";
+import { CardSection } from "@/components/paper-agent-card";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { ReferenceSection } from "@/components/paper-agent-reference";
 import { ToolsSection } from "@/components/paper-agent-tools";
@@ -571,7 +572,7 @@ function Agent({
           }}
         />
       </PageSection>
-      <PageSection title="Reading" intro="What the paper says it found, what it did, what it was done with, and where it falls short.">
+      <PageSection title="Reading" intro="What the paper reports, and the software, links, and licenses it names, each with its own words.">
         <Looked
           state={reading.value}
           label="Looking at what was read"
@@ -609,6 +610,31 @@ function Agent({
                 data.reload();
                 // The tools that read it are given only while its text is kept
                 given.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Method card"
+        intro="What the method was done with and tested on, and where it falls short. A model drafts it from the paper. You read it, put right what is wrong, and approve it, and what you did is kept apart and marked as yours."
+      >
+        <Looked
+          state={reading.value}
+          label="Looking at the method card"
+          failure="The method card could not be looked at."
+          onRetry={reading.reload}
+        >
+          {(value) => (
+            <CardSection
+              agent={agent}
+              reading={value}
+              working={working}
+              onChanged={(next) => {
+                reading.set(next);
+                // The data that the paper names, and whether it can be found, are of the card
+                data.reload();
+                repository.reload();
               }}
             />
           )}

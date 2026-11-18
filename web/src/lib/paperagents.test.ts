@@ -288,7 +288,17 @@ function reading(changes: Partial<PaperAgentReading> = {}): PaperAgentReading {
     truncated_from: null,
     finished_at: "2026-01-01T00:00:00Z",
     claims: [],
-    card: { status: "draft", methods: [], datasets: [], scope: [], limitations: [] },
+    card: {
+      status: "draft",
+      approved_at: null,
+      changed_since_approval: false,
+      edited: false,
+      methods: [],
+      datasets: [],
+      scope: [],
+      limitations: [],
+      removed: { methods: [], datasets: [], scope: [], limitations: [] },
+    },
     resources: { software: [], links: [], availability: [], licenses: [] },
     ...changes,
   };
@@ -536,13 +546,6 @@ describe("the facts of a reading", () => {
         { ...fact("c1"), kind: "number", value: "0.93" },
         { ...fact("c2"), kind: "comparison", value: "" },
       ],
-      card: {
-        status: "draft",
-        methods: [{ ...fact("m1"), name: "featureCounts" }],
-        datasets: [],
-        scope: [{ ...fact("s1"), aspect: "sample size", value: "500 nuclei" }],
-        limitations: [fact("l1")],
-      },
       resources: {
         software: [{ ...fact("w1"), name: "STAR", version: "2.7.10a" }, { ...fact("w2"), name: "R", version: "" }],
         links: [{ ...fact("k1"), url: "https://github.com/example/cellmapper", role: "code" }],
@@ -553,16 +556,21 @@ describe("the facts of a reading", () => {
 
     const groups = factGroups(found);
 
-    expect(groups.map((group) => group.key)).toEqual(["claims", "methods", "scope", "limitations", "software", "links", "availability", "licenses"]);
-    expect(factCount(found)).toBe(10);
+    expect(groups.map((group) => group.key)).toEqual(["claims", "software", "links", "availability", "licenses"]);
+    expect(factCount(found)).toBe(7);
     const lines = Object.fromEntries(groups.map((group) => [group.key, group.facts.map(({ title, tag }) => [title, tag])]));
     expect(lines.claims).toEqual([["0.93", "A number"], [null, "A comparison"]]);
-    expect(lines.scope).toEqual([["500 nuclei", "Sample size"]]);
-    expect(lines.limitations).toEqual([[null, null]]);
     expect(lines.software).toEqual([["STAR", "Version 2.7.10a"], ["R", null]]);
     expect(lines.links).toEqual([["https://github.com/example/cellmapper", "Code"]]);
     expect(lines.availability).toEqual([[null, "Data"]]);
     expect(lines.licenses).toEqual([["MIT", "Code"]]);
+  });
+
+  it("are not those of the method card, which a person corrects and which has its own part", () => {
+    const card = reading().card;
+    const found = reading({ card: { ...card, methods: [{ ...fact("m1"), by: "reading", read_as: null, name: "featureCounts" }] } });
+
+    expect(factGroups(found)).toEqual([]);
   });
 
   it("are none for a paper that has nothing found in it", () => {
