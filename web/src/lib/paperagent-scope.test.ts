@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  answersOf,
   cardVersion,
   checkScope,
   describeAspect,
@@ -14,7 +13,7 @@ import {
   MAX_UNIT_CHARS,
   OUTCOME_TEXT,
 } from "./paperagent-scope";
-import type { CardScope, MethodCard, ScopeAnswer, ScopeCheck, ScopeStatement } from "./types";
+import type { CardScope, MethodCard, ScopeCheck, ScopeStatement } from "./types";
 
 const said = (changes: Partial<typeof EMPTY_SCOPE_DRAFT>) => ({ ...EMPTY_SCOPE_DRAFT, ...changes });
 
@@ -60,8 +59,20 @@ describe("what a person says of their data", () => {
   it("has what is too long refused, in characters as the server counts them", () => {
     expect(checkScope(said({ tissue: "x".repeat(MAX_SCOPE_CHARS) })).value).not.toBeNull();
     expect(checkScope(said({ tissue: "x".repeat(MAX_SCOPE_CHARS + 1) })).problems.tissue).toBe(`That is at most ${MAX_SCOPE_CHARS} characters.`);
-    expect(checkScope(said({ tissue: "🧬".repeat(MAX_SCOPE_CHARS) })).value).not.toBeNull();
+    expect(checkScope(said({ tissue: `${"🧬".repeat(MAX_SCOPE_CHARS - 1)}a` })).value).not.toBeNull();
     expect(checkScope(said({ size: "5", unit: "x".repeat(MAX_UNIT_CHARS + 1) })).problems.unit).toBe(`That is at most ${MAX_UNIT_CHARS} characters.`);
+  });
+
+  it.each(["---", "?!", "  . "])("refuses %j as words, which the server would refuse too", (typed) => {
+    const checked = checkScope(said({ species: typed }));
+
+    expect(checked.value).toBeNull();
+    expect(checked.problems.species).toBe("Say it in words, with a letter or a digit in them.");
+  });
+
+  it("takes words in other scripts and words with digits", () => {
+    expect(checkScope(said({ species: "小鼠" })).value).toEqual({ species: "小鼠" });
+    expect(checkScope(said({ assay: "10x v3" })).value).toEqual({ assay: "10x v3" });
   });
 
   it("does not say there is nothing said when a part that was said is wrong", () => {
@@ -78,14 +89,6 @@ const statement = (changes: Partial<ScopeStatement> = {}): ScopeStatement => ({
   page: 2,
   section: "Methods",
   ...changes,
-});
-
-const answer = (outcome: ScopeAnswer["outcome"], aspect: ScopeAnswer["aspect"] = "species"): ScopeAnswer => ({
-  aspect,
-  given: "rat",
-  outcome,
-  says: [statement()],
-  reason: "",
 });
 
 function check(changes: Partial<ScopeCheck> = {}): ScopeCheck {
@@ -121,11 +124,9 @@ describe("what the card says of the data", () => {
     expect(text).toContain("not warned of");
   });
 
-  it("has its answers told apart by outcome, in the order they were checked", () => {
-    const aspects = [answer("outside", "species"), answer("inside", "tissue"), answer("outside", "assay")];
-
-    expect(answersOf(check({ aspects }), "outside").map((a) => a.aspect)).toEqual(["species", "assay"]);
+  it("has a thing that was said called as a sentence begins", () => {
     expect(describeAspect("sample size")).toBe("Sample size");
+    expect(describeAspect("input")).toBe("Input");
   });
 });
 

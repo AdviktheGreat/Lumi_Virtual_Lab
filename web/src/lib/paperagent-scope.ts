@@ -1,6 +1,6 @@
 import { characters, sentence, type Checked } from "./checks";
 import { tidy } from "./scientists";
-import type { MethodCard, ScopeAnswer, ScopeCheck, ScopeData, ScopeOutcome, ScopeStatement } from "./types";
+import type { MethodCard, ScopeCheck, ScopeData, ScopeOutcome, ScopeStatement } from "./types";
 
 // How long what is said of the data may be, as the server counts it: words, and the words for what a size counts
 export const MAX_SCOPE_CHARS = 200;
@@ -39,6 +39,7 @@ export function checkScope(draft: ScopeDraft): Checked<ScopeData, ScopeKey> {
     const words = tidy(draft[part]);
     if (words === "") continue;
     if (characters(words) > MAX_SCOPE_CHARS) problems[part] = `That is at most ${MAX_SCOPE_CHARS} characters.`;
+    else if (!/[\p{L}\p{N}]/u.test(words)) problems[part] = "Say it in words, with a letter or a digit in them.";
     data[field] = words;
   }
   const unit = tidy(draft.unit);
@@ -112,11 +113,6 @@ export function describeStatementPlace(statement: ScopeStatement): string | null
   ];
 
   return parts.length > 0 ? sentence(parts.join(", ")) : null;
-}
-
-// The answers that are of one outcome, in the order they were checked
-export function answersOf(check: ScopeCheck, outcome: ScopeOutcome): ScopeAnswer[] {
-  return check.aspects.filter((answer) => answer.outcome === outcome);
 }
 
 // How far the paper was read, in a sentence that is said where the card may lack what the paper says, or null where it was read
