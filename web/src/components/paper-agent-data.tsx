@@ -169,7 +169,7 @@ function StandIn({ agent, data, target, busy, onData }: Shared & { target: Targe
   );
 }
 
-// A dataset that the paper names, with the paper's words for it, the place that its accession is of, and what stands in for it
+// A dataset on the method card, with the paper's words for it if it has some, the place that its accession is of, and what stands in for it
 function Dataset({ dataset, ...shared }: Shared & { dataset: DataDataset; onSee: (candidate: DataCandidate) => void; seeing: boolean }) {
   const { data, onSee, seeing } = shared;
   const candidate = dataset.candidate === null ? undefined : data.candidates.find((item) => item.key === dataset.candidate);
@@ -180,8 +180,12 @@ function Dataset({ dataset, ...shared }: Shared & { dataset: DataDataset; onSee:
         <span className="min-w-0 break-words text-sm font-medium">{dataset.name}</span>
         {dataset.accession !== "" && <Badge variant="outline">{dataset.accession}</Badge>}
       </div>
-      <blockquote className="break-words border-l-2 border-border pl-2 text-sm text-muted-foreground">{dataset.quote}</blockquote>
-      <span className="text-xs text-muted-foreground">{describeAnchor(dataset.anchor)}</span>
+      {dataset.quote !== "" && (
+        <blockquote className="break-words border-l-2 border-border pl-2 text-sm text-muted-foreground">{dataset.quote}</blockquote>
+      )}
+      <span className="text-xs text-muted-foreground">
+        {dataset.anchor !== null ? describeAnchor(dataset.anchor) : "You added it to the method card, so the paper has no words for it here."}
+      </span>
       {candidate !== undefined && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">Its accession is of {candidate.label}.</span>
@@ -197,7 +201,7 @@ function Dataset({ dataset, ...shared }: Shared & { dataset: DataDataset; onSee:
   );
 }
 
-// The datasets that the paper names, for a person to say which of their own data stands in for any
+// The datasets on the method card, for a person to say which of their own data stands in for any
 function Datasets({ onSee, seeing, ...shared }: Shared & { onSee: (candidate: DataCandidate) => void; seeing: boolean }) {
   const id = useId();
   const { data } = shared;
@@ -209,12 +213,12 @@ function Datasets({ onSee, seeing, ...shared }: Shared & { onSee: (candidate: Da
         The data the paper used <span className="font-normal text-muted-foreground">({data.datasets.length})</span>
       </h3>
       <p className="text-xs text-muted-foreground">
-        These are the datasets the paper names. Your own data can stand in for one, which only notes which to use in its place: it
+        These are the datasets on the method card, which the paper names, or you put there. Your own data can stand in for one, which only notes which to use in its place: it
         stays where it is, as yours, and is not copied.
       </p>
       {data.datasets.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {data.read ? "The paper names no dataset." : "The paper has not been read to the end, so what it names is not known yet."}
+          {data.read ? "No dataset is on the method card." : "The paper has not been read to the end, so what it names is not known yet."}
         </p>
       ) : (
         <ul aria-label="Datasets the paper names" className="flex flex-col gap-2">

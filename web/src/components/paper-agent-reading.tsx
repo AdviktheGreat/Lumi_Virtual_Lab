@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import { BookOpen, ExternalLink, Trash2 } from "lucide-react";
 import { ProblemNotice } from "@/components/messages";
+import { Place } from "@/components/paper-agent-place";
 import { useServer } from "@/components/server-provider";
 import { describedBy, Field } from "@/components/settings-fields";
 import {
@@ -22,7 +23,6 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import {
   checkReading,
-  describeAnchor,
   describeLeftOut,
   describeLength,
   describeReading,
@@ -36,15 +36,12 @@ import {
   type FactGroup,
   type FactLine,
 } from "@/lib/paperagents";
-import type { PaperAgent, PaperAgentPassage, PaperAgentReading } from "@/lib/types";
+import type { PaperAgent, PaperAgentReading } from "@/lib/types";
 import type { JobsData } from "@/lib/use-jobs";
 import { useAttempt } from "@/lib/use-looked";
 import { cn } from "@/lib/utils";
 
 const LINK = "rounded-sm underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
-
-// How many characters of a quote are said in the name of the button that shows where it is
-const NAME_CHARS = 60;
 
 interface Shared {
   agent: PaperAgent;
@@ -145,35 +142,9 @@ function ReadForm({ agent, reading, working, blocked, jobs }: Shared & { jobs: J
   );
 }
 
-// The words of the paper at a place, with what is around them, and the words of the fact marked
-function Passage({ id, passage }: { id: string; passage: PaperAgentPassage }) {
-  return (
-    <div id={id} role="group" aria-label="The paper at this place" className="whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-xs leading-relaxed">
-      <span className="text-muted-foreground">{passage.before}</span>
-      <mark className="rounded-sm bg-primary/20 px-0.5 text-foreground">{passage.text}</mark>
-      <span className="text-muted-foreground">{passage.after}</span>
-    </div>
-  );
-}
-
 // A fact, with the paper's own words for it, where they are, and the way to see them in the paper
 function Fact({ agent, line }: { agent: string; line: FactLine }) {
-  const { report } = useServer();
-  const id = useId();
-  const attempt = useAttempt(report);
-  const [passage, setPassage] = useState<PaperAgentPassage | null>(null);
   const { fact, title, tag } = line;
-  const excerpt = fact.quote.length > NAME_CHARS ? `${fact.quote.slice(0, NAME_CHARS)}…` : fact.quote;
-
-  async function toggle() {
-    if (passage !== null) {
-      setPassage(null);
-
-      return;
-    }
-    const found = await attempt.run(() => api.paperAgentPassage(agent, fact.anchor.start, fact.anchor.end));
-    if (found) setPassage(found);
-  }
 
   return (
     <li className="flex flex-col gap-1.5 rounded-lg border border-border px-3 py-2" data-testid="paper-fact">
@@ -193,22 +164,7 @@ function Fact({ agent, line }: { agent: string; line: FactLine }) {
         </div>
       )}
       <blockquote className="break-words border-l-2 border-border pl-2 text-sm text-muted-foreground">{fact.quote}</blockquote>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">{describeAnchor(fact.anchor)}</span>
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={() => void toggle()}
-          disabled={attempt.busy}
-          aria-expanded={passage !== null}
-          aria-controls={passage !== null ? `${id}-passage` : undefined}
-          aria-label={`${passage !== null ? "Hide" : "Show in the paper"}: ${excerpt}`}
-        >
-          {passage !== null ? "Hide" : attempt.busy ? "Looking…" : "Show in the paper"}
-        </Button>
-      </div>
-      {attempt.problem && <ProblemNotice problem={attempt.problem} />}
-      {passage !== null && <Passage id={`${id}-passage`} passage={passage} />}
+      <Place agent={agent} quote={fact.quote} anchor={fact.anchor} />
     </li>
   );
 }
@@ -260,13 +216,15 @@ function Facts({ agent, reading }: { agent: string; reading: PaperAgentReading }
       </div>
       {groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {reading.read > 0 ? "Nothing was found that the paper's own words bear out." : "Nothing has been found yet."}
+          {reading.read > 0
+            ? "No claim, software, link, or license was found that the paper's own words bear out."
+            : "Nothing has been found yet."}
         </p>
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            {factCount(reading)} facts, each with its words from the paper. What the method was done with and tested on is a draft that
-            nobody has checked.
+            {factCount(reading)} facts, each with its words from the paper. What the method was done with and tested on is on the method
+            card, below.
           </p>
           {groups.map((group) => (
             <Group key={group.key} agent={agent} group={group} />
@@ -312,7 +270,7 @@ function ClearReading({
             <AlertDialogTitle>Clear the reading of {agent.title}?</AlertDialogTitle>
             <AlertDialogDescription>
               This takes away what was read of the paper, and what it cost is not given back. The paper stays, and can be read again
-              from the start, which costs again.
+              from the start, which costs again. What you changed on the method card is kept, and is put over the next reading.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

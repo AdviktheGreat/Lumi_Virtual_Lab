@@ -673,7 +673,7 @@ test("reads the paper of an agent with a budget, and shows what was found with t
   // What the model gave that the paper does not bear out is said to have been left out, and is not shown
   await expect(page.getByText("1 fact the model gave was left out, because the paper does not bear it out.")).toBeVisible();
   await expect(page.getByText("This method works on every species.")).toHaveCount(0);
-  await expect(page.getByText(/a draft that nobody has checked/)).toBeVisible();
+  await expect(page.getByTestId("card-status")).toContainText("all that was checked of a fact is that its words are in the paper");
 
   // The place of a fact is shown in the paper, with what is around it
   const show = claims.getByRole("button", { name: /^Show in the paper: CellMapper reached/ });
@@ -711,6 +711,174 @@ test("reads the paper of an agent with a budget, and shows what was found with t
   expect((await (await page.request.get(`/api/paperagents/${id}/reading`)).json()).chunks).toBeNull();
   // The paper is kept
   await expect(page.getByTestId("paper-agent-file")).toContainText("cells.txt");
+});
+
+const card = (page: Page) => page.getByTestId("card-status");
+const cardList = (page: Page, name: string) => page.getByRole("list", { name, exact: true });
+const cardOf = async (page: Page, id: string) => (await (await page.request.get(`/api/paperagents/${id}/reading`)).json()).card;
+
+test("says that the card is of the paper's file, which an agent without one has not", async ({ page }) => {
+  const id = await makeAgent(page, { title: "No file", paper: { kind: "file" } });
+  await openAgent(page, id, "No file");
+
+  await expect(page.getByRole("heading", { name: "Method card", level: 2 })).toBeVisible();
+  await expect(page.getByText("The card is kept with the paper's file, which is not here yet.", { exact: false })).toBeVisible();
+  await expect(card(page)).toHaveCount(0);
+});
+
+test("lets a person correct the method card and approve it, with what they did marked as theirs", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Card corrector", paper: { kind: "file" } });
+  await openAgent(page, id, "Card corrector");
+  await page.getByLabel("Upload the paper").setInputFiles({ name: "cells.txt", mimeType: "text/plain", buffer: Buffer.from(CELLS) });
+  await expect(page.getByTestId("paper-agent-file")).toContainText("cells.txt");
+
+  // A card by hand can be begun before the paper is read, and nothing on it is not approved
+  await expect(card(page)).toHaveAttribute("data-status", "draft");
+  await expect(page.getByRole("button", { name: "Approve the card" })).toBeDisabled();
+  await expect(card(page)).toContainText("There is nothing on the card to approve.");
+
+  await reading(page).getByLabel("Most it may spend, in dollars").fill("2");
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+
+  // What was read is the model's, and a draft that nobody has approved
+  await expect(card(page)).toContainText("A model made this from the paper");
+  await expect(cardList(page, "What the method was tested on").getByTestId("card-fact")).toHaveAttribute("data-by", "reading");
+  await expect(cardList(page, "What the method was tested on")).toContainText("Read by the model");
+  await expect(page.getByRole("button", { name: "Discard what I did" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Change: / })).toHaveCount(2);
+  // A limit that was read is the authors' sentence, which is not changed
+  await expect(cardList(page, "Where the authors say it falls short")).toContainText("The authors' sentence is not changed");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A fact that was read is changed, which keeps the paper's words and says what it was read as
+  await page.getByRole("button", { name: "Change: mouse" }).click();
+  const changing = form(page, "Change: mouse");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await changing.getByLabel("What it was tested on").fill("   ");
+  await changing.getByRole("button", { name: "Save it" }).click();
+  await expect(changing.getByText("Say what it was tested on.")).toBeVisible();
+  await changing.getByLabel("What it was tested on").fill("rat");
+  await changing.getByLabel("What it is about").selectOption("species");
+  await changing.getByRole("button", { name: "Save it" }).click();
+  const species = cardList(page, "What the method was tested on");
+  await expect(species.getByTestId("card-fact")).toHaveAttribute("data-by", "person");
+  await expect(species).toContainText("rat");
+  await expect(species).toContainText("Changed by you");
+  await expect(species).toContainText("The model read it as: species: mouse");
+  await expect(species.getByRole("blockquote")).toHaveText(LIMIT);
+  await expect(species.getByRole("button", { name: /^Show in the paper: / })).toBeVisible();
+  await expect(card(page)).toContainText("What you did to it: 1 changed.");
+  await expect(page.getByRole("button", { name: "Discard what I did" })).toBeVisible();
+  const kept = await cardOf(page, id);
+  expect(kept.scope[0]).toMatchObject({ by: "person", value: "rat", read_as: { aspect: "species", value: "mouse" } });
+  expect(kept.scope[0].anchor).not.toBeNull();
+
+  // A fact that a person adds has their words and no place in the paper, and says so
+  await page.getByRole("button", { name: "Add a dataset" }).click();
+  const adding = form(page, "Add a dataset");
+  await adding.getByRole("button", { name: "Add it" }).click();
+  await expect(adding.getByText("Say what the dataset is called.")).toBeVisible();
+  await adding.getByLabel("What it is called").fill("Our reads");
+  await adding.getByLabel("Its accession, if it has one").fill("GSE999999");
+  await adding.getByLabel("Your words for it, if you have some").fill("Table S1 of the supplement");
+  await adding.getByRole("button", { name: "Add it" }).click();
+  const datasets = cardList(page, "Data used");
+  const ours = datasets.getByTestId("card-fact").filter({ hasText: "Our reads" });
+  await expect(ours).toHaveAttribute("data-by", "person");
+  await expect(ours).toContainText("Added by you");
+  await expect(ours).toContainText("GSE999999");
+  await expect(ours).toContainText("Your words");
+  await expect(ours.getByRole("blockquote")).toHaveText("Table S1 of the supplement");
+  await expect(ours.getByRole("button", { name: /^Show in the paper/ })).toHaveCount(0);
+  await expect(datasets.getByTestId("card-fact")).toHaveCount(2);
+
+  // A fact that the card has already is refused, with what the server says
+  await page.getByRole("button", { name: "Add a dataset" }).click();
+  const again = form(page, "Add a dataset");
+  await again.getByLabel("What it is called").fill("GEO again");
+  await again.getByLabel("Its accession, if it has one").fill("GSE123456");
+  await again.getByRole("button", { name: "Add it" }).click();
+  await expect(again.getByRole("alert")).toContainText("The card has that already");
+  await again.getByRole("button", { name: "Cancel" }).click();
+  await expect(again).toHaveCount(0);
+
+  // The data part has the card's datasets, and says which is the person's
+  const data = page.getByRole("list", { name: "Datasets the paper names" });
+  await expect(data.getByTestId("data-dataset")).toHaveCount(2);
+  const own = data.getByTestId("data-dataset").filter({ hasText: "Our reads" });
+  await expect(own).toContainText("You added it to the method card");
+  await expect(own).toContainText("Its accession is of");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Approving is of the card as it is, and says what it is, which is not that it is right
+  await page.getByRole("button", { name: "Approve the card" }).click();
+  await expect(card(page)).toHaveAttribute("data-status", "approved");
+  await expect(card(page)).toContainText("which is not that it is right");
+  expect((await cardOf(page, id)).status).toBe("approved");
+
+  // Any change makes it a draft again, and putting it back makes it the card that was approved
+  await page.getByRole("button", { name: "Take off: GEO" }).click();
+  await expect(card(page)).toHaveAttribute("data-status", "draft");
+  await expect(card(page)).toContainText("has changed since");
+  await expect(card(page)).toContainText("1 taken off");
+  await expect(datasets.getByTestId("card-fact")).toHaveCount(1);
+  await page.getByText("Taken off (1)").click();
+  await page.getByRole("button", { name: "Put back: GEO" }).click();
+  await expect(datasets.getByTestId("card-fact")).toHaveCount(2);
+  await expect(card(page)).toHaveAttribute("data-status", "approved");
+  await page.getByRole("button", { name: "Take the approval back" }).click();
+  await expect(card(page)).toHaveAttribute("data-status", "draft");
+  await expect(card(page)).not.toContainText("has changed since");
+
+  // A fact that a person added is gone when it is taken off, which is asked
+  await page.getByRole("button", { name: "Take off: Our reads" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Take this off the card?" });
+  await expect(asking).toContainText("cannot be put back");
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(datasets.getByTestId("card-fact")).toHaveCount(2);
+  await page.getByRole("button", { name: "Take off: Our reads" }).click();
+  await page.getByRole("alertdialog", { name: "Take this off the card?" }).getByRole("button", { name: "Take off" }).click();
+  await expect(datasets.getByTestId("card-fact")).toHaveCount(1);
+  expect((await cardOf(page, id)).removed.datasets).toHaveLength(0);
+
+  // What a person did is kept when the reading is cleared, and is put over the next reading
+  await page.getByRole("button", { name: "Clear the reading" }).click();
+  await page.getByRole("alertdialog", { name: "Clear the reading of Card corrector?" }).getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(page.getByRole("list", { name: "What the authors report" })).toHaveCount(0);
+  await expect(species).toContainText("rat");
+  await reading(page).getByRole("button", { name: "Read the paper" }).click();
+  await expect(summary(page)).toContainText("Read 1 of 1 chunk", { timeout: 15_000 });
+  await expect(species).toContainText("Changed by you");
+  await expect(species).toContainText("The model read it as: species: mouse");
+  await expect(species.getByTestId("card-fact")).toHaveCount(1);
+
+  // A fact that a person changed is changed back to what was read, which is then no change at all
+  await page.getByRole("button", { name: "Change back: rat" }).click();
+  await expect(species).toContainText("mouse");
+  await expect(species).toContainText("Read by the model");
+  await expect(page.getByRole("button", { name: "Discard what I did" })).toHaveCount(0);
+  expect((await cardOf(page, id)).edited).toBe(false);
+
+  // Discarding what a person did gives back the card that the reading made
+  await page.getByRole("button", { name: "Add a method" }).click();
+  await form(page, "Add a method").getByLabel("What it is called").fill("Our method");
+  await form(page, "Add a method").getByRole("button", { name: "Add it" }).click();
+  const methods = page.locator('[data-kind="methods"]');
+  await expect(methods).toContainText("Our method");
+  await page.getByRole("button", { name: "Discard what I did" }).click();
+  const discarding = page.getByRole("alertdialog", { name: "Discard what you did to the card?" });
+  await discarding.getByRole("button", { name: "Keep" }).click();
+  await expect(methods).toContainText("Our method");
+  await page.getByRole("button", { name: "Discard what I did" }).click();
+  await page.getByRole("alertdialog", { name: "Discard what you did to the card?" }).getByRole("button", { name: "Discard" }).click();
+  await expect(methods).toContainText("No method is on the card.");
+  await expect(page.getByRole("button", { name: "Discard what I did" })).toHaveCount(0);
+  expect((await cardOf(page, id)).edited).toBe(false);
+  // The button to approve has just been switched on, and its colours are not looked at while they change
+  await expect(page.getByRole("button", { name: "Approve the card" })).toBeEnabled();
+  await page.waitForTimeout(400);
+  expect(await accessibilityProblems(page)).toEqual([]);
 });
 
 test("reads the file that is uploaded beside a DOI, which is then not fetched", async ({ page }) => {

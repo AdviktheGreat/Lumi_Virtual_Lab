@@ -994,19 +994,62 @@ export interface ReadClaim extends ReadFact {
   value: string;
 }
 
-export interface ReadMethod extends ReadFact {
+// What a statement of the scope of a method may be about
+export type ScopeAspect = "species" | "tissue" | "assay" | "sample size" | "input" | "other";
+
+// Whose a fact of the method card is: what the model read, or what a person changed or added
+export type CardBy = "reading" | "person";
+
+// A fact of the method card. One that a person added has their own words, if they gave any, and no place in the paper. One that a
+// person changed keeps the paper's words and where they are, and says what it was read as.
+export interface CardFact {
+  id: string;
+  quote: string;
+  anchor: ReadAnchor | null;
+  by: CardBy;
+  // What a fact that a person changed was read as, by field. It is null for one that was added, and the server leaves it out of one
+  // that is as it was read.
+  read_as?: Record<string, string> | null;
+  // When a person changed or added it, which a fact that is as it was read does not say
+  at?: string;
+}
+
+export interface CardMethod extends CardFact {
   name: string;
 }
 
-export interface ReadDataset extends ReadFact {
+export interface CardDataset extends CardFact {
   name: string;
   accession: string;
 }
 
-export interface ReadScope extends ReadFact {
-  aspect: "species" | "tissue" | "assay" | "sample size" | "input" | "other";
+export interface CardScope extends CardFact {
+  aspect: ScopeAspect;
   value: string;
 }
+
+export type CardKind = "methods" | "datasets" | "scope" | "limitations";
+
+// What the method was done with and tested on, as it is now: what the reading made with what a person did to it put over, and
+// whether a person approved it as it is
+export interface MethodCard {
+  status: "draft" | "approved";
+  // When it was approved, which is null unless it is as it was then
+  approved_at: string | null;
+  // Whether it was approved and has changed since
+  changed_since_approval: boolean;
+  // Whether any of it is a person's
+  edited: boolean;
+  methods: CardMethod[];
+  datasets: CardDataset[];
+  scope: CardScope[];
+  limitations: CardFact[];
+  // What a person took off, which they can put back
+  removed: { methods: CardMethod[]; datasets: CardDataset[]; scope: CardScope[]; limitations: CardFact[] };
+}
+
+// What a person says of a fact of the card, by field, with the words of a fact that is their own as quote
+export type CardFields = Record<string, string>;
 
 export interface ReadSoftware extends ReadFact {
   name: string;
@@ -1057,14 +1100,8 @@ export interface PaperAgentReading {
   truncated_from: number | null;
   finished_at: string | null;
   claims: ReadClaim[];
-  // A draft of what the method was done with and tested on, which nobody has checked
-  card: {
-    status: "draft";
-    methods: ReadMethod[];
-    datasets: ReadDataset[];
-    scope: ReadScope[];
-    limitations: ReadFact[];
-  };
+  // What the method was done with and tested on: a draft until a person has approved it
+  card: MethodCard;
   resources: {
     software: ReadSoftware[];
     links: ReadLink[];
@@ -1398,13 +1435,15 @@ export interface OwnDataSummary {
   bytes: number;
 }
 
-// A dataset the paper names, with the place its accession points to, and what stands in for it
+// A dataset on the method card, which the paper names or a person put there, with the place its accession points to, and what stands in for it
 export interface DataDataset {
   key: string;
   name: string;
   accession: string;
   quote: string;
-  anchor: ReadAnchor;
+  // Where in the paper it is, which is null for a dataset that a person added
+  anchor: ReadAnchor | null;
+  by: CardBy;
   candidate: string | null;
   stand_in: DataStandIn | null;
 }

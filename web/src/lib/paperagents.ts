@@ -411,27 +411,16 @@ export interface FactGroup {
 const CLAIM_KINDS = { number: "A number", comparison: "A comparison", qualitative: "Another conclusion" } as const;
 
 // The facts of a reading in the groups they are shown in, which are only those that have some, in the order a person
-// reads them: what the authors claim, what they did and tested it on, where it falls short, and what it was done with
+// reads them: what the authors claim, and what they name. What the method was done with and tested on is the method card, which
+// a person corrects, and is not here.
 export function factGroups(reading: PaperAgentReading): FactGroup[] {
-  const { card, resources } = reading;
+  const { resources } = reading;
   const groups: FactGroup[] = [
     {
       key: "claims",
       label: "What the authors report",
       facts: reading.claims.map((fact) => ({ fact, title: fact.value || null, tag: CLAIM_KINDS[fact.kind] ?? null })),
     },
-    { key: "methods", label: "Methods", facts: card.methods.map((fact) => ({ fact, title: fact.name, tag: null })) },
-    {
-      key: "datasets",
-      label: "Data used",
-      facts: card.datasets.map((fact) => ({ fact, title: fact.name, tag: fact.accession || null })),
-    },
-    {
-      key: "scope",
-      label: "What the method was tested on",
-      facts: card.scope.map((fact) => ({ fact, title: fact.value, tag: sentence(fact.aspect) })),
-    },
-    { key: "limitations", label: "Where the authors say it falls short", facts: card.limitations.map((fact) => ({ fact, title: null, tag: null })) },
     {
       key: "software",
       label: "Software",

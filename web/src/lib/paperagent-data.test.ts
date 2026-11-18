@@ -232,7 +232,16 @@ describe("the person's own data that stands in", () => {
   });
 
   it("is, apart from the datasets the paper names, those that the paper does not name", () => {
-    const named = { key: "d1", name: "Atlas", accession: "", quote: "", anchor: { start: 0, end: 0, page: null, section: null }, candidate: null, stand_in: null };
+    const named = {
+      key: "d1",
+      name: "Atlas",
+      accession: "",
+      quote: "",
+      anchor: { start: 0, end: 0, page: null, section: null },
+      by: "reading" as const,
+      candidate: null,
+      stand_in: null,
+    };
     const found = data({ datasets: [named], stand_ins: [standIn("d1", true), standIn("name:other", true)] });
 
     expect(otherStandIns(found).map((item) => item.key)).toEqual(["name:other"]);

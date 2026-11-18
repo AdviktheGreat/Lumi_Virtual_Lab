@@ -8,6 +8,8 @@ import type {
   ChatSummary,
   Campaign,
   CampaignChange,
+  CardFields,
+  CardKind,
   CheckedToolDetail,
   DataLake,
   DataListing,
@@ -595,6 +597,20 @@ export const api = {
   clearPaperAgentChecks: (id: string) => request<PaperAgentChecks>("DELETE", `/paperagents/${encodeURIComponent(id)}/checks`),
   paperAgentToolChecks: (id: string, name: string, signal?: AbortSignal) =>
     request<CheckedToolDetail>("GET", `/paperagents/${encodeURIComponent(id)}/checks/${encodeURIComponent(name)}`, undefined, signal),
+  // What a person does to the method card, each giving back the reading as it is then: adding a fact, changing one, taking one
+  // off and putting it back, approving the card and taking the approval back, and taking away all that they changed
+  addPaperAgentCardFact: (id: string, kind: CardKind, fields: CardFields) =>
+    request<PaperAgentReading>("POST", `/paperagents/${encodeURIComponent(id)}/card/facts`, { kind, fields }),
+  changePaperAgentCardFact: (id: string, fact: string, fields: CardFields) =>
+    request<PaperAgentReading>("PUT", `/paperagents/${encodeURIComponent(id)}/card/facts/${encodeURIComponent(fact)}`, { fields }),
+  removePaperAgentCardFact: (id: string, fact: string) =>
+    request<PaperAgentReading>("DELETE", `/paperagents/${encodeURIComponent(id)}/card/facts/${encodeURIComponent(fact)}`),
+  restorePaperAgentCardFact: (id: string, fact: string) =>
+    request<PaperAgentReading>("POST", `/paperagents/${encodeURIComponent(id)}/card/facts/${encodeURIComponent(fact)}/restore`),
+  approvePaperAgentCard: (id: string) => request<PaperAgentReading>("POST", `/paperagents/${encodeURIComponent(id)}/card/approval`),
+  withdrawPaperAgentCardApproval: (id: string) =>
+    request<PaperAgentReading>("DELETE", `/paperagents/${encodeURIComponent(id)}/card/approval`),
+  discardPaperAgentCardEdits: (id: string) => request<PaperAgentReading>("DELETE", `/paperagents/${encodeURIComponent(id)}/card/edits`),
   paperAgentPassage: (id: string, start: number, end: number, signal?: AbortSignal) =>
     request<PaperAgentPassage>("GET", `/paperagents/${encodeURIComponent(id)}/passage?start=${start}&end=${end}`, undefined, signal),
   chats: async (signal?: AbortSignal) => (await request<{ chats: ChatSummary[] }>("GET", "/chats", undefined, signal)).chats,
