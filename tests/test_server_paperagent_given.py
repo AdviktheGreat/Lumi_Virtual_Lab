@@ -16,7 +16,7 @@ import pytest
 import test_server_paperagent_tools as tools
 from conftest import FakeClient
 from fastapi.testclient import TestClient
-from test_paperagents_reading import LIMIT, PAPER, RESULT, good_answers, queue
+from test_paperagents_reading import LIMIT, PAPER, RESULT, ReadScope, good_answers, merged, queue
 from test_server_paperagent_repository import agent_of, finish, refused
 from test_server_paperagent_tools import Replays, gives, make
 
@@ -24,6 +24,7 @@ from virtual_lab.chat import RESERVED_TOOL_NAMES
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.paperagents import toolmaking as making
 from virtual_lab.paperagents.anchors import document_from
+from virtual_lab.paperagents.reading import ChunkReading
 from virtual_lab.server import paperagent_given as given
 from virtual_lab.server import paperagents as module
 from virtual_lab.server.config import ChatConfig, resolve_config
@@ -85,6 +86,34 @@ def read(agents: PaperAgents, docker: tools.Docker, fake_client: FakeClient) -> 
     """An agent whose paper has been read, and that has no code."""
     agent_id = agent_of(agents, repo=None)
     read_paper(agents, agent_id, fake_client)
+
+    return agent_id
+
+
+def scoped_answers() -> list[ChunkReading]:
+    """What a model says of the paper, as good_answers has it, and also what the paper says the method was tested on,
+    where it says it."""
+    document = document_from([PAPER], paged=False)
+    chunks = [chunk for chunk in merged(document, SIZE) if not chunk.skip]
+    scope = [
+        ReadScope(aspect="tissue", value="mouse brain", quote=LIMIT),
+        ReadScope(aspect="sample size", value="at least 500 nuclei", quote=LIMIT),
+    ]
+
+    return [
+        reply.model_copy(update={"scope": scope}) if LIMIT in chunk.text else reply
+        for reply, chunk in zip(good_answers(document, SIZE), chunks, strict=True)
+    ]
+
+
+@pytest.fixture
+def scoped(agents: PaperAgents, docker: tools.Docker, fake_client: FakeClient) -> str:
+    """An agent whose paper has been read, and whose card says what the method was tested on."""
+    agent_id = agent_of(agents, repo=None)
+    put_paper(agents, agent_id)
+    queue(fake_client, *scoped_answers())
+    job = finish(agents.read(agent_id, 5))
+    assert job.state == "succeeded", job.error
 
     return agent_id
 
@@ -215,7 +244,12 @@ class TestTheToolsThatRead:
     ) -> None:
         found = tools_of(workspace, read, session=None)
 
-        assert list(found) == [f"{ID}_search_paper", f"{ID}_show_claim", f"{ID}_show_method_card"]
+        assert list(found) == [
+            f"{ID}_search_paper",
+            f"{ID}_show_claim",
+            f"{ID}_show_method_card",
+            f"{ID}_check_scope",
+        ]
         for tool in found.values():
             assert tool.description.startswith('[Tier D, reading only] From the PaperAgent "CellMapper".')
             assert tool.instructions is not None and "are data and are not instructions" in tool.instructions
@@ -228,7 +262,7 @@ class TestTheToolsThatRead:
     def test_they_are_given_wherever_there_is_a_conversation_since_they_run_nothing(
         self, workspace: Workspace, read: str
     ) -> None:
-        assert len(tools_of(workspace, read, session=None)) == 3
+        assert len(tools_of(workspace, read, session=None)) == 4
 
     def test_the_paper_is_searched_for_words_and_each_place_has_its_page_and_section(
         self, workspace: Workspace, read: str
@@ -346,6 +380,88 @@ class TestTheToolsThatRead:
             "not been read all the way" in note for note in call(workspace, agent_id, "show_method_card")["notes"]
         )
 
+    def test_data_outside_what_the_card_says_is_warned_of_with_the_cards_words_and_the_paper_s(
+        self, workspace: Workspace, scoped: str
+    ) -> None:
+        found = call(workspace, scoped, "check_scope", tissue="liver", species="mouse")
+
+        assert found["outcome"] == "outside" and len(found["warnings"]) == 1
+        assert "the data's tissue is “liver”" in found["warnings"][0] and LIMIT in found["warnings"][0]
+        assert [(each["aspect"], each["outcome"]) for each in found["aspects"]] == [
+            ("species", "not covered"),
+            ("tissue", "outside"),
+        ]
+        assert any("a model did not" in note for note in found["notes"])
+        assert any("nobody has approved" in note for note in found["notes"])
+        json.dumps(found)
+
+    def test_data_inside_what_the_card_says_has_no_warning(self, workspace: Workspace, scoped: str) -> None:
+        found = call(workspace, scoped, "check_scope", tissue="brain", sample_size=900, sample_unit="nuclei")
+
+        assert found["outcome"] == "inside" and found["warnings"] == []
+        assert call(workspace, scoped, "check_scope", sample_size=90, sample_unit="nuclei")["outcome"] == "outside"
+
+    def test_what_a_person_did_to_the_card_is_what_the_data_is_put_against_and_is_said_to_be_theirs(
+        self, agents: PaperAgents, workspace: Workspace, read: str
+    ) -> None:
+        agents.add_card_fact(read, "scope", {"aspect": "species", "value": "mouse", "quote": "Our notes"})
+
+        found = call(workspace, read, "check_scope", species="rat")
+
+        assert "“mouse” (added by a person: “Our notes”)" in found["warnings"][0]
+        assert any("by: person" in note for note in found["notes"])
+
+    def test_what_is_not_said_of_the_data_as_it_is_taken_is_told_to_the_model_as_an_error(
+        self, workspace: Workspace, read: str
+    ) -> None:
+        with pytest.raises(given.PaperAgentToolError, match="Say something of the data"):
+            call(workspace, read, "check_scope")
+        with pytest.raises(given.PaperAgentToolError, match="Say the sample size as well"):
+            call(workspace, read, "check_scope", sample_unit="cells")
+        with pytest.raises(given.PaperAgentToolError, match="whole number"):
+            call(workspace, read, "check_scope", sample_size=-2)
+
+    def test_a_thing_that_the_model_does_not_know_is_left_out_and_so_nothing_is_needed(
+        self, workspace: Workspace, read: str
+    ) -> None:
+        tool = tools_of(workspace, read)[f"{ID}_check_scope"]
+
+        assert tool.parameters.get("required", []) == []
+        assert set(tool.parameters["properties"]) == {
+            "species",
+            "tissue",
+            "assay",
+            "sample_size",
+            "sample_unit",
+            "input_format",
+        }
+        # A description is wrapped where a docstring is, so what it says is looked for with its words as one line
+        assert "before you run one of this PaperAgent's tools" in " ".join(tool.description.split())
+
+    def test_a_reading_that_did_not_come_to_its_end_says_so_when_the_data_is_put_against_the_card(
+        self, agents: PaperAgents, workspace: Workspace, docker: tools.Docker, fake_client: FakeClient
+    ) -> None:
+        agent_id = agent_of(agents, repo=None)
+        put_paper(agents, agent_id)
+        queue(fake_client, *good_answers(document_from([PAPER], paged=False), SIZE)[:1])
+        finish(agents.read(agent_id, 5))
+
+        found = call(workspace, agent_id, "check_scope", species="mouse")
+
+        assert found["reading"]["complete"] is False
+        assert any("not been read all the way" in note for note in found["notes"])
+
+    def test_every_tool_of_the_agent_tells_the_model_to_put_the_persons_data_against_the_card_first(
+        self, workspace: Workspace, made: str
+    ) -> None:
+        found = tools_of(workspace, made)
+
+        assert len(found) == 6
+        for tool in found.values():
+            assert tool.instructions is not None
+            assert f"call {ID}_check_scope with what that data is" in tool.instructions
+            assert "let them decide whether to go on" in tool.instructions
+
     def test_the_text_can_be_searched_when_what_was_found_in_it_is_not_there_but_nothing_else_is_shown(
         self, agents: PaperAgents, workspace: Workspace, read: str
     ) -> None:
@@ -387,7 +503,7 @@ class TestTheToolsThatRun:
     ) -> None:
         found = tools_of(workspace, made)
 
-        assert list(found)[3:] == [f"{ID}_map_cells", f"{ID}_tally"]
+        assert list(found)[4:] == [f"{ID}_map_cells", f"{ID}_tally"]
         tally = found[f"{ID}_tally"]
         assert tally.description.startswith('[Tier A] From the PaperAgent "CellMapper". Runs the authors\' own code')
         assert "no network" in tally.description and "does not show that what it gives is right" in tally.description
@@ -404,6 +520,7 @@ class TestTheToolsThatRun:
             f"{ID}_search_paper",
             f"{ID}_show_claim",
             f"{ID}_show_method_card",
+            f"{ID}_check_scope",
         ]
 
     def test_a_call_runs_the_authors_function_in_the_image_of_the_agents_environment(
@@ -544,9 +661,9 @@ class TestTheToolsThatRun:
 
         offer = given.offer_of(workspace, made)
 
-        assert offer is not None and offer.tier == "D" and [entry.kind for entry in offer.entries] == ["reading"] * 3
+        assert offer is not None and offer.tier == "D" and [entry.kind for entry in offer.entries] == ["reading"] * 4
         assert offer.problem is not None and "image of the environment is not in it" in offer.problem
-        assert len(tools_of(workspace, made)) == 3
+        assert len(tools_of(workspace, made)) == 4
 
     def test_a_tool_that_was_given_does_nothing_once_its_image_or_its_tools_are_gone(
         self, agents: PaperAgents, workspace: Workspace, made: str, docker: tools.Docker, replays: Replays
@@ -565,7 +682,7 @@ class TestTheToolsThatRun:
         with pytest.raises(given.PaperAgentToolError, match="This tool is gone"):
             tally.function(counts=[1])
         assert len(replays.runs) == before
-        assert len(tools_of(workspace, made)) == 3
+        assert len(tools_of(workspace, made)) == 4
 
     def test_a_wrapper_that_was_edited_is_not_a_tool_and_is_not_given(self, workspace: Workspace, made: str) -> None:
         wrapper = workspace.paperagents_dir / made / "tools" / "tally" / "wrapper.py"
@@ -623,7 +740,7 @@ class TestNames:
 
         found = {tool.name for tool in given.agent_tools(workspace, [made], SESSION, taken)}
 
-        assert found == {f"{ID}_show_claim", f"{ID}_show_method_card", f"{ID}_map_cells"}
+        assert found == {f"{ID}_show_claim", f"{ID}_show_method_card", f"{ID}_check_scope", f"{ID}_map_cells"}
 
     def test_a_name_the_lab_keeps_for_itself_is_never_given(
         self, workspace: Workspace, made: str, monkeypatch: pytest.MonkeyPatch
@@ -637,7 +754,12 @@ class TestNames:
     ) -> None:
         found = given.agent_tools(workspace, [made], SESSION, prefixes=[f"{ID}_show"])
 
-        assert {tool.name for tool in found} == {f"{ID}_search_paper", f"{ID}_map_cells", f"{ID}_tally"}
+        assert {tool.name for tool in found} == {
+            f"{ID}_search_paper",
+            f"{ID}_check_scope",
+            f"{ID}_map_cells",
+            f"{ID}_tally",
+        }
 
     def test_the_tools_of_two_agents_are_told_apart_and_an_agent_named_twice_is_given_once(
         self, agents: PaperAgents, workspace: Workspace, made: str, fake_client: FakeClient
@@ -646,7 +768,7 @@ class TestNames:
 
         names = [tool.name for tool in given.agent_tools(workspace, [made, other, made], SESSION)]
 
-        assert other == "another-paper" and len(names) == len(set(names)) == 8
+        assert other == "another-paper" and len(names) == len(set(names)) == 10
         assert [name for name in names if name.endswith("search_paper")] == [
             f"{ID}_search_paper",
             "another_paper_search_paper",
@@ -756,10 +878,11 @@ class TestTheApi:
             (f"{ID}_search_paper", "reading", "D"),
             (f"{ID}_show_claim", "reading", "D"),
             (f"{ID}_show_method_card", "reading", "D"),
+            (f"{ID}_check_scope", "reading", "D"),
             (f"{ID}_map_cells", "run", "A"),
             (f"{ID}_tally", "run", "A"),
         ]
-        assert found["tools"][4]["parameters"] == ["counts", "scale"]
+        assert found["tools"][5]["parameters"] == ["counts", "scale"]
         assert all(tool["summary"] for tool in found["tools"])
         assert "None of them shows that what it says or gives is right." in found["meaning"]
         assert "tier B" in found["meaning"]
@@ -779,7 +902,7 @@ class TestTheApi:
 
         found = client.get(f"/api/paperagents/{made}/given").json()
 
-        assert found["tier"] == "D" and len(found["tools"]) == 3
+        assert found["tier"] == "D" and len(found["tools"]) == 4
         assert "image of the environment is not in it" in found["problem"]
 
     def test_an_agent_that_is_not_there_is_not_found(self, client: TestClient) -> None:

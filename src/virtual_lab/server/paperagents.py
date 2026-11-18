@@ -67,7 +67,7 @@ import shutil
 import tempfile
 import threading
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -1068,6 +1068,26 @@ class PaperAgents:
             "job": job.snapshot() if job is not None else None,
             **kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with()),
         }
+
+    def check_scope(self, agent_id: str, described: Mapping[str, Any]) -> dict[str, Any]:
+        """Puts what a person's data is against what the method card of an agent's paper says the method was used on:
+        for each thing said of the data, whether it is inside, outside, or not covered, and for those that are
+        outside, a warning with the card's words and the paper's. It does not stop anything: a person may go on.
+
+        :param described: What is said of the data: its species, tissue, assay, input format, and its sample size with
+            what that counts. At least one.
+        :raises ApiError: If there is no agent with this id, or nothing is said of the data, or a thing is not said as
+            it is taken.
+        """
+        directory, agent = self.lookup(agent_id)
+        file = agent["paper"].get("file")
+        found = kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with())
+        try:
+            result = kept_reading.scope_check(found, described)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+
+        return {"id": agent_id, **result}
 
     def passage(self, agent_id: str, start: Any, end: Any) -> dict[str, Any]:
         """The words of the paper at a place, with some of what is around them.

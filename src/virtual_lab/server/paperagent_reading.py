@@ -18,10 +18,12 @@ import json
 import math
 import re
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from virtual_lab.paperagents import card as method_card
+from virtual_lab.paperagents import scope
 from virtual_lab.paperagents.anchors import Document, document_of
 from virtual_lab.paperagents.reading import assemble, reading_of
 from virtual_lab.provenance import utc_timestamp
@@ -46,6 +48,13 @@ SCHEMA = 1
 # How much of the paper is given around a quote, and the most of it that a page may ask for
 PASSAGE_CONTEXT = 400
 MAX_PASSAGE_CHARS = 5000
+
+# What is said with every check of data against the card, so that what it says is not taken for more
+SCOPE_NOTE = (
+    "A program compared the words and the numbers, and a model did not. Inside means that the card says the method "
+    "was used on data like this, which is not that the method works on it. Outside means that the card does not say "
+    "so, which is not that the method fails on it."
+)
 
 # How a search of the paper goes: how long a question may be, how many places it may ask for, and how long a place is
 MAX_QUERY_CHARS = 300
@@ -262,6 +271,36 @@ def describe(directory: Path, file_sha256: str | None, expected: dict[str, Any] 
         "claims": files["claims"]["claims"],
         "card": card,
         "resources": {key: value for key, value in files["resources"].items() if key != "schema"},
+    }
+
+
+def how_far(found: Mapping[str, Any]) -> dict[str, Any]:
+    """How much of the paper has been read, which what is said of it must be taken with."""
+    return {"complete": found["complete"], "chunks": found["chunks"], "read": found["read"], "failed": found["failed"]}
+
+
+def scope_check(found: Mapping[str, Any], described: Mapping[str, Any]) -> dict[str, Any]:
+    """Puts what a person's data is against what the card of a paper says the method was used on, as scope.check does,
+    with how far the card is to be trusted: whether it is a draft or a person approved it, and how far the paper was
+    read.
+
+    :param found: What has been read of the paper, as describe gives it.
+    :param described: What is said of the data, as scope.clean takes it.
+    :raises ValueError: If what is said of the data is not as scope.clean takes it.
+    """
+    card = found["card"]
+
+    return {
+        **scope.check(card["scope"], described),
+        "card": {
+            "status": card["status"],
+            "approved_at": card["approved_at"],
+            "changed_since_approval": card["changed_since_approval"],
+            "edited": card["edited"],
+            "scope_facts": len(card["scope"]),
+        },
+        "reading": how_far(found),
+        "notes": [SCOPE_NOTE],
     }
 
 

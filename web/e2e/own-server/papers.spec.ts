@@ -3303,9 +3303,9 @@ test("gives an agent to conversations, shows what a conversation is given of it 
   await expect(giveBox(page)).not.toBeChecked();
   await expect(givenSummary(page)).toContainText("Tier A: runs the authors' code");
   await expect(givenSummary(page)).toContainText("Not given to conversations.");
-  await expect(givenSummary(page)).toContainText("3 tools that read the paper and 1 that runs its code.");
-  await expect(givenTools(page)).toHaveCount(4);
-  for (const name of ["search_paper", "show_claim", "show_method_card"]) {
+  await expect(givenSummary(page)).toContainText("4 tools that read the paper and 1 that runs its code.");
+  await expect(givenTools(page)).toHaveCount(5);
+  for (const name of ["search_paper", "show_claim", "show_method_card", "check_scope"]) {
     const tool = inConversations(page).locator(`[data-testid=given-tool][data-name=${prefix}${name}]`);
     await expect(tool).toHaveAttribute("data-kind", "reading");
     await expect(tool).toContainText("Tier D");
@@ -3333,12 +3333,14 @@ test("gives an agent to conversations, shows what a conversation is given of it 
   await expect(givenSummary(page)).toContainText("Given to the conversations that you start from now on.");
   expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).given).toBe(true);
   expect((await offeredIn(page, "local")).filter((name) => name.startsWith(prefix))).toEqual([
+    `${prefix}check_scope`,
     `${prefix}scale`,
     `${prefix}search_paper`,
     `${prefix}show_claim`,
     `${prefix}show_method_card`,
   ]);
   expect((await offeredIn(page, "nowhere")).filter((name) => name.startsWith(prefix))).toEqual([
+    `${prefix}check_scope`,
     `${prefix}search_paper`,
     `${prefix}show_claim`,
     `${prefix}show_method_card`,
@@ -3352,10 +3354,11 @@ test("gives an agent to conversations, shows what a conversation is given of it 
   await openAgent(page, id, "Given cells");
   expect((await page.request.delete(`/api/paperagents/${id}/tools`)).status()).toBe(200);
   await page.reload();
-  await expect(givenTools(page)).toHaveCount(3);
+  await expect(givenTools(page)).toHaveCount(4);
   await expect(page.getByTestId("given-why")).toContainText("It has no tool that runs. Tools that run are made of what the tutorials did, under Tools.");
   await expect(givenSummary(page)).toContainText("Tier D: reads the paper");
   expect((await offeredIn(page, "local")).filter((name) => name.startsWith(prefix))).toEqual([
+    `${prefix}check_scope`,
     `${prefix}search_paper`,
     `${prefix}show_claim`,
     `${prefix}show_method_card`,
