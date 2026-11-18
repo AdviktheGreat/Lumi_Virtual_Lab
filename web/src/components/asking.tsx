@@ -146,7 +146,8 @@ export function ApprovalCard({ approval }: { approval: Approval }) {
           )}
           <p className="text-sm text-muted-foreground">
             This is a warning, and it does not stop you: you can go on. It does not mean that the tool will fail on this data, only that the card does not
-            say it was used on data like this. If you go on, the run says that you did.
+            say it was used on data like this. If you go on, the run says that you did, and so do the runs of this agent&apos;s other tools on the same
+            data, which you are not asked about again unless the data or the card&apos;s words change.
           </p>
           {shown !== "" && shown !== "{}" && (
             <div className="flex flex-col gap-1">

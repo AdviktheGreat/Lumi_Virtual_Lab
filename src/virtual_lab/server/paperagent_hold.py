@@ -13,7 +13,10 @@ tool that runs is called, what was said is put against the card as it is then, a
   answered, the tool does not run, and the lead is told.
 
 A warning does not block: the person can always go on. What is held is the run, until they have said. They are asked
-once for the same data against the same words on the card, and again if either changes. The lead is not taken to know
+once for the same data against the same words on the card, and again if either changes, including while they are asked:
+once they have answered, the data and the card are looked at again, and the run is made only on what they went on with.
+A go-on is for the agent's tools, and not for the one that was asked about, so a second tool is run on the same data
+without asking, and says that they went on. The lead is not taken to know
 that a tool is run on the person's data and not on the authors' own, so a run that was not checked is only said to be.
 """
 
@@ -39,6 +42,11 @@ CHECKED_NOTE = (
     "The data that was described to check_scope was put against the method card as it is now. Inside is not that the "
     "tool works on it, and outside is not that it fails."
 )
+
+
+# How many times one run asks the person, before it is given up since what the lead says the data is, or what the card
+# says, keeps changing while they are asked
+MOST_QUESTIONS = 3
 
 
 class NotRun(RuntimeError):
@@ -137,27 +145,44 @@ class Hold:
         :param compare: Puts what was said against the card as it is now.
         :param check_tool: The name of the tool that says what the data is, if the agent has one, for what the lead is
             told if it did not.
-        :raises NotRun: If the run is held and the person did not go on, or could not be asked.
+        :raises NotRun: If the run is held and the person did not go on, or could not be asked, or what was said of the
+            data kept changing while they were asked.
         :return: What the run says of the data.
         """
-        with self._lock:
-            said = self._said.get(agent_id)
-            asking = self._asking.setdefault(agent_id, threading.Lock())
-        if said is None:
-            return unchecked(check_tool)
-        try:
-            result = compare(said.described)
-        except ValueError as error:
-            raise NotRun(f"What was said of the data could not be put against the card: {error}") from None
-        if result["outcome"] != scope.OUTSIDE:
-            return record_of(result)
-        key = key_of(said.described, result["warnings"])
-        # One question at a time for an agent, so that calls that are made together ask once
-        with asking:
-            if said.went_on != key:
-                self._go_on(said, key, ScopeHold(agent_id, title, tool, dict(arguments), tuple(result["warnings"])))
-
-        return record_of(result, said.went_on_at)
+        questions = 0
+        while True:
+            with self._lock:
+                said = self._said.get(agent_id)
+                asking = self._asking.setdefault(agent_id, threading.Lock())
+            if said is None:
+                return unchecked(check_tool)
+            try:
+                result = compare(said.described)
+            except ValueError as error:
+                raise NotRun(f"What was said of the data could not be put against the card: {error}") from None
+            if result["outcome"] != scope.OUTSIDE:
+                return record_of(result)
+            key = key_of(said.described, result["warnings"])
+            if said.went_on == key:
+                return record_of(result, said.went_on_at)
+            # One question at a time for an agent, so that calls that are made together ask once
+            with asking:
+                with self._lock:
+                    current = self._said.get(agent_id) is said
+                # What was said of the data has changed since it was read, and the person is asked of what it is now
+                if not current:
+                    continue
+                if said.went_on != key:
+                    if questions == MOST_QUESTIONS:
+                        raise NotRun(
+                            f"{tool} was not run: what was said of the data, or what the card says, changed while the "
+                            "person was asked whether to go on. Put the data against the card again, and run it once "
+                            "that is settled."
+                        )
+                    questions += 1
+                    self._go_on(said, key, ScopeHold(agent_id, title, tool, dict(arguments), tuple(result["warnings"])))
+            # The person's answer is of the data and the words that they were shown, so what the data is and what the
+            # card says are looked at again, and the run is made only on what they went on with
 
     def _go_on(self, said: Said, key: str, hold: ScopeHold) -> None:
         if self._ask is None:

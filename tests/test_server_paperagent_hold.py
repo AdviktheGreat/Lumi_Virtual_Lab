@@ -111,6 +111,15 @@ class Card:
         return self.found
 
 
+def by_tissue(described: Any) -> dict[str, Any]:
+    """Puts data against a card that has every tissue outside, with the tissue in the warning."""
+    tissue = described["tissue"]
+    found = result(warnings=(f"{tissue} is outside.",))
+    found["aspects"][0]["given"] = tissue
+
+    return found
+
+
 def before(hold: Hold, card: Card, agent: str = "cell", **changes: Any) -> dict[str, Any]:
     given_ = {"agent": agent, "title": "Cell", "tool": "cell_tally", "arguments": {"counts": [1]}, **changes}
 
@@ -273,6 +282,183 @@ class TestTheHoldOnItsOwn:
 
         assert len(asked) == 1 and len(found) == 3
         assert all(each["person_went_on"] is True for each in found)
+
+    def test_data_that_the_lead_says_while_the_person_is_asked_is_not_run_on_their_go_on_and_they_are_asked_of_it(
+        self,
+    ) -> None:
+        release, asking = threading.Event(), threading.Event()
+        asked: list[ScopeHold] = []
+
+        def person(hold: ScopeHold) -> bool:
+            asked.append(hold)
+            if len(asked) == 1:
+                asking.set()
+                assert release.wait(10)
+
+            return True
+
+        hold = Hold(person)
+        hold.remember("cell", {**DESCRIBED, "tissue": "liver"})
+        found: list[dict[str, Any]] = []
+        thread = threading.Thread(target=lambda: found.append(before(hold, by_tissue)))
+        thread.start()
+        assert asking.wait(10)
+        hold.remember("cell", {**DESCRIBED, "tissue": "kidney"})
+        release.set()
+        thread.join(10)
+
+        assert [each.warnings for each in asked] == [("liver is outside.",), ("kidney is outside.",)]
+        (said,) = found
+        assert said["of"][0]["given"] == "kidney" and said["warnings"] == ["kidney is outside."]
+        assert said["person_went_on"] is True
+
+    def test_data_that_the_lead_says_while_the_person_is_asked_is_not_run_if_they_do_not_go_on_with_it(self) -> None:
+        release, asking = threading.Event(), threading.Event()
+        answers = iter([True, False])
+
+        def person(hold: ScopeHold) -> bool:
+            if "liver" in hold.warnings[0]:
+                asking.set()
+                assert release.wait(10)
+
+            return next(answers)
+
+        hold = Hold(person)
+        hold.remember("cell", {**DESCRIBED, "tissue": "liver"})
+        raised: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                before(hold, by_tissue)
+            except NotRun as error:
+                raised.append(error)
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        assert asking.wait(10)
+        hold.remember("cell", {**DESCRIBED, "tissue": "kidney"})
+        release.set()
+        thread.join(10)
+
+        assert len(raised) == 1 and "chose not to go on" in str(raised[0])
+
+    def test_a_call_that_waits_to_ask_is_not_asked_of_data_that_has_changed_since_it_read_it(self) -> None:
+        release, asking, waiting = threading.Event(), threading.Event(), threading.Event()
+        asked: list[ScopeHold] = []
+        compared: list[int] = []
+
+        def person(hold: ScopeHold) -> bool:
+            asked.append(hold)
+            if len(asked) == 1:
+                asking.set()
+                assert release.wait(10)
+
+            return len(asked) > 1
+
+        def compare(described: Any) -> dict[str, Any]:
+            compared.append(1)
+            if len(compared) == 2:
+                waiting.set()
+
+            return by_tissue(described)
+
+        hold = Hold(person)
+        hold.remember("cell", {**DESCRIBED, "tissue": "liver"})
+        found: list[dict[str, Any]] = []
+        refused: list[BaseException] = []
+
+        def run(each: list[Any]) -> None:
+            try:
+                each.append(before(hold, compare))
+            except NotRun as error:
+                refused.append(error)
+
+        first = threading.Thread(target=run, args=(found,))
+        first.start()
+        assert asking.wait(10)
+        second = threading.Thread(target=run, args=(found,))
+        second.start()
+        assert waiting.wait(10)
+        hold.remember("cell", {**DESCRIBED, "tissue": "kidney"})
+        release.set()
+        first.join(10)
+        second.join(10)
+
+        assert [each.warnings for each in asked] == [("liver is outside.",), ("kidney is outside.",)]
+        assert len(refused) == 1 and "chose not to go on" in str(refused[0])
+        assert len(found) == 1 and found[0]["of"][0]["given"] == "kidney"
+
+    def test_a_card_that_changes_while_the_person_is_asked_is_put_against_the_data_again_and_they_are_asked_again(
+        self,
+    ) -> None:
+        card, asked = Card(), []
+
+        def person(hold: ScopeHold) -> bool:
+            asked.append(hold)
+            if len(asked) == 1:
+                card.found = result(warnings=("The card now says something else.",))
+
+            return True
+
+        hold = Hold(person)
+        hold.remember("cell", DESCRIBED)
+
+        said = before(hold, card)
+
+        assert [each.warnings for each in asked] == [
+            ("The tissue is outside.",),
+            ("The card now says something else.",),
+        ]
+        assert said["warnings"] == ["The card now says something else."]
+
+    def test_a_card_that_changes_to_say_the_data_is_inside_while_the_person_is_asked_needs_no_answer_to_the_change(
+        self,
+    ) -> None:
+        card, asked = Card(), []
+
+        def person(hold: ScopeHold) -> bool:
+            asked.append(hold)
+            card.found = result("inside", ())
+
+            return True
+
+        hold = Hold(person)
+        hold.remember("cell", DESCRIBED)
+
+        said = before(hold, card)
+
+        assert len(asked) == 1 and said["outcome"] == "inside" and "person_went_on" not in said
+
+    def test_data_that_keeps_changing_while_the_person_is_asked_is_not_run_and_the_lead_is_told_why(self) -> None:
+        asked: list[ScopeHold] = []
+        hold = Hold(
+            lambda held: asked.append(held) or hold.remember("cell", {**DESCRIBED, "tissue": str(len(asked))}) or True
+        )
+        hold.remember("cell", {**DESCRIBED, "tissue": "liver"})
+
+        with pytest.raises(NotRun, match="changed while the person was asked"):
+            before(hold, by_tissue)
+
+        assert len(asked) == holding.MOST_QUESTIONS
+
+    def test_a_run_may_ask_the_most_times_and_is_made_if_the_last_answer_is_of_what_stands(self) -> None:
+        card, asked = Card(), []
+
+        def person(hold: ScopeHold) -> bool:
+            asked.append(hold)
+            if len(asked) < holding.MOST_QUESTIONS:
+                card.found = result(warnings=(f"The card now says {len(asked)}.",))
+
+            return True
+
+        hold = Hold(person)
+        hold.remember("cell", DESCRIBED)
+
+        said = before(hold, card)
+
+        assert len(asked) == holding.MOST_QUESTIONS
+        assert said["warnings"] == [f"The card now says {holding.MOST_QUESTIONS - 1}."]
+        assert said["person_went_on"] is True
 
     def test_what_is_asked_is_the_data_and_the_words_and_not_what_the_person_could_not_have_seen(self) -> None:
         assert holding.key_of(DESCRIBED, ["a"]) == holding.key_of(dict(reversed(list(DESCRIBED.items()))), ["a"])

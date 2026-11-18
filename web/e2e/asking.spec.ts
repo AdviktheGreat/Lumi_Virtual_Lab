@@ -153,7 +153,8 @@ test.describe("a run on data that is outside what the method card says", () => {
     await expect(words.nth(1)).toHaveText(SCOPE_WARNINGS[1]);
     await expect(card).toContainText("does not stop you: you can go on");
     await expect(card).toContainText("does not mean that the tool will fail on this data");
-    await expect(card).toContainText("the run says that you did");
+    await expect(card).toContainText("the run says that you did, and so do the runs of this agent's other tools on the same data");
+    await expect(card).toContainText("unless the data or the card's words change");
     await expect(card).toContainText("It is to be run with");
     await expect(card.getByRole("code")).toContainText('"scale": 2');
     await expect(card.getByRole("button", { name: "Go on", exact: true })).toBeEnabled();
@@ -208,7 +209,8 @@ test.describe("a run on data that is outside what the method card says", () => {
     await expect(cards.nth(2)).toHaveAttribute("data-state", "withdrawn");
     await expect(cards.nth(2)).toContainText("Not answered, so not run");
     await expect(page.getByRole("button", { name: "Go on", exact: true })).toHaveCount(0);
-    await expect(page.getByText("Allowed")).toHaveCount(0);
+    // The chats in the sidebar are named after their tests, so what is looked at is the cards
+    await expect(cards.getByText("Allowed")).toHaveCount(0);
   });
 
   test("is asked next to a call that waits to be allowed, each answered for itself", async ({ page }) => {
