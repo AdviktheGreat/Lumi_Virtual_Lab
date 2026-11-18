@@ -276,7 +276,7 @@ _AFTER_PHRASES = (
 # A longer phrase is looked for before a shorter one that ends it, as "no more than" is before "more than"
 _BEFORE = sorted(_BEFORE_PHRASES, key=lambda phrase: -len(phrase[0]))
 _AFTER = sorted(_AFTER_PHRASES, key=lambda phrase: -len(phrase[0]))
-_JOINERS = frozenset({"to", "-", "and", "through", "or"})
+_JOINERS = frozenset({"to", "-", "through"})
 _NOT_UNITS = frozenset({"or", "and", "to", "of", "per", "each", "from", "in", "at", "with", "more", "fewer", "less"})
 
 
@@ -308,7 +308,9 @@ def size_of(text: str) -> Size | None:
     unit = unit_of(said[numbers[-1].end() :])
     if len(numbers) == 2:
         between = said[numbers[0].end() : numbers[1].start()].strip()
-        if between not in _JOINERS:
+        # "and" is a range only as in "between 3 and 5": "10 and 20 donors" is two sizes, and so is "5 or 10"
+        said_between = " ".join(said[: numbers[0].start()].split()).endswith("between")
+        if between not in _JOINERS and not (between == "and" and said_between):
             return None
         first, second = sorted((value(numbers[0]), value(numbers[1])))
 
@@ -441,26 +443,32 @@ def compare_words(words: str, facts: Sequence[Mapping[str, Any]]) -> tuple[str, 
     covering: list[Mapping[str, Any]] = []
     comparable: list[Mapping[str, Any]] = []
     unclear: list[Mapping[str, Any]] = []
+    anything: list[Mapping[str, Any]] = []
+    named: set[str] = set()
     for fact in facts:
         found = set(tokens(fact["value"]))
         if is_negated(fact["value"]) or not found:
             unclear.append(fact)
+            named |= found
             continue
         if is_wildcard(found):
-            return INSIDE, [fact], "A statement on the card says it is of any."
+            anything.append(fact)
+            continue
         comparable.append(fact)
         union |= found
         if found & wanted:
             covering.append(fact)
-    if wanted <= union:
-        return INSIDE, covering, "Statements on the card name it."
-    missing = wanted - union
-    if any(set(tokens(fact["value"])) & missing for fact in unclear):
+    # Said before anything else covers it, since a statement of "any" does not cover what another one rules out
+    if wanted & named:
         return (
             NOT_COVERED,
             list(facts),
             "A statement on the card says what it was not, in words that a program cannot compare.",
         )
+    if anything:
+        return INSIDE, anything, "A statement on the card says it is of any."
+    if wanted <= union:
+        return INSIDE, covering, "Statements on the card name it."
     if not comparable:
         return NOT_COVERED, list(unclear), "The card says nothing of this that a program can compare."
 
@@ -474,17 +482,20 @@ def compare_size(
 
     A statement that is a range, or that is open at one end, is compared with it. A statement that is one number says
     what was used and not a range, so it covers a size only if that is the size, and is not compared otherwise. What
-    is counted is compared as the words say it, and a size of one kind is not put against a range of another.
+    is counted is compared as the words say it, and a size of one kind is not put against a range of another: not one
+    that counts something against a size that is not said to count anything.
     """
     counted = {singular(word) for word in plain_words(unit)}
     covering: list[Mapping[str, Any]] = []
     ranges: list[Mapping[str, Any]] = []
     unclear: list[Mapping[str, Any]] = []
+    counts_something = False
     for fact in facts:
         size = size_of(fact["value"])
+        counts_something = counts_something or bool(size and size.unit)
         if size is None or (size.exact and not size.holds(number)):
             unclear.append(fact)
-        elif size.unit and counted and size.unit not in counted:
+        elif size.unit and size.unit not in counted:
             unclear.append(fact)
         elif size.holds(number):
             covering.append(fact)
@@ -494,6 +505,8 @@ def compare_size(
         return INSIDE, covering, "A statement on the card gives a size or a range that has it."
     if ranges:
         return OUTSIDE, [*ranges, *unclear], "The ranges that the card gives do not have it."
+    if facts and not counted and counts_something:
+        return NOT_COVERED, list(facts), "The card gives the size as a count of something. Say what the size counts."
     if facts:
         return NOT_COVERED, list(facts), "The card gives sizes in words that a program cannot put against this one."
 
@@ -534,7 +547,7 @@ def check(facts: Sequence[Mapping[str, Any]], described: Mapping[str, Any]) -> d
             outcome, evidence, reason = compare_words(value, by_aspect[aspect])
         words = given_words(aspect, value)
         if outcome == NOT_COVERED and not by_aspect[aspect]:
-            reason = f"The card says nothing of the {aspect}."
+            reason = f"The card has no statement of the {aspect}."
         answers.append(
             {
                 "aspect": aspect,

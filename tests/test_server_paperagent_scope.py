@@ -82,10 +82,18 @@ class TestWhatTheDataIsPutAgainst:
     ) -> None:
         before = agents.reading(agent_id)
 
-        found = check(client, agent_id, species="zebrafish", tissue="liver", sample_size=3)
+        found = check(client, agent_id, species="zebrafish", tissue="liver", sample_size=3, sample_unit="nuclei")
 
         assert found["outcome"] == scope.OUTSIDE and len(found["warnings"]) == 3
         assert agents.reading(agent_id) == before
+
+    def test_a_size_that_does_not_say_what_it_counts_is_not_put_against_a_card_that_does(
+        self, client: TestClient, agent_id: str
+    ) -> None:
+        found = check(client, agent_id, sample_size=3)
+
+        assert found["outcome"] == scope.NOT_COVERED and found["warnings"] == []
+        assert "Say what the size counts" in found["aspects"][0]["reason"]
 
 
 class TestWhatAPersonDidToTheCard:

@@ -388,12 +388,12 @@ def reading_tools(workspace: Workspace, agent_id: str, title: str) -> list[Entry
         sample_unit: str = "",
         input_format: str = "",
     ) -> dict[str, Any]:
-        """Puts what the person's data is against what the method card says the method was used on, which is how you
-        tell whether the data is inside it. Call it before you run one of this PaperAgent's tools on the person's own
-        data, and tell the person what it says before you run anything. Where it says the data is outside, give the
-        person the card's words that it quotes and let them decide whether to go on. A program compares the words and
-        the numbers, so give each thing in plain words and leave out what you do not know of the data: what the person
-        told you, or its description says.
+        """Puts what the person's data is against what the method card says the method was used on. Call it before you
+        run one of this PaperAgent's tools on the person's own data, and tell the person what it says before you run
+        anything. Where it says the data is outside, give the person the card's words that it quotes and let them
+        decide whether to go on. A program compares the words and the numbers that you give it and does not look at
+        the data, so give each thing in plain words as the person or the data's description says it, and leave out
+        what you do not know.
 
         :param species: What species the data is of, such as human or Mus musculus.
         :param tissue: What tissue it is of, such as liver or PBMC.

@@ -132,7 +132,7 @@ class TestInsideOutsideAndNotCovered:
         result = scope.check(facts, {"tissue": "liver"})
 
         assert result["outcome"] == scope.NOT_COVERED and result["warnings"] == []
-        assert result["aspects"][0]["says"] == [] and "says nothing of the tissue" in result["aspects"][0]["reason"]
+        assert result["aspects"][0]["says"] == [] and "no statement of the tissue" in result["aspects"][0]["reason"]
 
     def test_a_card_without_scope_covers_nothing(self) -> None:
         result = scope.check([], {"species": "human", "sample_size": 10})
@@ -160,6 +160,19 @@ class TestInsideOutsideAndNotCovered:
         assert outcome([fact("species", "any species")], species="axolotl") == scope.INSIDE
         assert outcome([fact("species", "species-agnostic")], species="axolotl") == scope.INSIDE
         assert outcome([fact("species", "all mouse strains")], species="human") == scope.OUTSIDE
+
+    def test_a_card_that_says_it_is_of_any_does_not_cover_what_another_statement_rules_out(self) -> None:
+        facts = [
+            fact("species", "any species", number=1),
+            fact("species", "not tested on human", "It was not tested on human samples.", number=2),
+        ]
+
+        result = scope.check(facts, {"species": "human"})
+
+        assert result["outcome"] == scope.NOT_COVERED and result["warnings"] == []
+        assert [s["value"] for s in result["aspects"][0]["says"]] == ["any species", "not tested on human"]
+        # What the other statement does not name is still covered by the one that says it is of any
+        assert outcome(facts, species="axolotl") == scope.INSIDE
 
     def test_a_statement_with_no_word_that_says_what_it_is_is_not_compared(self) -> None:
         facts = [fact("species", "cells")]
@@ -284,7 +297,16 @@ class TestSampleSizes:
         assert size is not None and size.exact and size.low == size.high
 
     @pytest.mark.parametrize(
-        "text", ["large", "", "3 datasets of 5,000 cells", "10x Chromium 5,000 cells", "1, 2, and 3 samples"]
+        "text",
+        [
+            "large",
+            "",
+            "3 datasets of 5,000 cells",
+            "10x Chromium 5,000 cells",
+            "1, 2, and 3 samples",
+            "10 and 20 donors",
+            "5 or 10 samples",
+        ],
     )
     def test_words_that_do_not_give_one_range_are_not_read(self, text: str) -> None:
         assert scope.size_of(text) is None
@@ -322,9 +344,33 @@ class TestSampleSizes:
         assert result["outcome"] == scope.NOT_COVERED and result["warnings"] == []
         assert [s["value"] for s in result["aspects"][0]["says"]] == ["at least 500 nuclei"]
 
-    def test_a_size_is_put_against_a_range_that_counts_when_the_unit_is_not_said_on_one_side(self) -> None:
+    def test_two_sizes_that_are_listed_are_not_a_range_that_has_what_is_between_them(self) -> None:
+        for listed in ("10 and 20 donors", "5 or 10 donors"):
+            result = scope.check([fact("sample size", listed)], {"sample_size": 7, "sample_unit": "donors"})
+
+            assert result["outcome"] == scope.NOT_COVERED and result["warnings"] == []
+        assert (
+            outcome([fact("sample size", "between 5 and 10 donors")], sample_size=7, sample_unit="donors")
+            == scope.INSIDE
+        )
+        assert (
+            outcome([fact("sample size", "between 5 and 10 donors")], sample_size=11, sample_unit="donors")
+            == scope.OUTSIDE
+        )
+
+    def test_a_range_that_has_no_unit_is_put_against_a_size_that_counts_something(self) -> None:
         assert outcome([fact("sample size", "at least 500")], sample_size=120, sample_unit="nuclei") == scope.OUTSIDE
-        assert outcome([fact("sample size", "at least 500 nuclei")], sample_size=120) == scope.OUTSIDE
+        assert outcome([fact("sample size", "at least 500")], sample_size=800, sample_unit="nuclei") == scope.INSIDE
+
+    def test_a_range_that_counts_something_is_not_put_against_a_size_that_counts_nothing_that_is_said(self) -> None:
+        facts = [fact("sample size", "at least 500 nuclei")]
+
+        for size in (120, 600):
+            result = scope.check(facts, {"sample_size": size})
+
+            assert result["outcome"] == scope.NOT_COVERED and result["warnings"] == []
+            assert "Say what the size counts" in result["aspects"][0]["reason"]
+        assert outcome(facts, sample_size=600, sample_unit="nuclei") == scope.INSIDE
 
     def test_a_unit_is_told_by_its_plural_and_by_any_of_its_words(self) -> None:
         facts = [fact("sample size", "at least 500 cells")]

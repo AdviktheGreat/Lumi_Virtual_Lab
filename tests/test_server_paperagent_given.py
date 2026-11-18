@@ -435,7 +435,8 @@ class TestTheToolsThatRead:
             "sample_unit",
             "input_format",
         }
-        assert "before you run one of this PaperAgent's tools" in tool.description
+        # A description is wrapped where a docstring is, so what it says is looked for with its words as one line
+        assert "before you run one of this PaperAgent's tools" in " ".join(tool.description.split())
 
     def test_a_reading_that_did_not_come_to_its_end_says_so_when_the_data_is_put_against_the_card(
         self, agents: PaperAgents, workspace: Workspace, docker: tools.Docker, fake_client: FakeClient
