@@ -52,6 +52,14 @@ and everything else is a request and an answer.
     POST   /api/paperagents/{id}/reading  starts reading the paper, within the limit on spending in the body, as a job
     GET    /api/paperagents/{id}/reading  what was read: claims, the method card, resources, each with a quote
     DELETE /api/paperagents/{id}/reading  takes away what was read, so that the paper can be read again
+    POST   /api/paperagents/{id}/card/facts  adds a fact to the method card, which is the person's own
+    PUT    /api/paperagents/{id}/card/facts/{fact}  changes a fact of the card to say what the person says
+    DELETE /api/paperagents/{id}/card/facts/{fact}  takes a fact off the card
+    POST   /api/paperagents/{id}/card/facts/{fact}/restore  puts a fact back, or has it say what it was read as
+    POST   /api/paperagents/{id}/card/approval  says that the person read the card and lets it stand
+    DELETE /api/paperagents/{id}/card/approval  takes the approval back, which makes the card a draft
+    DELETE /api/paperagents/{id}/card/edits  takes away all that the person did to the card
+    POST   /api/paperagents/{id}/scope-check  puts what the person's data is against what the card says it was used on
     GET    /api/paperagents/{id}/passage  the paper's words from ?start= to ?end=, with what is around them
     POST   /api/paperagents/{id}/repository  starts fetching the code, never running it, and taking stock of it
     GET    /api/paperagents/{id}/repository  where the code is, what the paper points to, what was found in it
@@ -412,6 +420,18 @@ class PaperAgentCardFactBody(PaperAgentCardFieldsBody):
     """A fact to add to the method card: which sort it is, and what it says."""
 
     kind: str = Field(max_length=20)
+
+
+class PaperAgentScopeBody(RequestModel):
+    """What a person's data is, to be put against what the method card says the method was used on: any of its species,
+    tissue, assay, input format, and sample size with what that counts. A check needs at least one."""
+
+    species: str | None = Field(None, max_length=1000)
+    tissue: str | None = Field(None, max_length=1000)
+    assay: str | None = Field(None, max_length=1000)
+    input_format: str | None = Field(None, max_length=1000)
+    sample_size: StrictInt | None = None
+    sample_unit: str | None = Field(None, max_length=1000)
 
 
 class PaperAgentRepositoryBody(RequestModel):
@@ -1342,6 +1362,10 @@ def create_app(
     @api.delete("/paperagents/{agent_id}/card/edits")
     def discard_paperagent_card_edits(agent_id: str) -> dict[str, Any]:
         return paperagents.discard_card_edits(agent_id)
+
+    @api.post("/paperagents/{agent_id}/scope-check")
+    def check_paperagent_scope(agent_id: str, body: PaperAgentScopeBody) -> dict[str, Any]:
+        return paperagents.check_scope(agent_id, body.model_dump())
 
     @api.post("/paperagents/{agent_id}/repository", status_code=202)
     def fetch_paperagent_repository(agent_id: str, body: PaperAgentRepositoryBody) -> dict[str, Any]:
