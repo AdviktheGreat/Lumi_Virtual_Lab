@@ -1754,19 +1754,19 @@ def create_app(
 
     @api.post("/chats/{chat_id}/approvals/{request_id}")
     def approve_call(chat_id: str, request_id: str, body: ApprovalBody) -> dict[str, str]:
-        connections = conversations.get(chat_id).connections
-        if connections is None:
+        asker = conversations.get(chat_id).asker
+        if asker is None:
             raise not_waiting(request_id)
 
-        return {"state": connections.asker.approval(request_id, body.allow)}
+        return {"state": asker.approval(request_id, body.allow)}
 
     @api.post("/chats/{chat_id}/questions/{request_id}")
     def answer_question(chat_id: str, request_id: str, body: AnswerBody) -> dict[str, str]:
-        connections = conversations.get(chat_id).connections
-        if connections is None:
+        asker = conversations.get(chat_id).asker
+        if asker is None:
             raise not_waiting(request_id)
 
-        return {"state": connections.asker.reply(request_id, body.answer)}
+        return {"state": asker.reply(request_id, body.answer)}
 
     @api.get("/chats/{chat_id}/events")
     async def follow_chat(

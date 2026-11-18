@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { approval, asked, connection, ended, lead, ORDER_FIELDS, server, tell, user, type Told } from "./replay";
+import { approval, asked, connection, ended, lead, ORDER_FIELDS, SCOPE_WARNINGS, scopeApproval, server, tell, user, type Told } from "./replay";
 
 // What the page shows of the servers whose tools the lead is given, and of what they and their tools ask of the researcher.
 // The conversation is real and the events it is told of are written here, so that every way a request, a question, or a
@@ -128,6 +128,129 @@ test.describe("a call that waits for the researcher", () => {
 
     await expect(page.getByTestId("approval").getByRole("alert")).toContainText("Nothing waits for an answer under r1");
     await expect(page.getByRole("button", { name: "Decline" })).toBeEnabled();
+  });
+});
+
+const tallying: Told = {
+  kind: "tool_calls",
+  speaker: lead,
+  text: "Running it.",
+  data: { calls: [{ id: "c1", name: "cellmapper_tally", arguments: JSON.stringify({ counts: [1, 2], scale: 2 }) }] },
+};
+
+test.describe("a run on data that is outside what the method card says", () => {
+  test("waits for the researcher to go on, with the card's words that it is outside of, and says that it does not stop them", async ({ page }) => {
+    await tell(page, [user("Tally my liver data"), tallying, scopeApproval("waiting"), running]);
+
+    const card = page.getByTestId("approval");
+    await expect(card).toHaveAttribute("data-state", "waiting");
+    await expect(card).toHaveAttribute("data-about", "scope");
+    await expect(card).toHaveAccessibleName("Go on with cellmapper_tally?");
+    await expect(card).toContainText("cellmapper_tally is to be run on data that is outside what the method card of CellMapper says");
+    const words = card.getByRole("list", { name: "What the card says" }).getByRole("listitem");
+    await expect(words).toHaveCount(2);
+    await expect(words.nth(0)).toHaveText(SCOPE_WARNINGS[0]);
+    await expect(words.nth(1)).toHaveText(SCOPE_WARNINGS[1]);
+    await expect(card).toContainText("does not stop you: you can go on");
+    await expect(card).toContainText("does not mean that the tool will fail on this data");
+    await expect(card).toContainText("the run says that you did");
+    await expect(card).toContainText("It is to be run with");
+    await expect(card.getByRole("code")).toContainText('"scale": 2');
+    await expect(card.getByRole("button", { name: "Go on", exact: true })).toBeEnabled();
+    await expect(card.getByRole("button", { name: "Do not run it" })).toBeEnabled();
+    await expect(card.getByRole("button", { name: "Allow", exact: true })).toHaveCount(0);
+    await expect(card.getByRole("status")).toHaveText("Waiting for you to say whether to go on with cellmapper_tally");
+    await expect(page.getByTestId("chat-state")).toHaveText("Waiting for you");
+  });
+
+  test("is gone on with by one button, which says yes to the server and waits for the conversation to say so", async ({ page }) => {
+    await tell(page, [user("Tally my liver data"), tallying, scopeApproval("waiting"), running]);
+    const sent = await sentTo(page, "approvals/r1", { state: "approved" });
+
+    await page.getByRole("button", { name: "Go on", exact: true }).click();
+
+    await expect.poll(() => sent).toEqual([{ allow: true }]);
+    const card = page.getByTestId("approval");
+    await expect(card.getByRole("button", { name: "Go on", exact: true })).toBeDisabled();
+    await expect(card.getByRole("button", { name: "Do not run it" })).toBeDisabled();
+    await expect(card.getByRole("status", { name: "Sending" })).toBeVisible();
+  });
+
+  test("is not run when the researcher says so with the other, which says no", async ({ page }) => {
+    await tell(page, [user("Tally my liver data"), tallying, scopeApproval("waiting"), running]);
+    const sent = await sentTo(page, "approvals/r1", { state: "declined" });
+
+    await page.getByRole("button", { name: "Do not run it" }).click();
+
+    await expect.poll(() => sent).toEqual([{ allow: false }]);
+  });
+
+  test("is shown as a line once it was answered, in terms of going on and not of allowing, and keeps what it was about", async ({ page }) => {
+    await tell(page, [
+      user("Tally my liver data"),
+      tallying,
+      scopeApproval("waiting", "a"),
+      scopeApproval("approved", "a"),
+      scopeApproval("waiting", "b"),
+      scopeApproval("declined", "b"),
+      scopeApproval("waiting", "c"),
+      { kind: "stopped", text: "Stopped." },
+    ]);
+
+    const cards = page.getByTestId("approval");
+    await expect(cards).toHaveCount(3);
+    await expect(cards.nth(0)).toHaveAttribute("data-state", "approved");
+    await expect(cards.nth(0)).toContainText("cellmapper_tally");
+    await expect(cards.nth(0)).toContainText("CellMapper");
+    await expect(cards.nth(0)).toContainText("You went on");
+    await expect(cards.nth(1)).toHaveAttribute("data-state", "declined");
+    await expect(cards.nth(1)).toContainText("You did not go on, so not run");
+    await expect(cards.nth(2)).toHaveAttribute("data-state", "withdrawn");
+    await expect(cards.nth(2)).toContainText("Not answered, so not run");
+    await expect(page.getByRole("button", { name: "Go on", exact: true })).toHaveCount(0);
+    await expect(page.getByText("Allowed")).toHaveCount(0);
+  });
+
+  test("is asked next to a call that waits to be allowed, each answered for itself", async ({ page }) => {
+    await tell(page, [user("Echo it"), calling, approval("waiting", "a"), scopeApproval("waiting", "b"), running]);
+    const sent = await sentTo(page, "approvals/b", { state: "approved" });
+
+    await page.getByTestId("approval").filter({ hasText: "Go on with cellmapper_tally?" }).getByRole("button", { name: "Go on", exact: true }).click();
+
+    await expect.poll(() => sent).toEqual([{ allow: true }]);
+    await expect(page.getByTestId("approval").filter({ hasText: "Allow genes_echo?" }).getByRole("button", { name: "Allow", exact: true })).toBeEnabled();
+  });
+
+  test("says why the server refused an answer, and can be answered again", async ({ page }) => {
+    await tell(page, [user("Tally my liver data"), tallying, scopeApproval("waiting"), running]);
+    let refuse = true;
+    await page.route("**/api/chats/*/approvals/r1", (route) =>
+      refuse
+        ? route.fulfill({
+            status: 409,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { code: "not_waiting", message: "Nothing waits for an answer under r1" } }),
+          })
+        : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: "approved" }) }),
+    );
+
+    await page.getByRole("button", { name: "Go on", exact: true }).click();
+
+    await expect(page.getByTestId("approval").getByRole("alert")).toHaveText("Nothing waits for an answer under r1");
+    await expect(page.getByRole("button", { name: "Go on", exact: true })).toBeEnabled();
+    refuse = false;
+    await page.getByRole("button", { name: "Go on", exact: true }).click();
+    await expect(page.getByTestId("approval").getByRole("alert")).toHaveCount(0);
+  });
+
+  test("shows the description when the server gave no separate words, and no list", async ({ page }) => {
+    const bare = scopeApproval("waiting");
+    bare.data = { ...bare.data, warnings: [], description: "It is outside." };
+    await tell(page, [user("Tally my liver data"), tallying, bare, running]);
+
+    const card = page.getByTestId("approval");
+    await expect(card).toContainText("It is outside.");
+    await expect(card.getByRole("list")).toHaveCount(0);
   });
 });
 

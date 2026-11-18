@@ -62,10 +62,15 @@ export interface Approval {
   // What the page answers it by
   request: string;
   state: ApprovalState;
+  // What is asked: whether a call to a server's tool may be made, or whether a run of a PaperAgent's tool is to go on with
+  // data that is outside what the agent's method card says
+  about: "call" | "scope";
   tool: string;
   server: string;
   title: string;
   description: string;
+  // For a run on data that is outside: what the card says that the data is outside of, in its words and the paper's
+  warnings: string[];
   // What it is to be called with, as text
   arguments: string;
 }
@@ -219,10 +224,12 @@ function approvalOf(event: ChatEvent): Approval {
   return {
     request: asText(event.data.request),
     state: (APPROVAL_STATES.includes(state) ? state : "waiting") as ApprovalState,
+    about: event.data.about === "scope" ? "scope" : "call",
     tool: asText(event.data.tool),
     server,
     title: asText(event.data.title, server),
     description: asText(event.data.description),
+    warnings: asStrings(event.data.warnings),
     arguments: asText(event.data.arguments),
   };
 }

@@ -748,10 +748,12 @@ describe("what the lead's servers and tools ask of the researcher", () => {
       approval: {
         request: "r1",
         state: "waiting",
+        about: "call",
         tool: "order",
         server: "lit",
         title: "Literature",
         description: "Orders a sample.",
+        warnings: [],
         arguments: '{\n  "n": 2\n}',
       },
     });
@@ -760,6 +762,25 @@ describe("what the lead's servers and tools ask of the researcher", () => {
 
       expect(ended).toMatchObject({ approval: { request: "r1", state, tool: "order", arguments: '{\n  "n": 2\n}' } });
     }
+  });
+
+  it("asks whether to go on with a run on data outside what the card says, with the card's words, and keeps them once it is answered", () => {
+    const words = ["Outside what the card says: the data's tissue is “liver”.", "Outside: the sample size is 90."];
+    const [step] = turnOf(asking("r1", { about: "scope", tool: "cell_tally", description: words.join(" "), warnings: words })).steps;
+
+    expect(step).toMatchObject({ kind: "approval", approval: { about: "scope", state: "waiting", tool: "cell_tally", warnings: words } });
+    for (const state of ["approved", "declined", "withdrawn"]) {
+      const [ended] = turnOf(asking("r1", { about: "scope", warnings: words }), approval("r1", state)).steps;
+
+      expect(ended).toMatchObject({ approval: { about: "scope", state, warnings: words } });
+    }
+  });
+
+  it("takes a request that does not say what it is about for a call, and leaves out what is not words", () => {
+    expect(turnOf(asking("r1", { about: "anything", warnings: ["Kept.", 3, null] })).steps[0]).toMatchObject({
+      approval: { about: "call", warnings: ["Kept."] },
+    });
+    expect(turnOf(asking("r1", { warnings: "not a list" })).steps[0]).toMatchObject({ approval: { warnings: [] } });
   });
 
   it("answers the request an event is of, and no other", () => {

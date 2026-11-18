@@ -135,6 +135,9 @@ class ChatHandle:
         # What connects to its MCP servers, and asks the researcher what they and their tools wait to be told, or None
         # for a conversation that has none
         self.connections: Connections | None = None
+        # What it asks the researcher with: for its servers, and for a PaperAgent's tool that is held to go on with data
+        # that is outside what the agent's card says. None for a conversation that has neither, and for a keyless one.
+        self.asker: Asker | None = None
         self.keyless = keyless
         self.closed = False
         self._loop = loop
@@ -194,8 +197,8 @@ class ChatHandle:
         """Ends the turn at the next point it can be, which includes the end of whatever it waits for the researcher
         to say. False if no turn is running."""
         accepted = self.chat.stop()
-        if accepted and self.connections is not None:
-            self.connections.asker.withdraw()
+        if accepted and self.asker is not None:
+            self.asker.withdraw()
 
         return accepted
 
@@ -209,6 +212,8 @@ class ChatHandle:
             # Before the turn is waited for, which something it waits to be told by the researcher would hold up
             if self.connections is not None:
                 self.connections.interrupt()
+            if self.asker is not None:
+                self.asker.close()
             self.chat.close(timeout=CLOSE_TIMEOUT)
         finally:
             try:
@@ -733,6 +738,15 @@ class Conversations:
         prefixes = [f"{tool_prefix(name)}_" for name in servers]
         # What the person had it write from papers, which runs where the code does, and so only where there is some
         written = function_tools(self.workspace, config.functions, session, {tool.name for tool in chosen}, prefixes)
+        titles = {name: item.title for name, item in imported.items()}
+        # Who is asked is the researcher: what a server or its tools wait to be told, and whether a PaperAgent's tool
+        # goes on with data that is outside what its card says. A keyless conversation is not asked anything.
+        asker = None
+        if not keyless and (servers or config.paperagents):
+            asker = Asker(
+                handle.tell, handle.stopping, lambda name: titles.get(name) or server_title(name, servers.get(name))
+            )
+        handle.asker = asker
         # What the person gave of a PaperAgent: its tools that read the paper, and those that run its code in its own
         # image where code is allowed
         agents = agent_tools(
@@ -743,12 +757,9 @@ class Conversations:
             prefixes,
             self.docker_command,
             handle.stopping,
+            go_on=asker.approve_scope if asker is not None else None,
         )
-        if servers and not keyless:
-            titles = {name: item.title for name, item in imported.items()}
-            asker = Asker(
-                handle.tell, handle.stopping, lambda name: titles.get(name) or server_title(name, servers.get(name))
-            )
+        if servers and asker is not None:
 
             def remember(name: str, entry: Mapping[str, Any], opened: MCPTools) -> None:
                 # What an imported agent's server held is not one of the settings' servers' to show

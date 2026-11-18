@@ -172,7 +172,10 @@ class ChatEvent:
           is its id, which each of its events carries, and data["state"] is "waiting", and then
           "approved", "declined", or "withdrawn" (for one nobody answered before the turn ended).
           "waiting" also has data["tool"], the tool's name, data["server"], data["title"], data["description"],
-          and data["arguments"], which is what it is to be called with, as text.
+          and data["arguments"], which is what it is to be called with, as text. It is also what a PaperAgent's
+          tool that is to be run on data outside what the agent's method card says waits for: "waiting" then has
+          data["about"] "scope" and data["warnings"], the card's words for each thing that is outside, and
+          data["server"] is "paperagent:" and the agent's id; approving it is going on with the run.
         - "question": what a server asks the researcher while one of its tools runs. data["request"]
           is its id, which each of its events carries, and data["state"] is "waiting", and then
           "answered", "declined", or "withdrawn". "waiting" also has data["server"], data["title"], text,

@@ -460,7 +460,7 @@ class TestTheToolsThatRead:
         for tool in found.values():
             assert tool.instructions is not None
             assert f"call {ID}_check_scope with what that data is" in tool.instructions
-            assert "let them decide whether to go on" in tool.instructions
+            assert "not run on data that is outside until the person has gone on" in " ".join(tool.instructions.split())
 
     def test_the_text_can_be_searched_when_what_was_found_in_it_is_not_there_but_nothing_else_is_shown(
         self, agents: PaperAgents, workspace: Workspace, read: str

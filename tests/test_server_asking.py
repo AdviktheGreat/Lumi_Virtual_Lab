@@ -1,4 +1,5 @@
-"""Tests of what a conversation asks the researcher: whether a call may be made, and what an MCP server asks."""
+"""Tests of what a conversation asks the researcher: whether a call may be made, whether a PaperAgent's tool goes
+on with data outside what its card says, and what an MCP server asks."""
 
 import threading
 from collections.abc import Callable
@@ -6,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from virtual_lab.approval import ApprovalDeclined, ApprovalRequest, ServerQuestion
+from virtual_lab.approval import ApprovalDeclined, ApprovalRequest, ScopeHold, ServerQuestion
 from virtual_lab.server.asking import Asker, check_answer, check_value, is_web_address
 from virtual_lab.server.errors import ApiError
 
@@ -244,6 +245,146 @@ class TestAskingWhetherACallMayBeMade:
         assert caught.value.code == "not_waiting"
         asking.reply(request, None)
         running.finish()
+
+
+def hold(**changes: Any) -> ScopeHold:
+    given: dict[str, Any] = {
+        "agent": "cellmapper",
+        "title": "CellMapper",
+        "tool": "cellmapper_tally",
+        "arguments": {"counts": [1, 2]},
+        "warnings": ("Outside what the card says: the tissue is liver.", "Outside: the sample size is 90."),
+    }
+
+    return ScopeHold(**{**given, **changes})
+
+
+class TestAskingWhetherToGoOnWithDataOutsideTheCard:
+    def test_the_run_waits_for_the_person_and_goes_on_when_they_say_so(self) -> None:
+        told = Told()
+        asking = asker(told)
+        running = Running(lambda: asking.approve_scope(hold()))
+
+        waiting = told.waiting("approval")
+        assert running.thread.is_alive()
+        assert asking.approval(waiting["request"], True) == "approved"
+
+        assert running.finish() is True and running.error is None
+        assert told.states("approval") == ["waiting", "approved"]
+        assert asking.waiting() == []
+
+    def test_what_is_told_of_it_is_the_agent_the_tool_the_words_of_the_card_and_what_it_is_to_be_called_with(
+        self,
+    ) -> None:
+        told = Told()
+        asking = asker(told)
+        running = Running(lambda: asking.approve_scope(hold()))
+
+        waiting = told.waiting("approval")
+        asking.approval(waiting["request"], False)
+        running.finish()
+
+        assert set(waiting) == {
+            "request",
+            "state",
+            "server",
+            "title",
+            "about",
+            "tool",
+            "description",
+            "warnings",
+            "arguments",
+        }
+        assert waiting["about"] == "scope" and waiting["tool"] == "cellmapper_tally"
+        assert waiting["server"] == "paperagent:cellmapper" and waiting["title"] == "CellMapper"
+        assert waiting["warnings"] == [
+            "Outside what the card says: the tissue is liver.",
+            "Outside: the sample size is 90.",
+        ]
+        assert waiting["description"] == " ".join(waiting["warnings"])
+        assert '"counts": [' in waiting["arguments"]
+
+    def test_the_end_of_it_is_told_of_as_being_of_the_same_agent(self) -> None:
+        told = Told()
+        asking = asker(told)
+        running = Running(lambda: asking.approve_scope(hold()))
+        waiting = told.waiting("approval")
+
+        asking.approval(waiting["request"], True)
+        running.finish()
+
+        settled = {
+            "request": waiting["request"],
+            "state": "approved",
+            "server": "paperagent:cellmapper",
+            "title": "CellMapper",
+        }
+        assert told.events[-1] == ("approval", "", settled)
+
+    def test_a_person_who_does_not_go_on_has_the_run_not_made(self) -> None:
+        told = Told()
+        asking = asker(told)
+        running = Running(lambda: asking.approve_scope(hold()))
+
+        assert asking.approval(told.waiting("approval")["request"], False) == "declined"
+
+        assert running.finish() is False
+        assert told.states("approval") == ["waiting", "declined"]
+
+    def test_a_turn_that_is_ending_asks_nothing_and_the_run_is_not_made(self) -> None:
+        told = Told()
+
+        with pytest.raises(ApprovalDeclined, match="turn was ending before a person said whether to go on with"):
+            asker(told, stopping=lambda: True).approve_scope(hold())
+
+        assert told.events == []
+
+    def test_a_question_that_waits_when_the_turn_is_stopped_is_withdrawn_and_the_run_is_not_made(self) -> None:
+        told = Told()
+        asking = asker(told)
+        running = Running(lambda: asking.approve_scope(hold()))
+        told.waiting("approval")
+
+        asking.withdraw()
+        running.finish()
+
+        assert isinstance(running.error, ApprovalDeclined)
+        assert "The turn ended before a person said whether to go on with cellmapper_tally" in str(running.error)
+        assert told.states("approval") == ["waiting", "withdrawn"]
+
+    def test_one_that_is_not_answered_in_time_is_withdrawn_and_the_run_is_not_made(self) -> None:
+        told = Told()
+
+        with pytest.raises(ApprovalDeclined, match="No one said whether to go on with cellmapper_tally within 0.05"):
+            asker(told, timeout=0.05).approve_scope(hold())
+
+        assert told.states("approval") == ["waiting", "withdrawn"]
+
+    def test_a_closed_conversation_asks_nothing_more(self) -> None:
+        told = Told()
+        asking = asker(told)
+        running = Running(lambda: asking.approve_scope(hold()))
+        told.waiting("approval")
+
+        asking.close()
+        running.finish()
+
+        assert isinstance(running.error, ApprovalDeclined)
+        with pytest.raises(ApprovalDeclined):
+            asking.approve_scope(hold())
+
+    def test_it_is_answered_as_a_call_is_and_cannot_be_answered_as_a_question(self) -> None:
+        told = Told()
+        asking = asker(told)
+        running = Running(lambda: asking.approve_scope(hold()))
+        request = told.waiting("approval")["request"]
+
+        with pytest.raises(ApiError) as caught:
+            asking.reply(request, {})
+
+        assert caught.value.code == "not_waiting"
+        asking.approval(request, True)
+        assert running.finish() is True
 
 
 class TestAskingWhatAServerAsks:

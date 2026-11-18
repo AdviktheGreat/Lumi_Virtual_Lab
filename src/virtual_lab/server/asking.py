@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from virtual_lab.approval import (
     ApprovalDeclined,
     ApprovalRequest,
+    ScopeHold,
     ServerQuestion,
     choices,
     field_kind,
@@ -188,6 +189,42 @@ class Asker:
         if pending.state == WITHDRAWN:
             raise ApprovalDeclined(
                 f"The turn ended before a person approved the call to {request.tool}, so it was not made."
+            )
+
+        return pending.state == APPROVED
+
+    def approve_scope(self, hold: ScopeHold) -> bool:
+        """Asks whether a run of a PaperAgent's tool is to go on, on data that is outside what the agent's method card
+        says, and waits. It is told of as an approval, and is answered as one is, so that it is one thing to answer.
+
+        :raises ApprovalDeclined: If it was not asked, because the turn was ending or the conversation closed, or it
+            was not answered in time, or the turn ended while it waited.
+        :return: Whether to go on.
+        """
+        server = {"server": f"paperagent:{hold.agent}", "title": hold.title}
+        pending = self._open("approval", server)
+        if pending is None:
+            raise ApprovalDeclined(
+                f"The turn was ending before a person said whether to go on with {hold.tool}, so it was not run."
+            )
+        self._tell(
+            "approval",
+            request=pending.id,
+            state="waiting",
+            about="scope",
+            tool=hold.tool,
+            description=" ".join(hold.warnings),
+            warnings=list(hold.warnings),
+            arguments=shown_arguments(hold.arguments),
+            **server,
+        )
+        if not self._wait(pending):
+            raise ApprovalDeclined(
+                f"No one said whether to go on with {hold.tool} within {self._timeout:g} seconds, so it was not run."
+            )
+        if pending.state == WITHDRAWN:
+            raise ApprovalDeclined(
+                f"The turn ended before a person said whether to go on with {hold.tool}, so it was not run."
             )
 
         return pending.state == APPROVED

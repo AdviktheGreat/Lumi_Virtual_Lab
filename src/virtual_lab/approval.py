@@ -58,6 +58,25 @@ class ApprovalRequest:
 
 
 @dataclass(frozen=True)
+class ScopeHold:
+    """A run of a PaperAgent's tool that waits for a person to say whether to go on, since the data it is to be run on
+    is outside what the agent's method card says. Going on is theirs to say, and nothing else says it.
+
+    :param agent: The agent's id.
+    :param title: What the agent is called.
+    :param tool: The tool's name, as a conversation calls it.
+    :param arguments: What it is to be called with.
+    :param warnings: Each thing that is outside, in the words of the check, which quote the card and the paper.
+    """
+
+    agent: str
+    title: str
+    tool: str
+    arguments: dict[str, Any]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ServerQuestion:
     """What an MCP server asks a person while one of its tools runs.
 

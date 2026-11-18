@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { accessibilityProblems, pastTheEdge } from "./axe";
 import { answered, ask, askWhereCodeRuns, expect, HOME_HEADING, test } from "./fixtures";
-import { approval, asked, calling, connection, ended, lead, ORDER_FIELDS, tell, user, type Told } from "./replay";
+import { approval, asked, calling, connection, ended, lead, ORDER_FIELDS, scopeApproval, tell, user, type Told } from "./replay";
 
 const SIZES = [
   { name: "desktop", width: 1280, height: 800 },
@@ -143,6 +143,11 @@ for (const theme of ["light", "dark"] as const) {
           approval("declined", "b"),
           approval("waiting", "c"),
           approval("withdrawn", "d"),
+          scopeApproval("waiting", "s1"),
+          scopeApproval("approved", "s1"),
+          scopeApproval("waiting", "s2"),
+          scopeApproval("declined", "s2"),
+          scopeApproval("waiting", "s3"),
           asked({ request: "q0", text: "Go ahead?" }),
           ended("answered", "q0"),
           asked({ request: "q1", fields: ORDER_FIELDS, required: ["name", "kind"] }),
