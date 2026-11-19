@@ -36,9 +36,11 @@ import {
   emptyVariant,
   hasVariants,
   offeredFor,
+  signatureOf,
   statusTitle,
   unusable,
   usable,
+  valuesFor,
   type VariantDraft,
 } from "@/lib/paperagent-variants";
 import type { ClaimOutcome, Job, PaperAgent, PaperAgentClaims, Variant, VariantArgument } from "@/lib/types";
@@ -365,7 +367,7 @@ function VariantForm({
         <NativeSelect
           id={`${id}-claim`}
           value={chosen.claim}
-          onChange={(event) => onDraft({ ...draft, claim: event.target.value, values: {} })}
+          onChange={(event) => onDraft({ ...draft, claim: event.target.value, values: {}, basis: "" })}
           aria-invalid={problems.claim !== undefined}
           aria-describedby={describedBy(`${id}-claim`, { hint: true, problem: problems.claim !== undefined })}
         >
@@ -393,9 +395,9 @@ function VariantForm({
               key={`${offered.claim}:${argument.name}`}
               id={`${id}-value-${offered.claim}-${argument.name}`}
               argument={argument}
-              typed={draft.values[argument.name] ?? ""}
+              typed={valuesFor(draft, offered)[argument.name] ?? ""}
               problem={problems[`value:${argument.name}`]}
-              onChange={(typed) => change({ values: { ...draft.values, [argument.name]: typed } })}
+              onChange={(typed) => change({ values: { ...valuesFor(draft, offered), [argument.name]: typed }, basis: signatureOf(offered) })}
             />
           ))}
           {problems.changes && (

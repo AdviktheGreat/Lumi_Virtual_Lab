@@ -25,6 +25,8 @@ export interface VariantDraft {
   claim: string;
   // What each argument that is to change is to be, as it was typed, by the argument's name. An argument with nothing typed is not changed.
   values: Record<string, string>;
+  // The arguments that those were typed for, as `signatureOf` says them, so that what was typed for one call is not taken for another's
+  basis: string;
   minutes: string;
   repeats: string;
   gigabytes: string;
@@ -35,6 +37,7 @@ export function emptyVariant(variants: Pick<PaperAgentVariants, "limits">, claim
   return {
     claim,
     values: {},
+    basis: "",
     minutes: String(variants.limits.default_minutes),
     repeats: String(variants.limits.default_repeats),
     gigabytes: String(variants.limits.default_gigabytes),
@@ -49,6 +52,16 @@ export function offeredFor(variants: Pick<PaperAgentVariants, "claims">, claim: 
   const option = variants.claims.find((each) => each.claim === claim);
 
   return option !== undefined && option.can ? option : undefined;
+}
+
+// The arguments that a call was given, by name and as they were shown, which is what a value typed for one of them is typed against
+export function signatureOf(option: Offered): string {
+  return option.arguments.map((argument) => `${argument.name}=${argument.text}`).join("\n");
+}
+
+// What was typed for the arguments that a claim is offered with now: nothing, if it was typed for others, as when the claims were tried again
+export function valuesFor(draft: VariantDraft, option: Offered): Record<string, string> {
+  return draft.basis === signatureOf(option) ? draft.values : {};
 }
 
 // The claims that a variant can be made of, and those that it cannot with why
@@ -89,6 +102,23 @@ export function isPlain(value: unknown, depth = 0): boolean {
   return false;
 }
 
+// A value written as the server writes it to count it and to tell it from another: Python's json.dumps, with its separators, nothing but
+// ASCII, and, if asked, the keys of a table in order. What JSON.stringify gives is shorter, so a value near the most would pass here and be
+// refused there.
+export function pythonJson(value: unknown, sorted = false): string {
+  const text = (each: string) => JSON.stringify(each).replace(/[\u007f-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  if (typeof value === "string") return text(value);
+  if (Array.isArray(value)) return `[${value.map((item) => pythonJson(item, sorted)).join(", ")}]`;
+  if (typeof value === "object" && value !== null) {
+    const keys = Object.keys(value);
+    if (sorted) keys.sort();
+
+    return `{${keys.map((key) => `${text(key)}: ${pythonJson((value as Record<string, unknown>)[key], sorted)}`).join(", ")}}`;
+  }
+
+  return JSON.stringify(value) ?? "null";
+}
+
 function hasWholeNumber(value: unknown): boolean {
   if (typeof value === "number") return Number.isInteger(value);
   if (Array.isArray(value)) return value.some(hasWholeNumber);
@@ -103,7 +133,7 @@ function isUnchanged(value: unknown, argument: VariantArgument): boolean {
   if (argument.value === null && argument.text !== "None") return false;
   if (hasWholeNumber(argument.value) && /\d[.eE]/.test(argument.text)) return false;
 
-  return JSON.stringify(value) === JSON.stringify(argument.value);
+  return pythonJson(value, true) === pythonJson(argument.value, true);
 }
 
 export type Parsed = { ok: true; value: unknown } | { ok: false; problem: string };
@@ -125,7 +155,7 @@ export function parseValue(text: string, name: string, mostChars: number): Parse
       problem: `The new value for ${name} is not one that an argument is given as: text, true or false, null, a finite number, or a list or table of those, nested at most ${MOST_DEPTH} deep.`,
     };
   }
-  if (JSON.stringify(value).length > mostChars) return { ok: false, problem: `The new value for ${name} is at most ${mostChars} characters of JSON.` };
+  if (pythonJson(value).length > mostChars) return { ok: false, problem: `The new value for ${name} is at most ${mostChars} characters of JSON.` };
 
   return { ok: true, value };
 }
@@ -139,8 +169,9 @@ export function checkVariant(draft: VariantDraft, variants: PaperAgentVariants):
   if (option === undefined) problems.claim = "Choose the claim whose call is made again.";
   else if (!option.can) problems.claim = `${option.refused.message}.`;
   else {
+    const values = valuesFor(draft, option);
     for (const argument of option.arguments) {
-      const typed = (draft.values[argument.name] ?? "").trim();
+      const typed = (values[argument.name] ?? "").trim();
       if (typed === "" || !argument.plain) continue;
       const parsed = parseValue(typed, argument.name, limits.max_value_chars);
       if (!parsed.ok) problems[`value:${argument.name}`] = parsed.problem;

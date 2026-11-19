@@ -14,10 +14,13 @@ import {
   isPlain,
   offeredFor,
   parseValue,
+  pythonJson,
   showValue,
+  signatureOf,
   statusTitle,
   unusable,
   usable,
+  valuesFor,
   type VariantDraft,
 } from "./paperagent-variants";
 import type { PaperAgentVariants, Variant, VariantArgument, VariantOption } from "./types";
@@ -39,7 +42,9 @@ function argument(name: string, value: unknown, text: string, plain = true): Var
   return { name, text, value, plain };
 }
 
-const scored: VariantOption = {
+type Offering = Extract<VariantOption, { can: true }>;
+
+const scored: Offering = {
   claim: "c1",
   can: true,
   refused: null,
@@ -74,8 +79,9 @@ function variants(part: Partial<PaperAgentVariants> = {}): PaperAgentVariants {
   };
 }
 
+// What is typed is typed for the arguments that the claim is offered with, unless it is said to be for others
 function draft(part: Partial<VariantDraft> = {}): VariantDraft {
-  return { ...emptyVariant({ limits }, "c1"), ...part };
+  return { ...emptyVariant({ limits }, "c1"), basis: signatureOf(scored), ...part };
 }
 
 function variant(part: Partial<Variant> = {}): Variant {
@@ -118,7 +124,7 @@ describe("what may be changed", () => {
   });
 
   it("starts with what the server says a call may take", () => {
-    expect(emptyVariant({ limits })).toEqual({ claim: "", values: {}, minutes: "5", repeats: "2", gigabytes: "1", note: "" });
+    expect(emptyVariant({ limits })).toEqual({ claim: "", values: {}, basis: "", minutes: "5", repeats: "2", gigabytes: "1", note: "" });
     expect(emptyVariant({ limits }, "c1").claim).toBe("c1");
   });
 });
@@ -157,6 +163,23 @@ describe("a value that is typed", () => {
     expect(parseValue(JSON.stringify("x".repeat(38)), "method", 40).ok).toBe(true);
   });
 
+  it("is counted as the server counts it, with the spaces and the escapes that it writes", () => {
+    expect(pythonJson([1, 2, { a: [], b: {} }])).toBe('[1, 2, {"a": [], "b": {}}]');
+    expect(pythonJson("é")).toBe('"\\u00e9"');
+    expect(pythonJson("😀")).toBe('"\\ud83d\\ude00"');
+    expect(pythonJson("a\u007fb\n")).toBe('"a\\u007fb\\n"');
+    expect(pythonJson({ b: 1, a: 2 })).toBe('{"b": 1, "a": 2}');
+    expect(pythonJson({ b: 1, a: 2 }, true)).toBe('{"a": 2, "b": 1}');
+    expect(pythonJson(null)).toBe("null");
+    expect(pythonJson(true)).toBe("true");
+    // A list of three is 7 characters as it is typed without spaces and 9 as the server counts it
+    expect(parseValue("[1,2,3]", "values", 8)).toEqual({ ok: false, problem: "The new value for values is at most 8 characters of JSON." });
+    expect(parseValue("[1,2,3]", "values", 9).ok).toBe(true);
+    // Text that is not ASCII is longer as the server writes it
+    expect(parseValue('"éé"', "method", 15).ok).toBe(true);
+    expect(parseValue('"éé"', "method", 13).ok).toBe(false);
+  });
+
   it("is plain if an argument can be given it", () => {
     expect(isPlain(null)).toBe(true);
     expect(isPlain([1, "a", true, null, { b: 2.5 }])).toBe(true);
@@ -186,6 +209,35 @@ describe("what making a variant is asked for", () => {
 
     expect(checked.value).toEqual({ claim: "c1", changes: { scale: 3 }, minutes: 5, repeats: 2, gigabytes: 1 });
     expect(checked.value).not.toHaveProperty("note");
+  });
+
+  it("is refused for a table that is what the argument was given, whatever the order of its keys", () => {
+    const table: Offering = {
+      claim: "c1",
+      can: true,
+      refused: null,
+      function: "cellmapper.core.score",
+      arguments: [argument("options", { a: 1, b: [2] }, "{'a': 1, 'b': [2]}")],
+    };
+    const some = variants({ claims: [table, refused] });
+    const same = (typed: string) =>
+      checkVariant(draft({ values: { options: typed }, basis: signatureOf(table) }), some).problems["value:options"];
+
+    expect(same('{"b": [2], "a": 1}')).toBe("options was given that value, so it is not a change.");
+    expect(same('{"a": 1, "b": [3]}')).toBeUndefined();
+  });
+
+  it("does not take what was typed for other arguments for what the claim is offered with now", () => {
+    const typed = draft({ values: { scale: "3" } });
+    const later: Offering = { ...scored, arguments: [argument("scale", 4, "4"), ...scored.arguments.slice(2)] };
+
+    expect(valuesFor(typed, scored)).toEqual({ scale: "3" });
+    expect(valuesFor(typed, later)).toEqual({});
+    expect(checkVariant(typed, variants()).value?.changes).toEqual({ scale: 3 });
+    const again = variants({ claims: [later, refused] });
+
+    expect(checkVariant(typed, again).problems.changes).toBe("Give at least one argument a new value.");
+    expect(checkVariant(draft({ values: { scale: "3" }, basis: signatureOf(later) }), again).value?.changes).toEqual({ scale: 3 });
   });
 
   it("needs a claim that a variant can be made of", () => {
