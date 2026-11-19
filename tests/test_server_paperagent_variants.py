@@ -852,6 +852,7 @@ class TestOverHttp:
             {"claim": claim, "changes": {"scale": 3}, "minutes": "5"},
             {"claim": claim, "changes": {"scale": 3}, "minutes": 1.5},
             {"claim": claim, "changes": {"scale": 3}, "note": 5},
+            {"claim": claim, "changes": {"scale": 3}, "note": "n" * 301},
             {"claim": claim, "changes": {"scale": 3}, "surprise": 1},
         ):
             assert client.post(base, json=body).status_code == 422, body

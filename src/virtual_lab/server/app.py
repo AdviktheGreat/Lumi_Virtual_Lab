@@ -526,7 +526,7 @@ class PaperAgentVariantBody(RequestModel):
     minutes: StrictInt | None = None
     repeats: StrictInt | None = None
     gigabytes: StrictInt | None = None
-    note: str | None = Field(None, max_length=1000)
+    note: str | None = Field(None, max_length=300)
 
 
 class PaperAgentDataBody(RequestModel):
