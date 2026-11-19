@@ -19,6 +19,13 @@ that a model went by, which a program found in the abstract, and the addresses o
 which are suggestions and are not the address of its code until the person says so. One that the person added has
 neither.
 
+A candidate that has been built, or that building could not go on with, says which, and why: what stands in the way of
+a method, in words, and whether it is for the person to say something (waiting), something that is so of the method
+and not for anyone to change here (blocked), something that went wrong that may not the next time it is tried
+(failed), or something that was not got to (pending). That a method is built is not kept here, since it is the
+PaperAgent that is looked at: a method is built if its PaperAgent's tools are made. What is kept is only the last thing
+that stood in the way, and what the person said to it.
+
 A file that is not in the shape that a bake-off is kept in is not used, as it may not be if it was edited.
 """
 
@@ -31,13 +38,13 @@ from typing import Any
 from virtual_lab.paperagents.stock import matches
 from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server.errors import ApiError
-from virtual_lab.server.paperagents import check_paper, check_repo, passes
+from virtual_lab.server.paperagents import check_paper, check_repo, passes, same_paper
 from virtual_lab.server.workspace import has_control_character, read_json
 from virtual_lab.utils import MeetingUsage, compute_token_cost, write_atomically
 
 RECORD_FILE = "bakeoff.json"
 # What a record says of how it is kept, so that a later version can read what an earlier one wrote
-SCHEMA = 1
+SCHEMA = 2
 MAX_RECORD_BYTES = 2 << 20
 MAX_BAKEOFFS = 50
 MAX_CANDIDATES = 12
@@ -55,6 +62,12 @@ BY_PERSON = "person"
 WRITERS = ("model", "person")
 # Where a paper that a search found can be read, by the service that found it
 FOUND_PAGES = {"europepmc": "https://europepmc.org/", "arxiv": "https://arxiv.org/"}
+# What stands in the way of a method that is being built, and at which step of building it
+BUILD_STATES = ("waiting", "blocked", "failed", "pending")
+BUILD_STEPS = ("agent", "code", "paper", "preflight", "environment", "tutorials", "tools")
+MAX_REASON_CHARS = 600
+WHY = re.compile(r"[a-z_]{1,30}")
+COMMIT = re.compile(r"[0-9a-f]{7,64}")
 # Why a choice of a model did not become a candidate, which a shortlist counts
 DROPPED = ("not_shown", "twice", "quote", "more", "already", "no_room")
 
@@ -69,6 +82,14 @@ FOUND = {
     "preprint": bool,
     "full_text": (bool, None),
 }
+BUILD = {
+    "state": str,
+    "step": str,
+    "why": str,
+    "reason": str,
+    "at": str,
+    "go_on": (str, None),
+}
 CANDIDATE = {
     "id": str,
     "name": str,
@@ -80,6 +101,7 @@ CANDIDATE = {
     "added_at": str,
     "found": (FOUND, None),
     "fit": ({"quote": str, "model": str}, None),
+    "build": (BUILD, None),
 }
 SHORTLIST = {
     "started_at": str,
@@ -111,6 +133,11 @@ RECORD = {
 }
 
 
+def printable(text: str) -> str:
+    """Text without what is not text in it, which a paper's title from a service may have, on one line."""
+    return " ".join("".join(char if char.isprintable() else " " for char in text).split())
+
+
 def is_amount(value: Any) -> bool:
     return isinstance(value, NUMBER) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
 
@@ -134,6 +161,20 @@ def is_found(found: dict[str, Any]) -> bool:
         and (found["url"] == "" or page_of(found["source"], found["url"]) == found["url"])
         and not has_control_character(found["credit"])
         and not has_control_character(found["venue"])
+    )
+
+
+def is_build(build: dict[str, Any]) -> bool:
+    """Whether what is kept of what stands in the way of a method is that: one of the states and steps there are, a
+    reason in words, and, if the person said to go on, the commit of the code that they said it of."""
+    return (
+        build["state"] in BUILD_STATES
+        and build["step"] in BUILD_STEPS
+        and WHY.fullmatch(build["why"]) is not None
+        and 0 < len(build["reason"]) <= MAX_REASON_CHARS
+        and not has_control_character(build["reason"])
+        and not has_control_character(build["at"])
+        and (build["go_on"] is None or COMMIT.fullmatch(build["go_on"]) is not None)
     )
 
 
@@ -161,6 +202,7 @@ def is_candidate(value: dict[str, Any]) -> bool:
         and (value["fit"] is not None) == (value["added_by"] == BY_SEARCH)
         and (value["found"] is not None) == (value["added_by"] == BY_SEARCH)
         and (value["found"] is None or is_found(value["found"]))
+        and (value["build"] is None or is_build(value["build"]))
     )
 
 
@@ -185,13 +227,26 @@ def is_record(value: Any) -> bool:
     )
 
 
+def upgraded(value: Any) -> Any:
+    """What an earlier version kept, as this one keeps it: the first, which had no building, has none said of any
+    candidate. What is not a record of that version is as it was."""
+    if not isinstance(value, dict) or value.get("schema") != 1 or not isinstance(value.get("candidates"), list):
+        return value
+
+    return {
+        **value,
+        "schema": SCHEMA,
+        "candidates": [{**each, "build": None} if isinstance(each, dict) else each for each in value["candidates"]],
+    }
+
+
 def load(directory: Path) -> dict[str, Any] | None:
     """The bake-off in a directory, or None if there is none or what is there is not one."""
     path = directory / RECORD_FILE
     try:
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_RECORD_BYTES:
             return None
-        value = read_json(path)
+        value = upgraded(read_json(path))
     except OSError:
         return None
 
@@ -243,8 +298,47 @@ def cost_of(usage: MeetingUsage) -> tuple[float, bool]:
     return float(spent), known
 
 
+def charge_amount(record: dict[str, Any], cost: float, known: bool = True) -> dict[str, Any]:
+    """The bake-off with an amount that a step spent added to what has been spent, which is not known if the step's is
+    not, and is not known again after that."""
+    return {**record, "spent": round(record["spent"] + cost, 6), "cost_known": record["cost_known"] and known}
+
+
 def charge(record: dict[str, Any], usage: MeetingUsage) -> dict[str, Any]:
     """The bake-off with what a step used added to what has been spent."""
     cost, known = cost_of(usage)
 
-    return {**record, "spent": round(record["spent"] + cost, 6), "cost_known": record["cost_known"] and known}
+    return charge_amount(record, cost, known)
+
+
+def standing_of(
+    candidate: dict[str, Any], agent: dict[str, Any] | None, building: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Where a method stands: being built, built, stood in the way of, or not yet gone at. It is made from what there is
+    now, and not from what was kept of it, so that a PaperAgent that was built by hand, or one whose environment was
+    taken away, is as it is.
+
+    :param agent: The PaperAgent of the method's paper, as a page is given one, if there is one.
+    :param building: The job that is building the bake-off's methods, if there is one, as it is given to a page.
+    """
+    progress = building["progress"] if building is not None else {}
+    if progress.get("candidate") == candidate["id"]:
+        return {"state": "building", "step": progress.get("step"), "reason": building["message"] if building else ""}
+    if agent is not None and agent["steps"]["tools"] == "done" and agrees(candidate["repo"], agent["repo"]):
+        return {"state": "built", "step": None, "reason": "Its tools are made."}
+    if candidate["build"] is not None:
+        return {key: candidate["build"][key] for key in ("state", "step", "why", "reason", "at")}
+
+    return {"state": "new", "step": None, "reason": ""}
+
+
+def agrees(said: str | None, has: str | None) -> bool:
+    """Whether a PaperAgent's code is the code that the bake-off says a method has: it is if the bake-off says none, and
+    otherwise if they are the same address. A PaperAgent that was built from other code is not the method that was
+    asked for, and building asks the person which is."""
+    return said is None or said == has
+
+
+def agent_for(paper: dict[str, Any], agents: list[tuple[Path, dict[str, Any]]]) -> tuple[str, dict[str, Any]] | None:
+    """The PaperAgent of a paper, with its id, from the PaperAgents there are as `kept` lists them, if there is one."""
+    return next(((directory.name, agent) for directory, agent in agents if same_paper(paper, agent["paper"])), None)

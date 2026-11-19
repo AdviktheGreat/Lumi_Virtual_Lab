@@ -101,6 +101,9 @@ and everything else is a request and an answer.
     DELETE /api/bakeoffs/{id}/candidates/{method}  takes a method out of the running
     POST   /api/bakeoffs/{id}/shortlist  starts finding methods for the task in the literature, within what is left of
                                          the limit, as a job; it adds to the methods and takes none away
+    POST   /api/bakeoffs/{id}/build      starts building the methods, as a job: each is given the PaperAgent of its
+                                         paper and the steps that a PaperAgent has, and the person is asked where it
+                                         is for them to say; reading is paid for out of what is left of the limit
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -634,6 +637,18 @@ class BakeoffShortlistBody(RequestModel):
     model write them."""
 
     queries: list[Annotated[str, StringConstraints(max_length=400)]] | None = Field(None, max_length=20)
+
+
+class BakeoffBuildBody(RequestModel):
+    """How to build methods: which of them, all that are not built if left out, and which of those that building
+    asked about to go on with."""
+
+    candidates: list[Annotated[str, StringConstraints(max_length=64)]] | None = Field(
+        None, max_length=paperagent_bakeoff.MAX_CANDIDATES
+    )
+    go_on: list[Annotated[str, StringConstraints(max_length=64)]] | None = Field(
+        None, max_length=paperagent_bakeoff.MAX_CANDIDATES
+    )
 
 
 class McpServerBody(RequestModel):
@@ -1656,6 +1671,10 @@ def create_app(
     @api.post("/bakeoffs/{bakeoff_id}/shortlist", status_code=202)
     def shortlist_bakeoff(bakeoff_id: str, body: BakeoffShortlistBody) -> dict[str, Any]:
         return bakeoffs.start_shortlist(bakeoff_id, body.queries).snapshot(0)
+
+    @api.post("/bakeoffs/{bakeoff_id}/build", status_code=202)
+    def build_bakeoff(bakeoff_id: str, body: BakeoffBuildBody) -> dict[str, Any]:
+        return bakeoffs.start_build(bakeoff_id, body.candidates, body.go_on).snapshot(0)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:

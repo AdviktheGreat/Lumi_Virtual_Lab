@@ -2,7 +2,7 @@
 
 A bake-off is kept in a directory of its own in the workspace's bakeoffs/ (paperagent_bakeoff.py). It says what the
 person wants done, which of their data it is to be done on, and how much the whole of it may spend, and it has the
-methods that are in the running, the candidates. This is the first step of it: finding them.
+methods that are in the running, the candidates. The first step of it is finding them, and the second is building them.
 
 A model writes a few short searches for the task, a program runs them in Europe PMC and on arXiv, and a model chooses,
 from the abstracts that were found, the papers that are of a method that does the task, with the words of the abstract
@@ -11,7 +11,12 @@ that are the model's reading of abstracts and are shown as that: it is not said 
 the person's data, or that they are the best there are. The person may add a method that it left out, by its paper, and
 may take any away, name them, and say where each one's code is. The address of code that an abstract has in it is only
 shown as a suggestion, and nothing is fetched from it, nor from anywhere else, before the person says that it is the
-code. Nothing is built or run here, and no PaperAgent is made: those are the steps that follow.
+code. Finding them builds nothing and runs nothing, and makes no PaperAgent.
+
+Building them (bakeoff_building.py) gives each method that the person asks for the PaperAgent of its paper, which is
+made if there is none, and does the steps that a PaperAgent has to it one after another, as they are done by hand: so a
+step that was done by hand is not done again, and one that is done here can be looked at on the PaperAgent's page. What
+is built is the PaperAgent's, and what stood in the way of a method is kept with it here.
 
 What a model is asked is paid for out of the bake-off's one limit on spending, which is set when it is made and may be
 raised, and which is never less than what has been spent.
@@ -27,8 +32,10 @@ from typing import Any
 
 from virtual_lab.environment import StoppedError
 from virtual_lab.paperagents import asking, shortlisting
+from virtual_lab.paperagents import environment as building
 from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server import paperagent_bakeoff as kept_bakeoff
+from virtual_lab.server.bakeoff_building import Builder
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError
 from virtual_lab.server.paperagents import (
@@ -39,6 +46,7 @@ from virtual_lab.server.paperagents import (
     is_blank,
     is_real_directory,
     same_paper,
+    steps_of,
 )
 from virtual_lab.server.papers import RUN_ID, check_budget, money
 from virtual_lab.server.workspace import claim_directory, has_control_character
@@ -46,6 +54,8 @@ from virtual_lab.utils import MeetingUsage
 
 # The job that finds the methods of a task in the literature, which is not done to a bake-off while it is being done
 SHORTLIST_JOB = "bakeoff-shortlist"
+# The job that builds the methods that are in the running, which is not done to a bake-off while it is being done either
+BUILD_JOB = "bakeoff-build"
 
 
 def check_task(text: Any) -> str:
@@ -77,11 +87,6 @@ def check_name(text: Any, what: str, most: int) -> str:
     return name
 
 
-def printable(text: str) -> str:
-    """Text without what is not text in it, which a paper's title from a service may have."""
-    return " ".join("".join(char if char.isprintable() else " " for char in text).split())
-
-
 class Bakeoffs:
     """The bake-offs, kept in a workspace.
 
@@ -102,6 +107,7 @@ class Bakeoffs:
         self.jobs = paperagents.jobs
         self.articles = articles
         self.preprints = preprints
+        self.builder = Builder(self)
         # Held while a bake-off is read, changed, and kept again, so that two changes do not undo each other
         self._lock = threading.Lock()
 
@@ -139,11 +145,20 @@ class Bakeoffs:
         """The job that is finding the methods of a bake-off, if one is."""
         return next((job for job in self.jobs.active(SHORTLIST_JOB) if job.subject == bakeoff_id), None)
 
+    def building(self, bakeoff_id: str) -> Job | None:
+        """The job that is building the methods of a bake-off, if one is."""
+        return next((job for job in self.jobs.active(BUILD_JOB) if job.subject == bakeoff_id), None)
+
+    def running(self, bakeoff_id: str) -> Job | None:
+        """The job that is finding or building the methods of a bake-off, if one is."""
+        return self.finding(bakeoff_id) or self.building(bakeoff_id)
+
     def check_idle(self, bakeoff_id: str) -> None:
         """
-        :raises ApiError: If the methods of the bake-off are being found, which what is done to it must wait for.
+        :raises ApiError: If the methods of the bake-off are being found or built, which what is done to it must wait
+            for.
         """
-        job = self.finding(bakeoff_id)
+        job = self.running(bakeoff_id)
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
 
@@ -172,7 +187,7 @@ class Bakeoffs:
 
     def summary(self, bakeoff_id: str, record: dict[str, Any]) -> dict[str, Any]:
         """A bake-off as a list of them shows it."""
-        job = self.finding(bakeoff_id)
+        job = self.running(bakeoff_id)
 
         return {
             "id": bakeoff_id,
@@ -196,7 +211,9 @@ class Bakeoffs:
         agents = self.paperagents.kept()
         named = record["data"]["own"] if record["data"] is not None else None
         own = self.paperagents.own_data().get(named) if named is not None else None
-        job = self.finding(bakeoff_id)
+        job = self.running(bakeoff_id)
+        building_now = self.building(bakeoff_id)
+        building_snapshot = building_now.snapshot() if building_now is not None else None
 
         return {
             **self.summary(bakeoff_id, record),
@@ -207,29 +224,34 @@ class Bakeoffs:
             ),
             "left": kept_bakeoff.left_of(record),
             "shortlist": record["shortlist"],
-            "candidates": [
-                {
-                    **candidate,
-                    "agent": next(
-                        (
-                            {
-                                "id": directory.name,
-                                "title": agent["title"],
-                                "repo": (agent.get("repo") or {}).get("url"),
-                            }
-                            for directory, agent in agents
-                            if same_paper(candidate["paper"], agent["paper"])
-                        ),
-                        None,
-                    ),
-                }
-                for candidate in record["candidates"]
-            ],
+            "candidates": [self.shown(candidate, agents, building_snapshot) for candidate in record["candidates"]],
             "job": job.snapshot() if job is not None else None,
             "limits": self.limits(),
             "meaning": shortlisting_meaning(),
             "settings_model": self.workspace.load_settings().model,
         }
+
+    def shown(
+        self,
+        candidate: dict[str, Any],
+        agents: list[tuple[Path, dict[str, Any]]],
+        building_snapshot: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """A candidate as a page is shown it: with the PaperAgent of its paper if there is one, and where it stands."""
+        found = kept_bakeoff.agent_for(candidate["paper"], agents)
+        entry = self.paperagents.entry(found[0], found[1]) if found is not None else None
+        agent = (
+            {
+                "id": entry["id"],
+                "title": entry["title"],
+                "repo": (entry["repo"] or {}).get("url"),
+                "steps": entry["steps"],
+            }
+            if entry is not None
+            else None
+        )
+
+        return {**candidate, "agent": agent, "standing": kept_bakeoff.standing_of(candidate, agent, building_snapshot)}
 
     # Making, changing, and taking away
 
@@ -354,6 +376,7 @@ class Bakeoffs:
             "added_at": utc_timestamp(),
             "found": None,
             "fit": None,
+            "build": None,
         }
         with self._lock:
             directory, record = self.lookup(bakeoff_id)
@@ -399,7 +422,10 @@ class Bakeoffs:
             if name is not None:
                 candidate = {**candidate, "name": check_name(name, "A method", kept_bakeoff.MAX_NAME_CHARS)}
             if repo is not None:
-                candidate = {**candidate, "repo": None if is_blank(repo) else check_repo(repo)}
+                code = None if is_blank(repo) else check_repo(repo)
+                if code != candidate["repo"]:
+                    # What stood in the way of building the method was of the code that it had
+                    candidate = {**candidate, "repo": code, "build": None}
             kept_bakeoff.keep(
                 directory, {**record, "candidates": [*candidates[:position], candidate, *candidates[position + 1 :]]}
             )
@@ -469,20 +495,8 @@ class Bakeoffs:
                     f"There are {kept_bakeoff.MAX_CANDIDATES} methods in the running, which is as many as there can "
                     "be. Remove some first",
                 )
-            if not record["cost_known"]:
-                raise ApiError(
-                    409,
-                    "cost_unknown",
-                    "A response did not say what it used, so what has been spent is not known and the limit cannot be "
-                    "kept. No more is asked of a model for this bake-off",
-                )
+            self.check_money(record)
             left = kept_bakeoff.left_of(record)
-            if left <= 0:
-                raise ApiError(
-                    409,
-                    "limit",
-                    f"The limit on spending, {money(record['limit'])}, has been reached. Raise it to go on",
-                )
             usage = MeetingUsage()
             work = self.shortlister(bakeoff_id, self.asker_of(model, left, usage), usage, wanted)
             try:
@@ -608,7 +622,7 @@ class Bakeoffs:
         """A method that a model chose, as it is kept: with the words of its abstract that were found there, and the
         addresses of code that its abstract has in it, which are suggestions."""
         found = choice.found
-        title = printable(found.title)[: shortlisting.MAX_TITLE_CHARS] or default_title(paper)
+        title = kept_bakeoff.printable(found.title)[: shortlisting.MAX_TITLE_CHARS] or default_title(paper)
         suggested = dict.fromkeys(
             address for link in found.links if (address := self.paperagents.as_repo(link)) is not None
         )
@@ -625,10 +639,11 @@ class Bakeoffs:
             "found": {
                 **found.record(),
                 "url": kept_bakeoff.page_of(found.source, found.url),
-                "credit": printable(found.credit),
-                "venue": printable(found.venue),
+                "credit": kept_bakeoff.printable(found.credit),
+                "venue": kept_bakeoff.printable(found.venue),
             },
             "fit": {"quote": choice.quote, "model": model},
+            "build": None,
         }
 
     def settle(self, bakeoff_id: str, usage: MeetingUsage) -> None:
@@ -639,6 +654,178 @@ class Bakeoffs:
             except ApiError:
                 return
             kept_bakeoff.keep(directory, kept_bakeoff.charge(record, usage))
+
+    def settle_cost(self, bakeoff_id: str, cost: float, known: bool) -> None:
+        """Adds what a step spent, as it says, to what the bake-off has spent. It is not known what was spent if the
+        step could not say."""
+        with self._lock:
+            try:
+                directory, record = self.lookup(bakeoff_id)
+            except ApiError:
+                return
+            kept_bakeoff.keep(directory, kept_bakeoff.charge_amount(record, cost, known))
+
+    def edit_candidate(
+        self, bakeoff_id: str, candidate_id: str, change: Callable[[dict[str, Any]], dict[str, Any]]
+    ) -> None:
+        """Keeps a method as `change` makes it of what it is now, which is for a step that was started to say what came
+        of it. Nothing is kept of a method that was taken out of the running since, or of a bake-off that was taken
+        away."""
+        with self._lock:
+            try:
+                directory, record = self.lookup(bakeoff_id)
+            except ApiError:
+                return
+            candidates = [change(each) if each["id"] == candidate_id else each for each in record["candidates"]]
+            kept_bakeoff.keep(directory, {**record, "candidates": candidates})
+
+    def candidate(self, bakeoff_id: str, candidate_id: str) -> dict[str, Any] | None:
+        """A method as it is kept now, or None if it, or the bake-off, is gone."""
+        try:
+            _, record = self.lookup(bakeoff_id)
+        except ApiError:
+            return None
+
+        return next((each for each in record["candidates"] if each["id"] == candidate_id), None)
+
+    # Building them
+
+    def check_ids(self, ids: Any, what: str) -> list[str] | None:
+        """The ids of methods that were given, or None if none were.
+
+        :raises ApiError: If they are not a list of ids, each once.
+        """
+        if ids is None:
+            return None
+        if not isinstance(ids, list) or not all(isinstance(each, str) for each in ids) or len(set(ids)) != len(ids):
+            raise ApiError(422, "invalid", f"{what} are given as a list of the ids of methods, each once")
+
+        return ids
+
+    def start_build(self, bakeoff_id: str, candidates: Any = None, go_on: Any = None) -> Job:
+        """Starts building methods: each is given the PaperAgent of its paper, the paper is read for what it says of
+        the code, the code is fetched and looked at to see whether it is worth going on with, and, if it is, its
+        environment is built, its tutorials are run, and tools are made of what they did. Each step is the
+        PaperAgent's own, and one that has been done is not done again. Reading is the only step that is paid for in
+        model requests, and it is paid for out of what is left of the limit.
+
+        :param candidates: The ids of the methods to build, or none for all that are not built.
+        :param go_on: The ids of methods whose code the look at it said to ask about, and that the person says to go on
+            with.
+        :raises ApiError: If there is no bake-off or method with these ids, what is given is not fit, Git is not
+            installed or Docker is not running, nothing is left to build, a method to go on with is not one that was
+            asked about, a key or a price is missing, nothing is left of the limit for reading the papers that are
+            not read, or the methods of the bake-off are being found or built.
+        """
+        self.lookup(bakeoff_id)
+        wanted = self.check_ids(candidates, "The methods to build")
+        approved = self.check_ids(go_on, "The methods to go on with") or []
+        if shutil.which("git") is None:
+            raise ApiError(422, "git_missing", "Git is not installed on this machine, and fetching code takes it")
+        usable, problem = building.ready(self.paperagents.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and building takes it")
+
+        with self._lock:
+            directory, record = self.lookup(bakeoff_id)
+            self.check_idle(bakeoff_id)
+            agents = self.paperagents.kept()
+            known = {each["id"]: each for each in record["candidates"]}
+            for each in (*(wanted or []), *approved):
+                if each not in known:
+                    raise not_found("method in that bake-off with that id")
+            asked = list(known) if wanted is None else wanted
+            chosen = [each for each in asked if not self.is_built(known[each], agents)]
+            if not chosen:
+                raise ApiError(
+                    409,
+                    "nothing_to_build",
+                    "There is no method in the running to build, or each of those asked for is built already",
+                )
+            commits = {each: self.commit_asked_about(known[each], agents) for each in approved}
+            for each, commit in commits.items():
+                if each not in chosen or commit is None:
+                    raise ApiError(
+                        409,
+                        "not_asking",
+                        f"{known[each]['name']} is not waiting for you to go on with it: looking at its code did not "
+                        "find things to ask you about, or it is not one of those to build",
+                    )
+            unread = [each for each in chosen if not self.is_read(known[each], agents)]
+            if unread:
+                self.paperagents.usable_model()
+                if len(unread) == len(chosen):
+                    self.check_money(record)
+            try:
+                job = self.jobs.start(
+                    BUILD_JOB,
+                    bakeoff_id,
+                    f"Building the methods: {record['title']}",
+                    self.builder.work(bakeoff_id, chosen),
+                    exclusive=f"bakeoff:{bakeoff_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+            if commits:
+                kept_bakeoff.keep(
+                    directory,
+                    {
+                        **record,
+                        "candidates": [
+                            {**each, "build": {**each["build"], "go_on": commits[each["id"]]}}
+                            if each["id"] in commits
+                            else each
+                            for each in record["candidates"]
+                        ],
+                    },
+                )
+
+        return job
+
+    def check_money(self, record: dict[str, Any]) -> None:
+        """
+        :raises ApiError: If nothing is left of the limit to ask a model with, or what has been spent is not known.
+        """
+        if not record["cost_known"]:
+            raise ApiError(
+                409,
+                "cost_unknown",
+                "A response did not say what it used, so what has been spent is not known and the limit cannot be "
+                "kept. No more is asked of a model for this bake-off",
+            )
+        if kept_bakeoff.left_of(record) <= 0:
+            raise ApiError(
+                409,
+                "limit",
+                f"The limit on spending, {money(record['limit'])}, has been reached. Raise it to go on",
+            )
+
+    def is_built(self, candidate: dict[str, Any], agents: list[tuple[Path, dict[str, Any]]]) -> bool:
+        found = kept_bakeoff.agent_for(candidate["paper"], agents)
+
+        return (
+            found is not None
+            and steps_of(found[1])["tools"] == "done"
+            and kept_bakeoff.agrees(candidate["repo"], (found[1].get("repo") or {}).get("url"))
+        )
+
+    def is_read(self, candidate: dict[str, Any], agents: list[tuple[Path, dict[str, Any]]]) -> bool:
+        found = kept_bakeoff.agent_for(candidate["paper"], agents)
+
+        return found is not None and steps_of(found[1])["reading"] == "done"
+
+    def commit_asked_about(self, candidate: dict[str, Any], agents: list[tuple[Path, dict[str, Any]]]) -> str | None:
+        """The commit of the code that a method's building asked the person about, or None if it did not, or the code
+        is not what it was asked about of."""
+        build = candidate["build"]
+        found = kept_bakeoff.agent_for(candidate["paper"], agents)
+        if build is None or build["why"] != "ask" or found is None:
+            return None
+        intake = self.paperagents.repository(found[0])["intake"]
+
+        return str(intake["commit"]) if intake is not None else None
 
 
 def shortlisting_meaning() -> str:
