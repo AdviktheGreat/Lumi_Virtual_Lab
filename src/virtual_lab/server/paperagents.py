@@ -385,8 +385,12 @@ def check_title(title: Any, paper: dict[str, Any] | None = None) -> str:
 
 
 def is_real_directory(path: Path) -> bool:
-    """Whether a path is a directory of its own, and not a link to one, which is not followed out of the workspace."""
-    return path.is_dir() and not path.is_symlink()
+    """Whether a path is a directory of its own, and not a link to one, which is not followed out of the workspace. A
+    name that the file system cannot take, as one that is too long, is of no directory."""
+    try:
+        return path.is_dir() and not path.is_symlink()
+    except OSError:
+        return False
 
 
 def passes(check: Callable[[Any], Any], value: Any) -> bool:

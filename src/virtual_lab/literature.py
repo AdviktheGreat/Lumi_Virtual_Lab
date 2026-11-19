@@ -490,6 +490,7 @@ def search_articles(
     sort: str = "relevance",
     open_access_only: bool = False,
     include_preprints: bool = True,
+    with_abstracts: bool = False,
 ) -> ArticleResults:
     """Searches Europe PMC for published articles and biology preprints.
 
@@ -499,6 +500,8 @@ def search_articles(
     :param sort: "relevance", "cited", or "recent".
     :param open_access_only: Only return articles whose full text can then be fetched.
     :param include_preprints: Whether to include preprint servers such as bioRxiv.
+    :param with_abstracts: Whether to have the abstracts, which a listing leaves out and which cost
+        the service more to send.
     :raises ValueError: If the query is empty, the limit is below one, or the sort is unknown.
     :raises WebRequestError: If Europe PMC could not be reached.
     :return: The results.
@@ -529,7 +532,7 @@ def search_articles(
 
     response = europe_pmc_search(
         query=sent,
-        result_type="lite",
+        result_type="core" if with_abstracts else "lite",
         size=size,
         sort=ARTICLE_SORTS[sort],
     )
