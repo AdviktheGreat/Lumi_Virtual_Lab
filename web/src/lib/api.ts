@@ -46,6 +46,8 @@ import type {
   PaperAgentDivergence,
   PaperAgentReproduction,
   PaperAgentReproductionOptions,
+  PaperAgentVariantOptions,
+  PaperAgentVariants,
   PaperAgentGiven,
   PaperAgentImportCheck,
   PaperAgentData,
@@ -611,6 +613,12 @@ export const api = {
   clearPaperAgentReproduction: (id: string) => request<PaperAgentReproduction>("DELETE", `/paperagents/${encodeURIComponent(id)}/reproduction`),
   paperAgentDivergence: (id: string, signal?: AbortSignal) =>
     request<PaperAgentDivergence>("GET", `/paperagents/${encodeURIComponent(id)}/divergence`, undefined, signal),
+  // The variants of the claims, which are their calls made again with something changed, and are never the paper's result
+  paperAgentVariants: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentVariants>("GET", `/paperagents/${encodeURIComponent(id)}/variants`, undefined, signal),
+  startPaperAgentVariant: (id: string, options: PaperAgentVariantOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/variants`, options),
+  clearPaperAgentVariants: (id: string) => request<PaperAgentVariants>("DELETE", `/paperagents/${encodeURIComponent(id)}/variants`),
   // What a person does to the method card, each giving back the reading as it is then: adding a fact, changing one, taking one
   // off and putting it back, approving the card and taking the approval back, and taking away all that they changed
   addPaperAgentCardFact: (id: string, kind: CardKind, fields: CardFields) =>

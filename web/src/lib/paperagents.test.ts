@@ -52,6 +52,7 @@ import {
   titleProblem,
   checksJob,
   lastReproductionJob,
+  lastVariantJob,
   reproductionJob,
   toolsJob,
   variantJob,
@@ -877,6 +878,15 @@ describe("the job that makes a variant of a claim of an agent", () => {
     expect(variantJob(jobs, "cells")?.id).toBe("v1");
     expect(variantJob(jobs.slice(0, 3), "cells")).toBeUndefined();
     expect(reproductionJob([varying()], "cells")).toBeUndefined();
+  });
+
+  it("is, when none is at work, the latest that is over", () => {
+    const jobs = [varying({ id: "new", state: "stopped" }), varying({ id: "old", state: "failed" }), job({ state: "failed" })];
+
+    expect(lastVariantJob(jobs, "cells")?.id).toBe("new");
+    expect(lastVariantJob([varying()], "cells")).toBeUndefined();
+    expect(lastVariantJob([varying({ id: "other", subject: "dogs", state: "failed" })], "cells")).toBeUndefined();
+    expect(lastVariantJob([job({ kind: "paperagent-reproduction", state: "failed" })], "cells")).toBeUndefined();
   });
 
   it("changes the key that the page looks again by, and says nothing of another agent's or of one that is over", () => {

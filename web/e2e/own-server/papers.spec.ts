@@ -3898,3 +3898,562 @@ test("says what is wrong when the server refuses to try the claims, and looks ag
   expect((await claimsOf(page, id)).job).toBeNull();
   expect(await accessibilityProblems(page)).toEqual([]);
 });
+
+const variantsForm = (page: Page) => form(page, "Make a variant");
+const makeVariantButton = (page: Page) => variantsForm(page).getByRole("button", { name: "Make the variant" });
+const keptVariants = (page: Page) => page.getByTestId("variants-kept");
+const variantRows = (page: Page) => page.getByTestId("variant");
+const makingVariant = (page: Page) => page.getByRole("region", { name: "Making a variant" });
+const variantsOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/variants`)).json();
+const claimWith = async (page: Page, id: string, status: string): Promise<string> =>
+  (await claimsOf(page, id)).claims.find((claim: { status: string }) => claim.status === status).id;
+const VARIANTS = { name: "Variants", level: 2, exact: true } as const;
+const CLOSING = "This is a variant. It is not the paper's result, and the claim's own result is as it was.";
+
+// Makes an agent whose claims have been tried, so that what a test is about is what is made of them, and opens it on the variants
+async function agentWithTriedClaims(page: Page, title: string, paper = claimsPaper(title)): Promise<string> {
+  const id = await agentWithClaims(page, title, paper);
+  await tryTheClaims(page, id);
+  await page.reload();
+  await expect(page.getByRole("heading", VARIANTS)).toBeVisible();
+  await expect(variantsForm(page)).toBeVisible();
+
+  return id;
+}
+
+// Makes a variant through the server, and waits until that is done
+async function makeTheVariant(page: Page, id: string, claim: string, changes: Record<string, unknown>) {
+  const started = await page.request.post(`/api/paperagents/${id}/variants`, { data: { claim, changes } });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await variantsOf(page, id)).job, { timeout: 30_000 }).toBeNull();
+}
+
+test("says that a variant is made of a claim that was tried, and not before", async ({ page }) => {
+  const id = await agentWithClaims(page, "Scored varied early");
+  await expect(page.getByRole("heading", VARIANTS)).toBeVisible();
+  await expect(page.getByTestId("variants-problem")).toHaveText("Try the claims first, as it is a claim that was tried that a variant is made of.");
+  await expect(page.getByTestId("variants-problem")).toHaveAttribute("data-code", "no_reproduction");
+  await expect(variantsForm(page)).toHaveCount(0);
+  await expect(keptVariants(page)).toHaveCount(0);
+  expect(await variantsOf(page, id)).toMatchObject({ ready: false, problem: { code: "no_reproduction" }, claims: [], variants: [], stale: 0, job: null });
+  const claim = (await claimsOf(page, id)).claims[0].id;
+  const asked = await page.request.post(`/api/paperagents/${id}/variants`, { data: { claim, changes: { values: [4, 5, 6] } } });
+  expect(asked.status()).toBe(422);
+  expect((await asked.json()).error.code).toBe("no_reproduction");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Once the claims are tried the page looks again, and a variant can be made
+  await tryTheClaims(page, id);
+  await page.reload();
+  await expect(page.getByTestId("variants-problem")).toHaveCount(0);
+  await expect(variantsForm(page)).toBeVisible();
+  await expect(keptVariants(page)).toHaveCount(0);
+});
+
+test("makes variants of a claim's call with new values, says of each that it is not the paper's result, saves them as a table, and takes them away", async ({ page }) => {
+  test.setTimeout(150_000);
+  const id = await agentWithTriedClaims(page, "Scored varied");
+  const reproduced = await claimWith(page, id, "reproduced");
+  const own = await claimsOf(page, id);
+  const form = variantsForm(page);
+  const limits = (await variantsOf(page, id)).limits;
+  expect(await variantsOf(page, id)).toMatchObject({ ready: true, problem: null, variants: [], stale: 0, counts: { variants: 0, comparable: 0, rounds_to_paper: 0 } });
+
+  // The claims that a call can be made again of are offered, and why not the others is said when it is asked
+  const claim = form.getByLabel("Claim", { exact: true });
+  await expect(claim.locator("option")).toHaveCount(4);
+  await expect(claim.locator("option").first()).toHaveText("Choose a claim");
+  await expect(claim.locator("option").nth(1)).toHaveText("0.93: CellMapper reached an AUROC of 0.93 on held-out mouse hippoc…");
+  await expect(form).toContainText("3 claims can be varied.");
+  await form.getByRole("button", { name: "Why 1 claim cannot be varied" }).click();
+  await expect(form.getByRole("list", { name: "Claims that cannot be varied" })).toContainText("That claim was not attempted, so there is no call that it was held to.");
+  await expect(form.getByTestId("variants-refused").locator("li")).toHaveAttribute("data-code", "not_attempted");
+  await form.getByRole("button", { name: "Hide why not" }).click();
+  await expect(form.getByRole("list", { name: "Claims that cannot be varied" })).toHaveCount(0);
+
+  // A claim is chosen, and nothing is made until what is asked is right
+  await makeVariantButton(page).click();
+  await expect(form.getByText("Choose the claim whose call is made again.", { exact: true })).toBeVisible();
+  await expect(form.getByTestId("variant-argument")).toHaveCount(0);
+  await claim.selectOption(reproduced);
+  await expect(form.getByRole("group", { name: /What to change in the call of cellmapper\.core\.score/ })).toBeVisible();
+  await expect(form.getByTestId("variant-argument")).toHaveCount(1);
+  await expect(form.getByTestId("variant-argument")).toContainText("Given [1, 2, 3]");
+  await makeVariantButton(page).click();
+  await expect(form.getByText("Give at least one argument a new value.", { exact: true })).toBeVisible();
+  const values = form.getByLabel("values", { exact: true });
+  await values.fill("abc");
+  await expect(form.getByText(/^The new value for values is written as JSON/)).toBeVisible();
+  await values.fill("[1, 2, 3]");
+  await expect(form.getByText("values was given that value, so it is not a change.", { exact: true })).toBeVisible();
+  await values.fill(`[${"1, ".repeat(limits.max_value_chars)}1]`);
+  await expect(form.getByText(`The new value for values is at most ${limits.max_value_chars} characters of JSON.`, { exact: true })).toBeVisible();
+  await values.fill("[4, 5, 6]");
+  await form.getByLabel("Most time, in minutes").fill("0");
+  await expect(form.getByText(new RegExp(`is a whole number from 1 to ${limits.max_minutes}\\.$`))).toBeVisible();
+  await form.getByLabel("How many times each call is made").fill("many");
+  await expect(form.getByText(`How many times each call is made is a whole number from 1 to ${limits.max_repeats}.`, { exact: true })).toBeVisible();
+  await form.getByLabel("A note (optional)").fill("x".repeat(limits.max_note_chars + 1));
+  await expect(form.getByText(`A note is at most ${limits.max_note_chars} characters.`, { exact: true })).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  // Nothing was asked of the server while any of that was wrong
+  expect(await variantsOf(page, id)).toMatchObject({ variants: [], job: null });
+  await form.getByLabel("Most time, in minutes").fill(String(limits.default_minutes));
+  await form.getByLabel("How many times each call is made").fill(String(limits.default_repeats));
+  await form.getByLabel("A note (optional)").fill("");
+  await expect(form.getByRole("alert")).toHaveCount(0);
+
+  // A variant is made, and shown as what it is
+  await makeVariantButton(page).click();
+  await expect(variantRows(page)).toHaveCount(1, { timeout: 30_000 });
+  const first = variantRows(page).first();
+  await expect(first.getByTestId("variant-not-result")).toHaveText("Not the paper's result");
+  await expect(first.getByTestId("variant-status")).toHaveText("Gave a number");
+  await expect(first.getByTestId("variant-comparable")).toHaveText("Comparable");
+  await expect(first).toContainText("Of the claim that says “CellMapper reached an AUROC of 0.93 on held-out mouse hippocampus nuclei.”, which the paper gives as 0.93.");
+  await expect(first.getByRole("list", { name: "What was changed" })).toHaveText("values: [4,5,6] in place of [1,2,3]");
+  await expect(first.getByTestId("variant-outcome")).toHaveText("It gave 1.02, where the call that the claim was held to gave 0.93.");
+  await expect(first.getByTestId("variant-control")).toHaveText(
+    "Comparable: the same call with nothing changed gave what the tutorial got, and the variant gave a number.",
+  );
+  await expect(first.getByTestId("variant-rounds")).toHaveText("The number that it gave does not round to the paper's 0.93.");
+  await expect(first.getByTestId("variant-note")).toHaveCount(0);
+  await expect(first.getByTestId("variant-made")).toHaveText(
+    new RegExp(`^Made .+\\. Each call was made ${limits.default_repeats} times, for at most ${limits.default_minutes} minutes and ${limits.default_gigabytes} gigabytes? written\\.$`),
+  );
+  await expect(page.getByTestId("variants-counts")).toHaveText("1 variant: 1 comparable, 0 that give a number that rounds to the paper's. None of them is the paper's result.");
+  await expect(page.getByTestId("variants-meaning")).toHaveText((await variantsOf(page, id)).meaning);
+  // The server's own account is under it, and says the same
+  await first.getByRole("button", { name: /^Show how/ }).click();
+  await expect(first.getByTestId("variant-text")).toContainText("the call gave 1.02");
+  await expect(first.getByTestId("variant-text")).toContainText(CLOSING);
+  const how = first.getByRole("list", { name: "How this variant was made" });
+  await expect(how).toContainText("The claim was held to a call of cellmapper.core.score(values=[1, 2, 3]), at result, run by tutorials/quickstart.ipynb, which gave 0.93.");
+  await expect(how).toContainText("With the changes, the 2 times it was made gave: 1.02, 1.02.");
+  await expect(how).toContainText("With nothing changed, it gave 0.93 at the same place.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await first.getByRole("button", { name: /^Hide how/ }).click();
+  await expect(how).toHaveCount(0);
+
+  // What was typed stays, so that it can be changed a little and made again. One that gives the number that the paper reports is not that
+  // number reproduced, and a note is kept with it
+  await expect(values).toHaveValue("[4, 5, 6]");
+  await values.fill("[1, 2, 3, 0]");
+  await form.getByLabel("A note (optional)").fill("Is it the zero?");
+  await makeVariantButton(page).click();
+  await expect(variantRows(page)).toHaveCount(2, { timeout: 30_000 });
+  const second = variantRows(page).nth(1);
+  await expect(second.getByTestId("variant-outcome")).toHaveText("It gave 0.93, where the call that the claim was held to gave 0.93.");
+  await expect(second.getByTestId("variant-rounds")).toHaveText(
+    "The number that it gave rounds to the paper's 0.93. That is not a reproduction of the paper's result.",
+  );
+  await expect(second.getByTestId("variant-not-result")).toBeVisible();
+  await expect(second.getByTestId("variant-note")).toHaveText("Your note: Is it the zero?");
+  await expect(page.getByTestId("variants-counts")).toHaveText(
+    "2 variants: 2 comparable, 1 that gives a number that rounds to the paper's. None of them is the paper's result.",
+  );
+
+  // One that the call stops at is said so, and has no number to set beside the claim's
+  await values.fill('"abc"');
+  await form.getByLabel("A note (optional)").fill("");
+  await makeVariantButton(page).click();
+  await expect(variantRows(page)).toHaveCount(3, { timeout: 30_000 });
+  const third = variantRows(page).nth(2);
+  await expect(third.getByTestId("variant-status")).toHaveText("Stopped with an error");
+  await expect(third.getByTestId("variant-comparable")).toHaveText("Not comparable");
+  await expect(third.getByTestId("variant-outcome")).toHaveText("It stopped with TypeError: values must be a list of numbers.");
+  await expect(third.getByTestId("variant-control")).toContainText("the variant gave no number to set beside the claim's.");
+  await expect(third.getByTestId("variant-rounds")).toHaveCount(0);
+  await expect(third).toHaveAttribute("data-status", "error");
+  await expect(third).toHaveAttribute("data-comparable", "no");
+  const made = await variantsOf(page, id);
+  expect(made.variants.map((variant: { variant: { status: string } }) => variant.variant.status)).toEqual(["gave", "gave", "error"]);
+  expect(made.counts).toEqual({ variants: 3, comparable: 2, rounds_to_paper: 1 });
+
+  // None of them changed what was said of the claim
+  const after = await claimsOf(page, id);
+  expect(after.claims).toEqual(own.claims);
+  expect(after.counts).toEqual(own.counts);
+  await expect(claimWithStatus(page, "reproduced")).toHaveCount(1);
+  await expect(claimWithStatus(page, "reproduced").getByTestId("claim-status")).toHaveText("Reproduced");
+
+  // They can be saved as a table, each saying that it is not the paper's result
+  const download = keptVariants(page).getByRole("link", { name: "Download as a table, the variants" });
+  await expect(download).toHaveAttribute("href", `/api/paperagents/${id}/tables/variants`);
+  const table = await page.request.get(`/api/paperagents/${id}/tables/variants`);
+  expect(table.status()).toBe(200);
+  expect(table.headers()["content-type"]).toContain("text/csv");
+  expect(table.headers()["content-disposition"]).toContain("attachment");
+  const csv = await table.text();
+  expect(csv).toContain("Is it the paper's result");
+  expect(csv).toContain("values = [4, 5, 6] in place of [1, 2, 3]");
+  expect(csv).toContain("Is it the zero?");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // They are taken away only when it is said to be, and what was said of the claim stays
+  await keptVariants(page).getByRole("button", { name: "Take the variants away" }).click();
+  const asking = page.getByRole("alertdialog");
+  await expect(asking.getByRole("heading", { name: "Take away the variants of the claims of Scored varied?" })).toBeVisible();
+  await expect(asking).toContainText("This takes away the 3 variants that were kept. What was said of each claim stays as it was, as no variant changes it.");
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  await expect(variantRows(page)).toHaveCount(3);
+  await keptVariants(page).getByRole("button", { name: "Take the variants away" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take away" }).click();
+  await expect(keptVariants(page)).toHaveCount(0);
+  expect(await variantsOf(page, id)).toMatchObject({ variants: [], stale: 0, counts: { variants: 0 } });
+  expect((await claimsOf(page, id)).claims).toEqual(own.claims);
+  await expect(variantsForm(page)).toBeVisible();
+  await expect(claimWithStatus(page, "reproduced")).toHaveCount(1);
+});
+
+test("says when the call alone does not give what the tutorial got, so that a variant of it cannot be set beside the claim", async ({ page }) => {
+  test.setTimeout(90_000);
+  const id = await agentWithTriedClaims(page, "Scored differing");
+  const reproduced = await claimWith(page, id, "reproduced");
+  await variantsForm(page).getByLabel("Claim", { exact: true }).selectOption(reproduced);
+  await variantsForm(page).getByLabel("values", { exact: true }).fill("[4, 5, 6]");
+  await makeVariantButton(page).click();
+  await expect(variantRows(page)).toHaveCount(1, { timeout: 30_000 });
+  const row = variantRows(page).first();
+  await expect(row.getByTestId("variant-status")).toHaveText("Gave a number");
+  await expect(row.getByTestId("variant-comparable")).toHaveText("Not comparable");
+  await expect(row).toHaveAttribute("data-control", "differs");
+  await expect(row.getByTestId("variant-control")).toHaveText(
+    "Not comparable: the same call with nothing changed did not give what the tutorial got, so the call alone does not stand for what the tutorial did.",
+  );
+  await expect(page.getByTestId("variants-counts")).toHaveText("1 variant: 0 comparable, 0 that give a number that rounds to the paper's. None of them is the paper's result.");
+  await row.getByRole("button", { name: /^Show how/ }).click();
+  await expect(row.getByTestId("variant-text")).toContainText("did not give what the tutorial got");
+  await expect(row.getByRole("list", { name: "How this variant was made" })).toContainText("With nothing changed, it differs from what the tutorial got: the value is 0.94 where it was 0.93.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("follows the making of a variant while it goes on, waits for it before anything else is done to the agent, and keeps nothing if it is stopped", async ({ page }) => {
+  test.setTimeout(90_000);
+  const id = await agentWithTriedClaims(page, "Scored tedious");
+  const reproduced = await claimWith(page, id, "reproduced");
+  await variantsForm(page).getByLabel("Claim", { exact: true }).selectOption(reproduced);
+  await variantsForm(page).getByLabel("values", { exact: true }).fill("[4, 5, 6]");
+  await makeVariantButton(page).click();
+
+  const stop = makingVariant(page).getByRole("button", { name: "Stop: Making a variant of a claim: Scored tedious" });
+  await expect(stop).toBeVisible();
+  await expect(variantsForm(page)).toHaveCount(0);
+  await expect(keptVariants(page)).toHaveCount(0);
+  expect((await variantsOf(page, id)).job).not.toBeNull();
+  await page.reload();
+  await expect(stop).toBeVisible();
+  await expect(variantsForm(page)).toHaveCount(0);
+  // Nothing else is done to the agent while it goes on
+  await expect(reading(page)).toContainText("A variant of a claim is being made. Reading waits for that.");
+  await expect(reading(page).getByRole("button", { name: /^(Read the paper|Carry on reading)$/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Delete Scored tedious" })).toBeDisabled();
+  await expect(claimsForm(page).getByRole("button", { name: "Waiting…" })).toBeDisabled();
+  await expect(keptClaims(page).getByRole("button", { name: "Take the trying away" })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  const claim = await claimWith(page, id, "reproduced");
+  expect((await page.request.post(`/api/paperagents/${id}/variants`, { data: { claim, changes: { values: [7] } } })).status()).toBe(409);
+  expect((await page.request.delete(`/api/paperagents/${id}/variants`)).status()).toBe(409);
+  expect((await page.request.delete(`/api/paperagents/${id}/reproduction`)).status()).toBe(409);
+
+  await stop.click();
+
+  await expect(makingVariant(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(variantsForm(page)).toBeVisible();
+  expect(await variantsOf(page, id)).toMatchObject({ job: null, variants: [], stale: 0 });
+  await expect(keptVariants(page)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Delete Scored tedious" })).toBeEnabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("does not show variants of claims that were tried before the paper was read again to other claims, and says that they are kept", async ({ page }) => {
+  test.setTimeout(120_000);
+  const id = await agentWithTriedClaims(page, "Scored varied stale");
+  await makeTheVariant(page, id, await claimWith(page, id, "reproduced"), { values: [4, 5, 6] });
+  await page.reload();
+  await expect(variantRows(page)).toHaveCount(1);
+
+  // A paper that says one thing more is read in its place, so that the claims that were tried are not those that are kept now
+  await sendPaper(page, id, "claims.txt", `${claimsPaper("Scored varied stale")}\n\nA fifth method reached an AUROC of 0.62 on the same nuclei (Figure 2).`);
+  await readTheAgent(page, id);
+  await page.reload();
+  await expect(page.getByTestId("variants-problem")).toHaveText(
+    "The claims were tried against another run of the tutorials, or other claims, than are kept now. Try them again.",
+  );
+  await expect(page.getByTestId("variants-problem")).toHaveAttribute("data-code", "stale");
+  expect(await variantsOf(page, id)).toMatchObject({ ready: false, variants: [], stale: 1, claims: [] });
+  await expect(variantRows(page)).toHaveCount(0);
+  await expect(variantsForm(page)).toHaveCount(0);
+  await expect(page.getByTestId("variants-counts")).toHaveText(
+    "No variant has been made. 1 variant made of another run of the tutorials, other claims, or another trying is kept and not shown.",
+  );
+  await expect(keptVariants(page)).not.toContainText("values");
+  await expect(keptVariants(page).getByRole("link", { name: "Download as a table, the variants" })).toHaveCount(0);
+  const refused = await page.request.post(`/api/paperagents/${id}/variants`, { data: { claim: await claimWith(page, id, "stale"), changes: { values: [7] } } });
+  expect(refused.status()).toBe(409);
+  expect((await refused.json()).error.code).toBe("stale");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What is kept and not shown can be taken away
+  await keptVariants(page).getByRole("button", { name: "Take the variants away" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("This takes away the variant that was kept.");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take away" }).click();
+  await expect(keptVariants(page)).toHaveCount(0);
+  expect(await variantsOf(page, id)).toMatchObject({ stale: 0, variants: [] });
+
+  // Trying the claims again is of what is kept now, and a variant can be made of it
+  await tryTheClaims(page, id);
+  await page.reload();
+  await expect(page.getByTestId("variants-problem")).toHaveCount(0);
+  await expect(variantsForm(page)).toBeVisible();
+});
+
+test("takes away the variants when the claims are tried again, which are of the places that the earlier trying held the claims to", async ({ page }) => {
+  test.setTimeout(120_000);
+  const id = await agentWithTriedClaims(page, "Scored varied again");
+  await makeTheVariant(page, id, await claimWith(page, id, "reproduced"), { values: [4, 5, 6] });
+  await page.reload();
+  await expect(variantRows(page)).toHaveCount(1);
+  await claimsForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await claimsForm(page).getByRole("button", { name: "Try the claims again" }).click();
+  await expect(page.getByTestId("claims-counts")).toBeVisible({ timeout: 20_000 });
+  await expect(variantRows(page)).toHaveCount(0, { timeout: 20_000 });
+  await expect(keptVariants(page)).toHaveCount(0);
+  expect(await variantsOf(page, id)).toMatchObject({ variants: [], stale: 0 });
+  await expect(variantsForm(page)).toBeVisible();
+
+  // The trying taken away takes away the variants too, and nothing is left to make one of
+  await makeTheVariant(page, id, await claimWith(page, id, "reproduced"), { values: [4, 5, 6] });
+  await page.reload();
+  await expect(variantRows(page)).toHaveCount(1);
+  await keptClaims(page).getByRole("button", { name: "Take the trying away" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take away" }).click();
+  await expect(keptClaims(page)).toHaveCount(0);
+  await expect(variantRows(page)).toHaveCount(0);
+  await expect(page.getByTestId("variants-problem")).toHaveAttribute("data-code", "no_reproduction");
+  await expect(variantsForm(page)).toHaveCount(0);
+  expect(await variantsOf(page, id)).toMatchObject({ ready: false, variants: [], stale: 0 });
+});
+
+test("says what is wrong when the server refuses to make a variant, and looks again at what it shows when what it showed is out of date", async ({ page }) => {
+  const id = await agentWithTriedClaims(page, "Scored varied refused");
+  const claim = await claimWith(page, id, "reproduced");
+  await variantsForm(page).getByLabel("Claim", { exact: true }).selectOption(claim);
+  await variantsForm(page).getByLabel("values", { exact: true }).fill("[4, 5, 6]");
+
+  // Docker is not running, as the server says it
+  await page.route("**/api/paperagents/*/variants", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "docker_missing", message: "Docker is not running, and making a variant takes it" } }),
+        })
+      : route.fallback(),
+  );
+  await makeVariantButton(page).click();
+  await expect(variantsForm(page).getByRole("alert")).toContainText("Docker is not running, and making a variant takes it");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await page.unroute("**/api/paperagents/*/variants");
+  expect(await variantsOf(page, id)).toMatchObject({ variants: [], job: null });
+
+  // The server refuses what the page does not, which is said as it says it
+  await page.route("**/api/paperagents/*/variants", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "invalid", message: "The call was not given an argument called speed. It was given values" } }),
+        })
+      : route.fallback(),
+  );
+  await makeVariantButton(page).click();
+  await expect(variantsForm(page).getByRole("alert")).toContainText("The call was not given an argument called speed. It was given values");
+  await page.unroute("**/api/paperagents/*/variants");
+
+  // The trying is taken away behind the page's back, so that there is nothing that was tried, which the page is told of by the server
+  expect((await page.request.delete(`/api/paperagents/${id}/reproduction`)).status()).toBe(200);
+  await makeVariantButton(page).click();
+  await expect(page.getByTestId("variants-problem")).toHaveAttribute("data-code", "no_reproduction");
+  await expect(variantsForm(page)).toHaveCount(0);
+  expect((await variantsOf(page, id)).job).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+// A variant as the server keeps one, for a test to say what it came to
+function fakeVariant(id: string, claim: string, part: Record<string, unknown>) {
+  return {
+    id,
+    made_at: new Date().toISOString(),
+    seconds: 3.2,
+    limits: { minutes: 5, repeats: 2, gigabytes: 2 },
+    note: null,
+    claim,
+    quote: "CellMapper reached an AUROC of 0.93 on held-out mouse hippocampus nuclei.",
+    number: "0.93",
+    tutorial: { id: "01", path: "tutorials/quickstart.ipynb" },
+    call: 3,
+    function: "cellmapper.core.score",
+    where: "a call of cellmapper.core.score(values=[1, 2, 3]), at result",
+    path: [],
+    changes: [{ name: "values", was: [1, 2, 3], now: [9] }],
+    claim_run: 0.93,
+    control: { verdict: "match", gave: 0.93, differences: [], error: null },
+    variant: { status: "gave", gave: 0.93, values: [0.93, 0.93], type: "float", error: null, differences: [] },
+    comparable: true,
+    rounds_to_paper: true,
+    repeats: 2,
+    tolerance: { relative: 0.001, absolute: 0.000001 },
+    text: `With values = [9] in place of [1, 2, 3], the call gave 0.93. ${CLOSING}`,
+    ...part,
+  };
+}
+
+test("says each way that a variant can come out, and what the call with nothing changed did, in words and not only a colour", async ({ page }) => {
+  const id = await agentWithTriedClaims(page, "Scored varied ways");
+  const claim = await claimWith(page, id, "reproduced");
+  const real = await variantsOf(page, id);
+  const gave = { status: "gave", gave: 1.02, values: [1.02, 1.02], type: "float", error: null, differences: [] };
+  const variants = [
+    fakeVariant("aaaaaaaaaaaa", claim, { variant: gave, rounds_to_paper: false }),
+    fakeVariant("bbbbbbbbbbbb", claim, {
+      variant: { status: "no_place", gave: null, values: [null, null], type: "list", error: null, differences: [] },
+      comparable: false,
+      rounds_to_paper: null,
+    }),
+    fakeVariant("cccccccccccc", claim, {
+      variant: { status: "unstable", gave: null, values: [0.5, 0.6], type: "float", error: null, differences: ["result: 0.5 against 0.6"] },
+      comparable: false,
+      rounds_to_paper: null,
+    }),
+    fakeVariant("dddddddddddd", claim, {
+      variant: { status: "error", gave: null, values: [], type: null, error: { type: "ValueError", message: "negative" }, differences: [] },
+      control: { verdict: "error", gave: null, differences: [], error: { type: "KeyError", message: "x" } },
+      comparable: false,
+      rounds_to_paper: null,
+    }),
+    fakeVariant("eeeeeeeeeeee", claim, {
+      variant: { status: "not_run", gave: null, values: [], type: null, error: null, differences: [] },
+      control: { verdict: "not_run", gave: null, differences: [], error: null },
+      comparable: false,
+      rounds_to_paper: null,
+    }),
+    fakeVariant("ffffffffffff", claim, {
+      variant: gave,
+      control: { verdict: "differs", gave: null, differences: ["result: 0.7 against 0.93"], error: null },
+      comparable: false,
+      rounds_to_paper: false,
+    }),
+  ];
+  await page.route("**/api/paperagents/*/variants", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({ json: { ...real, variants, counts: { variants: 6, comparable: 1, rounds_to_paper: 1 } } })
+      : route.fallback(),
+  );
+  await page.reload();
+  await expect(variantRows(page)).toHaveCount(6);
+  const statuses = ["Gave a number", "Gave no number at the place", "Gave something else each time", "Stopped with an error", "Was not made in the time", "Gave a number"];
+  await expect(variantRows(page).getByTestId("variant-status")).toHaveText(statuses);
+  await expect(variantRows(page).getByTestId("variant-not-result")).toHaveCount(6);
+  await expect(variantRows(page).getByTestId("variant-comparable")).toHaveText([
+    "Comparable",
+    "Not comparable",
+    "Not comparable",
+    "Not comparable",
+    "Not comparable",
+    "Not comparable",
+  ]);
+  const outcome = (index: number) => variantRows(page).nth(index).getByTestId("variant-outcome");
+  await expect(outcome(1)).toHaveText("It ran, and gave a list with no number at the place that the claim was held to.");
+  await expect(outcome(2)).toHaveText("It gave something else each time it was made, so no one number is said.");
+  await expect(outcome(3)).toHaveText("It stopped with ValueError: negative.");
+  await expect(outcome(4)).toHaveText("It was not made in the time that was given.");
+  const control = (index: number) => variantRows(page).nth(index).getByTestId("variant-control");
+  await expect(control(3)).toContainText("the same call with nothing changed stopped with an error, so the call alone does not stand for what the tutorial did.");
+  await expect(control(4)).toContainText("the same call with nothing changed was not made in the time, so the call alone");
+  await expect(control(5)).toContainText("the same call with nothing changed did not give what the tutorial got");
+  // Only a number that the variant gave is said to round to the paper's or not
+  await expect(variantRows(page).nth(1).getByTestId("variant-rounds")).toHaveCount(0);
+  await expect(variantRows(page).nth(0).getByTestId("variant-rounds")).toHaveText("The number that it gave does not round to the paper's 0.93.");
+  await variantRows(page).nth(3).getByRole("button", { name: /^Show how/ }).click();
+  const how = variantRows(page).nth(3).getByRole("list", { name: "How this variant was made" });
+  await expect(how).toContainText("With nothing changed, it stopped with KeyError: x.");
+  await expect(how).toContainText("With the changes, it stopped with ValueError: negative.");
+  await variantRows(page).nth(2).getByRole("button", { name: /^Show how/ }).click();
+  await expect(variantRows(page).nth(2).getByRole("list", { name: "How this variant was made" })).toContainText("With the changes, the times it was made differ: result: 0.5 against 0.6.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("offers only the arguments that can be changed, and says why a claim whose call cannot be made again is not offered", async ({ page }) => {
+  const id = await agentWithTriedClaims(page, "Scored varied args");
+  const claim = await claimWith(page, id, "reproduced");
+  const real = await variantsOf(page, id);
+  const other = real.claims.find((each: { claim: string; can: boolean }) => each.claim !== claim && each.can);
+  const refusals = [
+    { claim: "r1", can: false, refused: { code: "not_a_call", message: "That claim was held to a line that the tutorial printed, and a line is not a call that can be made again with other arguments" } },
+    { claim: "r2", can: false, refused: { code: "cannot_call", message: "The function cannot be read from the code, so it cannot be called directly" } },
+  ];
+  const mixed = {
+    claim,
+    can: true,
+    refused: null,
+    function: "cellmapper.core.score",
+    arguments: [
+      { name: "values", text: "[1, 2, 3]", value: [1, 2, 3], plain: true },
+      { name: "adata", text: "<AnnData object with n_obs × n_vars = 3 × 2>", value: null, plain: false },
+      { name: "labels", text: `['${"a".repeat(80)}'...`, value: null, plain: true },
+      { name: "flag", text: "None", value: null, plain: true },
+    ],
+  };
+  await page.route("**/api/paperagents/*/variants", (route) =>
+    route.request().method() === "GET" ? route.fulfill({ json: { ...real, claims: [mixed, other, ...refusals] } }) : route.fallback(),
+  );
+  await page.reload();
+  const form = variantsForm(page);
+  await form.getByLabel("Claim", { exact: true }).selectOption(claim);
+  await expect(form.getByTestId("variant-argument")).toHaveCount(4);
+  // An argument that cannot be given as a value from here is not offered a place to be changed, and says so
+  const handle = form.locator("[data-testid=variant-argument][data-name=adata]");
+  await expect(handle).toContainText("Given <AnnData object with n_obs × n_vars = 3 × 2>");
+  await expect(handle).toContainText("This is not a value that an argument can be given from here, so it is not changed.");
+  await expect(handle.getByRole("textbox")).toHaveCount(0);
+  await expect(form.getByRole("textbox", { name: "adata" })).toHaveCount(0);
+  // One that was too long to be offered has no value to compare, so what is typed is sent for the server to judge, and None is the nothing of JSON
+  await form.getByLabel("flag", { exact: true }).fill("null");
+  await makeVariantButton(page).click();
+  await expect(form.getByText("flag was given that value, so it is not a change.", { exact: true })).toBeVisible();
+  await form.getByLabel("flag", { exact: true }).fill("false");
+  await expect(form.getByText("flag was given that value, so it is not a change.", { exact: true })).toHaveCount(0);
+  await form.getByLabel("labels", { exact: true }).fill('["b"]');
+  await expect(form.getByRole("alert")).toHaveCount(0);
+  // Changing the claim starts the values over
+  await form.getByLabel("Claim", { exact: true }).selectOption(other.claim);
+  await form.getByLabel("Claim", { exact: true }).selectOption(claim);
+  await expect(form.getByLabel("flag", { exact: true })).toHaveValue("");
+  await form.getByRole("button", { name: "Why 2 claims cannot be varied" }).click();
+  const why = form.getByRole("list", { name: "Claims that cannot be varied" });
+  await expect(why.locator("li")).toHaveCount(2);
+  await expect(why.locator("li[data-code=not_a_call]")).toContainText("is not a call that can be made again with other arguments.");
+  await expect(why.locator("li[data-code=cannot_call]")).toContainText("so it cannot be called directly.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("says that no claim was held to a call that a variant can be made of", async ({ page }) => {
+  const id = await agentWithTriedClaims(page, "Scored varied none");
+  const real = await variantsOf(page, id);
+  const refusals = real.claims.map((each: { claim: string }) => ({
+    claim: each.claim,
+    can: false,
+    refused: { code: "not_a_call", message: "That claim was held to a line that the tutorial printed, and a line is not a call that can be made again with other arguments" },
+  }));
+  await page.route("**/api/paperagents/*/variants", (route) =>
+    route.request().method() === "GET" ? route.fulfill({ json: { ...real, claims: refusals } }) : route.fallback(),
+  );
+  await page.reload();
+  await expect(variantsForm(page)).toHaveCount(0);
+  await expect(page.getByTestId("variants-none-to-make")).toContainText("No claim was held to a call that a variant can be made of.");
+  await page.getByRole("button", { name: "Why 4 claims cannot be varied" }).click();
+  await expect(page.getByRole("list", { name: "Claims that cannot be varied" }).locator("li")).toHaveCount(4);
+  expect(await accessibilityProblems(page)).toEqual([]);
+});

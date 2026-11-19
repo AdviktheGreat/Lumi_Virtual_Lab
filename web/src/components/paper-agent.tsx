@@ -10,6 +10,7 @@ import { PageSection } from "@/components/page-section";
 import { CodeSection } from "@/components/paper-agent-code";
 import { ChecksSection } from "@/components/paper-agent-checks";
 import { ClaimsSection } from "@/components/paper-agent-claims";
+import { VariantsSection } from "@/components/paper-agent-variants";
 import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
@@ -58,6 +59,7 @@ import {
   lastReproductionJob,
   lastRepositoryJob,
   lastToolsJob,
+  lastVariantJob,
   MAX_AGENT_TITLE,
   paperFile,
   paperLink,
@@ -549,6 +551,10 @@ function Agent({
   const lastTrying = lastReproductionJob(all, agent.id);
   // How the last trying ended is said if it did not end well, and while what it made is kept
   const lastTryingShown = lastTrying !== undefined && (lastTrying.state !== "succeeded" || madeClaims?.kept != null) ? lastTrying : undefined;
+  const madeVariants = claims.value.kind === "ready" ? claims.value.value.variants : null;
+  const lastVariant = lastVariantJob(all, agent.id);
+  // How the last making of a variant ended is said if it did not end well, and while there are variants that it made
+  const lastVariantShown = lastVariant !== undefined && (lastVariant.state !== "succeeded" || (madeVariants !== null && madeVariants.variants.length > 0)) ? lastVariant : undefined;
   const idle =
     !working &&
     !fetchingCode &&
@@ -905,6 +911,33 @@ function Agent({
               claims={value}
               busy={!idle}
               trying={tryingClaims}
+              jobs={jobs}
+              onCleared={() => claims.reload()}
+              onStale={() => {
+                onReload();
+                reference.reload();
+                tools.reload();
+                checks.reload();
+                claims.reload();
+                given.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Variants"
+        intro="A claim's call made again, in the environment of the tutorials, with arguments that you change, beside what the claim was held to. A variant is not the paper's result, and it does not change what was said of its claim."
+      >
+        <WorkStatus job={makingVariant} last={lastVariantShown} jobs={jobs} label="Making a variant" />
+        <Looked state={claims.value} label="Looking at the variants" failure="The variants could not be looked at." onRetry={claims.reload}>
+          {(value) => (
+            <VariantsSection
+              key={agent.id}
+              agent={agent}
+              claims={value}
+              busy={!idle}
+              making={makingVariant}
               jobs={jobs}
               onCleared={() => claims.reload()}
               onStale={() => {

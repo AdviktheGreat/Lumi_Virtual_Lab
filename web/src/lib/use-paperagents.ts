@@ -90,9 +90,13 @@ export function usePaperAgentChecks(id: string, report: (error: unknown) => void
 // changed: as the tutorials are run or taken away, which is what the claims are held to, as the paper is read, and as the claims are tried
 export function usePaperAgentClaims(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentClaims> {
   const look = useCallback(async () => {
-    const [reproduction, divergence] = await Promise.all([api.paperAgentReproduction(id), api.paperAgentDivergence(id)]);
+    const [reproduction, divergence, variants] = await Promise.all([
+      api.paperAgentReproduction(id),
+      api.paperAgentDivergence(id),
+      api.paperAgentVariants(id),
+    ]);
 
-    return { reproduction, divergence };
+    return { reproduction, divergence, variants };
   }, [id]);
 
   return useLooked(look, report, again);
