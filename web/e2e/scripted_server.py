@@ -72,6 +72,10 @@ from a script: no key is needed, and every run says the same. What it says depen
   a stand-in for the container runs them: they pass, and "unsound" makes one fail. "unhurried" makes each check take a
   while, so that the checking can be followed and stopped. A model of another family that is asked for inputs to try
   proposes three, of which one names a parameter that scale does not take.
+- A variant of a claim of an agent that is "scored" is made by the same stand-in: the code's own score gives the number
+  that the tutorial got for what the tutorial passed, a hundredth more or less for each that the sum of the values is
+  from 6, and an error for values that are not a list of numbers. "differing" gives a hundredth more even for what the
+  tutorial passed, so that the call alone does not stand for what it did, and "tedious" makes the calls take a while.
 - The data of a PaperAgent is listed and fetched by stand-ins for the places it is kept at, which have a few records,
   named by their keys: Zenodo record 1000001 has files of which one is corrupt (what it sends is not what its checksum
   says), one gives no checksum, and one is restricted; 1000002 has a file larger than the most that is fetched at first;
@@ -635,7 +639,8 @@ NOTEBOOK = json.dumps(
 
 CORE_FOR_GPU = "import torch\n\nmodel = torch.nn.Linear(2, 2).cuda()\n"
 
-# The functions that the stand-in tutorials call, where the calls say they are: scale at line 3 and embed at line 8
+# The functions that the stand-in tutorials call, where the calls say they are: scale at line 3, embed at line 8, and
+# score at line 12, which is read when a variant of a claim is made of a call of it
 CORE = (
     "import torch\n"
     "\n"
@@ -647,6 +652,10 @@ CORE = (
     "def embed(values: list[float]) -> list[list[float]]:\n"
     '    """Places each value in two dimensions."""\n'
     "    return [[value, value] for value in values]\n"
+    "\n"
+    "def score(values: list[float]) -> float:\n"
+    '    """How well the method did."""\n'
+    "    return 0.93\n"
     "\n"
     "\n"
     'device = "cuda" if torch.cuda.is_available() else "cpu"\n'
@@ -1175,6 +1184,31 @@ def scaled(function: str, args: dict[str, Any], label: str) -> dict[str, Any]:
     return {"type": "list", "plain": True, "value": [value * factor + more for value in args.get("values", [])]}
 
 
+def scored(case: wrappers.Case, label: str) -> dict[str, Any]:
+    """What the code's own score gives, as a call of it is recorded, for an agent that is "scored": the number that its
+    tutorial got for the arguments that the tutorial passed, and for others that number moved a hundredth for each that
+    the sum of values is from what it was, so that a change can be seen to give another number, or the same one.
+    Values that are not a list stop it with an error. The agent that is "differing" gives a hundredth more than the
+    tutorial got even for what the tutorial passed, so that the call alone does not stand for what the tutorial did."""
+    values = case.args.get("values")
+    if not isinstance(values, list) or not all(isinstance(each, int | float) for each in values):
+        error = {"type": "TypeError", "message": "values must be a list of numbers", "traceback": [], "cell": None}
+
+        return {"schema": 1, "ok": False, "error": error, "result": None, "seconds": 0.1, "output": ""}
+    number = case.expected["value"] if case.expected else round(0.93 + (sum(values) - 6) / 100, 2)
+    if "differing" in label:
+        number = round(number + 0.01, 2)
+
+    return {
+        "schema": 1,
+        "ok": True,
+        "error": None,
+        "result": {"type": "float", "plain": True, "value": number},
+        "seconds": 0.1,
+        "output": "",
+    }
+
+
 def stand_in_run_tests(
     self: checking.CheckRunner, ids: Sequence[str], seconds: float
 ) -> tuple[str, dict[str, Any] | None, list[str]]:
@@ -1217,7 +1251,12 @@ def stand_in_replay(
     if "unhurried" in self.label and isinstance(self, checking.CheckRunner):
         wait_for_checks(self)
 
+    # The code's own score is called alone when a variant of a claim is made, of the call that the claim was held to
+    scoring = "scored" in self.label and function == checking.DIRECT_NAME and "'score')" in source
+
     def gave(case: wrappers.Case) -> dict[str, Any]:
+        if scoring:
+            return scored(case, self.label)
         value = case.expected
         if not value:
             # A call that no tutorial made, of scale, which is all that is made into a tool

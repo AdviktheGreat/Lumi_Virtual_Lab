@@ -2227,8 +2227,103 @@ export interface PaperAgentDivergence {
   meaning: string;
 }
 
-// The trying of the claims, and where each first parts from the paper, which are looked at together
+// An argument of the call that a claim was held to, as it was given
+export interface VariantArgument {
+  name: string;
+  // The value in words, cut if it is long
+  text: string;
+  // The value, if it is short enough to be offered. It is also null for a value that is nothing
+  value: unknown;
+  // Whether it is a value that an argument can be given as, which a change can be of
+  plain: boolean;
+}
+
+// What a person may change of the call that a claim was held to, or why no variant of the claim can be made
+export type VariantOption =
+  | { claim: string; can: true; refused: null; function: string; arguments: VariantArgument[] }
+  | { claim: string; can: false; refused: { code: string; message: string } };
+
+export type VariantStatus = "gave" | "no_place" | "unstable" | "error" | "not_run";
+export type ControlVerdict = "match" | "differs" | "error" | "not_run";
+
+// A variant of a claim: its call made again with arguments changed, and what came of it. It is never the paper's result.
+export interface Variant {
+  id: string;
+  made_at: string;
+  seconds: number;
+  limits: { minutes: number; repeats: number; gigabytes: number };
+  note: string | null;
+  claim: string;
+  quote: string;
+  // The number as the paper writes it
+  number: string;
+  tutorial: { id: string; path: string };
+  call: number;
+  function: string;
+  where: string;
+  path: (string | number)[];
+  changes: { name: string; was: unknown; now: unknown }[];
+  // What the tutorial's call gave at the place that the claim was held to
+  claim_run: number;
+  // The same call with nothing changed, made in the same way
+  control: { verdict: ControlVerdict; gave: number | null; differences: string[]; error: { type: string; message: string } | null };
+  variant: {
+    status: VariantStatus;
+    gave: number | null;
+    values: (number | null)[];
+    type: string | null;
+    error: { type: string; message: string } | null;
+    differences: string[];
+  };
+  // Whether the call with nothing changed gave what the tutorial got, and the variant gave a number
+  comparable: boolean;
+  // Whether the number it gave rounds to the paper's, if it gave one. That is not a reproduction.
+  rounds_to_paper: boolean | null;
+  repeats: number;
+  tolerance: { relative: number; absolute: number };
+  text: string;
+}
+
+// What there is of the variants of an agent's claims: what may be changed of each claim's call, and the variants that were made
+export interface PaperAgentVariants {
+  id: string;
+  ready: boolean;
+  problem: { code: string; message: string } | null;
+  reproduction: { commit: string; image_id: string; reference: { started_at: string; finished_at: string } } | null;
+  claims: VariantOption[];
+  variants: Variant[];
+  // How many variants are kept that are of another run, other claims, or another trying, and are not shown
+  stale: number;
+  counts: { variants: number; comparable: number; rounds_to_paper: number };
+  job: Job | null;
+  meaning: string;
+  limits: {
+    most_changes: number;
+    max_value_chars: number;
+    max_note_chars: number;
+    most_kept: number;
+    default_minutes: number;
+    max_minutes: number;
+    default_repeats: number;
+    max_repeats: number;
+    default_gigabytes: number;
+    max_gigabytes: number;
+  };
+}
+
+// What to say of making a variant: the claim, the new value of each argument to change, and what the two calls may take
+export interface PaperAgentVariantOptions {
+  claim: string;
+  changes: Record<string, unknown>;
+  minutes: number;
+  repeats: number;
+  gigabytes: number;
+  note?: string;
+}
+
+// The trying of the claims, where each first parts from the paper, and the variants made of them, which are looked at together
 export interface PaperAgentClaims {
   reproduction: PaperAgentReproduction;
   divergence: PaperAgentDivergence;
+  variants: PaperAgentVariants;
 }
