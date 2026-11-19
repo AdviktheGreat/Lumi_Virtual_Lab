@@ -89,8 +89,10 @@ def status_title(entry: Mapping[str, Any]) -> str:
 def claim_rows(
     reproduction: Mapping[str, Any], divergence: Mapping[str, Any], variants: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
-    """One row for each claim of the paper, in order: what came of it, what it was held to, where it first parts from
-    the paper and what differs that was found, if it did not reproduce, and how many variants were made of it.
+    """One row for each claim that the trying lists, in order: what came of it, what it was held to, where it first
+    parts from the paper and what differs that was found, if it did not reproduce, and how many variants were made of
+    it. The trying lists the first reproducing.MOST_CLAIMS of a paper's claims, and the rows are those, so a paper with
+    more has no row for the rest, as it has no entry for them in what the server shows.
 
     :param reproduction: What PaperAgents.reproduction gives.
     :param divergence: What PaperAgents.divergence gives, which has no claims if there is no trying that is current.
