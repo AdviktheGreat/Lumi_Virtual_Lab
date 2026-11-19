@@ -622,7 +622,12 @@ class Bakeoffs:
             "suggested": list(suggested)[: kept_bakeoff.MAX_SUGGESTED],
             "added_by": kept_bakeoff.BY_SEARCH,
             "added_at": utc_timestamp(),
-            "found": {**found.record(), "credit": printable(found.record()["credit"])},
+            "found": {
+                **found.record(),
+                "url": kept_bakeoff.page_of(found.source, found.url),
+                "credit": printable(found.credit),
+                "venue": printable(found.venue),
+            },
             "fit": {"quote": choice.quote, "model": model},
         }
 

@@ -12,6 +12,7 @@ import shutil
 import threading
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -341,6 +342,35 @@ class TestWhatIsNotABakeOff:
         assert why(bakeoffs.view, bakeoff_id) == (404, "not_found")
         assert why(bakeoffs.start_shortlist, bakeoff_id) == (404, "not_found")
         assert bakeoffs.describe()["bakeoffs"] == []
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            lambda record: record["candidates"][0]["found"].update(url="javascript:alert(1)"),
+            lambda record: record["candidates"][0]["found"].update(url="https://europepmc.org/article/MED/1 2"),
+            lambda record: record["candidates"][1]["found"].update(url="https://arxiv.org/abs/1 2"),
+            lambda record: record["candidates"][0]["found"].update(url="https://europepmc.org/x\x00"),
+            lambda record: record["candidates"][0]["found"].update(url="https://arxiv.org/abs/2410.08355v3"),
+            lambda record: record["candidates"][0]["found"].update(source="elsewhere"),
+            lambda record: record["candidates"][0]["found"].update(source="elsewhere", url=""),
+            lambda record: record["candidates"][0]["found"].update(venue="Nature\x1b[31m"),
+            lambda record: record["candidates"][0]["found"].update(credit="Li S\nand others"),
+            lambda record: record["candidates"][0].update(found=None),
+            lambda record: record["candidates"][0].update(title="a\x00b"),
+        ],
+        ids=range(11),
+    )
+    def test_where_a_candidate_was_found_is_a_page_of_the_service_that_found_it_and_text(
+        self, bakeoffs: Bakeoffs, workspace: Workspace, model_client: FakeClient, damage: Any
+    ) -> None:
+        bakeoff_id = made(bakeoffs)
+        found_two(bakeoffs, bakeoff_id, model_client)
+        assert len(bakeoffs.kept()) == 1
+
+        rewrite(workspace, bakeoff_id, damage)
+
+        assert bakeoffs.kept() == []
+        assert why(bakeoffs.view, bakeoff_id) == (404, "not_found")
 
     @pytest.mark.parametrize("which, fit", [(0, None), (-1, {"quote": "words", "model": "m"})])
     def test_a_candidate_that_a_search_found_has_the_words_of_a_model_and_one_that_the_person_added_has_none(
@@ -923,6 +953,47 @@ class TestFindingMethods:
         [candidate] = record_of(workspace, bakeoff_id)["candidates"]
         assert candidate["name"] == candidate["title"] == "Cell mapper [31m red"
         assert bakeoffs.kept() != []
+
+    def test_what_a_service_sent_of_where_it_found_a_paper_is_kept_as_text_and_never_makes_the_bake_off_unreadable(
+        self, bakeoffs: Bakeoffs, workspace: Workspace, services: Services, model_client: FakeClient
+    ) -> None:
+        odd = replace(
+            article(1, WITH_CODE), article_id="12 3\x00", journal="Nature\x1b[31m Methods", authors=("Li\nS", "Zhu J")
+        )
+        services.articles["cell type annotation"] = [odd]
+        bakeoff_id = made(bakeoffs)
+
+        find(bakeoffs, bakeoff_id, model_client, queries("cell type annotation"), picks((1, WORDS)))
+
+        [candidate] = bakeoffs.view(bakeoff_id)["candidates"]
+        assert candidate["found"]["url"] == ""
+        assert candidate["found"]["venue"] == "Nature [31m Methods" and candidate["found"]["credit"] == "Li S, Zhu J"
+        assert len(bakeoffs.kept()) == 1
+
+    def test_a_page_of_the_service_that_found_a_paper_is_kept_as_it_was_given(
+        self, bakeoffs: Bakeoffs, model_client: FakeClient
+    ) -> None:
+        bakeoff_id = made(bakeoffs)
+
+        found_two(bakeoffs, bakeoff_id, model_client)
+
+        first, second = bakeoffs.view(bakeoff_id)["candidates"]
+        assert first["found"]["url"] == "https://europepmc.org/article/MED/1"
+        assert second["found"]["url"] == "https://arxiv.org/abs/2410.08355v3"
+
+    @pytest.mark.parametrize(
+        "source, url",
+        [
+            ("elsewhere", "https://europepmc.org/article/MED/1"),
+            ("europepmc", "https://arxiv.org/abs/1"),
+            ("arxiv", "https://arxiv.org.evil.example/abs/1"),
+            ("arxiv", "https://arxiv.org/abs/1 2"),
+            ("arxiv", "https://arxiv.org/abs/1\u2028"),
+            ("arxiv", "javascript:alert(1)"),
+        ],
+    )
+    def test_a_page_that_is_not_one_of_the_service_that_found_the_paper_is_none(self, source: str, url: str) -> None:
+        assert kept.page_of(source, url) == ""
 
     def test_a_model_that_is_not_priced_or_has_no_key_is_not_asked(
         self, workspace: Workspace, jobs: Jobs, services: Services, model_client: FakeClient

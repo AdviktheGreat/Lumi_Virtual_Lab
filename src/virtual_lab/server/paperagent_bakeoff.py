@@ -53,6 +53,8 @@ BY_SEARCH = "search"
 BY_PERSON = "person"
 # Who wrote the searches
 WRITERS = ("model", "person")
+# Where a paper that a search found can be read, by the service that found it
+FOUND_PAGES = {"europepmc": "https://europepmc.org/", "arxiv": "https://arxiv.org/"}
 # Why a choice of a model did not become a candidate, which a shortlist counts
 DROPPED = ("not_shown", "twice", "quote", "more", "already", "no_room")
 
@@ -113,10 +115,32 @@ def is_amount(value: Any) -> bool:
     return isinstance(value, NUMBER) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
 
 
+def page_of(source: str, url: str) -> str:
+    """The page where a paper that a search found can be read, if it is one of the service's, and none if it is not: a
+    page shows it as a link, so it must be at the service that found the paper, and has no space or control character
+    in it."""
+    prefix = FOUND_PAGES.get(source)
+    if prefix is None or not url.startswith(prefix) or any(not char.isprintable() or char.isspace() for char in url):
+        return ""
+
+    return url
+
+
+def is_found(found: dict[str, Any]) -> bool:
+    """Whether what is kept of where a candidate was found is what a search gives: a service that there is, a page of
+    it or none, and words with no control character in them."""
+    return (
+        found["source"] in FOUND_PAGES
+        and (found["url"] == "" or page_of(found["source"], found["url"]) == found["url"])
+        and not has_control_character(found["credit"])
+        and not has_control_character(found["venue"])
+    )
+
+
 def is_candidate(value: dict[str, Any]) -> bool:
     """Whether what a record holds as a candidate is one: its paper is a DOI or a link, as it is kept, its code and
-    suggestions are addresses of code, and it has the words of a model if a search found it and has none if the person
-    added it."""
+    suggestions are addresses of code, and, if a search found it, it has the words of a model and where it was found,
+    and, if the person added it, it has neither."""
     paper = value["paper"]
     try:
         kept = check_paper(paper)
@@ -129,11 +153,14 @@ def is_candidate(value: dict[str, Any]) -> bool:
         and paper["kind"] != "file"
         and 0 < len(value["name"]) <= MAX_NAME_CHARS
         and not has_control_character(value["name"])
+        and not has_control_character(value["title"])
         and (value["repo"] is None or passes(check_repo, value["repo"]))
         and len(value["suggested"]) <= MAX_SUGGESTED
         and all(passes(check_repo, address) for address in value["suggested"])
         and value["added_by"] in (BY_SEARCH, BY_PERSON)
         and (value["fit"] is not None) == (value["added_by"] == BY_SEARCH)
+        and (value["found"] is not None) == (value["added_by"] == BY_SEARCH)
+        and (value["found"] is None or is_found(value["found"]))
     )
 
 
