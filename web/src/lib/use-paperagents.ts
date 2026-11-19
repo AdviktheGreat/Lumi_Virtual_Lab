@@ -5,6 +5,7 @@ import { api } from "./api";
 import type {
   PaperAgent,
   PaperAgentChecks,
+  PaperAgentClaims,
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentGiven,
@@ -81,6 +82,18 @@ export function usePaperAgentTools(id: string, report: (error: unknown) => void,
 // is what is checked, and as they are checked
 export function usePaperAgentChecks(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentChecks> {
   const look = useCallback(() => api.paperAgentChecks(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+// What there is of the trying of an agent's claims, and where each first parts from the paper, looked at together and again when it may have
+// changed: as the tutorials are run or taken away, which is what the claims are held to, as the paper is read, and as the claims are tried
+export function usePaperAgentClaims(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentClaims> {
+  const look = useCallback(async () => {
+    const [reproduction, divergence] = await Promise.all([api.paperAgentReproduction(id), api.paperAgentDivergence(id)]);
+
+    return { reproduction, divergence };
+  }, [id]);
 
   return useLooked(look, report, again);
 }

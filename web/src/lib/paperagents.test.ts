@@ -51,7 +51,10 @@ import {
   STOCK_ITEMS_SHOWN,
   titleProblem,
   checksJob,
+  lastReproductionJob,
+  reproductionJob,
   toolsJob,
+  variantJob,
   type AgentDraft,
 } from "./paperagents";
 import type { Job, PaperAgent, PaperAgentReading, PaperAgentRepository, Preflight, ReadAnchor, RepositoryStock } from "./types";
@@ -834,5 +837,51 @@ describe("the job that checks the tools of an agent", () => {
     expect(readingKey([checking()], 0, "cells")).not.toBe(readingKey([job({ id: "c1", kind: "paperagent-tools" })], 0, "cells"));
     expect(readingKey([checking({ subject: "dogs" })], 0, "cells")).toBe("0|");
     expect(readingKey([checking({ state: "succeeded" })], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the job that tries the claims of an agent", () => {
+  const trying = (changes: Partial<Job> = {}) => job({ id: "t1", kind: "paperagent-reproduction", ...changes });
+
+  it("is the one at work on that agent, and not the one that checks its tools or another agent's", () => {
+    const jobs = [job({ kind: "paperagent-checks" }), trying({ id: "other", subject: "dogs" }), trying({ id: "old", state: "failed" }), trying()];
+
+    expect(reproductionJob(jobs, "cells")?.id).toBe("t1");
+    expect(reproductionJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(reproductionJob([job({ kind: "paperagent-checks" })], "cells")).toBeUndefined();
+    expect(checksJob([trying()], "cells")).toBeUndefined();
+  });
+
+  it("is, when none is at work, the latest that is over", () => {
+    const jobs = [trying({ id: "new", state: "stopped" }), trying({ id: "old", state: "failed" }), job({ state: "failed" })];
+
+    expect(lastReproductionJob(jobs, "cells")?.id).toBe("new");
+    expect(lastReproductionJob([trying()], "cells")).toBeUndefined();
+    expect(lastReproductionJob([job({ kind: "paperagent-checks", state: "failed" })], "cells")).toBeUndefined();
+  });
+
+  it("changes the key that the page looks again by, and says nothing of another agent's or of one that is over", () => {
+    expect(readingKey([trying()], 0, "cells")).toBe("0||trying:t1");
+    expect(readingKey([trying()], 0, "cells")).not.toBe(readingKey([], 0, "cells"));
+    expect(readingKey([trying({ subject: "dogs" })], 0, "cells")).toBe("0|");
+    expect(readingKey([trying({ state: "succeeded" })], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the job that makes a variant of a claim of an agent", () => {
+  const varying = (changes: Partial<Job> = {}) => job({ id: "v1", kind: "paperagent-variant", ...changes });
+
+  it("is the one at work on that agent, and not the one that tries its claims or another agent's", () => {
+    const jobs = [job({ kind: "paperagent-reproduction" }), varying({ id: "other", subject: "dogs" }), varying({ id: "old", state: "failed" }), varying()];
+
+    expect(variantJob(jobs, "cells")?.id).toBe("v1");
+    expect(variantJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(reproductionJob([varying()], "cells")).toBeUndefined();
+  });
+
+  it("changes the key that the page looks again by, and says nothing of another agent's or of one that is over", () => {
+    expect(readingKey([varying()], 0, "cells")).toBe("0||varying:v1");
+    expect(readingKey([varying({ subject: "dogs" })], 0, "cells")).toBe("0|");
+    expect(readingKey([varying({ state: "succeeded" })], 0, "cells")).toBe("0|");
   });
 });

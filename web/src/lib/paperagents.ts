@@ -251,8 +251,10 @@ export function readingKey(jobs: readonly Job[] | null, ended: number, agent: st
   const running = (jobs ?? []).filter((job) => isActive(job) && job.kind === REFERENCE_JOB && job.subject === agent).map((job) => job.id);
   const making = (jobs ?? []).filter((job) => isActive(job) && job.kind === TOOLS_JOB && job.subject === agent).map((job) => job.id);
   const checking = (jobs ?? []).filter((job) => isActive(job) && job.kind === CHECKS_JOB && job.subject === agent).map((job) => job.id);
+  const trying = (jobs ?? []).filter((job) => isActive(job) && job.kind === REPRODUCTION_JOB && job.subject === agent).map((job) => job.id);
+  const varying = (jobs ?? []).filter((job) => isActive(job) && job.kind === VARIANT_JOB && job.subject === agent).map((job) => job.id);
 
-  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}${checking.length > 0 ? `|checks:${checking.join(",")}` : ""}`;
+  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}${checking.length > 0 ? `|checks:${checking.join(",")}` : ""}${trying.length > 0 ? `|trying:${trying.join(",")}` : ""}${varying.length > 0 ? `|varying:${varying.join(",")}` : ""}`;
 }
 
 // The job that fetches the code of an agent, which the server runs with the agent's id as its subject
@@ -331,6 +333,27 @@ export function checksJob(jobs: readonly Job[], agent: string): Job | undefined 
 // The latest checking of an agent's tools that is over, whose outcome is what it was last done with
 export function lastChecksJob(jobs: readonly Job[], agent: string): Job | undefined {
   return jobs.find((job) => !isActive(job) && job.kind === CHECKS_JOB && job.subject === agent);
+}
+
+// The job that tries the claims of an agent's paper against what its tutorials gave, which the server runs with the agent's id as its subject
+export const REPRODUCTION_JOB = "paperagent-reproduction";
+
+// The job at work trying an agent's claims, which nothing else is done to the agent in the meantime
+export function reproductionJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === REPRODUCTION_JOB && job.subject === agent);
+}
+
+// The latest trying of an agent's claims that is over, whose outcome is what it was last done with
+export function lastReproductionJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => !isActive(job) && job.kind === REPRODUCTION_JOB && job.subject === agent);
+}
+
+// The job that makes a variant of one of an agent's claims, which the server runs with the agent's id as its subject
+export const VARIANT_JOB = "paperagent-variant";
+
+// The job at work making a variant of a claim of an agent's, which nothing else is done to the agent in the meantime
+export function variantJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === VARIANT_JOB && job.subject === agent);
 }
 
 export interface ReadingDraft {

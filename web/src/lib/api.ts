@@ -43,6 +43,9 @@ import type {
   PaperAgentChange,
   PaperAgentChecks,
   PaperAgentChecksOptions,
+  PaperAgentDivergence,
+  PaperAgentReproduction,
+  PaperAgentReproductionOptions,
   PaperAgentGiven,
   PaperAgentImportCheck,
   PaperAgentData,
@@ -599,6 +602,15 @@ export const api = {
   clearPaperAgentChecks: (id: string) => request<PaperAgentChecks>("DELETE", `/paperagents/${encodeURIComponent(id)}/checks`),
   paperAgentToolChecks: (id: string, name: string, signal?: AbortSignal) =>
     request<CheckedToolDetail>("GET", `/paperagents/${encodeURIComponent(id)}/checks/${encodeURIComponent(name)}`, undefined, signal),
+  // The trying of the claims, which is held to what the tutorials gave, and where each first parts from the paper, which is made from
+  // what is kept
+  paperAgentReproduction: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentReproduction>("GET", `/paperagents/${encodeURIComponent(id)}/reproduction`, undefined, signal),
+  startPaperAgentReproduction: (id: string, options: PaperAgentReproductionOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/reproduction`, options),
+  clearPaperAgentReproduction: (id: string) => request<PaperAgentReproduction>("DELETE", `/paperagents/${encodeURIComponent(id)}/reproduction`),
+  paperAgentDivergence: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentDivergence>("GET", `/paperagents/${encodeURIComponent(id)}/divergence`, undefined, signal),
   // What a person does to the method card, each giving back the reading as it is then: adding a fact, changing one, taking one
   // off and putting it back, approving the card and taking the approval back, and taking away all that they changed
   addPaperAgentCardFact: (id: string, kind: CardKind, fields: CardFields) =>

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { accessibilityProblems } from "../axe";
 import { answered, askWhereCodeRuns, expect, test } from "../fixtures";
 
@@ -16,7 +16,7 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools", "paperagent-checks"];
+  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools", "paperagent-checks", "paperagent-reproduction", "paperagent-variant"];
   for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
@@ -3565,4 +3565,336 @@ test("says that an agent whose paper has not been read has nothing to give yet, 
   // An agent that is not there is not given, and the page says so
   await page.request.delete(`/api/paperagents/${id}`);
   expect((await page.request.get(`/api/paperagents/${id}/given`)).status()).toBe(404);
+});
+
+const FIGURE_ADDRESS = "https://github.com/example/figure-cellmapper";
+const claimsForm = (page: Page) => form(page, "Try the claims");
+const tryingClaims = (page: Page) => page.getByRole("region", { name: "Trying the claims" });
+const keptClaims = (page: Page) => page.getByTestId("claims-kept");
+const claimsTable = (page: Page) => page.getByRole("table", { name: "Claims", exact: true });
+const claimWithStatus = (page: Page, status: string) => page.locator(`[data-testid=claim][data-status=${status}]`);
+const claimsOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/reproduction`)).json();
+const TRY = "Try the claims";
+
+// The sentences of a paper whose tutorials give 0.93 at one place: the first is that number, the next two cite a figure that a tutorial
+// makes and are not, and the last cites nothing that the code makes. The title is its own, as the same paper is not kept by two agents.
+const claimsPaper = (title: string) =>
+  [
+    `${title}: mapping cell types`,
+    "Results",
+    "CellMapper reached an AUROC of 0.93 on held-out mouse hippocampus nuclei.",
+    "The reference method reached an AUROC of 0.84 on the same nuclei (Figure 2).",
+    "A third method reached an AUROC of 0.91 on the same nuclei (Figure 2).",
+    "A fourth method reached an AUROC of 0.55 on nuclei of the cortex.",
+    "Methods",
+    "Clusters were found with Seurat v4.3 after the reads were aligned.",
+  ].join("\n\n");
+
+// Makes an agent whose paper has been read and whose tutorials have been run, so that what a test is about is how its claims were held
+// to what they gave, and opens it. A title with "scored" in it is of tutorials that give the number that the first claim reports.
+async function agentWithClaims(page: Page, title: string, paper = claimsPaper(title), repo = FIGURE_ADDRESS): Promise<string> {
+  const id = await agentWithTutorials(page, title, { kind: "file" }, repo);
+  await sendPaper(page, id, "claims.txt", paper);
+  await readTheAgent(page, id);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Claims", level: 2, exact: true })).toBeVisible();
+
+  return id;
+}
+
+test("says that claims are tried once the paper is read and the tutorials are run, and not before", async ({ page }) => {
+  const id = await agentWithTutorials(page, "Scored unread", { kind: "file" }, FIGURE_ADDRESS);
+  await expect(page.getByRole("heading", { name: "Claims", level: 2, exact: true })).toBeVisible();
+  await expect(page.getByTestId("claims-problem")).toHaveText("Read the paper first, as it is the claims that were read from it that are tried.");
+  await expect(claimsForm(page).getByRole("button", { name: TRY })).toBeDisabled();
+  await expect(keptClaims(page)).toHaveCount(0);
+  const asked = await page.request.post(`/api/paperagents/${id}/reproduction`, { data: { max_cost: 1 } });
+  expect(asked.status()).toBe(422);
+  expect((await asked.json()).error.code).toBe("no_claims");
+  expect(await claimsOf(page, id)).toMatchObject({ ready: false, problem: { code: "no_claims" }, kept: null, claims: [], current: false });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Once the paper is read the page looks again, and the claims can be tried
+  await sendPaper(page, id, "claims.txt", claimsPaper("Scored unread"));
+  await readTheAgent(page, id);
+  await page.reload();
+  await expect(page.getByTestId("claims-problem")).toHaveCount(0);
+  await expect(claimsForm(page).getByRole("button", { name: TRY })).toBeEnabled();
+  await expect(claimsForm(page)).toContainText("4 numbers of the paper have digits enough to be tried.");
+  await expect(claimsForm(page)).toContainText("Nothing is run: it is what the tutorials kept that the claims are held to.");
+
+  // Tutorials that have not been run are what there is nothing to hold the claims to
+  const bare = await agentWithEnvironment(page, "Scored unrun", FIGURE_ADDRESS, { kind: "file" });
+  await sendPaper(page, bare, "claims.txt", claimsPaper("Scored unrun"));
+  await readTheAgent(page, bare);
+  await page.reload();
+  await expect(page.getByTestId("claims-problem")).toHaveText("Run the tutorials first, as it is what they gave that the claims are held to.");
+  await expect(claimsForm(page).getByRole("button", { name: TRY })).toBeDisabled();
+  expect((await page.request.post(`/api/paperagents/${bare}/reproduction`, { data: { max_cost: 1 } })).status()).toBe(422);
+});
+
+const showHow = (row: Locator) => row.getByRole("button", { name: /^Show how/ });
+const WHOLE_RUN = "What differs, of the whole run";
+
+test("tries the claims with a budget, shows how each came out and what it was held to, and where the tutorial parts from the paper, and takes the trying away", async ({ page }) => {
+  test.setTimeout(90_000);
+  const id = await agentWithClaims(page, "Scored claims");
+  await expect(keptClaims(page)).toHaveCount(0);
+  await expect(page.getByTestId("claims-problem")).toHaveCount(0);
+  await expect(claimsForm(page)).toContainText("4 numbers of the paper have digits enough to be tried.");
+  await expect(claimsForm(page)).toContainText("gpt-5.2, the model in the settings, is asked which place in what the tutorials gave the sentence is about, and is not shown any value there.");
+  await expect(claimsForm(page)).not.toContainText("Trying them again takes away");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The most it may spend is always said, and is an amount, and nothing is asked until it is
+  await claimsForm(page).getByRole("button", { name: TRY }).click();
+  await expect(claimsForm(page).getByText("Say the most it may spend.", { exact: true })).toBeVisible();
+  await claimsForm(page).getByLabel("Most it may spend, in dollars").fill("many");
+  await claimsForm(page).getByRole("button", { name: TRY }).click();
+  await expect(claimsForm(page).getByText("The most it may spend is an amount in dollars, such as 1 or 0.50.", { exact: true })).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await claimsOf(page, id)).kept).toBeNull();
+
+  await claimsForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await claimsForm(page).getByRole("button", { name: TRY }).click();
+  await expect(keptClaims(page)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("claims-counts")).toHaveText("4 claims: 1 reproduced, 1 partly reproduced, 1 not reproduced, 1 not attempted.");
+  await expect(page.getByTestId("claims-how")).toHaveText(/^Tried .+\. gpt-5\.2 was asked 1 time, which cost <\$0\.01\.$/);
+  await expect(page.getByTestId("claims-meaning")).toContainText("It does not say that they were run on the paper's data, or that the paper is right.");
+  await expect(page.getByTestId("claims-meaning")).toContainText("A difference is one that was found, not a cause");
+  await expect(claimsForm(page).getByRole("button", { name: "Try the claims again" })).toBeEnabled();
+  await expect(claimsForm(page)).toContainText("Trying them again takes away what was kept of this trying, and the variants that were made of it.");
+  expect(await claimsOf(page, id)).toMatchObject({ kept: { complete: true, requests: 1, model: "gpt-5.2" }, current: true, counts: { reproduced: 1, partly: 1, not_reproduced: 1, not_attempted: 1, stale: 0 } });
+
+  // Each claim is told by what the paper says, the number, and how it came out in a word
+  await expect(claimsTable(page).getByTestId("claim")).toHaveCount(4);
+  const reproduced = claimWithStatus(page, "reproduced");
+  await expect(reproduced).toHaveCount(1);
+  await expect(reproduced).toContainText("CellMapper reached an AUROC of 0.93 on held-out mouse hippocampus nuclei.");
+  await expect(reproduced.getByTestId("claim-status")).toHaveText("Reproduced");
+  await expect(reproduced.getByTestId("claim-summary")).toContainText("tutorials/quickstart.ipynb gave 0.93 in a call of cellmapper.core.score(values=[1, 2, 3])");
+  await expect(claimWithStatus(page, "partly").getByTestId("claim-status")).toHaveText("Partly reproduced");
+  await expect(claimWithStatus(page, "not_reproduced").getByTestId("claim-status")).toHaveText("Not reproduced");
+  await expect(claimWithStatus(page, "not_reproduced").getByTestId("claim-summary")).toContainText("where the paper reports 0.84 (10.7% away)");
+  const unattempted = claimWithStatus(page, "not_attempted");
+  await expect(unattempted.getByTestId("claim-status")).toHaveText("Not attempted");
+  await expect(unattempted.getByTestId("claim-summary")).toContainText("No code could be linked to it");
+  // A claim that nothing was held to has nothing to show of how
+  await expect(showHow(unattempted)).toHaveCount(0);
+
+  // What a claim was held to is shown when it is asked for, with who chose the place, and that it was chosen blind
+  await showHow(reproduced).click();
+  const held = page.getByRole("list", { name: "What it was held to" });
+  await expect(held).toHaveCount(1);
+  await expect(held).toContainText("Held to a call of cellmapper.core.score(values=[1, 2, 3]), at result in tutorials/quickstart.ipynb.");
+  await expect(held).toContainText("It gave 0.93, and the paper reports 0.93.");
+  await expect(held).toContainText("It was found because a result rounds to the paper's number.");
+  await expect(held).toContainText("gpt-5.2 chose this place from the words alone, without being shown any value. A program held it to the number.");
+  await expect(held).toContainText("The 2 runs of the tutorial agreed.");
+  // A claim that reproduced does not part from the paper
+  await expect(page.getByTestId("claim-divergence")).toHaveCount(0);
+  await expect(reproduced.getByRole("button", { name: /^Hide how/ })).toHaveAttribute("aria-expanded", "true");
+
+  // One that did not shows where the tutorial first parts from the paper, and what differs that was found, which is not said to be why
+  const notReproduced = claimWithStatus(page, "not_reproduced");
+  await showHow(notReproduced).click();
+  await expect(page.getByTestId("claim-divergence")).toHaveCount(1);
+  await expect(page.getByTestId("claim-point")).toContainText("the first output, in the order that it made its calls, that parts from the paper is a call of cellmapper.core.score(values=[1, 2, 3]), at result: it gave 0.93, and the paper reports 0.84.");
+  await expect(page.getByTestId("claim-point")).toContainText("1 output before it agreed with the paper");
+  await expect(page.getByTestId("claim-divergence")).toContainText("Differences found (not shown to be why)");
+  await expect(page.getByTestId("claim-divergence")).toContainText("None was found for this tutorial. That does not say that there is none");
+  await expect(page.getByRole("list", { name: "What it was held to" }).nth(1)).toContainText("It was found because the sentence and the tutorial both refer to figure 2. No result there rounds to the paper's number.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await reproduced.getByRole("button", { name: /^Hide how/ }).click();
+  await expect(page.getByRole("list", { name: "What it was held to" })).toHaveCount(1);
+  await notReproduced.getByRole("button", { name: /^Hide how/ }).click();
+  await expect(page.getByTestId("claim-detail")).toHaveCount(0);
+
+  // What differs of the whole run is said, with the software that the paper names and what is installed
+  const whole = page.getByTestId("claims-whole-run");
+  await expect(whole).toContainText(WHOLE_RUN);
+  await expect(whole.getByRole("list", { name: "Software that the paper names" })).toContainText("Seurat: the paper says 4.3, none installed (not installed).");
+
+  // They are told apart by how they came out
+  const filter = keptClaims(page).getByLabel("Show", { exact: true });
+  await expect(filter.locator("option")).toHaveText(["All claims", "Reproduced (1)", "Partly reproduced (1)", "Not reproduced (1)", "Not attempted (1)"]);
+  await filter.selectOption({ label: "Not reproduced (1)" });
+  await expect(claimsTable(page).getByTestId("claim")).toHaveCount(1);
+  await expect(claimsTable(page).getByTestId("claim")).toHaveAttribute("data-status", "not_reproduced");
+  await filter.selectOption({ label: "All claims" });
+  await expect(claimsTable(page).getByTestId("claim")).toHaveCount(4);
+
+  // They can be saved as a table, which is what the server makes of what is kept
+  const download = keptClaims(page).getByRole("link", { name: "Download as a table, the claims" });
+  await expect(download).toHaveAttribute("href", `/api/paperagents/${id}/tables/claims`);
+  const table = await page.request.get(`/api/paperagents/${id}/tables/claims`);
+  expect(table.status()).toBe(200);
+  expect(table.headers()["content-type"]).toContain("text/csv");
+  expect(table.headers()["content-disposition"]).toContain("attachment");
+  expect(await table.text()).toContain("CellMapper reached an AUROC of 0.93 on held-out mouse hippocampus nuclei.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The trying is taken away only when it is said to be, and what the tutorials gave stays
+  await keptClaims(page).getByRole("button", { name: "Take the trying away" }).click();
+  const asking = page.getByRole("alertdialog");
+  await expect(asking.getByRole("heading", { name: "Take away the trying of the claims of Scored claims?" })).toBeVisible();
+  await asking.getByRole("button", { name: "Keep" }).click();
+  await expect(asking).toHaveCount(0);
+  await expect(keptClaims(page)).toBeVisible();
+  expect((await claimsOf(page, id)).kept).not.toBeNull();
+  await keptClaims(page).getByRole("button", { name: "Take the trying away" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take away" }).click();
+  await expect(keptClaims(page)).toHaveCount(0);
+  const cleared = await claimsOf(page, id);
+  expect(cleared).toMatchObject({ kept: null, ready: true, current: false });
+  expect(cleared.claims.map((claim: { reason: string }) => claim.reason)).toEqual(["not_tried", "not_tried", "not_tried", "not_tried"]);
+  expect((await referenceOf(page, id)).kept).toMatchObject({ complete: true });
+  await expect(claimsForm(page).getByRole("button", { name: TRY })).toBeEnabled();
+  await expect(claimsForm(page)).not.toContainText("Trying them again takes away");
+
+  // And they are tried again from nothing
+  await claimsForm(page).getByLabel("Most it may spend, in dollars").fill("0.50");
+  await claimsForm(page).getByRole("button", { name: TRY }).click();
+  await expect(page.getByTestId("claims-counts")).toHaveText("4 claims: 1 reproduced, 1 partly reproduced, 1 not reproduced, 1 not attempted.", { timeout: 20_000 });
+  await expect(claimsForm(page).getByRole("button", { name: "Try the claims again" })).toBeEnabled();
+});
+
+// Sixteen sentences that cite a figure that a tutorial makes, which are asked of a model five at a time, and of which the first of each
+// request takes a while to be answered, so that the trying can be followed and stopped between one request and the next
+const lingeringPaper = (title: string) =>
+  [
+    `${title}: mapping cell types`,
+    "Results",
+    ...Array.from({ length: 16 }, (_, index) => `${index % 5 === 0 ? "slow: " : ""}Method ${index + 1} reached an AUROC of 0.${61 + index} on the same nuclei (Figure 2).`),
+  ].join("\n\n");
+
+// Tries the claims of an agent through the server, and waits until that is done
+async function tryTheClaims(page: Page, id: string, maxCost = 1) {
+  const started = await page.request.post(`/api/paperagents/${id}/reproduction`, { data: { max_cost: maxCost } });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await claimsOf(page, id)).job, { timeout: 30_000 }).toBeNull();
+}
+
+test("follows the trying while it goes on, waits for it before anything else is done to the agent, and keeps what it had tried when it is stopped", async ({ page }) => {
+  test.setTimeout(90_000);
+  const id = await agentWithClaims(page, "Scored lingering", lingeringPaper("Scored lingering"));
+  await expect(claimsForm(page)).toContainText("16 numbers of the paper have digits enough to be tried.");
+  await claimsForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await claimsForm(page).getByRole("button", { name: TRY }).click();
+
+  const stop = tryingClaims(page).getByRole("button", { name: "Stop: Trying the claims: Scored lingering" });
+  await expect(stop).toBeVisible();
+  // What is kept is shown when the trying is over, and the form is not offered again while it goes on
+  await expect(keptClaims(page)).toHaveCount(0);
+  await expect(claimsForm(page)).toHaveCount(0);
+  expect((await claimsOf(page, id)).job).not.toBeNull();
+  await page.reload();
+  await expect(stop).toBeVisible();
+  await expect(keptClaims(page)).toHaveCount(0);
+  await expect(claimsForm(page)).toHaveCount(0);
+  // Nothing else is done to the agent while it goes on, and its paper is not read
+  await expect(reading(page)).toContainText("The claims are being tried. Reading waits for that.");
+  await expect(reading(page).getByRole("button", { name: /^(Read the paper|Carry on reading)$/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Delete Scored lingering" })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  const refused = await page.request.post(`/api/paperagents/${id}/reproduction`, { data: { max_cost: 1 } });
+  expect(refused.status()).toBe(409);
+  expect((await page.request.delete(`/api/paperagents/${id}/reproduction`)).status()).toBe(409);
+
+  await stop.click();
+
+  await expect(tryingClaims(page).getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(keptClaims(page)).toBeVisible();
+  await expect(page.getByTestId("claims-how")).toContainText("It did not come to its end.");
+  expect(await claimsOf(page, id)).toMatchObject({ job: null, kept: { complete: false } });
+  // What was tried is kept, and the claims that were not reached are said not to have been tried
+  const total = Object.values((await claimsOf(page, id)).counts as Record<string, number>).reduce((sum, each) => sum + each, 0);
+  expect(total).toBe(16);
+  await expect(claimWithStatus(page, "not_attempted").first().getByTestId("claim-summary")).toHaveText("It has not been tried.");
+  await expect(claimsTable(page).getByTestId("claim")).toHaveCount(16);
+  await expect(claimsForm(page).getByRole("button", { name: "Try the claims again" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Delete Scored lingering" })).toBeEnabled();
+  await expect(keptClaims(page).getByRole("button", { name: "Take the trying away" })).toBeEnabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("says that claims tried before the paper was read again to other claims are stale, and shows nothing of what they came to", async ({ page }) => {
+  test.setTimeout(90_000);
+  const id = await agentWithClaims(page, "Scored stale");
+  await tryTheClaims(page, id);
+  await page.reload();
+  await expect(claimWithStatus(page, "reproduced")).toHaveCount(1);
+  await expect(page.getByTestId("claims-stale")).toHaveCount(0);
+  await expect(page.getByTestId("claims-whole-run")).toBeVisible();
+
+  // A paper that says one thing more is read in its place, so that what was tried is of other claims than are kept now
+  await sendPaper(page, id, "claims.txt", `${claimsPaper("Scored stale")}\n\nA fifth method reached an AUROC of 0.62 on the same nuclei (Figure 2).`);
+  await readTheAgent(page, id);
+  await page.reload();
+  await expect(page.getByTestId("claims-stale")).toContainText("These were tried against another run of the tutorials, or other claims, than are kept now, so what came of each is not shown. Try the claims again.");
+  expect(await claimsOf(page, id)).toMatchObject({ current: false, counts: { stale: 4, reproduced: 0, partly: 0, not_reproduced: 0, not_attempted: 1 } });
+  await expect(page.getByTestId("claims-counts")).toHaveText("5 claims: 1 not attempted, 4 stale.");
+  await expect(claimsTable(page).getByTestId("claim")).toHaveCount(5);
+  await expect(claimWithStatus(page, "stale")).toHaveCount(4);
+  await expect(claimWithStatus(page, "reproduced")).toHaveCount(0);
+  const first = claimWithStatus(page, "stale").first();
+  await expect(first.getByTestId("claim-status")).toHaveText("Stale (was Reproduced)");
+  await expect(first.getByTestId("claim-summary")).toHaveText(
+    "It was tried against another run of the tutorials, or other claims, than are kept now, so what came of it is not shown. It was reproduced when it was tried. Try the claims again.",
+  );
+  await expect(claimWithStatus(page, "not_attempted").getByTestId("claim-summary")).toHaveText("It has not been tried.");
+  // Nothing of what it came to, or where it parted from the paper, or what differs of the run, is shown, as none of it is of what is kept now
+  await expect(keptClaims(page)).not.toContainText("cellmapper.core");
+  await expect(keptClaims(page).getByRole("button", { name: /^Show how/ })).toHaveCount(0);
+  await expect(page.getByTestId("claims-whole-run")).toHaveCount(0);
+  await expect(page.getByTestId("claims-meaning")).not.toContainText("A difference is one that was found");
+  const filter = keptClaims(page).getByLabel("Show", { exact: true });
+  await expect(filter.locator("option")).toHaveText(["All claims", "Not attempted (1)", "Stale (4)"]);
+  await filter.selectOption({ label: "Stale (4)" });
+  await expect(claimsTable(page).getByTestId("claim")).toHaveCount(4);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Trying them again is of what is kept now
+  await expect(claimsForm(page)).toContainText("5 numbers of the paper have digits enough to be tried.");
+  await claimsForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await claimsForm(page).getByRole("button", { name: "Try the claims again" }).click();
+  await expect(page.getByTestId("claims-counts")).toHaveText("5 claims: 1 reproduced, 1 partly reproduced, 2 not reproduced, 1 not attempted.", { timeout: 20_000 });
+  await expect(page.getByTestId("claims-stale")).toHaveCount(0);
+  await expect(claimWithStatus(page, "stale")).toHaveCount(0);
+  // The filter was of a way that no claim comes out now, so all of them are shown
+  await expect(claimsTable(page).getByTestId("claim")).toHaveCount(5);
+});
+
+test("says what is wrong when the server refuses to try the claims, and looks again at what it shows when what it showed is out of date", async ({ page }) => {
+  const id = await agentWithClaims(page, "Scored refused");
+  await claimsForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+
+  // What the server says of a missing key is said as it says it, with a way to put it right
+  await page.route("**/api/paperagents/*/reproduction", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { code: "missing_keys", message: "gpt-5.2 needs OPENAI_API_KEY, which is not set. Add it in the settings.", missing: ["OPENAI_API_KEY"] },
+          }),
+        })
+      : route.fallback(),
+  );
+  await claimsForm(page).getByRole("button", { name: TRY }).click();
+  const problem = claimsForm(page).getByRole("alert");
+  await expect(problem).toContainText("gpt-5.2 needs OPENAI_API_KEY");
+  await expect(problem.getByRole("button", { name: "Add the key" })).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await page.unroute("**/api/paperagents/*/reproduction");
+  expect((await claimsOf(page, id)).kept).toBeNull();
+
+  // What was read of the paper is taken away behind the page's back, so that there is nothing to try, which the page is told of by the server
+  expect((await page.request.delete(`/api/paperagents/${id}/reading`)).status()).toBe(200);
+  await expect(claimsForm(page).getByRole("button", { name: TRY })).toBeEnabled();
+  await claimsForm(page).getByRole("button", { name: TRY }).click();
+  await expect(page.getByTestId("claims-problem")).toHaveText("Read the paper first, as it is the claims that were read from it that are tried.");
+  await expect(claimsForm(page).getByRole("button", { name: TRY })).toBeDisabled();
+  expect((await claimsOf(page, id)).job).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
 });
