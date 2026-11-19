@@ -90,6 +90,7 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}/variants  what of each claim's call can be changed, and the variants made, which are
                                          not the paper's result and leave the claim as it was
     DELETE /api/paperagents/{id}/variants  takes away the variants
+    GET    /api/paperagents/{id}/tables/{kind}  the claims, or the variants, as a table to open in a spreadsheet
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -1545,6 +1546,12 @@ def create_app(
         paperagents.clear_variants(agent_id)
 
         return paperagents.variants(agent_id)
+
+    @api.get("/paperagents/{agent_id}/tables/{kind}")
+    def get_paperagent_table(agent_id: str, kind: str) -> Response:
+        name, content = paperagents.table(agent_id, kind)
+
+        return Response(content, media_type="text/csv; charset=utf-8", headers=download_headers(name, "csv"))
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:

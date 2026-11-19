@@ -342,8 +342,8 @@ def text_of(
     status = variant["status"]
     if status == GAVE:
         said = (
-            f"With {what}, {link['where']} gave {variant['gave']!r} at {at}, where the tutorial's call gave "
-            f"{link['got']!r} and the paper reports {number}."
+            f"With {what}, the call gave {variant['gave']!r} at {at}. The claim was held to {link['where']}, which "
+            f"gave {link['got']!r}, and the paper reports {number}."
         )
     elif status == NO_PLACE:
         said = f"With {what}, the call ran and gave a {variant['type']} with no number at {at}."
