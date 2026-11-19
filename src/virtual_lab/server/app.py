@@ -86,6 +86,10 @@ and everything else is a request and an answer.
     DELETE /api/paperagents/{id}/reproduction  takes away what was kept of the trying, so that it can be done again
     GET    /api/paperagents/{id}/divergence  for each claim that did not reproduce, where its tutorial first parts from
                                          the paper and what differs that was found, with nothing run
+    POST   /api/paperagents/{id}/variants  starts making a variant of a claim: its call made again, arguments changed
+    GET    /api/paperagents/{id}/variants  what of each claim's call can be changed, and the variants made, which are
+                                         not the paper's result and leave the claim as it was
+    DELETE /api/paperagents/{id}/variants  takes away the variants
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -509,6 +513,20 @@ class PaperAgentReproductionBody(RequestModel):
     """How to try the claims: the most that asking a model may spend, in USD, which must be said."""
 
     max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+
+
+class PaperAgentVariantBody(RequestModel):
+    """What to make a variant of and how: the id of a claim that was tried and was held to a call, the new value of
+    each argument to change by its name, the most minutes that both calls may take, how many times each is made, the
+    most gigabytes that a call may write, and a note of why, which is kept with the variant. What is allowed of the
+    changes is said when they are checked, with why."""
+
+    claim: str = Field(max_length=200)
+    changes: dict[str, Any]
+    minutes: StrictInt | None = None
+    repeats: StrictInt | None = None
+    gigabytes: StrictInt | None = None
+    note: str | None = Field(None, max_length=300)
 
 
 class PaperAgentDataBody(RequestModel):
@@ -1509,6 +1527,24 @@ def create_app(
     @api.get("/paperagents/{agent_id}/divergence")
     def get_paperagent_divergence(agent_id: str) -> dict[str, Any]:
         return paperagents.divergence(agent_id)
+
+    @api.post("/paperagents/{agent_id}/variants", status_code=202)
+    def make_paperagent_variant(agent_id: str, body: PaperAgentVariantBody) -> dict[str, Any]:
+        job = paperagents.start_variant(
+            agent_id, body.claim, body.changes, body.minutes, body.repeats, body.gigabytes, body.note
+        )
+
+        return job.snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/variants")
+    def get_paperagent_variants(agent_id: str) -> dict[str, Any]:
+        return paperagents.variants(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/variants")
+    def delete_paperagent_variants(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_variants(agent_id)
+
+        return paperagents.variants(agent_id)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:

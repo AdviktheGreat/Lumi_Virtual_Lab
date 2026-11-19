@@ -91,7 +91,7 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
-from virtual_lab.paperagents import asking, diverging, linking, proposing, reproducing, toolmaking
+from virtual_lab.paperagents import asking, diverging, linking, proposing, reproducing, toolmaking, varying
 from virtual_lab.paperagents import card as method_card
 from virtual_lab.paperagents import checking as verifying
 from virtual_lab.paperagents import data as finding
@@ -118,6 +118,7 @@ from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server import paperagent_reproduction as kept_reproduction
 from virtual_lab.server import paperagent_tools as kept_tools
 from virtual_lab.server import paperagent_toolwork as toolwork
+from virtual_lab.server import paperagent_variants as kept_variants
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError, Jobs
 from virtual_lab.server.own import Own
@@ -164,6 +165,8 @@ CHECKS_JOB = "paperagent-checks"
 # The job that tries the paper's claims against what the tutorials gave, which is not done to an agent while another job
 # is
 REPRODUCTION_JOB = "paperagent-reproduction"
+# The job that makes a claim's call again with something changed, which is not done to an agent while another job is
+VARIANT_JOB = "paperagent-variant"
 # What is left free on the disk when data is fetched, and the longest that a note of which data stands in for what is
 DISK_RESERVE_BYTES = 1 << 30
 MAX_DATASET_CHARS = 200
@@ -692,12 +695,16 @@ class PaperAgents:
         """The job that is trying an agent's claims, if one is."""
         return next((job for job in self.jobs.active(REPRODUCTION_JOB) if job.subject == agent_id), None)
 
+    def variant_job(self, agent_id: str) -> Job | None:
+        """The job that is making a variant of one of an agent's claims, if one is."""
+        return next((job for job in self.jobs.active(VARIANT_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
-            fetched, its tutorials run, its tools made, its tools checked, or its claims tried, which what is done to
-            them must wait for.
+            fetched, its tutorials run, its tools made, its tools checked, its claims tried, or a variant of one made,
+            which what is done to them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -708,6 +715,7 @@ class PaperAgents:
             or self.tools_job(agent_id)
             or self.checks_job(agent_id)
             or self.reproduction_job(agent_id)
+            or self.variant_job(agent_id)
         )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
@@ -1688,6 +1696,7 @@ class PaperAgents:
         # held to what was run
         kept_tools.forget(directory)
         kept_reproduction.forget(directory)
+        kept_variants.forget(directory)
         kept_reference.forget(directory)
 
     def environment(self, agent_id: str, python: Any = None, system_packages: Any = None) -> dict[str, Any]:
@@ -2179,6 +2188,7 @@ class PaperAgents:
         # Tools are made from a reference run, and are of no use once it is taken away, nor is the trying of the claims
         kept_tools.forget(directory)
         kept_reproduction.forget(directory)
+        kept_variants.forget(directory)
         self.settle_tools(agent_id, "pending")
         account = {
             "schema": kept_reference.SCHEMA,
@@ -2249,6 +2259,7 @@ class PaperAgents:
             # The tools were made from what is taken away, and the claims were held to it
             kept_tools.forget(directory)
             kept_reproduction.forget(directory)
+            kept_variants.forget(directory)
             kept_reference.forget(directory)
             if steps_of(agent)["tools"] in ("done", "failed"):
                 self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": "pending"}})
@@ -2801,6 +2812,8 @@ class PaperAgents:
             repo = kept_repository.repo_path(directory)
 
             def work(job: Job) -> str:
+                # The variants were read at places that the earlier trying held the claims to
+                kept_variants.forget(directory)
                 return kept_reproduction.reproduce_all(job, directory, reference, claims, picker, repo, limits)
 
             try:
@@ -2832,12 +2845,14 @@ class PaperAgents:
         """Takes away what was kept of the trying of the claims, so that they are tried again from nothing.
 
         :raises ApiError: If there is no agent with this id, or its paper is being read, its code fetched, its
-            environment built, its data fetched, its tutorials run, its tools made or checked, or its claims tried.
+            environment built, its data fetched, its tutorials run, its tools made or checked, or its claims tried. The
+            variants that were made go too, as they were read at places that the trying held the claims to.
         """
         with self._lock:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
             kept_reproduction.forget(directory)
+            kept_variants.forget(directory)
 
     def divergence(self, agent_id: str) -> dict[str, Any]:
         """Where the tutorials of an agent first part from the paper for each claim that was not reproduced, or only
@@ -2905,6 +2920,220 @@ class PaperAgents:
                 "differences": diverging.counts_of(every),
             },
         }
+
+    # The claims' calculations made again with something changed, which a person asks for
+
+    def variants(self, agent_id: str) -> dict[str, Any]:
+        """What there is of the variants of an agent's claims: for each claim of the trying, whether its call can be
+        made again and with what arguments, and the variants that were made, each with what was changed, what came of
+        it, and whether the call with nothing changed gave what the tutorial got. A variant is never the paper's result,
+        and what is said of a claim is not changed by one. Nothing is run to make this, and only the variants of the
+        trying of the claims that is kept now are shown.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        claims = kept_reading.claims_of(directory)
+        reference, _ = kept_tools_of(directory, agent)
+        trying = kept_reproduction.load(directory)
+        current = trying is not None and kept_reproduction.is_current(trying, reference, claims)
+        problem = None
+        if trying is None:
+            problem = (
+                "no_reproduction",
+                "Try the claims first, as it is a claim that was tried that a variant is made of",
+            )
+        elif not current:
+            problem = (
+                "stale",
+                "The claims were tried against another run of the tutorials, or other claims, than are kept now. Try "
+                "them again",
+            )
+        record = kept_variants.load(directory)
+        kept = (
+            record is not None
+            and reference is not None
+            and trying is not None
+            and current
+            and kept_variants.is_current(record, reference, trying, claims)
+        )
+        shown = record["variants"] if record is not None and kept else []
+        job = self.variant_job(agent_id)
+        checks = checkwork.limits_of()
+
+        return {
+            "id": agent_id,
+            "ready": problem is None,
+            "problem": {"code": problem[0], "message": problem[1]} if problem is not None else None,
+            "reproduction": kept_reproduction.made_of(reference) if reference is not None and current else None,
+            "claims": self.variant_options(directory, reference, trying) if reference is not None and current else [],
+            "variants": shown,
+            "stale": len(record["variants"]) if record is not None and not kept else 0,
+            "counts": kept_variants.counts_of(shown),
+            "job": job.snapshot() if job is not None else None,
+            "meaning": varying.MEANING,
+            "limits": {
+                "most_changes": varying.MOST_CHANGES,
+                "max_value_chars": varying.MAX_VALUE_CHARS,
+                "max_note_chars": varying.MAX_NOTE_CHARS,
+                "most_kept": kept_variants.MOST_KEPT,
+                "default_minutes": checks["default_minutes"],
+                "max_minutes": checks["max_minutes"],
+                "default_repeats": checks["default_repeats"],
+                "max_repeats": checks["max_repeats"],
+                "default_gigabytes": checks["default_gigabytes"],
+                "max_gigabytes": checks["max_gigabytes"],
+            },
+        }
+
+    def variant_options(
+        self, directory: Path, reference: dict[str, Any], trying: dict[str, Any] | None
+    ) -> list[dict[str, Any]]:
+        """For each claim of the trying, what a person may change of the call that it was held to, or why no variant of
+        it can be made. The record of each tutorial is read once, and each function is read from the code once."""
+        if trying is None:
+            return []
+        repo = kept_repository.repo_path(directory)
+        details: dict[str, dict[str, Any] | None] = {}
+        readable: dict[tuple[str, str], list[str] | None] = {}
+
+        def positional_of(code: Path, module: str, function: str) -> list[str] | None:
+            if (module, function) not in readable:
+                readable[module, function] = verifying.positional_of(code, module, function)
+
+            return readable[module, function]
+
+        found = []
+        for entry in trying["claims"]:
+            link = entry["link"]
+            detail = None
+            if link is not None:
+                tutorial = link["tutorial"]["id"]
+                if tutorial not in details:
+                    details[tutorial] = kept_reference.load_detail(directory, reference, tutorial)
+                detail = details[tutorial]
+            found.append(varying.options_of(entry, detail, repo, positional_of))
+
+        return found
+
+    def start_variant(
+        self,
+        agent_id: str,
+        claim: Any,
+        changes: Any,
+        minutes: Any = None,
+        repeats: Any = None,
+        gigabytes: Any = None,
+        note: Any = None,
+    ) -> Job:
+        """Starts making a variant of one of the agent's claims: the call that the claim was held to is made again, in
+        the environment, in a container that has none of this machine in it and no network, as the code's own function,
+        with the arguments that were named changed and nothing else, and the number at the place that the claim was held
+        to is read. The same call with nothing changed is made in the same way, and the variant is comparable only if
+        that gave what the tutorial got. What comes of it is kept beside the claim as a variant, which is not the
+        paper's result and does not change what was said of the claim.
+
+        :param claim: The id of the claim, which is one that was tried and was held to a call.
+        :param changes: The new value of each argument to change, by its name, which are a few and are values that an
+            argument is given as: text, a truth value, nothing, a finite number, or a list or table of those.
+        :param minutes: The most time that both calls may take together.
+        :param repeats: How many times each call is made, to see that it gives the same each time.
+        :param gigabytes: The most that a call may write.
+        :param note: What the person says of why they ask, which is kept with the variant.
+        :raises ApiError: If there is no agent with this id or no such claim, what is given is not fit, Docker is not
+            running, the code has not been fetched or its environment not built or its image is not in Docker, the
+            tutorials were not run or the claims were not tried, the trying is of another run or other claims than are
+            kept now, the claim was not attempted or was not held to a call that can be made again, or the agent's
+            paper, code, environment, data, tutorials, tools, or claims are being worked on.
+        """
+        self.lookup(agent_id)
+        try:
+            limits = verifying.check_limits(minutes, None, repeats, gigabytes).for_runs()
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+        if not isinstance(claim, str) or not claim:
+            raise ApiError(422, "invalid", "Name the claim by its id")
+        if note is not None and (
+            not isinstance(note, str) or len(note) > varying.MAX_NOTE_CHARS or has_control_character(note)
+        ):
+            raise ApiError(422, "invalid", f"A note is text of at most {varying.MAX_NOTE_CHARS} characters")
+        usable, problem = building.ready(self.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and making a variant takes it")
+
+        with self._lock:
+            directory, agent, intake, _, _ = self.image_for_runs(agent_id, "the call is made again")
+            claims = kept_reading.claims_of(directory)
+            if not any(each["id"] == claim for each in claims):
+                raise not_found("claim of that PaperAgent")
+            reference, _ = kept_tools_of(directory, agent)
+            if reference is None:
+                raise ApiError(422, "no_reference", "Run the tutorials first, as it is what they gave that is varied")
+            trying = kept_reproduction.load(directory)
+            if trying is None:
+                raise ApiError(
+                    422, "no_reproduction", "Try the claims first, as it is a claim that was tried that is varied"
+                )
+            if not kept_reproduction.is_current(trying, reference, claims):
+                raise ApiError(
+                    409,
+                    "stale",
+                    "The claims were tried against another run of the tutorials, or other claims, than are kept now. "
+                    "Try them again",
+                )
+            entry = next((each for each in trying["claims"] if each["id"] == claim), None)
+            if entry is None:
+                raise ApiError(422, "not_tried", "That claim was not tried. Try the claims first")
+            link = entry["link"]
+            detail = kept_reference.load_detail(directory, reference, link["tutorial"]["id"]) if link else None
+            try:
+                plan = varying.plan(entry, detail, kept_repository.repo_path(directory), changes)
+            except varying.Refused as refused:
+                raise ApiError(422, refused.code, refused.message) from refused
+            folder, _ = data_to_give(directory) if reference["data"] is not None else (None, None)
+            if reference["data"] is not None and folder is None:
+                raise ApiError(409, "no_data", "The data that the tutorials were given has been taken away.")
+            bound = kept_variants.bound_to(reference, trying, claims)
+
+            def work(job: Job) -> str:
+                return kept_variants.make_variant(
+                    job,
+                    directory,
+                    self.workspace.root,
+                    agent_id,
+                    intake["commit"],
+                    plan,
+                    bound,
+                    limits,
+                    folder,
+                    self.docker_command,
+                    note,
+                )
+
+            try:
+                return self.jobs.start(
+                    VARIANT_JOB,
+                    agent_id,
+                    f"Making a variant of a claim: {agent['title']}",
+                    work,
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def clear_variants(self, agent_id: str) -> None:
+        """Takes away the variants that were made, which leaves what was said of each claim as it was.
+
+        :raises ApiError: If there is no agent with this id, or its paper is being read, its code fetched, its
+            environment built, its data fetched, its tutorials run, its tools made or checked, its claims tried, or a
+            variant is being made.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            kept_variants.forget(directory)
 
     def clear_checks(self, agent_id: str) -> None:
         """Takes away the checks that were made of the tools, so that they are of the tier they were made as until they
