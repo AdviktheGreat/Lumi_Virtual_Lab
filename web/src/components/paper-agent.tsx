@@ -9,6 +9,7 @@ import { ProblemNotice } from "@/components/messages";
 import { PageSection } from "@/components/page-section";
 import { CodeSection } from "@/components/paper-agent-code";
 import { ChecksSection } from "@/components/paper-agent-checks";
+import { ClaimsSection } from "@/components/paper-agent-claims";
 import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
@@ -54,6 +55,7 @@ import {
   lastEnvironmentJob,
   lastReadingJob,
   lastReferenceJob,
+  lastReproductionJob,
   lastRepositoryJob,
   lastToolsJob,
   MAX_AGENT_TITLE,
@@ -63,6 +65,7 @@ import {
   readingKey,
   referenceJob,
   repoName,
+  reproductionJob,
   repositoryJob,
   repoProblem,
   STATUS_LABELS,
@@ -70,6 +73,7 @@ import {
   STEPS,
   titleProblem,
   toolsJob,
+  variantJob,
 } from "@/lib/paperagents";
 import { hasChecks } from "@/lib/paperagent-checks";
 import { uploadProblem } from "@/lib/papers";
@@ -77,6 +81,7 @@ import { tidy } from "@/lib/scientists";
 import type {
   PaperAgent,
   PaperAgentChecks,
+  PaperAgentClaims,
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentGiven,
@@ -92,6 +97,7 @@ import { useAttempt, type Looked as LookedAt } from "@/lib/use-looked";
 import {
   usePaperAgent,
   usePaperAgentChecks,
+  usePaperAgentClaims,
   usePaperAgentData,
   usePaperAgentEnvironment,
   usePaperAgentGiven,
@@ -459,6 +465,7 @@ function Agent({
   reference,
   tools,
   checks,
+  claims,
   given,
   onChanged,
   onReload,
@@ -471,6 +478,7 @@ function Agent({
   reference: LookedAt<PaperAgentReference>;
   tools: LookedAt<PaperAgentTools>;
   checks: LookedAt<PaperAgentChecks>;
+  claims: LookedAt<PaperAgentClaims>;
   given: LookedAt<PaperAgentGiven>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
@@ -533,8 +541,24 @@ function Agent({
   // How the last checking ended is said if it did not end well, and while there is anything that it made
   const lastCheckingShown =
     lastChecking !== undefined && (lastChecking.state !== "succeeded" || (madeChecks !== null && hasChecks(madeChecks.tools))) ? lastChecking : undefined;
+  // The same of the claims, which are held to what the tutorials gave, and of the variants made of them. Neither is a step of the agent, so
+  // the agent does not say that they go on
+  const tryingClaims = reproductionJob(all, agent.id);
+  const makingVariant = variantJob(all, agent.id);
+  const madeClaims = claims.value.kind === "ready" ? claims.value.value.reproduction : null;
+  const lastTrying = lastReproductionJob(all, agent.id);
+  // How the last trying ended is said if it did not end well, and while what it made is kept
+  const lastTryingShown = lastTrying !== undefined && (lastTrying.state !== "succeeded" || madeClaims?.kept != null) ? lastTrying : undefined;
   const idle =
-    !working && !fetchingCode && !makingEnvironment && !fetchingData && !runningTutorials && makingTools === undefined && checkingTools === undefined;
+    !working &&
+    !fetchingCode &&
+    !makingEnvironment &&
+    !fetchingData &&
+    !runningTutorials &&
+    makingTools === undefined &&
+    checkingTools === undefined &&
+    tryingClaims === undefined &&
+    makingVariant === undefined;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
   const changed = (next: PaperAgent) => {
@@ -543,6 +567,7 @@ function Agent({
     environment.reload();
     data.reload();
     reference.reload();
+    claims.reload();
     tools.reload();
     checks.reload();
     given.reload();
@@ -597,14 +622,20 @@ function Agent({
                           ? "The tools are being made. Reading waits for that."
                           : checkingTools !== undefined
                             ? "The tools are being checked. Reading waits for that."
-                            : runningTutorials
-                              ? "The tutorials are being run or the tools made. Reading waits for that."
-                              : null
+                            : tryingClaims !== undefined
+                              ? "The claims are being tried. Reading waits for that."
+                              : makingVariant !== undefined
+                                ? "A variant of a claim is being made. Reading waits for that."
+                                : runningTutorials
+                                  ? "The tutorials are being run or the tools made. Reading waits for that."
+                                  : null
               }
               jobs={jobs}
               onCleared={(cleared) => {
                 reading.set(cleared);
                 onReload();
+                // The claims that are tried are those that were read
+                claims.reload();
                 // What the paper points to is found from what was read
                 repository.reload();
                 data.reload();
@@ -669,6 +700,7 @@ function Agent({
                 // What the code names for the data is found from the code, and its tutorials are what are run
                 data.reload();
                 reference.reload();
+                claims.reload();
                 tools.reload();
                 checks.reload();
                 given.reload();
@@ -680,6 +712,7 @@ function Agent({
                 environment.reload();
                 data.reload();
                 reference.reload();
+                claims.reload();
                 tools.reload();
                 checks.reload();
                 given.reload();
@@ -711,6 +744,7 @@ function Agent({
                 environment.set(cleared);
                 // What was run in the image goes with it
                 reference.reload();
+                claims.reload();
                 tools.reload();
                 checks.reload();
                 given.reload();
@@ -720,6 +754,7 @@ function Agent({
                 onReload();
                 environment.reload();
                 reference.reload();
+                claims.reload();
                 tools.reload();
                 checks.reload();
                 given.reload();
@@ -746,6 +781,7 @@ function Agent({
                 data.set(next);
                 // What the tutorials are given to read is what was fetched
                 reference.reload();
+                claims.reload();
                 tools.reload();
                 checks.reload();
                 given.reload();
@@ -781,6 +817,7 @@ function Agent({
               onStale={() => {
                 onReload();
                 reference.reload();
+                claims.reload();
                 tools.reload();
                 checks.reload();
                 given.reload();
@@ -814,6 +851,7 @@ function Agent({
               onStale={() => {
                 onReload();
                 reference.reload();
+                claims.reload();
                 tools.reload();
                 checks.reload();
                 given.reload();
@@ -845,8 +883,36 @@ function Agent({
               onStale={() => {
                 onReload();
                 reference.reload();
+                claims.reload();
                 tools.reload();
                 checks.reload();
+                given.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Claims"
+        intro="Each claim of the paper that states a number, held to what the tutorials gave when they were run here, and, for those that did not reproduce, where the tutorial first parts from the paper. This is of the tutorials as they ran here. It does not say that they were run on the paper's data, or that the paper is right."
+      >
+        <WorkStatus job={tryingClaims} last={lastTryingShown} jobs={jobs} label="Trying the claims" />
+        <Looked state={claims.value} label="Looking at the claims" failure="The claims could not be looked at." onRetry={claims.reload}>
+          {(value) => (
+            <ClaimsSection
+              key={agent.id}
+              agent={agent}
+              claims={value}
+              busy={!idle}
+              trying={tryingClaims}
+              jobs={jobs}
+              onCleared={() => claims.reload()}
+              onStale={() => {
+                onReload();
+                reference.reload();
+                tools.reload();
+                checks.reload();
+                claims.reload();
                 given.reload();
               }}
             />
@@ -906,6 +972,7 @@ export function AgentPage({ id }: { id: string }) {
   const reference = usePaperAgentReference(id, report, again);
   const tools = usePaperAgentTools(id, report, again);
   const checks = usePaperAgentChecks(id, report, again);
+  const claims = usePaperAgentClaims(id, report, again);
   const given = usePaperAgentGiven(id, report, again);
   const list = usePaperAgentsList(report, "");
 
@@ -938,6 +1005,7 @@ export function AgentPage({ id }: { id: string }) {
                 reference={reference}
                 tools={tools}
                 checks={checks}
+                claims={claims}
                 given={given}
                 onChanged={agent.set}
                 onReload={agent.reload}

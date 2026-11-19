@@ -2093,3 +2093,142 @@ export interface PaperAgentChecksOptions {
   max_cost?: number;
   verifier_model?: string;
 }
+
+// How one claim of a paper came out when it was held to what the tutorials gave. Stale is what a claim is shown as when what was said
+// of it is of another run of the tutorials, or of other claims, than are kept now, and is not said to be anything else
+export type ClaimStatus = "reproduced" | "partly" | "not_reproduced" | "not_attempted" | "stale";
+
+// Where a claim was held to, which is a place in what a tutorial gave: the result of a call, or a line that it printed
+export interface ClaimLink {
+  // How the place was found: by the number, by the figure that the sentence and the tutorial both refer to, or by both
+  basis: string;
+  tutorial: { id: string; path: string; kind: string; runs: number; stable: boolean | null };
+  source: "call" | "line";
+  // The place in words
+  where: string;
+  // The call that gave it, if it was a call
+  call: number | null;
+  got: number;
+  // The number as the paper wrote it
+  number: { text: string; value: number; decimals: number; percent: boolean };
+  // How far what was got is from the number, as a share of it
+  share: number;
+  // The figures and tables that the sentence and the tutorial both refer to
+  figures: string[];
+  chosen_by: string;
+  // Other places that hold the number, which were not chosen
+  others: { tutorial: string; where: string; value: number }[];
+}
+
+// One claim of a paper, and what came of trying it
+export interface ClaimOutcome {
+  id: string;
+  kind: string;
+  // The number as the paper writes it, or nothing for a claim that states none
+  value: string;
+  quote: string;
+  anchor: ReadAnchor | null;
+  figures: string[];
+  status: ClaimStatus;
+  // Why it was not attempted, for one that was not
+  reason: string | null;
+  summary: string;
+  link: ClaimLink | null;
+  // What a stale claim was before
+  was?: ClaimStatus;
+}
+
+// What there is of the trying of an agent's claims: each claim of the paper and how it came out, and what is needed to try them again
+export interface PaperAgentReproduction {
+  id: string;
+  ready: boolean;
+  problem: { code: string; message: string } | null;
+  settings_model: string;
+  // How many numbers of the paper have digits enough to be tried
+  numbers: number;
+  reference: { commit: string; image_id: string; reference: { started_at: string; finished_at: string } } | null;
+  kept: {
+    started_at: string;
+    finished_at: string | null;
+    complete: boolean;
+    model: string;
+    cost: number | null;
+    requests: number;
+    limit: string | null;
+    notes: string[];
+  } | null;
+  // Whether what is kept is of the run of the tutorials and the claims that are kept now
+  current: boolean;
+  claims: ClaimOutcome[];
+  // How many claims of the paper come after the most that are listed, which are not listed or tried
+  more: number;
+  counts: Record<ClaimStatus, number>;
+  job: Job | null;
+  meaning: string;
+  limits: { partly_share: number; most_claims: number; most_asked: number; batch: number };
+}
+
+// What to say of trying the claims: the most that asking a model may spend
+export interface PaperAgentReproductionOptions {
+  max_cost: number;
+}
+
+// A difference found between what the paper says and what was used here. It is not said to be why a number differs.
+export interface DivergenceDifference {
+  kind: "python" | "package" | "data" | "runs" | "seed" | "argument";
+  text: string;
+  evidence: Record<string, unknown>;
+  // The paper's words that it is held to, if there are any
+  quote: string | null;
+}
+
+// The first output of a tutorial that parts from a number of the paper, and the outputs before it that agreed
+export interface DivergencePoint {
+  first: { claim: string; quote: string; number: string; got: number; where: string; call: number | null };
+  // False if it is in a printed line, whose order among the calls is not known
+  ordered: boolean;
+  agreed: { claim: string; quote: string; number: string; got: number; where: string; call: number | null }[];
+  agreed_count: number;
+  text: string;
+}
+
+// A claim that did not reproduce, or only partly, with where its tutorial first parts from the paper and what differs that was found
+export interface DivergenceClaim {
+  id: string;
+  quote: string;
+  value: string;
+  status: ClaimStatus;
+  tutorial: string;
+  point: DivergencePoint | null;
+  differences: DivergenceDifference[];
+}
+
+// Software that the paper names, with the version that is installed here
+export interface DivergenceSoftware {
+  name: string;
+  paper: string;
+  installed: string | null;
+  state: "same" | "differs" | "no_version" | "not_comparable" | "not_installed";
+  quote: string;
+}
+
+// Where the tutorials first part from the paper for each claim that did not reproduce, made from what is kept
+export interface PaperAgentDivergence {
+  id: string;
+  ready: boolean;
+  problem: { code: string; message: string } | null;
+  current: boolean;
+  run: { python: string | null; packages: number; data: unknown; tutorials: number } | null;
+  claims: DivergenceClaim[];
+  software: DivergenceSoftware[];
+  // Those of the whole run
+  differences: DivergenceDifference[];
+  counts: { claims: number; points: number; differences: Record<string, number> };
+  meaning: string;
+}
+
+// The trying of the claims, and where each first parts from the paper, which are looked at together
+export interface PaperAgentClaims {
+  reproduction: PaperAgentReproduction;
+  divergence: PaperAgentDivergence;
+}

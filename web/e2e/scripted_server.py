@@ -144,6 +144,7 @@ from virtual_lab.paperagents import fetch as fetching  # noqa: E402
 from virtual_lab.paperagents import proposing  # noqa: E402
 from virtual_lab.paperagents import reference as referencing  # noqa: E402
 from virtual_lab.paperagents import repository as cloning  # noqa: E402
+from virtual_lab.paperagents import reproducing  # noqa: E402
 from virtual_lab.paperagents import toolmaking as making  # noqa: E402
 from virtual_lab.paperagents import wrappers  # noqa: E402
 from virtual_lab.paperagents.reading import (  # noqa: E402
@@ -690,7 +691,12 @@ def stand_in_clone(
         "cellmapper/core.py": CORE_FOR_GPU if needs_gpu else CORE,
     }
     if not needs_gpu:
-        files["tutorials/quickstart.ipynb"] = NOTEBOOK
+        # A tutorial that says which figure it makes, by which the sentences that cite that figure are linked to it
+        files["tutorials/quickstart.ipynb"] = (
+            NOTEBOOK.replace("# Map the cells of a sample", "# Figure 2: map the cells of a sample")
+            if "figure" in url
+            else NOTEBOOK
+        )
         files["tests/test_core.py"] = "def test_nothing():\n    assert True\n"
         if "tested" in url:
             files["tests/test_scale.py"] = (
@@ -1010,6 +1016,21 @@ def stand_in_calls(item: referencing.Item, number: int, label: str = "") -> list
     if "methods" in label:
         return [{**call, "method": True, "qualname": f"Mapper.{call['function']}"} for call in (scale, table)]
 
+    # A call that gives the number that the paper of a "scored" agent reports for how well the method did
+    if "scored" in label:
+        score = {
+            **scale,
+            "id": 3,
+            "function": "score",
+            "qualname": "score",
+            "line": 12,
+            "args": {"values": plain("list", [1, 2, 3])},
+            "result": plain("float", 0.93),
+            "from": {"file": item.path, "line": 5},
+        }
+
+        return [scale, table, score]
+
     return [scale, table]
 
 
@@ -1314,6 +1335,18 @@ def stand_in_proposals() -> proposing.Proposals:
     )
 
 
+def stand_in_picks(kwargs: dict[str, Any]) -> reproducing.Picks:
+    """What a model says of which place each sentence is about: the first of those it is shown, for every claim.
+    The tutorials of an agent that gives a number that a paper reports give it at one place, which is the only one that
+    a claim of its paper that is held to anything is shown."""
+    text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")
+    asked = re.findall(r"^Claim (\d+)$", text, flags=re.MULTILINE)
+    if "slow:" in text:
+        time.sleep(PAPER_DELAY)
+
+    return reproducing.Picks(picks=[reproducing.Pick(claim=int(number), place=1) for number in asked])
+
+
 class ScriptedCompletions(FakeCompletions):
     def __init__(self, delay: float) -> None:
         super().__init__()
@@ -1378,6 +1411,8 @@ class ScriptedCompletions(FakeCompletions):
         schema = kwargs["response_format"]
         if schema is proposing.Proposals:
             return parsed_response(stand_in_proposals())
+        if schema is reproducing.Picks:
+            return parsed_response(stand_in_picks(kwargs))
         if schema is not PaperFindings and schema is not ChunkReading:
             return super().parse(**kwargs)
         text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")
