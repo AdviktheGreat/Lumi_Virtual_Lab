@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { api, ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import {
   checkClaims,
   claimStatusTitle,
@@ -93,7 +94,7 @@ function Divergence({ found }: { found: DivergenceClaim }) {
 
 // One claim: its sentence, the number that the paper reports, how it came out, and, once it is asked for, what it was held to and where
 // the tutorial first parts from the paper
-function ClaimRow({ claim, found }: { claim: ClaimOutcome; found: DivergenceClaim | undefined }) {
+function ClaimRow({ claim, found, striped }: { claim: ClaimOutcome; found: DivergenceClaim | undefined; striped: boolean }) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const stale = claim.status === "stale";
@@ -102,7 +103,7 @@ function ClaimRow({ claim, found }: { claim: ClaimOutcome; found: DivergenceClai
 
   return (
     <>
-      <tr className="align-top odd:bg-muted/30" data-testid="claim" data-id={claim.id} data-status={claim.status}>
+      <tr className={cn("align-top", striped && "bg-muted/30")} data-testid="claim" data-id={claim.id} data-status={claim.status}>
         <td className="break-words px-2.5 py-1.5">{claim.quote}</td>
         <td className="px-2.5 py-1.5 tabular-nums">{claim.value || <span className="text-muted-foreground">None</span>}</td>
         <td className="px-2.5 py-1.5">
@@ -130,7 +131,7 @@ function ClaimRow({ claim, found }: { claim: ClaimOutcome; found: DivergenceClai
         </td>
       </tr>
       {open && more && (
-        <tr className="odd:bg-muted/30" data-testid="claim-detail" data-id={claim.id}>
+        <tr className={striped ? "bg-muted/30" : undefined} data-testid="claim-detail" data-id={claim.id}>
           <td colSpan={5} className="px-2.5 pb-2.5">
             <div id={id} className="flex flex-col gap-2 text-xs">
               {link !== null && (
@@ -242,8 +243,8 @@ function ClaimsTable({ agent, claims }: { agent: PaperAgent; claims: PaperAgentC
             </tr>
           </thead>
           <tbody>
-            {shown.map((claim) => (
-              <ClaimRow key={claim.id} claim={claim} found={divergenceOf(claims, claim.id)} />
+            {shown.map((claim, index) => (
+              <ClaimRow key={claim.id} claim={claim} found={divergenceOf(claims, claim.id)} striped={index % 2 === 0} />
             ))}
           </tbody>
         </table>

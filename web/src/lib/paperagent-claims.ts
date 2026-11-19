@@ -59,7 +59,11 @@ export function describeCounts(counts: Record<ClaimStatus, number>, more: number
   const parts = STATUSES.filter((status) => (counts[status] ?? 0) > 0).map((status) => `${counts[status]} ${statusTitle(status).toLowerCase()}`);
   const said = total === 0 ? "No claim of the paper is listed." : `${count(total, "claim")}: ${parts.join(", ")}.`;
 
-  return more > 0 ? `${said} ${count(more, "claim")} more come after the ${total} that are listed, and are not tried.` : said;
+  if (more === 0) return said;
+
+  return more === 1
+    ? `${said} 1 claim more comes after the ${total} that are listed, and is not tried.`
+    : `${said} ${more} claims more come after the ${total} that are listed, and are not tried.`;
 }
 
 // What trying the claims cost and how it ended, in a line

@@ -110,7 +110,7 @@ describe("how many claims came out each way", () => {
     expect(describeCounts(counts({ partly: 1 }), 0)).toBe("1 claim: 1 partly reproduced.");
     expect(describeCounts(counts({ stale: 2 }), 0)).toBe("2 claims: 2 stale.");
     expect(describeCounts(counts({ reproduced: 300 }), 12)).toBe("300 claims: 300 reproduced. 12 claims more come after the 300 that are listed, and are not tried.");
-    expect(describeCounts(counts({ reproduced: 300 }), 1)).toContain("1 claim more come after");
+    expect(describeCounts(counts({ reproduced: 300 }), 1)).toBe("300 claims: 300 reproduced. 1 claim more comes after the 300 that are listed, and is not tried.");
   });
 
   it("says that none is listed when none is", () => {
