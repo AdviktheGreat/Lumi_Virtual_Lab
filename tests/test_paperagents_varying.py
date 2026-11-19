@@ -326,8 +326,8 @@ class TestMakingItAgain:
         assert found["tutorial"] == {"id": "01-examples-demo-py", "path": "examples/demo.py"}
         assert (found["call"], found["function"], found["path"]) == (2, "fixture.core.mean", [])
         text = found["text"]
-        assert "With scale = 3 in place of 2" in text and "gave 9.0 at result" in text
-        assert "where the tutorial's call gave 6.0 and the paper reports 6.0" in text
+        assert "With scale = 3 in place of 2, the call gave 9.0 at result." in text
+        assert f"The claim was held to {found['where']}, which gave 6.0, and the paper reports 6.0." in text
         assert (
             "gave what the tutorial got" in text and "That number does not round to the one the paper reports." in text
         )

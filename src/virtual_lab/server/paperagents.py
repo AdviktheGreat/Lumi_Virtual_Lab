@@ -91,7 +91,17 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
-from virtual_lab.paperagents import asking, diverging, linking, proposing, reproducing, toolmaking, varying
+from virtual_lab.paper_batch import csv_bytes
+from virtual_lab.paperagents import (
+    asking,
+    diverging,
+    linking,
+    proposing,
+    reporting,
+    reproducing,
+    toolmaking,
+    varying,
+)
 from virtual_lab.paperagents import card as method_card
 from virtual_lab.paperagents import checking as verifying
 from virtual_lab.paperagents import data as finding
@@ -3134,6 +3144,32 @@ class PaperAgents:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
             kept_variants.forget(directory)
+
+    def table(self, agent_id: str, kind: str) -> tuple[str, bytes]:
+        """What the claims came to, or the variants that were made of them, as a table to open in a spreadsheet, made
+        each time from what is kept, with nothing run and no model asked. The claims are listed with where each first
+        parts from the paper and how many variants were made, and a claim that is stale is given no more than that it
+        is, as it is shown. The variants are listed beside what came of their claims, which they do not change, and
+        each says that it is not the paper's result.
+
+        :param kind: "claims" or "variants".
+        :return: What to call the file, and what is in it.
+        :raises ApiError: If there is no agent with this id, or no such table.
+        """
+        _, agent = self.lookup(agent_id)
+        if kind not in reporting.KINDS:
+            raise not_found("table of that PaperAgent")
+        reproduction = self.reproduction(agent_id)
+        variants = self.variants(agent_id)
+        if kind == reporting.CLAIMS:
+            content = csv_bytes(
+                reporting.CLAIM_COLUMNS,
+                reporting.claim_rows(reproduction, self.divergence(agent_id), variants),
+            )
+        else:
+            content = csv_bytes(reporting.VARIANT_COLUMNS, reporting.variant_rows(reproduction, variants))
+
+        return f"{agent['title']} - {kind}", content
 
     def clear_checks(self, agent_id: str) -> None:
         """Takes away the checks that were made of the tools, so that they are of the tier they were made as until they
