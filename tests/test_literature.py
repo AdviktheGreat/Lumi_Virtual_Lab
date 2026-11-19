@@ -265,6 +265,13 @@ class TestSearchingEuropePmc:
 
         assert web_transport.params[0]["resultType"] == "lite"
 
+    def test_the_abstracts_come_only_when_they_are_asked_for(self, web_transport) -> None:
+        queue(web_transport, search_response(ARTICLE_RECORD))
+        found = search_articles("miR-122", with_abstracts=True)
+
+        assert web_transport.params[0]["resultType"] == "core"
+        assert found.articles[0].abstract == ARTICLE_RECORD["abstractText"]
+
     @pytest.mark.parametrize(
         "sort, expected", [("relevance", None), ("cited", "CITED desc"), ("recent", "P_PDATE_D desc")]
     )

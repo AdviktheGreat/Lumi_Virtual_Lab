@@ -91,6 +91,16 @@ and everything else is a request and an answer.
                                          not the paper's result and leave the claim as it was
     DELETE /api/paperagents/{id}/variants  takes away the variants
     GET    /api/paperagents/{id}/tables/{kind}  the claims, or the variants, as a table to open in a spreadsheet
+    GET    /api/bakeoffs                the bake-offs, and what a page needs to make one
+    POST   /api/bakeoffs                a bake-off: a task, which of the person's data it is on, and its spending limit
+    GET    /api/bakeoffs/{id}           one, with its methods, what is left of its limit, and what it was found by
+    PATCH  /api/bakeoffs/{id}           says again what it is called, what it is for, which data, or the limit
+    DELETE /api/bakeoffs/{id}           takes it away, leaving the PaperAgents that were made for its methods
+    POST   /api/bakeoffs/{id}/candidates  puts a method in the running, by its paper
+    PATCH  /api/bakeoffs/{id}/candidates/{method}  says again what a method is called and where its code is
+    DELETE /api/bakeoffs/{id}/candidates/{method}  takes a method out of the running
+    POST   /api/bakeoffs/{id}/shortlist  starts finding methods for the task in the literature, within what is left of
+                                         the limit, as a job; it adds to the methods and takes none away
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -166,7 +176,9 @@ from virtual_lab.export_notebook import chat_notebook, notebook_text
 from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.openrouter import Catalog
 from virtual_lab.paperagents.data import MAX_NAME_CHARS as MAX_DATA_FILE_CHARS
+from virtual_lab.server import paperagent_bakeoff
 from virtual_lab.server.asking import not_waiting
+from virtual_lab.server.bakeoffs import Bakeoffs
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
 from virtual_lab.server.conversations import Conversations
 from virtual_lab.server.errors import ApiError, file_error, not_found
@@ -581,6 +593,49 @@ class PaperAgentChangeBody(RequestModel):
     given: StrictBool | None = None
 
 
+class BakeoffBody(RequestModel):
+    """A bake-off: what the person wants done, which of their own data it is to be done on if that is known, and the
+    most that the whole of it may spend, in USD, which is always said."""
+
+    task: str = Field(max_length=paperagent_bakeoff.MAX_TASK_CHARS * 4)
+    title: str | None = Field(None, max_length=paperagent_bakeoff.MAX_TITLE_CHARS * 4)
+    data: str | None = Field(None, max_length=1000)
+    limit: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+
+
+class BakeoffChangeBody(RequestModel):
+    """What to say again of a bake-off: any of these, and what is not given is left as it is. Empty data takes the data
+    away, and the limit is never less than what has been spent."""
+
+    task: str | None = Field(None, max_length=paperagent_bakeoff.MAX_TASK_CHARS * 4)
+    title: str | None = Field(None, max_length=paperagent_bakeoff.MAX_TITLE_CHARS * 4)
+    data: str | None = Field(None, max_length=1000)
+    limit: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+
+
+class BakeoffCandidateBody(RequestModel):
+    """A method to put in the running: its paper, what it is called, and where its code is if the person knows."""
+
+    paper: PaperAgentPaperBody
+    name: str | None = Field(None, max_length=paperagent_bakeoff.MAX_NAME_CHARS * 4)
+    repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+
+
+class BakeoffCandidateChangeBody(RequestModel):
+    """What to say again of a method: any of these, and what is not given is left as it is. An empty repo takes the code
+    away."""
+
+    name: str | None = Field(None, max_length=paperagent_bakeoff.MAX_NAME_CHARS * 4)
+    repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+
+
+class BakeoffShortlistBody(RequestModel):
+    """How to find methods: the searches to make, a few short ones, if the person would rather say them than have a
+    model write them."""
+
+    queries: list[Annotated[str, StringConstraints(max_length=400)]] | None = Field(None, max_length=20)
+
+
 class McpServerBody(RequestModel):
     """How to reach an MCP server, as a config gives it, or {"preset": ...} for one of the library's."""
 
@@ -818,6 +873,7 @@ def create_app(
         chat_models=chat_models,
         docker_command=docker_command,
     )
+    bakeoffs = Bakeoffs(paperagents)
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -1552,6 +1608,54 @@ def create_app(
         name, content = paperagents.table(agent_id, kind)
 
         return Response(content, media_type="text/csv; charset=utf-8", headers=download_headers(name, "csv"))
+
+    @api.get("/bakeoffs")
+    def get_bakeoffs() -> dict[str, Any]:
+        return bakeoffs.describe()
+
+    @api.post("/bakeoffs", status_code=201)
+    def make_bakeoff(body: BakeoffBody) -> dict[str, Any]:
+        return bakeoffs.view(bakeoffs.create(body.title, body.task, body.data, body.limit))
+
+    @api.get("/bakeoffs/{bakeoff_id}")
+    def get_bakeoff(bakeoff_id: str) -> dict[str, Any]:
+        return bakeoffs.view(bakeoff_id)
+
+    @api.patch("/bakeoffs/{bakeoff_id}")
+    def change_bakeoff(bakeoff_id: str, body: BakeoffChangeBody) -> dict[str, Any]:
+        bakeoffs.change(bakeoff_id, body.title, body.task, body.data, body.limit)
+
+        return bakeoffs.view(bakeoff_id)
+
+    @api.delete("/bakeoffs/{bakeoff_id}")
+    def delete_bakeoff(bakeoff_id: str) -> dict[str, Any]:
+        bakeoffs.delete(bakeoff_id)
+
+        return bakeoffs.describe()
+
+    @api.post("/bakeoffs/{bakeoff_id}/candidates", status_code=201)
+    def add_bakeoff_candidate(bakeoff_id: str, body: BakeoffCandidateBody) -> dict[str, Any]:
+        bakeoffs.add_candidate(bakeoff_id, body.paper.model_dump(exclude_none=True), body.name, body.repo)
+
+        return bakeoffs.view(bakeoff_id)
+
+    @api.patch("/bakeoffs/{bakeoff_id}/candidates/{candidate_id}")
+    def change_bakeoff_candidate(
+        bakeoff_id: str, candidate_id: str, body: BakeoffCandidateChangeBody
+    ) -> dict[str, Any]:
+        bakeoffs.change_candidate(bakeoff_id, candidate_id, body.name, body.repo)
+
+        return bakeoffs.view(bakeoff_id)
+
+    @api.delete("/bakeoffs/{bakeoff_id}/candidates/{candidate_id}")
+    def remove_bakeoff_candidate(bakeoff_id: str, candidate_id: str) -> dict[str, Any]:
+        bakeoffs.remove_candidate(bakeoff_id, candidate_id)
+
+        return bakeoffs.view(bakeoff_id)
+
+    @api.post("/bakeoffs/{bakeoff_id}/shortlist", status_code=202)
+    def shortlist_bakeoff(bakeoff_id: str, body: BakeoffShortlistBody) -> dict[str, Any]:
+        return bakeoffs.start_shortlist(bakeoff_id, body.queries).snapshot(0)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:
