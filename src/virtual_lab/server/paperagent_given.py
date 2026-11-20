@@ -474,11 +474,15 @@ class Runnable:
     :param tag: The name of the image of the agent's environment.
     :param data: The folder of the data that the tutorials were given, if they were.
     :param tools: The tools, each as it is kept, with its wrapper's code, in the order they were made.
+    :param commit: The commit of the code that the tools were made of.
+    :param image_id: The image of the environment that they were made in.
     """
 
     tag: str
     data: Path | None
     tools: tuple[dict[str, Any], ...]
+    commit: str = ""
+    image_id: str = ""
 
 
 def runnable(workspace: Workspace, agent_id: str, docker_command: Sequence[str]) -> tuple[Runnable | None, str | None]:
@@ -511,7 +515,7 @@ def runnable(workspace: Workspace, agent_id: str, docker_command: Sequence[str])
         if (tool := kept_tools.load_tool(directory, summary["name"]))
     )
 
-    return (Runnable(tag, folder, loaded), None) if loaded else (None, None)
+    return (Runnable(tag, folder, loaded, kept["commit"], kept["image_id"]), None) if loaded else (None, None)
 
 
 class Asked(threading.Event):
@@ -548,6 +552,44 @@ def shown(value: dict[str, Any]) -> dict[str, Any]:
         **{key: item for key, item in value.items() if key != "plain"},
         "note": "This is not plain data, so it is described and not sent.",
     }
+
+
+def call_once(
+    workspace: Workspace,
+    agent_id: str,
+    found: Runnable,
+    tool: dict[str, Any],
+    sent: Any,
+    docker_command: Sequence[str],
+    stopping: Callable[[], bool] | None,
+    mounts: Sequence[tuple[Path, str]] = (),
+    seconds: int = CALL_SECONDS,
+) -> tuple[making.Replay, making.ToolLimits]:
+    """Calls one tool once, in a container of its own, on a copy of the code of its own, and says how that went.
+
+    :param sent: The arguments, as JSON that the runner reads back as they were (see encode).
+    :param mounts: Further files or folders of this machine for the call to read, each with where it is put, read-only.
+    :param seconds: How long the call may take.
+    :raises StoppedError: If whoever is calling is stopping.
+    :raises DockerUnavailableError: If Docker did not run it, which is not a failing of the tool.
+    """
+    cases = tool["evidence"]["cases"]
+    where = cases[0]["cwd"] if cases else "."
+    case = wrappers.Case(0, "conversation", None, {}, where, sent, {})
+    limits = making.ToolLimits(repeats=1)
+    with tempfile.TemporaryDirectory(prefix="paperagent.", dir=workspace.root) as scratch:
+        runner = making.ToolRunner(
+            found.tag,
+            limits,
+            Path(scratch),
+            found.data,
+            tuple(docker_command),
+            Asked(stopping),
+            agent_id,
+            mounts=mounts,
+        )
+
+        return runner.replay(tool["source"], tool["name"], [case], seconds), limits
 
 
 def failure_of(call: dict[str, Any]) -> str:
@@ -619,20 +661,14 @@ class Caller:
                 )
             except NotRun as error:
                 raise PaperAgentToolError(str(error)) from None
-        cases = tool["evidence"]["cases"]
-        where = cases[0]["cwd"] if cases else "."
-        case = wrappers.Case(0, "conversation", None, {}, where, sent, {})
-        limits = making.ToolLimits(repeats=1)
-        with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
-            runner = making.ToolRunner(
-                found.tag, limits, Path(scratch), found.data, self.docker_command, Asked(self.stopping), self.agent_id
+        try:
+            replay, limits = call_once(
+                self.workspace, self.agent_id, found, tool, sent, self.docker_command, self.stopping
             )
-            try:
-                replay = runner.replay(tool["source"], self.name, [case], CALL_SECONDS)
-            except StoppedError:
-                raise PaperAgentToolError("The call was stopped.") from None
-            except DockerUnavailableError as error:
-                raise PaperAgentToolError(str(error)) from None
+        except StoppedError:
+            raise PaperAgentToolError("The call was stopped.") from None
+        except DockerUnavailableError as error:
+            raise PaperAgentToolError(str(error)) from None
         call = replay.results[0][0]
         if call is None:
             reason = {

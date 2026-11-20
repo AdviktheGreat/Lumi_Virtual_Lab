@@ -115,6 +115,7 @@ class Replays:
                 "files": sorted(path.name for path in folder.iterdir()),
                 "source": (folder / making.WRAPPER_AT).read_text(),
                 "data": runner.data,
+                "mounts": runner.mounts,
                 "label": runner.label,
                 "tag": runner.tag,
                 "limits": runner.tools,

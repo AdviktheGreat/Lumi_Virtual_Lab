@@ -38,9 +38,11 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.paperagents import asking, shortlisting
 from virtual_lab.paperagents import environment as building
 from virtual_lab.provenance import utc_timestamp
+from virtual_lab.server import bakeoff_runs as kept_runs
 from virtual_lab.server import bakeoff_scope
 from virtual_lab.server import paperagent_bakeoff as kept_bakeoff
 from virtual_lab.server.bakeoff_building import Builder
+from virtual_lab.server.bakeoff_running import Runs, place_of
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError
 from virtual_lab.server.paperagents import (
@@ -61,6 +63,7 @@ from virtual_lab.utils import MeetingUsage
 SHORTLIST_JOB = "bakeoff-shortlist"
 # The job that builds the methods that are in the running, which is not done to a bake-off while it is being done either
 BUILD_JOB = "bakeoff-build"
+RUN_JOB = "bakeoff-run"
 
 
 def check_task(text: Any) -> str:
@@ -113,6 +116,7 @@ class Bakeoffs:
         self.articles = articles
         self.preprints = preprints
         self.builder = Builder(self)
+        self.runs = Runs(self)
         # Held while a bake-off is read, changed, and kept again, so that two changes do not undo each other
         self._lock = threading.Lock()
 
@@ -154,14 +158,18 @@ class Bakeoffs:
         """The job that is building the methods of a bake-off, if one is."""
         return next((job for job in self.jobs.active(BUILD_JOB) if job.subject == bakeoff_id), None)
 
+    def calling(self, bakeoff_id: str) -> Job | None:
+        """The job that is running the methods of a bake-off on the person's data, if one is."""
+        return next((job for job in self.jobs.active(RUN_JOB) if job.subject == bakeoff_id), None)
+
     def running(self, bakeoff_id: str) -> Job | None:
-        """The job that is finding or building the methods of a bake-off, if one is."""
-        return self.finding(bakeoff_id) or self.building(bakeoff_id)
+        """The job that is finding, building, or running the methods of a bake-off, if one is."""
+        return self.finding(bakeoff_id) or self.building(bakeoff_id) or self.calling(bakeoff_id)
 
     def check_idle(self, bakeoff_id: str) -> None:
         """
-        :raises ApiError: If the methods of the bake-off are being found or built, which what is done to it must wait
-            for.
+        :raises ApiError: If the methods of the bake-off are being found, built, or run, which what is done to it must
+            wait for.
         """
         job = self.running(bakeoff_id)
         if job is not None:
@@ -212,13 +220,17 @@ class Bakeoffs:
 
         :raises ApiError: If there is no bake-off with this id.
         """
-        _, record = self.lookup(bakeoff_id)
+        directory, record = self.lookup(bakeoff_id)
         agents = self.paperagents.kept()
         named = record["data"]["own"] if record["data"] is not None else None
         own = self.paperagents.own_data().get(named) if named is not None else None
         job = self.running(bakeoff_id)
         building_now = self.building(bakeoff_id)
         building_snapshot = building_now.snapshot() if building_now is not None else None
+        runs = {each["id"]: kept_runs.load(directory, each["id"]) for each in record["candidates"]}
+        data_now = (
+            self.data_now(named) if any(run is not None and run["data"] is not None for run in runs.values()) else None
+        )
 
         return {
             **self.summary(bakeoff_id, record),
@@ -231,7 +243,7 @@ class Bakeoffs:
             "left": kept_bakeoff.left_of(record),
             "shortlist": record["shortlist"],
             "candidates": [
-                self.shown(candidate, agents, building_snapshot, record["described"])
+                self.shown(candidate, agents, building_snapshot, record["described"], runs[candidate["id"]], data_now)
                 for candidate in record["candidates"]
             ],
             "job": job.snapshot() if job is not None else None,
@@ -246,9 +258,16 @@ class Bakeoffs:
         agents: list[tuple[Path, dict[str, Any]]],
         building_snapshot: dict[str, Any] | None,
         described: dict[str, Any] | None = None,
+        run: dict[str, Any] | None = None,
+        data_now: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """A candidate as a page is shown it: with the PaperAgent of its paper if there is one, where it stands, and
-        what the card of its paper says of the data."""
+        """A candidate as a page is shown it: with the PaperAgent of its paper if there is one, where it stands, what
+        the card of its paper says of the data, and what came of running it on the data if it was, with whether the data
+        and the method are as they were then.
+
+        :param run: What is kept of the last run of the method.
+        :param data_now: The data that the bake-off is run on as it is listed now, if a run says what it ran on.
+        """
         found = kept_bakeoff.agent_for(candidate["paper"], agents)
         entry = self.paperagents.entry(found[0], found[1]) if found is not None else None
         agent = (
@@ -267,7 +286,15 @@ class Bakeoffs:
             "agent": agent,
             "standing": kept_bakeoff.standing_of(candidate, agent, building_snapshot),
             "scope": bakeoff_scope.scope_of(self.paperagents, described, candidate, agent["id"] if agent else None),
+            "run": kept_runs.summary(run, data_now, self.runs.method_now(found)) if run is not None else None,
         }
+
+    def data_now(self, named: str | None) -> dict[str, Any] | None:
+        """The data that a bake-off is run on as it is listed now, with its name, or None if there is none or it cannot
+        be given to code."""
+        place = place_of(self.workspace, named) if named is not None else None
+
+        return {"own": named, **kept_runs.listing_of(place)} if place is not None and named is not None else None
 
     # Making, changing, and taking away
 
@@ -474,6 +501,7 @@ class Bakeoffs:
             if len(left) == len(record["candidates"]):
                 raise not_found("method in that bake-off with that id")
             kept_bakeoff.keep(directory, {**record, "candidates": left})
+            kept_runs.forget(directory, candidate_id)
 
     # Going on with a method whose card the data is outside of
 
@@ -888,6 +916,83 @@ class Bakeoffs:
                 ) from error
 
         return job
+
+    # Running them
+
+    def start_run(self, bakeoff_id: str, calls: Any, minutes: Any = None) -> Job:
+        """Starts running methods on the person's data: for each, the tool and the arguments that the person says are
+        called once, in a container with the data read-only and no network. What comes of each is kept, and so is why a
+        method was not run: the data is outside what the card of its paper says and the person has not said to go on
+        with it, it is not built, or the call is not as the tool's signature says.
+
+        :param calls: The calls to make, by the id of each method, each with the name of a tool and its arguments.
+        :param minutes: The most that one call may take.
+        :raises ApiError: If there is no bake-off or method with these ids, what is given is not fit, Docker is not
+            running, the bake-off has no data of the person's to run on or it is not where the Data page says, or its
+            methods are being found, built, or run.
+        """
+        self.lookup(bakeoff_id)
+        wanted = self.runs.check_calls(calls)
+        seconds = self.runs.check_minutes(minutes)
+        usable, problem = building.ready(self.paperagents.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and running a method takes it")
+        with self._lock:
+            _, record = self.lookup(bakeoff_id)
+            self.check_idle(bakeoff_id)
+            if record["data"] is None:
+                raise ApiError(
+                    422, "no_data", "Say which of your data the methods are run on, on the bake-off, and then run them"
+                )
+            self.check_data(record["data"]["own"])
+            known = {each["id"] for each in record["candidates"]}
+            if any(each not in known for each in wanted):
+                raise not_found("method in that bake-off with that id")
+            try:
+                return self.jobs.start(
+                    RUN_JOB,
+                    bakeoff_id,
+                    f"Running the methods: {record['title']}",
+                    self.runs.work(bakeoff_id, wanted, seconds),
+                    exclusive=f"bakeoff:{bakeoff_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def keep_run(self, bakeoff_id: str, run: dict[str, Any]) -> bool:
+        """Keeps what came of running a method, in place of the last run of it. It is not kept if the method, or the
+        bake-off, was taken away since the run was started, which is said by the answer.
+
+        :raises ValueError: If it is not a run, which is for whoever made it to say.
+        """
+        with self._lock:
+            try:
+                directory, record = self.lookup(bakeoff_id)
+            except ApiError:
+                return False
+            if not any(each["id"] == run["candidate"] for each in record["candidates"]):
+                return False
+            kept_runs.keep(directory, run)
+
+        return True
+
+    def run_of(self, bakeoff_id: str, candidate_id: str) -> dict[str, Any]:
+        """The last run of a method, the whole of it with its result, and whether the data and the method are as they
+        were when it was made.
+
+        :raises ApiError: If there is no such bake-off or method, or the method has not been run.
+        """
+        directory, record = self.lookup(bakeoff_id)
+        candidate = self.find_candidate(record, candidate_id)
+        run = kept_runs.load(directory, candidate_id)
+        if run is None:
+            raise not_found("run of that method")
+        named = record["data"]["own"] if record["data"] is not None else None
+        found = kept_bakeoff.agent_for(candidate["paper"], self.paperagents.kept())
+
+        return {**run, "since": kept_runs.since(run, self.data_now(named), self.runs.method_now(found))}
 
     def check_money(self, record: dict[str, Any]) -> None:
         """

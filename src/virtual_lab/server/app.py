@@ -108,6 +108,10 @@ and everything else is a request and an answer.
     POST   /api/bakeoffs/{id}/build      starts building the methods, as a job: each is given the PaperAgent of its
                                          paper and the steps that a PaperAgent has, and the person is asked where it
                                          is for them to say; reading is paid for out of what is left of the limit
+    POST   /api/bakeoffs/{id}/run        runs the methods that the person names on their data, as a job: for each, the
+                                         tool and arguments they say, checked against the tool's signature, called once
+                                         in a container with the data read-only; what is not run is kept with why
+    GET    /api/bakeoffs/{id}/candidates/{method}/run  the whole of the last run of a method, with its result
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -183,7 +187,7 @@ from virtual_lab.export_notebook import chat_notebook, notebook_text
 from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.openrouter import Catalog
 from virtual_lab.paperagents.data import MAX_NAME_CHARS as MAX_DATA_FILE_CHARS
-from virtual_lab.server import paperagent_bakeoff
+from virtual_lab.server import bakeoff_running, paperagent_bakeoff
 from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.bakeoffs import Bakeoffs
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
@@ -668,6 +672,24 @@ class BakeoffBuildBody(RequestModel):
     go_on: list[Annotated[str, StringConstraints(max_length=64)]] | None = Field(
         None, max_length=paperagent_bakeoff.MAX_CANDIDATES
     )
+
+
+class BakeoffCallBody(RequestModel):
+    """What one method is called with: the name of one of its tools and the arguments, by the names of the tool's
+    parameters. A program checks them against the tool's signature before anything is run."""
+
+    tool: str = Field(max_length=bakeoff_running.MAX_TOOL_NAME_CHARS * 2)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class BakeoffRunBody(RequestModel):
+    """How to run methods on the person's data: the call of each, by the id of the method, and the most minutes that one
+    call may take."""
+
+    calls: dict[Annotated[str, StringConstraints(max_length=64)], BakeoffCallBody] = Field(
+        max_length=paperagent_bakeoff.MAX_CANDIDATES
+    )
+    minutes: int | None = Field(None, strict=True)
 
 
 class McpServerBody(RequestModel):
@@ -1708,6 +1730,16 @@ def create_app(
     @api.post("/bakeoffs/{bakeoff_id}/build", status_code=202)
     def build_bakeoff(bakeoff_id: str, body: BakeoffBuildBody) -> dict[str, Any]:
         return bakeoffs.start_build(bakeoff_id, body.candidates, body.go_on).snapshot(0)
+
+    @api.post("/bakeoffs/{bakeoff_id}/run", status_code=202)
+    def run_bakeoff(bakeoff_id: str, body: BakeoffRunBody) -> dict[str, Any]:
+        calls = {key: call.model_dump() for key, call in body.calls.items()}
+
+        return bakeoffs.start_run(bakeoff_id, calls, body.minutes).snapshot(0)
+
+    @api.get("/bakeoffs/{bakeoff_id}/candidates/{candidate_id}/run")
+    def get_bakeoff_run(bakeoff_id: str, candidate_id: str) -> dict[str, Any]:
+        return bakeoffs.run_of(bakeoff_id, candidate_id)
 
     @api.get("/paperagents/{agent_id}/data")
     def get_paperagent_data(agent_id: str) -> dict[str, Any]:

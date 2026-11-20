@@ -20,7 +20,7 @@ from test_paperagents_environment import PYPROJECT, needs_docker
 from test_paperagents_stock import notebook, stock_of, tree
 
 from virtual_lab.environment import StoppedError
-from virtual_lab.execution import DockerUnavailableError
+from virtual_lab.execution import DockerUnavailableError, ExecutionError
 from virtual_lab.paperagents import environment as env
 from virtual_lab.paperagents import reference as ref
 from virtual_lab.paperagents.reference import Item, Limits, Runner
@@ -1177,6 +1177,39 @@ class TestCommand:
 
     def test_without_data_there_is_no_variable_that_says_where_it_is(self, tmp_path: Path) -> None:
         assert not any(part.startswith("PAPER_DATA") for part in self.command(tmp_path))
+
+    def test_what_else_is_to_be_read_is_given_read_only_where_it_is_said_and_after_the_data(
+        self, tmp_path: Path
+    ) -> None:
+        data = tmp_path / "data"
+        data.mkdir()
+        counts = tmp_path / "own" / "counts.csv"
+        counts.parent.mkdir()
+        counts.write_text("a,b\n1,2\n")
+        command = self.command(tmp_path, data=data, mounts=[(counts, "/data/counts.csv")])
+        mounts = [part for part in command if part.startswith("type=bind")]
+        assert len(mounts) == 3
+        assert f"source={data.resolve()},target={ref.DATA_PATH},readonly" in mounts[1]
+        assert mounts[2] == f"type=bind,source={counts.resolve()},target=/data/counts.csv,readonly"
+        assert "readonly" not in mounts[0] and "--network none" in " ".join(command)
+
+    def test_what_else_is_to_be_read_is_mounted_without_the_data_that_a_tutorial_was_given(
+        self, tmp_path: Path
+    ) -> None:
+        counts = tmp_path / "own" / "counts.csv"
+        counts.parent.mkdir()
+        counts.write_text("a,b\n1,2\n")
+        command = self.command(tmp_path, mounts=[(counts, "/data/counts.csv")])
+        mounts = [part for part in command if part.startswith("type=bind")]
+        assert len(mounts) == 2 and mounts[1].endswith("target=/data/counts.csv,readonly")
+        assert not any(part.startswith("PAPER_DATA") for part in command)
+
+    def test_nothing_else_is_given_unless_it_is_asked_for(self, tmp_path: Path) -> None:
+        assert Runner("image:tag", Limits(), tmp_path).mounts == ()
+
+    def test_what_else_is_to_be_read_that_is_not_there_is_not_given_a_container(self, tmp_path: Path) -> None:
+        with pytest.raises(ExecutionError, match="not there any more"):
+            self.command(tmp_path, mounts=[(tmp_path / "gone.csv", "/data/gone.csv")])
 
     def test_the_container_is_labelled_with_whose_it_is_so_that_one_that_is_left_can_be_found(
         self, tmp_path: Path
