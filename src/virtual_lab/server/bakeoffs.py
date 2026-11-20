@@ -756,18 +756,8 @@ class Bakeoffs:
                 self.paperagents.usable_model()
                 if len(unread) == len(chosen):
                     self.check_money(record)
-            try:
-                job = self.jobs.start(
-                    BUILD_JOB,
-                    bakeoff_id,
-                    f"Building the methods: {record['title']}",
-                    self.builder.work(bakeoff_id, chosen),
-                    exclusive=f"bakeoff:{bakeoff_id}",
-                )
-            except JobConflictError as error:
-                raise ApiError(
-                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
-                ) from error
+            # What the person said is kept before the work starts, which looks for it from its first moment on and
+            # does not take this lock to do so
             if commits:
                 kept_bakeoff.keep(
                     directory,
@@ -781,6 +771,20 @@ class Bakeoffs:
                         ],
                     },
                 )
+            try:
+                job = self.jobs.start(
+                    BUILD_JOB,
+                    bakeoff_id,
+                    f"Building the methods: {record['title']}",
+                    self.builder.work(bakeoff_id, chosen),
+                    exclusive=f"bakeoff:{bakeoff_id}",
+                )
+            except JobConflictError as error:
+                if commits:
+                    kept_bakeoff.keep(directory, record)
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
 
         return job
 

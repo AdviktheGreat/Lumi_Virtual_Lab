@@ -57,7 +57,7 @@ from virtual_lab.server import paperagents as paperagents_module
 from virtual_lab.server.app import create_app
 from virtual_lab.server.bakeoffs import BUILD_JOB, Bakeoffs
 from virtual_lab.server.errors import ApiError
-from virtual_lab.server.jobs import Job, Jobs
+from virtual_lab.server.jobs import Job, JobConflictError, Jobs
 from virtual_lab.server.paperagents import ENVIRONMENT_JOB, PaperAgents, steps_of
 from virtual_lab.server.papers import money
 from virtual_lab.server.workspace import Settings, Workspace
@@ -491,6 +491,62 @@ class TestWhatThePersonIsAskedAndSays:
         assert bakeoffs.building(bakeoff_id) is None
         assert why(bakeoffs.start_build, bakeoff_id, None, ["00000000"]) == (404, "not_found")
         assert why(bakeoffs.start_build, bakeoff_id, ["00000000"]) == (404, "not_found")
+
+    def test_what_the_person_says_is_kept_before_the_work_that_looks_for_it_starts(
+        self,
+        bakeoffs: Bakeoffs,
+        workspace: Workspace,
+        stack: Remotes,
+        docker: Docker,
+        model_client: FakeClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stack.by_address[FIRST_CODE] = without(stack.default, "LICENSE", NOTEBOOK, SCRIPT)
+        bakeoff_id = made(bakeoffs)
+        method = add(bakeoffs, bakeoff_id, DOI, "CellMapper", FIRST_CODE)
+        read_by(model_client, FIRST_CODE)
+        build(bakeoffs, bakeoff_id)
+        said: list[Any] = []
+        start = bakeoffs.jobs.start
+
+        def started(kind: str, *arguments: Any, **options: Any) -> Job:
+            if kind == BUILD_JOB:
+                said.append(record_of(workspace, bakeoff_id)["candidates"][0]["build"]["go_on"])
+            return start(kind, *arguments, **options)
+
+        monkeypatch.setattr(bakeoffs.jobs, "start", started)
+
+        build(bakeoffs, bakeoff_id, go_on=[method])
+
+        assert said == [COMMIT]
+
+    def test_what_the_person_says_is_not_kept_if_the_work_cannot_be_started(
+        self,
+        bakeoffs: Bakeoffs,
+        jobs: Jobs,
+        workspace: Workspace,
+        stack: Remotes,
+        model_client: FakeClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stack.by_address[FIRST_CODE] = without(stack.default, "LICENSE")
+        bakeoff_id = made(bakeoffs)
+        method = add(bakeoffs, bakeoff_id, DOI, "CellMapper", FIRST_CODE)
+        read_by(model_client, FIRST_CODE)
+        build(bakeoffs, bakeoff_id)
+        before = record_of(workspace, bakeoff_id)
+        other = jobs.start("something-else", "x", "Something else", lambda job: None, exclusive="paperagent:x")
+        finish(other)
+
+        def conflict(kind: str, *arguments: Any, **options: Any) -> Job:
+            raise JobConflictError(other)
+
+        monkeypatch.setattr(bakeoffs.jobs, "start", conflict)
+
+        assert why(bakeoffs.start_build, bakeoff_id, None, [method]) == (409, "busy")
+
+        assert record_of(workspace, bakeoff_id) == before
+        assert before["candidates"][0]["build"]["go_on"] is None
 
     @pytest.mark.parametrize(
         "given", [{"candidates": "all"}, {"candidates": [7]}, {"candidates": ["a", "a"]}, {"go_on": "all"}]
