@@ -676,10 +676,12 @@ class BakeoffBuildBody(RequestModel):
 
 class BakeoffCallBody(RequestModel):
     """What one method is called with: the name of one of its tools and the arguments, by the names of the tool's
-    parameters. A program checks them against the tool's signature before anything is run."""
+    parameters, or `propose` for a model to choose them. A program checks them against the tool's signature before
+    anything is run, whoever chose them."""
 
-    tool: str = Field(max_length=bakeoff_running.MAX_TOOL_NAME_CHARS * 2)
+    tool: str | None = Field(None, max_length=bakeoff_running.MAX_TOOL_NAME_CHARS * 2)
     arguments: dict[str, Any] = Field(default_factory=dict)
+    propose: bool = Field(False, strict=True)
 
 
 class BakeoffRunBody(RequestModel):
@@ -1733,7 +1735,7 @@ def create_app(
 
     @api.post("/bakeoffs/{bakeoff_id}/run", status_code=202)
     def run_bakeoff(bakeoff_id: str, body: BakeoffRunBody) -> dict[str, Any]:
-        calls = {key: call.model_dump() for key, call in body.calls.items()}
+        calls = {key: call.model_dump(exclude_unset=True) for key, call in body.calls.items()}
 
         return bakeoffs.start_run(bakeoff_id, calls, body.minutes).snapshot(0)
 

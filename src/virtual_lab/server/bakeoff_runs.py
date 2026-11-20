@@ -12,12 +12,14 @@ whichever way it came out, so that a method is not left out of a table for not h
   fails on the person's data is a thing to know of it.
 - not_run: the call was not made, and why: the data is outside what the card of the method's paper says and the person
   has not said to go on, or there is no data to run on, or the method is not built, or the tool or the arguments are not
-  as the tool's signature says. It is shown as it is, and not left out.
+  as the tool's signature says, or a model that was to propose the call gave none or could not be asked. It is shown as
+  it is, and not left out.
 
-Each says what it ran: the tool and its tier, the arguments it was called with and whose they were, the method's own
-commit and image, the data as it was listed (its names, sizes and times, which are not a hash of what is in it), and
-what the data was put against the card with. It does not say that the result is right: what it says is that this call
-was made to this code on this data, and what it gave.
+Each says what it ran: the tool and its tier, the arguments it was called with and whose they were (the person's, or
+what a model proposed, with which model, the tool and arguments as it said them, its words for why, and what asking it
+cost, which are its words and not findings), the method's own commit and image, the data as it was listed (its names,
+sizes and times, which are not a hash of what is in it), and what the data was put against the card with. It does not
+say that the result is right: what it says is that this call was made to this code on this data, and what it gave.
 
 Only the latest run of a method is kept. A run is of what was there when it was made, so what is shown of it says
 whether the data, or the method, is as it was.
@@ -39,10 +41,15 @@ from virtual_lab.server.workspace import has_control_character
 from virtual_lab.utils import write_atomically
 
 RUNS_FOLDER = "runs"
-SCHEMA = 1
+# 1 was a run that had no `proposed`, which is read as one that the person's call was made of
+SCHEMA = 2
 MAX_RUN_BYTES = 1 << 20
 MAX_ARGUMENTS_CHARS = 20_000
 MAX_REASON_CHARS = 4000
+MAX_PROPOSED_REASON_CHARS = 300
+# How much of what a model said of the tool and the arguments is kept, as it said it
+MAX_SAID_TOOL_CHARS = 100
+MAX_SAID_ARGUMENTS_CHARS = 2000
 MAX_PRINTED_CHARS = 2000
 MAX_WARNINGS = 5
 MAX_WARNING_CHARS = 600
@@ -67,9 +74,16 @@ NOT_RUN_WHY = (
     "not_built",
     "no_tool",
     "bad_call",
+    "not_proposed",
+    "limit",
 )
-# Who chose the call: the person, in what they said
+# What can only come of a call that a model was to propose: it gave none or could not be asked, or was not asked since
+# nothing was left to ask it with
+MODEL_ONLY_WHY = ("not_proposed", "limit")
+# Who chose the call: the person, in what they said, or a model, whose call a program then checked as it checks theirs
 BY_PERSON = "person"
+BY_MODEL = "model"
+BY = (BY_PERSON, BY_MODEL)
 
 NUMBER = (int, float)
 TOOL = {"name": str, "called": str, "tier": str}
@@ -83,6 +97,7 @@ SCOPE = {
     "warnings": [str],
 }
 METHOD = {"agent": str, "commit": str, "image_id": str}
+PROPOSED = {"model": str, "reason": str, "cost": (NUMBER, None), "tool": (str, None), "arguments": (str, None)}
 RUN = {
     "schema": int,
     "candidate": str,
@@ -91,6 +106,7 @@ RUN = {
     "reason": str,
     "at": str,
     "by": str,
+    "proposed": (PROPOSED, None),
     "tool": (TOOL, None),
     "arguments": (dict, None),
     "seconds": (NUMBER, None),
@@ -146,6 +162,24 @@ def is_method(method: dict[str, Any]) -> bool:
     )
 
 
+def is_said(text: str, most: int) -> bool:
+    return len(text) <= most and not has_control_character(text)
+
+
+def is_proposed(proposed: dict[str, Any]) -> bool:
+    cost = proposed["cost"]
+
+    return (
+        proposed["model"] != ""
+        and not has_control_character(proposed["model"])
+        and not has_control_character(proposed["reason"])
+        and len(proposed["reason"]) <= MAX_PROPOSED_REASON_CHARS
+        and (proposed["tool"] is None or is_said(proposed["tool"], MAX_SAID_TOOL_CHARS))
+        and (proposed["arguments"] is None or is_said(proposed["arguments"], MAX_SAID_ARGUMENTS_CHARS))
+        and (cost is None or (math.isfinite(cost) and cost >= 0))
+    )
+
+
 def is_run(value: Any, candidate_id: str) -> bool:
     """Whether what is kept as the run of a method is one: of that method, in one of the states with a reason that fits
     it, and having what a run of that state has."""
@@ -154,7 +188,9 @@ def is_run(value: Any, candidate_id: str) -> bool:
     if (
         value["state"] not in STATES
         or has_control_character(value["at"])
-        or value["by"] != BY_PERSON
+        or value["by"] not in BY
+        or (value["by"] == BY_MODEL) != (value["proposed"] is not None)
+        or (value["proposed"] is not None and not is_proposed(value["proposed"]))
         or len(value["reason"]) > MAX_REASON_CHARS
         or (value["printed"] is not None and len(value["printed"]) > MAX_PRINTED_CHARS)
         or not is_scope(value["scope"])
@@ -189,6 +225,7 @@ def is_run(value: Any, candidate_id: str) -> bool:
 
     return (
         value["why"] in NOT_RUN_WHY
+        and (value["by"] == BY_MODEL or value["why"] not in MODEL_ONLY_WHY)
         and value["reason"] != ""
         and value["seconds"] is None
         and value["result"] is None
@@ -213,6 +250,8 @@ def load(directory: Path, candidate_id: str) -> dict[str, Any] | None:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError):
         return None
+    if isinstance(value, dict) and value.get("schema") == 1:
+        value = {**value, "schema": SCHEMA, "proposed": None}
 
     return value if is_run(value, candidate_id) else None
 

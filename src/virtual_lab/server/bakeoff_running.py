@@ -6,14 +6,21 @@ person's data, in the container that a tool is called in everywhere else (papera
 method's environment, no network, the data of the person's read-only under /data, a process of its own on a copy of
 the code of its own, for at most the minutes that were allowed and writing at most the gigabytes that are.
 
-The call is a person's here: they say which tool, and with which arguments. What chooses it is not a model, which is
-for a step that follows, and a program checks it all the same before anything is sent (what a model proposes will be
-checked as this is):
+The call is the person's: they say which tool, and with which arguments. Or it is a model's, if they ask for one to be
+proposed (paperagents/applying.py), from the task, what they say their data is, and what the method's tools say of
+themselves. It is not asked until nothing else stands in the way of the call, so nothing is spent on a call that would
+not be made. What a model proposes is data and nothing more: a program checks it as it checks the person's, before
+anything is sent, and the model's say-so changes nothing of that:
 
-- the tool is one that the method has, as it is kept now;
+- the tool is one that the method has, as it is kept now (and, if a model chose it, one of those it was shown);
 - the arguments are an object of values by the names of the tool's parameters, each of the type that the tool's
   signature says, with each that has no default given and none that the tool does not take;
-- a place in the data that an argument names is in the data of this bake-off, and is there.
+- a place in the data that an argument names is in the data of this bake-off, and is there;
+- if a model chose the call, some argument is the place of the data. A call that does not use it is not on it, and the
+  run would say that it was.
+
+What a model is asked is paid for out of the bake-off's one limit, and no more is asked of it once that is reached: a
+method whose call was still to be proposed is then not run, and says so.
 
 Whether the call is made at all is for the guardrail of the method card (bakeoff_scope.py): data that is outside what
 the card of the method's paper says is not run on until the person has said to go on with that method, and what is not
@@ -27,7 +34,7 @@ It is not said that what it gave is right.
 import hashlib
 import json
 import math
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -35,8 +42,8 @@ from virtual_lab.constants import SANDBOX_USER_DATA_DIR
 from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError, ExecutionError
 from virtual_lab.function_checks import FunctionSourceError, read_function
+from virtual_lab.paperagents import applying, asking, proposing, wrappers
 from virtual_lab.paperagents import toolmaking as making
-from virtual_lab.paperagents import wrappers
 from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server import bakeoff_runs as kept_runs
 from virtual_lab.server import bakeoff_scope
@@ -125,6 +132,13 @@ def check_places(arguments: dict[str, Any], name: str, root: Path) -> list[str]:
     return problems
 
 
+def names_data(arguments: dict[str, Any], name: str) -> bool:
+    """Whether some argument is the place of the data, or a place in it."""
+    base = inside_container(name)
+
+    return any(text == base or text.startswith(f"{base}/") for text in strings_in(arguments))
+
+
 def check_call(tool: dict[str, Any], arguments: Any, name: str, root: Path) -> list[str]:
     """What is wrong with a call of a tool, which is nothing if it is one that the tool's signature allows. What
     checks it is a program: the names and types of the arguments, as the tool says them.
@@ -188,15 +202,32 @@ class Runs:
         :raises ApiError: If they are not an object of calls by the ids of methods, each with the name of a tool and an
             object of arguments.
         """
-        what = "The calls to make are an object by the id of each method, with the name of a tool and its arguments"
+        what = (
+            "The calls to make are an object by the id of each method, with the name of a tool and its arguments, or "
+            "with propose: true for a model to propose the call"
+        )
         if not isinstance(calls, dict) or not calls:
             raise ApiError(422, "invalid", what)
         if len(calls) > kept_bakeoff.MAX_CANDIDATES:
             raise ApiError(422, "invalid", f"No more than {kept_bakeoff.MAX_CANDIDATES} methods can be run at once")
         checked: dict[str, dict[str, Any]] = {}
         for candidate_id, call in calls.items():
-            if not isinstance(candidate_id, str) or not isinstance(call, dict) or set(call) - {"tool", "arguments"}:
+            if (
+                not isinstance(candidate_id, str)
+                or not isinstance(call, dict)
+                or set(call) - {"tool", "arguments", "propose"}
+                or not isinstance(call.get("propose", False), bool)
+            ):
                 raise ApiError(422, "invalid", what)
+            if call.get("propose"):
+                if "tool" in call or "arguments" in call:
+                    raise ApiError(
+                        422,
+                        "invalid",
+                        "A call is either the person's, with a tool and arguments, or a model's to propose",
+                    )
+                checked[candidate_id] = {"propose": True}
+                continue
             tool = call.get("tool")
             if not isinstance(tool, str) or not 0 < len(tool) <= MAX_TOOL_NAME_CHARS or tool != tool.strip():
                 raise ApiError(422, "invalid", "A tool is called by its name, which is not empty or very long")
@@ -222,15 +253,36 @@ class Runs:
 
     # Doing it
 
-    def work(self, bakeoff_id: str, calls: dict[str, dict[str, Any]], seconds: int) -> Callable[[Job], str]:
-        """What a job does to run methods: runs each, one after another, whatever came of the one before."""
+    def work(
+        self,
+        bakeoff_id: str,
+        calls: dict[str, dict[str, Any]],
+        seconds: int,
+        asker: applying.ModelApplier | None = None,
+    ) -> Callable[[Job], str]:
+        """What a job does to run methods: runs each, one after another, whatever came of the one before, and, whatever
+        came of the job, adds what a model that proposed calls used to what the bake-off has spent.
+
+        :param asker: What proposes the calls that are asked of a model, which is for the job to be given if any is.
+        """
 
         def run(job: Job) -> str:
-            return self.run_all(job, bakeoff_id, calls, seconds)
+            try:
+                return self.run_all(job, bakeoff_id, calls, seconds, asker)
+            finally:
+                if asker is not None:
+                    self.bakeoffs.settle(bakeoff_id, asker.usage)
 
         return run
 
-    def run_all(self, job: Job, bakeoff_id: str, calls: dict[str, dict[str, Any]], seconds: int) -> str:
+    def run_all(
+        self,
+        job: Job,
+        bakeoff_id: str,
+        calls: dict[str, dict[str, Any]],
+        seconds: int,
+        asker: applying.ModelApplier | None,
+    ) -> str:
         counts: dict[str, int] = {}
         job.update(candidates=len(calls), finished=0)
         for number, (candidate_id, call) in enumerate(calls.items(), 1):
@@ -249,7 +301,7 @@ class Runs:
                 finished=number - 1,
             )
             try:
-                run = self.run_one(job, record, candidate, call, seconds)
+                run = self.run_one(job, record, candidate, call, seconds, asker)
             except StoppedError:
                 raise StoppedError(STOPPED) from None
             if not self.bakeoffs.keep_run(bakeoff_id, run):
@@ -274,7 +326,13 @@ class Runs:
         return " ".join(parts)
 
     def run_one(
-        self, job: Job, record: dict[str, Any], candidate: dict[str, Any], call: dict[str, Any], seconds: int
+        self,
+        job: Job,
+        record: dict[str, Any],
+        candidate: dict[str, Any],
+        call: dict[str, Any],
+        seconds: int,
+        asker: applying.ModelApplier | None,
     ) -> dict[str, Any]:
         """What came of running one method: the call is made if nothing stands in the way of it, and whatever came
         of it, or why it was not made, is the run.
@@ -302,6 +360,7 @@ class Runs:
             "candidate": candidate["id"],
             "at": utc_timestamp(),
             "by": kept_runs.BY_PERSON,
+            "proposed": None,
             "tool": None,
             "arguments": None,
             "seconds": None,
@@ -312,7 +371,7 @@ class Runs:
             "method": None,
         }
         try:
-            return self.attempt(job, record, candidate, found, scope, call, seconds, base)
+            return self.attempt(job, record, candidate, found, scope, call, seconds, asker, base)
         except Refused as refused:
             return {
                 **base,
@@ -330,10 +389,15 @@ class Runs:
         scope: dict[str, Any],
         call: dict[str, Any],
         seconds: int,
+        asker: applying.ModelApplier | None,
         base: dict[str, Any],
     ) -> dict[str, Any]:
         """Makes the call, if nothing stands in the way of it, in the order that costs least, and says what came of it.
+        A call that a model is to propose is asked for last of all that costs nothing, so that none is paid for that
+        would not be made.
 
+        :param base: What the run is to start as, which is filled in with who chose the call if a model did, as soon as
+            it is asked, so that a call that was then refused says so.
         :raises Refused: If something does.
         """
         if record["data"] is None:
@@ -367,11 +431,28 @@ class Runs:
         runnable, problem = given.runnable(self.workspace, agent_id, self.paperagents.docker_command)
         if runnable is None:
             raise Refused("not_built", problem or "The tools of this method cannot be run now. Build it again.")
-        tool = next((each for each in runnable.tools if each["name"] == call["tool"]), None)
+        by_model = bool(call.get("propose"))
+        tools = runnable.tools[: applying.MOST_TOOLS] if by_model else runnable.tools
+        if by_model:
+            call = self.proposed_call(record, tools, name, place, asker, base)
+        tool = next((each for each in tools if each["name"] == call["tool"]), None)
         if tool is None:
-            names = ", ".join(each["name"] for each in runnable.tools[:8])
-            raise Refused("no_tool", f"This method has no tool called {cut(call['tool'], 60)!r}. It has: {names}.")
+            names = ", ".join(each["name"] for each in tools[:8])
+            raise Refused(
+                "no_tool",
+                (
+                    f"The model chose {cut(call['tool'], 60)!r}, which is not one of the tools that it was shown. "
+                    if by_model
+                    else f"This method has no tool called {cut(call['tool'], 60)!r}. "
+                )
+                + f"It has: {names}.",
+            )
         problems = check_call(tool, call["arguments"], name, place)
+        if by_model and not problems and not names_data(call["arguments"], name):
+            problems = [
+                f"No argument of the call is the person's data, which is at {inside_container(name)}, so it would "
+                "not be a call on it"
+            ]
         if problems:
             raise Refused("bad_call", "; ".join(problems) + ".")
         listed = kept_runs.listing_of(place)
@@ -404,6 +485,55 @@ class Runs:
             raise Refused("cannot_mount", f"The container could not be started with the data in it: {error}") from None
 
         return self.outcome_of(made, replay, limits, seconds)
+
+    def proposed_call(
+        self,
+        record: dict[str, Any],
+        tools: Sequence[dict[str, Any]],
+        name: str,
+        place: Path,
+        asker: applying.ModelApplier | None,
+        base: dict[str, Any],
+    ) -> dict[str, Any]:
+        """The call that a model proposes for a method, as the person would have given it: the name of a tool, and its
+        arguments. Nothing of it is yet known to be a call that can be made, which is for a program to find out.
+
+        :param tools: The tools of the method that the model may choose from.
+        :param base: The run as it starts, which says that a model chose the call, with which model, its words for why,
+            and what asking it cost.
+        :raises Refused: If the limit was reached before it could be asked, it gave no tool or could not be asked, or
+            the arguments that it wrote are not JSON of the kind that is allowed.
+        """
+        if asker is None:
+            raise ValueError("A call was to be proposed, and no model was given to propose it")
+        base["by"] = kept_runs.BY_MODEL
+        base["proposed"] = {"model": asker.model, "reason": "", "cost": 0.0, "tool": None, "arguments": None}
+        before = asker.spent()
+        try:
+            got = asker.propose(
+                record["task"], self.bakeoffs.describe_data(record), inside_container(name), place.is_dir(), tools
+            )
+        except asking.LimitReached as error:
+            raise Refused("limit", f"A call was not proposed, as the model was not asked: {error}.") from None
+        after = asker.spent()
+        base["proposed"] = {
+            "model": asker.model,
+            "reason": got.reason,
+            "cost": round(after - before, 6) if before is not None and after is not None else None,
+            "tool": applying.readable(got.tool)[: kept_runs.MAX_SAID_TOOL_CHARS] if got.tool is not None else None,
+            "arguments": (
+                cut(applying.readable(got.arguments), kept_runs.MAX_SAID_ARGUMENTS_CHARS)
+                if got.tool is not None
+                else None
+            ),
+        }
+        if got.tool is None:
+            raise Refused("not_proposed", got.note or "The model proposed no call.")
+        arguments, why = proposing.parse_arguments(got.arguments)
+        if arguments is None:
+            raise Refused("bad_call", f"The arguments that the model wrote cannot be used. {why}")
+
+        return {"tool": got.tool, "arguments": arguments}
 
     def outcome_of(
         self, made: dict[str, Any], replay: making.Replay, limits: making.ToolLimits, seconds: int
