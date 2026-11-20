@@ -796,7 +796,7 @@ class TestGivingACallRoom:
         [[call]] = replay.results
         assert call is not None and call["result"]["plain"] is False
 
-    @pytest.mark.parametrize("room", [0, -1, tm.MAX_ROOM + 1, True])
+    @pytest.mark.parametrize("room", [0, -1, tm.MAX_ROOM + 1, True, 1.5, "1000"])
     def test_room_that_is_not_a_number_of_characters_that_is_allowed_is_refused_and_nothing_is_called(
         self, tmp_path: Path, room: Any
     ) -> None:

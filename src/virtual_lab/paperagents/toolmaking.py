@@ -220,7 +220,7 @@ class ToolRunner(referencing.Runner):
         :raises StoppedError: If whoever started the runs asked to stop them.
         :raises DockerUnavailableError: If Docker did not run it, which is not a failing of the tool.
         """
-        if room is not None and (isinstance(room, bool) or not 0 < room <= MAX_ROOM):
+        if room is not None and (not isinstance(room, int) or isinstance(room, bool) or not 0 < room <= MAX_ROOM):
             raise ValueError(f"A call may be given room for at most {MAX_ROOM} characters, and some")
         repeats = self.tools.repeats
         folder = self.scratch / f"run-{uuid4().hex[:12]}"
