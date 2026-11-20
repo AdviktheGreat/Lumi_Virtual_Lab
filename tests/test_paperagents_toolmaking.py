@@ -585,6 +585,21 @@ class TestWhatACallWrote:
         for name in ("1-0.json", "2-0.json", "3-0.json", "4-0.json"):
             assert tm.read_call(tmp_path, name) is None
 
+    def test_a_call_that_was_given_room_may_write_a_file_as_big_as_that_room_can_come_to_and_no_bigger(
+        self, tmp_path: Path
+    ) -> None:
+        base = len(json.dumps({**self.good(), "output": ""}))
+        most = tm.MAX_CALL_BYTES + 1000 * tm.BYTES_PER_ROOM
+        self.written(tmp_path, "0-0.json", {**self.good(), "output": "x" * (most - base)})
+        self.written(tmp_path, "1-0.json", {**self.good(), "output": "x" * (most - base + 1)})
+        self.written(tmp_path, "2-0.json", {**self.good(), "output": "x" * (tm.MAX_CALL_BYTES - base + 1)})
+
+        assert tm.read_call(tmp_path, "0-0.json", 1000) is not None
+        assert tm.read_call(tmp_path, "1-0.json", 1000) is None
+        assert tm.read_call(tmp_path, "2-0.json") is None
+        assert tm.read_call(tmp_path, "2-0.json", 1000) is not None
+        assert tm.read_call(tmp_path, "0-0.json") is None
+
     def test_a_folder_of_results_that_is_a_link_is_not_followed(self, tmp_path: Path) -> None:
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
@@ -663,10 +678,142 @@ class TestTheRunnerOfACall:
         result = tm.read_call(work, "0-0.json")
         assert result is not None and not result["ok"] and result["error"]["type"] == "FileNotFoundError"
 
+    ROOMY = (
+        "def labels(count):\n    return ['type%04d' % index for index in range(count)]\n\n\n"
+        "def numbers(count):\n    import numpy\n\n    return numpy.arange(count)\n\n\n"
+        "def table(count):\n    import pandas\n\n"
+        "    return pandas.DataFrame({'a': range(count), 'b': range(count)})\n\n\n"
+        "def emoji(count):\n    return '\\U0001F600' * count\n"
+    )
+
+    def gave(self, tmp_path: Path, function: str, count: int, **spec: Any) -> dict[str, Any]:
+        cases = [{"id": 0, "args": {"count": count}, "cwd": "."}]
+        work = self.run(tmp_path, cases, self.ROOMY, function, **spec)
+        result = tm.read_call(work, "0-0.json", spec.get("room"))
+        assert result is not None and result["ok"], result
+
+        return result["result"]
+
+    def test_what_a_call_gave_that_is_more_than_a_tutorials_calls_keep_is_a_look_at_it_unless_it_is_given_room(
+        self, tmp_path: Path
+    ) -> None:
+        looked = self.gave(tmp_path / "a", "labels", 3000)
+        kept = self.gave(tmp_path / "b", "labels", 3000, room=400_000)
+
+        assert looked["type"] == "list" and looked["plain"] is False and "value" not in looked
+        assert kept["plain"] is True and kept["value"] == [f"type{index:04d}" for index in range(3000)]
+
+    def test_an_array_with_more_cells_than_a_tutorials_calls_keep_has_its_values_kept_if_the_call_is_given_room(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("numpy")
+        looked = self.gave(tmp_path / "a", "numbers", 40_000)
+        kept = self.gave(tmp_path / "b", "numbers", 40_000, room=400_000)
+
+        assert looked["plain"] is False and "values" not in looked and looked["shape"] == [40_000]
+        assert kept["plain"] is False and kept["values"] == list(range(40_000)) and kept["shape"] == [40_000]
+        assert kept["sha256"] == looked["sha256"]
+
+    def test_a_table_with_more_cells_than_a_tutorials_calls_keep_has_its_values_kept_if_the_call_is_given_room(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("pandas")
+        looked = self.gave(tmp_path / "a", "table", 6000)
+        kept = self.gave(tmp_path / "b", "table", 6000, room=400_000)
+
+        assert looked["plain"] is False and "values" not in looked and looked["shape"] == [6000, 2]
+        assert kept["values"] == {"a": list(range(6000)), "b": list(range(6000))} and kept["sha256"] == looked["sha256"]
+
+    def test_what_is_more_than_the_room_given_is_still_a_look_at_it(self, tmp_path: Path) -> None:
+        kept = self.gave(tmp_path, "labels", 3000, room=30_000)
+
+        assert kept["plain"] is False and "value" not in kept
+
+    def test_a_call_that_is_given_no_room_keeps_what_a_tutorials_calls_do(self, tmp_path: Path) -> None:
+        pytest.importorskip("numpy")
+        # 6,000 cells are fewer than the most that are kept, and more than the room of 40,000 characters has room for
+        looked = self.gave(tmp_path, "numbers", 6000)
+
+        assert looked["plain"] is False and "values" not in looked
+
+    def test_a_call_that_is_given_no_room_keeps_what_is_not_big_whole(self, tmp_path: Path) -> None:
+        # 200 labels are some 2,000 characters, which is more than a call that was given a room of 1,000 would keep
+        kept = self.gave(tmp_path, "labels", 200)
+
+        assert kept["plain"] is True and len(kept["value"]) == 200
+
+    def test_a_result_of_text_that_fills_the_room_is_read_back_as_the_text_it_is_at_its_most_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        # a character that JSON writes as two escapes is twelve bytes, and the file is as big as the room can come to
+        room = 400_000
+        count = room - 20
+        kept = self.gave(tmp_path, "emoji", count, room=room)
+
+        assert kept["plain"] is True and kept["value"] == "\U0001f600" * count
+
     def test_a_runner_that_is_written_for_the_oldest_python_that_environments_are_built_for(self) -> None:
         source = (Path(tm.__file__).parent / "tool_runner.py").read_text()
         ast.parse(source, feature_version=(3, 7))
         assert ":=" not in source and "match " not in source
+
+
+@pytest.mark.usefixtures("processors")
+class TestGivingACallRoom:
+    WRAPPER = "def labels(count):\n    return ['type%04d' % index for index in range(count)]\n"
+
+    def replay(self, tmp_path: Path, count: int, **options: Any) -> tuple[LocalRunner, tm.Replay]:
+        repo = tree(tmp_path / "repo", BASE)
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        runner = LocalRunner(repo, scratch, tm.ToolLimits(repeats=1))
+        case = wrap.Case(0, "t", None, {}, ".", {"count": count}, {})
+
+        return runner, runner.replay(self.WRAPPER, "labels", [case], 60, **options)
+
+    def test_a_call_that_is_given_room_is_told_so_and_what_it_gave_is_read_back_whole(self, tmp_path: Path) -> None:
+        runner, replay = self.replay(tmp_path, 3000, room=400_000)
+
+        assert json.loads(runner.seen[0][tm.CALL_FILE])["room"] == 400_000
+        [[call]] = replay.results
+        assert call is not None and call["result"]["plain"] is True and len(call["result"]["value"]) == 3000
+
+    def test_what_a_call_gave_is_read_back_whole_if_it_is_more_bytes_than_a_tutorials_calls_may_write(
+        self, tmp_path: Path
+    ) -> None:
+        _, replay = self.replay(tmp_path, 20_000, room=400_000)
+
+        [[call]] = replay.results
+        assert call is not None and len(call["result"]["value"]) == 20_000
+        assert len(json.dumps(call)) > tm.MAX_CALL_BYTES
+
+    def test_a_call_that_is_given_no_room_is_not_told_of_any_and_what_it_gave_is_a_look_at_it(
+        self, tmp_path: Path
+    ) -> None:
+        runner, replay = self.replay(tmp_path, 3000)
+
+        assert "room" not in json.loads(runner.seen[0][tm.CALL_FILE])
+        [[call]] = replay.results
+        assert call is not None and call["result"]["plain"] is False
+
+    @pytest.mark.parametrize("room", [0, -1, tm.MAX_ROOM + 1, True, 1.5, "1000"])
+    def test_room_that_is_not_a_number_of_characters_that_is_allowed_is_refused_and_nothing_is_called(
+        self, tmp_path: Path, room: Any
+    ) -> None:
+        repo = tree(tmp_path / "repo", BASE)
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        runner = LocalRunner(repo, scratch)
+
+        with pytest.raises(ValueError, match="room for at most"):
+            runner.replay(self.WRAPPER, "labels", [wrap.Case(0, "t", None, {}, ".", {"count": 1}, {})], 60, room=room)
+        assert runner.seen == [] and list(scratch.iterdir()) == []
+
+    def test_the_most_room_that_is_allowed_is_allowed(self, tmp_path: Path) -> None:
+        _, replay = self.replay(tmp_path, 3, room=tm.MAX_ROOM)
+
+        [[call]] = replay.results
+        assert call is not None and call["result"]["value"] == ["type0000", "type0001", "type0002"]
 
 
 @pytest.mark.usefixtures("processors")
@@ -767,6 +914,23 @@ class TestInContainers:
     def test_no_container_and_no_folder_is_left(self, outcome: dict[str, Any]) -> None:
         assert run_ids("tooltest") == []
         assert list(outcome["scratch"].iterdir()) == []
+
+    def test_a_call_that_is_given_room_keeps_what_it_gave_whole_in_a_container_and_one_that_is_not_does_not(
+        self, built: tuple[str, Path], tmp_path: Path
+    ) -> None:
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        runner = tm.ToolRunner(built[0], tm.ToolLimits(repeats=1), scratch, label="tooltest")
+        wrapper = "def labels(count):\n    return ['type%04d' % index for index in range(count)]\n"
+        case = wrap.Case(0, "t", None, {}, ".", {"count": 3000}, {})
+
+        looked = runner.replay(wrapper, "labels", [case], 60)
+        kept = runner.replay(wrapper, "labels", [case], 60, room=400_000)
+
+        [[first]], [[second]] = looked.results, kept.results
+        assert first is not None and first["result"]["plain"] is False
+        assert second is not None and second["result"]["value"] == [f"type{index:04d}" for index in range(3000)]
+        assert run_ids("tooltest") == [] and list(scratch.iterdir()) == []
 
     def sleeping(self, built: tuple[str, Path]) -> wrap.Candidate:
         _, repo = built

@@ -254,6 +254,7 @@ class TestRunningAMethod:
         assert ran["function"] == "tally" and ran["repeats"] == 1
         assert [case["args"] for case in ran["cases"]] == [{"counts": [1, 2, 3], "scale": 2}]
         assert ran["seconds"] == making.DEFAULT_MINUTES * 60 and ran["data"] is None
+        assert ran["room"] == kept_runs.RESULT_ROOM == 400_000
         assert not ran["scratch"].exists()
         agent_id = seen(bakeoffs, bakeoff_id, candidate)["agent"]["id"]
         assert ran["label"] == agent_id
@@ -321,6 +322,24 @@ class TestRunningAMethod:
         assert shown["arguments"] == MAP["arguments"] and shown["tool"]["name"] == "map_cells"
         whole = bakeoffs.run_of(bakeoff_id, candidate)
         assert whole["result"]["value"] == list(range(1000)) and whole["since"] == []
+
+    def test_a_list_of_some_thousands_of_labels_is_kept_whole_and_one_that_is_more_than_the_file_holds_is_described(
+        self, bakeoffs: Bakeoffs, workspace: Workspace, replays: Replays, built: tuple[str, str]
+    ) -> None:
+        bakeoff_id, candidate = built
+        labels = [f"type{index:05d}" for index in range(20_000)]
+        replays.plays["map_cells"] = gives(labels)
+
+        run(bakeoffs, bakeoff_id, {candidate: MAP})
+
+        assert bakeoffs.run_of(bakeoff_id, candidate)["result"]["value"] == labels
+        assert file_of(workspace, bakeoff_id, candidate).stat().st_size < kept_runs.MAX_RUN_BYTES
+        replays.plays["map_cells"] = gives([*labels, *labels, *labels, *labels])
+
+        run(bakeoffs, bakeoff_id, {candidate: MAP})
+
+        kept = kept_of(workspace, bakeoff_id, candidate)
+        assert kept["state"] == "ran" and "value" not in kept["result"] and kept["result"]["sha256"]
 
     def test_a_result_that_is_more_than_can_be_kept_is_described_with_a_hash_and_the_run_still_ran(
         self, bakeoffs: Bakeoffs, workspace: Workspace, replays: Replays, built: tuple[str, str], monkeypatch: Any

@@ -564,12 +564,14 @@ def call_once(
     stopping: Callable[[], bool] | None,
     mounts: Sequence[tuple[Path, str]] = (),
     seconds: int = CALL_SECONDS,
+    room: int | None = None,
 ) -> tuple[making.Replay, making.ToolLimits]:
     """Calls one tool once, in a container of its own, on a copy of the code of its own, and says how that went.
 
     :param sent: The arguments, as JSON that the runner reads back as they were (see encode).
     :param mounts: Further files or folders of this machine for the call to read, each with where it is put, read-only.
     :param seconds: How long the call may take.
+    :param room: How many characters of what it gave it may keep, if more than a conversation is shown of one.
     :raises StoppedError: If whoever is calling is stopping.
     :raises DockerUnavailableError: If Docker did not run it, which is not a failing of the tool.
     """
@@ -589,7 +591,7 @@ def call_once(
             mounts=mounts,
         )
 
-        return runner.replay(tool["source"], tool["name"], [case], seconds), limits
+        return runner.replay(tool["source"], tool["name"], [case], seconds, room), limits
 
 
 def failure_of(call: dict[str, Any]) -> str:
