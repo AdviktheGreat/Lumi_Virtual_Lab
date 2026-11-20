@@ -308,7 +308,7 @@ class TestWhatIsNotABakeOff:
             lambda record: record.update(spent=-1),
             lambda record: record.update(limit=float("nan")),
             lambda record: record.update(spent="0"),
-            lambda record: record.update(schema=2),
+            lambda record: record.update(schema=3),
             lambda record: record.update(task=""),
             lambda record: record.update(title="x" * 500),
             lambda record: record.update(cost_known="yes"),
@@ -648,6 +648,7 @@ class TestTheMethodsInTheRunning:
             "id": agent_id,
             "title": "Cell mapper",
             "repo": CODE,
+            "steps": dict.fromkeys(("reading", "repository", "environment", "data", "tools"), "pending"),
         }
         agents.change(agent_id, title="Renamed")
         assert bakeoffs.view(bakeoff_id)["candidates"][0]["agent"]["title"] == "Renamed"
@@ -1179,6 +1180,7 @@ def person_candidate(doi: str) -> dict[str, Any]:
         "added_at": "2024-01-01T00:00:00Z",
         "found": None,
         "fit": None,
+        "build": None,
     }
 
 
