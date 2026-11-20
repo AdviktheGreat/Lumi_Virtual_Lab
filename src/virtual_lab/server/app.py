@@ -112,6 +112,10 @@ and everything else is a request and an answer.
                                          tool and arguments they say, checked against the tool's signature, called once
                                          in a container with the data read-only; what is not run is kept with why
     GET    /api/bakeoffs/{id}/candidates/{method}/run  the whole of the last run of a method, with its result
+    GET    /api/bakeoffs/{id}/comparison  how each method came out, what it cost, and whether the methods agree, as of
+                                         now, with a tolerance for numbers if the person gives one; there is no ranking
+    GET    /api/bakeoffs/{id}/tables/{kind}  the methods, or each two that gave an answer, as a table to open in a
+                                         spreadsheet (methods, pairs)
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs
     GET    /api/mcp/catalog             the servers of others that can be added with a click, and which are added
     POST   /api/mcp/catalog/{name}      add one of them, on
@@ -1738,6 +1742,20 @@ def create_app(
         calls = {key: call.model_dump(exclude_unset=True) for key, call in body.calls.items()}
 
         return bakeoffs.start_run(bakeoff_id, calls, body.minutes).snapshot(0)
+
+    @api.get("/bakeoffs/{bakeoff_id}/comparison")
+    def get_bakeoff_comparison(
+        bakeoff_id: str, relative: float | None = Query(None), absolute: float | None = Query(None)
+    ) -> dict[str, Any]:
+        return bakeoffs.comparison(bakeoff_id, relative, absolute)
+
+    @api.get("/bakeoffs/{bakeoff_id}/tables/{kind}")
+    def get_bakeoff_table(
+        bakeoff_id: str, kind: str, relative: float | None = Query(None), absolute: float | None = Query(None)
+    ) -> Response:
+        name, content = bakeoffs.table(bakeoff_id, kind, relative, absolute)
+
+        return Response(content, media_type="text/csv; charset=utf-8", headers=download_headers(name, "csv"))
 
     @api.get("/bakeoffs/{bakeoff_id}/candidates/{candidate_id}/run")
     def get_bakeoff_run(bakeoff_id: str, candidate_id: str) -> dict[str, Any]:

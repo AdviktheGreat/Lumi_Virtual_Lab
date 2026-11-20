@@ -42,6 +42,7 @@ from virtual_lab.server import bakeoff_runs as kept_runs
 from virtual_lab.server import bakeoff_scope
 from virtual_lab.server import paperagent_bakeoff as kept_bakeoff
 from virtual_lab.server.bakeoff_building import Builder
+from virtual_lab.server.bakeoff_comparing import Comparer
 from virtual_lab.server.bakeoff_running import Runs, place_of
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError
@@ -117,6 +118,7 @@ class Bakeoffs:
         self.preprints = preprints
         self.builder = Builder(self)
         self.runs = Runs(self)
+        self.comparer = Comparer(self)
         # Held while a bake-off is read, changed, and kept again, so that two changes do not undo each other
         self._lock = threading.Lock()
 
@@ -1012,6 +1014,20 @@ class Bakeoffs:
         found = kept_bakeoff.agent_for(candidate["paper"], self.paperagents.kept())
 
         return {**run, "since": kept_runs.since(run, self.data_now(named), self.runs.method_now(found))}
+
+    def comparison(self, bakeoff_id: str, relative: Any = None, absolute: Any = None) -> dict[str, Any]:
+        """How the methods of a bake-off came out and whether they agree (see bakeoff_comparing.py).
+
+        :raises ApiError: If there is no bake-off with this id, or the tolerance is not one.
+        """
+        return self.comparer.comparison(bakeoff_id, relative, absolute)
+
+    def table(self, bakeoff_id: str, kind: str, relative: Any = None, absolute: Any = None) -> tuple[str, bytes]:
+        """The methods of a bake-off, or each two of them that gave an answer, as a table to open in a spreadsheet.
+
+        :raises ApiError: If there is no bake-off with this id, or no such table, or the tolerance is not one.
+        """
+        return self.comparer.table(bakeoff_id, kind, relative, absolute)
 
     def check_money(self, record: dict[str, Any]) -> None:
         """
