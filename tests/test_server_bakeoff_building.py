@@ -52,6 +52,7 @@ from virtual_lab.paperagents import repository as cloning
 from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import ReadLicense, ReadLink, plan_chunks
 from virtual_lab.server import bakeoff_building, imported_agents
+from virtual_lab.server import paperagent_bakeoff as kept
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagents as paperagents_module
 from virtual_lab.server.app import create_app
@@ -1524,9 +1525,9 @@ class TestWhatIsKeptOfBuilding:
         rewrite(workspace, bakeoff_id, earlier)
 
         [(_, loaded)] = bakeoffs.kept()
-        assert loaded["schema"] == 2 and [each["build"] for each in loaded["candidates"]] == [None]
+        assert loaded["schema"] == kept.SCHEMA and [each["build"] for each in loaded["candidates"]] == [None]
         bakeoffs.change(bakeoff_id, title="Changed")
-        assert record_of(workspace, bakeoff_id)["schema"] == 2
+        assert record_of(workspace, bakeoff_id)["schema"] == kept.SCHEMA
 
     def test_a_file_of_the_earlier_kind_that_is_damaged_is_still_not_used(
         self, bakeoffs: Bakeoffs, workspace: Workspace
