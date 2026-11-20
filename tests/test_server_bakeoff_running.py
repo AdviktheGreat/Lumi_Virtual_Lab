@@ -260,7 +260,7 @@ class TestRunningAMethod:
 
         saved = kept_of(workspace, bakeoff_id, candidate)
         assert (saved["state"], saved["why"], saved["reason"], saved["by"]) == ("ran", None, "", "person")
-        assert saved["candidate"] == candidate and saved["schema"] == 1
+        assert saved["candidate"] == candidate and saved["schema"] == 2 and saved["proposed"] is None
         assert saved["tool"] == {"name": "tally", "called": "cellmapper.mapping.tally", "tier": "A"}
         assert saved["arguments"] == {"counts": [1, 2, 3], "scale": 2}
         assert saved["result"] == {"type": "int", "value": 12} and saved["seconds"] == 0.1
@@ -1383,7 +1383,10 @@ class TestWhatIsKeptIsOnlyWhatIsInTheShapeOfARun:
     @pytest.mark.parametrize(
         "change",
         [
-            lambda saved: saved.update(schema=2),
+            lambda saved: saved.update(schema=3),
+            lambda saved: saved.pop("proposed"),
+            lambda saved: saved.update(proposed=[]),
+            lambda saved: saved.update(by="model"),
             lambda saved: saved.update(candidate="00000000"),
             lambda saved: saved.update(state="done"),
             lambda saved: saved.update(state="failed"),

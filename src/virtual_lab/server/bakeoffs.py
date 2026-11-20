@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from virtual_lab.environment import StoppedError
-from virtual_lab.paperagents import asking, shortlisting
+from virtual_lab.paperagents import applying, asking, shortlisting
 from virtual_lab.paperagents import environment as building
 from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server import bakeoff_runs as kept_runs
@@ -599,6 +599,16 @@ class Bakeoffs:
         except ValueError as error:
             raise ApiError(422, "invalid", str(error)) from error
 
+    def applier_of(self, model: str, max_cost: float, usage: MeetingUsage) -> applying.ModelApplier:
+        """What asks the model in the settings to propose the call of a method, within a limit on what it may cost.
+
+        :raises ApiError: If a key it needs is not set, or its price is not known.
+        """
+        try:
+            return applying.ModelApplier(model, max_cost, self.paperagents.chat_models, self.paperagents.client, usage)
+        except ValueError as error:
+            raise ApiError(422, "invalid", str(error)) from error
+
     def start_shortlist(self, bakeoff_id: str, queries: Any = None) -> Job:
         """Starts finding the methods of the task in the literature: the searches are written by a model, or are the
         person's, they are run, and a model chooses from what they found, within what is left of the limit. What it
@@ -921,15 +931,18 @@ class Bakeoffs:
 
     def start_run(self, bakeoff_id: str, calls: Any, minutes: Any = None) -> Job:
         """Starts running methods on the person's data: for each, the tool and the arguments that the person says are
-        called once, in a container with the data read-only and no network. What comes of each is kept, and so is why a
-        method was not run: the data is outside what the card of its paper says and the person has not said to go on
-        with it, it is not built, or the call is not as the tool's signature says.
+        called once, in a container with the data read-only and no network, or the call is one that a model proposes,
+        within what is left of the limit, once nothing else stands in the way of the method being run. What comes of
+        each is kept, and so is why a method was not run: the data is outside what the card of its paper says and the
+        person has not said to go on with it, it is not built, or the call is not as the tool's signature says.
 
-        :param calls: The calls to make, by the id of each method, each with the name of a tool and its arguments.
+        :param calls: The calls to make, by the id of each method, each with the name of a tool and its arguments, or
+            with `propose` for a model to propose it.
         :param minutes: The most that one call may take.
         :raises ApiError: If there is no bake-off or method with these ids, what is given is not fit, Docker is not
-            running, the bake-off has no data of the person's to run on or it is not where the Data page says, or its
-            methods are being found, built, or run.
+            running, the bake-off has no data of the person's to run on or it is not where the Data page says, a call is
+            to be proposed and a key or a price is missing, nothing is left of the limit, or what has been spent is not
+            known, or its methods are being found, built, or run.
         """
         self.lookup(bakeoff_id)
         wanted = self.runs.check_calls(calls)
@@ -937,6 +950,8 @@ class Bakeoffs:
         usable, problem = building.ready(self.paperagents.docker_command)
         if not usable:
             raise ApiError(422, "docker_missing", problem or "Docker is not running, and running a method takes it")
+        proposed = any(call.get("propose") for call in wanted.values())
+        model = self.paperagents.usable_model() if proposed else None
         with self._lock:
             _, record = self.lookup(bakeoff_id)
             self.check_idle(bakeoff_id)
@@ -948,12 +963,16 @@ class Bakeoffs:
             known = {each["id"] for each in record["candidates"]}
             if any(each not in known for each in wanted):
                 raise not_found("method in that bake-off with that id")
+            asker = None
+            if model is not None:
+                self.check_money(record)
+                asker = self.applier_of(model, kept_bakeoff.left_of(record), MeetingUsage())
             try:
                 return self.jobs.start(
                     RUN_JOB,
                     bakeoff_id,
                     f"Running the methods: {record['title']}",
-                    self.runs.work(bakeoff_id, wanted, seconds),
+                    self.runs.work(bakeoff_id, wanted, seconds, asker),
                     exclusive=f"bakeoff:{bakeoff_id}",
                 )
             except JobConflictError as error:
