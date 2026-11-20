@@ -138,6 +138,7 @@ class TestTheModelProposesTheCall:
         assert job.message == "Ran 1 of 1 methods."
         [ran] = replays.runs[before:]
         assert ran["function"] == "read_table" and [case["args"] for case in ran["cases"]] == [READ_TABLE]
+        assert ran["room"] == kept_runs.RESULT_ROOM
         saved = kept_of(workspace, bakeoff_id, candidate)
         assert (saved["state"], saved["why"], saved["reason"], saved["by"]) == ("ran", None, "", "model")
         assert saved["schema"] == 2

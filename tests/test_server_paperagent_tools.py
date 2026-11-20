@@ -112,6 +112,7 @@ class Replays:
                 "repeats": spec["repeats"],
                 "seconds": seconds,
                 "spec_seconds": spec["seconds"],
+                "room": spec.get("room"),
                 "files": sorted(path.name for path in folder.iterdir()),
                 "source": (folder / making.WRAPPER_AT).read_text(),
                 "data": runner.data,

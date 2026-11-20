@@ -6,7 +6,10 @@ method's environment, no network, the data read-only. What came of it is kept wi
 whichever way it came out, so that a method is not left out of a table for not having run:
 
 - ran: the call came to an answer. The result is kept as the tool gave it, if it is plain data, and described if it is
-  not, with what it printed and the seconds it took.
+  not, with what it printed and the seconds it took. A call is given room for ten times the characters of what a
+  tutorial's call keeps, so that a list of some thousands of labels, or an array or table of that many values, is kept
+  whole and not as a hash and a look at it: what is not kept whole cannot be compared with another method's or with the
+  person's labels, and a result that is too big for the run's file, or for its room, is described and hashed.
 - failed: the call was made and did not come to an answer: the authors' function raised, or it was stopped for the time
   or the size, or the container ended without saying how it went. It is kept with what was seen, since a method that
   fails on the person's data is a thing to know of it.
@@ -44,6 +47,11 @@ RUNS_FOLDER = "runs"
 # 1 was a run that had no `proposed`, which is read as one that the person's call was made of
 SCHEMA = 2
 MAX_RUN_BYTES = 1 << 20
+# How many characters of what a method gave it is given room to keep, which is ten times what a tutorial's calls are
+# (paperagents/tutorial_runner.py), so that a list of some thousands of labels is kept whole and can be compared with
+# what another method gave or with the person's labels. What the file of a run holds is what bounds it in the end: a
+# result that is nested keeps more of each in the file than it was given room for, and is then described and hashed
+RESULT_ROOM = 400_000
 MAX_ARGUMENTS_CHARS = 20_000
 MAX_REASON_CHARS = 4000
 MAX_PROPOSED_REASON_CHARS = 300

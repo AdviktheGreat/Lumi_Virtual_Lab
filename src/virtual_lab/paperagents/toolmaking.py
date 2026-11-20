@@ -58,6 +58,10 @@ MAX_GIGABYTES = 20
 
 # How big what one call wrote of itself may be, since it is written by the process that ran the project's code
 MAX_CALL_BYTES = 200_000
+# How much room a call may be given to keep what it gave, in characters, and how many bytes of file that can come to
+# on top of the above: a character of text that JSON writes as an escape is up to twelve bytes
+MAX_ROOM = 2_000_000
+BYTES_PER_ROOM = 12
 # How much of the time that a replay is given the runner inside takes for itself to say how it went, as a part
 SPARE = 0.9
 LEAST_SECONDS = referencing.LEAST_SECONDS
@@ -148,13 +152,18 @@ def valid_call(value: Any) -> bool:
     )
 
 
-def read_call(folder: Path, name: str) -> dict[str, Any] | None:
-    """What one call wrote of itself, if it is there and is a result."""
+def read_call(folder: Path, name: str, room: int | None = None) -> dict[str, Any] | None:
+    """What one call wrote of itself, if it is there and is a result.
+
+    :param room: How much room the call was given to keep what it gave, if it was given more than usual, which is how
+        big its file may be.
+    """
     where = folder / CALLS_FOLDER
     path = where / name
+    most = MAX_CALL_BYTES + (room or 0) * BYTES_PER_ROOM
     try:
         status = path.lstat()
-        if not referencing.is_real_folder(where) or not stat.S_ISREG(status.st_mode) or status.st_size > MAX_CALL_BYTES:
+        if not referencing.is_real_folder(where) or not stat.S_ISREG(status.st_mode) or status.st_size > most:
             return None
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError):
@@ -191,15 +200,28 @@ class ToolRunner(referencing.Runner):
     def argv(self, item: referencing.Item) -> list[str]:
         return ["python", f"{SANDBOX_WORK_DIR}/{referencing.RUNNER_AT}", "run", item.path]
 
-    def replay(self, source: str, function: str, cases: Sequence[wrappers.Case], seconds: float) -> Replay:
+    def replay(
+        self,
+        source: str,
+        function: str,
+        cases: Sequence[wrappers.Case],
+        seconds: float,
+        room: int | None = None,
+    ) -> Replay:
         """Calls a wrapper again with the arguments of each of the calls that the tutorials made to its function.
 
         :param source: The wrapper's code.
         :param function: Its name.
         :param seconds: How long all of the calls may take together.
+        :param room: How many characters of what a call gave it may keep, if more than a tutorial's calls are, so that
+            what it gave can be kept whole where it is not very big (a list of labels, an array) and not as a look at
+            it. Left out, a call keeps what a tutorial's calls do.
+        :raises ValueError: If the room is not a number of characters that is allowed.
         :raises StoppedError: If whoever started the runs asked to stop them.
         :raises DockerUnavailableError: If Docker did not run it, which is not a failing of the tool.
         """
+        if room is not None and (isinstance(room, bool) or not 0 < room <= MAX_ROOM):
+            raise ValueError(f"A call may be given room for at most {MAX_ROOM} characters, and some")
         repeats = self.tools.repeats
         folder = self.scratch / f"run-{uuid4().hex[:12]}"
         folder.mkdir()
@@ -215,13 +237,14 @@ class ToolRunner(referencing.Runner):
                 "repeats": repeats,
                 "seconds": max(1, int(seconds * SPARE)),
                 "cases": [{"id": index, "args": case.args, "cwd": case.cwd} for index, case in enumerate(cases)],
+                **({"room": room} if room is not None else {}),
             }
             (folder / CALL_FILE).write_text(json.dumps(spec), encoding="utf-8")
             ended, code, text = self.execute(folder, referencing.Item("tool", CALL_FILE, "run"), seconds)
             if ended == "stopped":
                 raise StoppedError("Stopped.")
             results = [
-                [read_call(folder, f"{index}-{repeat}.json") for repeat in range(repeats)]
+                [read_call(folder, f"{index}-{repeat}.json", room) for repeat in range(repeats)]
                 for index in range(len(cases))
             ]
             if ended == "done" and code == referencing.DOCKER_FAILED and not any(any(each) for each in results):

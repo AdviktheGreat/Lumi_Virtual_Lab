@@ -540,6 +540,7 @@ class TestTheToolsThatRun:
         assert [case["args"] for case in run["cases"]] == [{"counts": [1, 2, 3], "scale": 2}]
         assert run["tag"] == tools.reference.tag_of(made) and run["label"] == made
         assert run["data"] is None and run["seconds"] == making.DEFAULT_MINUTES * 60
+        assert run["room"] is None
         assert "def tally(" in run["source"] and "import cellmapper.mapping as _repo" in run["source"]
         assert not run["scratch"].exists()
 

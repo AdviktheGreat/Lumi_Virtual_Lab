@@ -86,16 +86,19 @@ def once(options, spec, index, repeat):
         function = getattr(load_wrapper(os.path.join(options.work, spec["wrapper"])), spec["function"])
         arguments = dict((name, decode(value)) for name, value in case["args"].items())
         # What the arguments used of the room that one call may keep is what they used when the call was recorded, so
-        # that a result is described as it was then, by what it is and not by how much was left
-        room = [record.MAX_CALL_CHARS]
+        # that a result is described as it was then, by what it is and not by how much was left. A call that is given
+        # more room (by the spec) may keep more of what it gave, which is for a result that is to be compared and not
+        # held to what a tutorial gave
+        room = [spec.get("room", record.MAX_CALL_CHARS)]
+        cells = max(record.MAX_VALUE_CELLS, room[0] // 8)
         for value in arguments.values():
-            record.summarize(value, room)
+            record.summarize(value, room, cells)
         sys.stdout, sys.stderr = out, err
         try:
             value = function(**arguments)
         finally:
             sys.stdout, sys.stderr = sys.__stdout__, sys.__stderr__
-        result["result"] = record.summarize(value, room)
+        result["result"] = record.summarize(value, room, cells)
         result["ok"] = True
     except BaseException as error:
         trace = sys.exc_info()[2]

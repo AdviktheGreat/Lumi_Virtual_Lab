@@ -478,6 +478,7 @@ class Runs:
                 job.stop.is_set,
                 [(place, inside_container(name))],
                 seconds,
+                kept_runs.RESULT_ROOM,
             )
         except DockerUnavailableError:
             raise

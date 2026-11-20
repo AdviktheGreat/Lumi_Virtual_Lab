@@ -145,16 +145,17 @@ def fingerprint(value):
     return None
 
 
-def values_of(value, room):
-    """The numbers in an array, or a table by its columns, if there are not many and are only plain values."""
+def values_of(value, room, cells):
+    """The numbers in an array, or a table by its columns, if there are not many (at most `cells`) and are only plain
+    values."""
     try:
         size = attribute(value, "size")
         if attribute(value, "dtype") is not None and hasattr(value, "tolist"):
-            if isinstance(size, int) and size <= MAX_VALUE_CELLS:
+            if isinstance(size, int) and size <= cells:
                 return plain(value.tolist(), room)
         shape = attribute(value, "shape")
         if hasattr(value, "to_dict") and attribute(value, "columns") is not None and isinstance(shape, tuple):
-            if len(shape) == 2 and shape[0] * shape[1] <= MAX_VALUE_CELLS:
+            if len(shape) == 2 and shape[0] * shape[1] <= cells:
                 return plain(value.to_dict("list"), room)
     except Exception:
         pass
@@ -162,12 +163,13 @@ def values_of(value, room):
     return None
 
 
-def summarize(value, room):
+def summarize(value, room, cells=MAX_VALUE_CELLS):
     """What a value was, in a record that is bounded. A value that is plain JSON is kept as it is. Any other is given by
     its type and a short look at it, and by as much of what is in it as can be had: its shape, a hash of it, and its
     values if there are not many.
 
     :param room: How much is left of what one call may keep, which is lowered by what is kept.
+    :param cells: The most that an array or a table may have for its values to be kept, if they fit in what is left.
     """
     name = type_name(value)
     trial = [room[0]]
@@ -189,7 +191,7 @@ def summarize(value, room):
     if digest is not None:
         summary["sha256"] = digest
     trial = [room[0]]
-    values = values_of(value, trial)
+    values = values_of(value, trial, cells)
     if values is not None:
         room[0] = trial[0]
         summary["values"] = values
