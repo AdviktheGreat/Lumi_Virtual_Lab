@@ -26,6 +26,12 @@ and not for anyone to change here (blocked), something that went wrong that may 
 PaperAgent that is looked at: a method is built if its PaperAgent's tools are made. What is kept is only the last thing
 that stood in the way, and what the person said to it.
 
+The person may say what their data is, as the scope check of a PaperAgent takes it (its species, tissue, assay, input
+format, and sample size with what that counts), and it is kept as they said it. What is put against the method card of
+each method's paper is worked out from it and the card as they are, each time, and is not kept; what is kept is only the
+person's saying to go on with a method whose card the data is outside of, with the data and the card's words that they
+were shown, so that it is not taken for going on with anything else.
+
 A file that is not in the shape that a bake-off is kept in is not used, as it may not be if it was edited.
 """
 
@@ -35,6 +41,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from virtual_lab.paperagents import scope
 from virtual_lab.paperagents.stock import matches
 from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server.errors import ApiError
@@ -44,7 +51,7 @@ from virtual_lab.utils import MeetingUsage, compute_token_cost, write_atomically
 
 RECORD_FILE = "bakeoff.json"
 # What a record says of how it is kept, so that a later version can read what an earlier one wrote
-SCHEMA = 2
+SCHEMA = 3
 MAX_RECORD_BYTES = 2 << 20
 MAX_BAKEOFFS = 50
 MAX_CANDIDATES = 12
@@ -68,6 +75,9 @@ BUILD_STEPS = ("agent", "code", "paper", "preflight", "environment", "tutorials"
 MAX_REASON_CHARS = 600
 WHY = re.compile(r"[a-z_]{1,30}")
 COMMIT = re.compile(r"[0-9a-f]{7,64}")
+KEY = re.compile(r"[0-9a-f]{64}")
+# What the person may say of their data, which is what a PaperAgent's scope check takes
+DESCRIBED_WORDS = ("species", "tissue", "assay", "input_format", "sample_unit")
 # Why a choice of a model did not become a candidate, which a shortlist counts
 DROPPED = ("not_shown", "twice", "quote", "more", "already", "no_room")
 
@@ -90,6 +100,16 @@ BUILD = {
     "at": str,
     "go_on": (str, None),
 }
+WENT_ON = {"key": str, "at": str}
+DESCRIBED = {
+    "species": str,
+    "tissue": str,
+    "assay": str,
+    "input_format": str,
+    "sample_size": int,
+    "sample_unit": str,
+    "at": str,
+}
 CANDIDATE = {
     "id": str,
     "name": str,
@@ -102,6 +122,7 @@ CANDIDATE = {
     "found": (FOUND, None),
     "fit": ({"quote": str, "model": str}, None),
     "build": (BUILD, None),
+    "went_on": (WENT_ON, None),
 }
 SHORTLIST = {
     "started_at": str,
@@ -125,6 +146,7 @@ RECORD = {
     "created_at": str,
     "task": str,
     "data": ({"own": str}, None),
+    "described": (DESCRIBED, None),
     "limit": NUMBER,
     "spent": NUMBER,
     "cost_known": bool,
@@ -178,6 +200,28 @@ def is_build(build: dict[str, Any]) -> bool:
     )
 
 
+def facts_of(described: dict[str, Any]) -> dict[str, Any]:
+    """What the person said of their data, as a scope check takes it: without when they said it."""
+    return {key: value for key, value in described.items() if key != "at"}
+
+
+def is_described(described: dict[str, Any]) -> bool:
+    """Whether what is kept of what the data is, is what a scope check takes: something is said, in words, and the
+    size, if one is said, is a whole number with what it counts."""
+    try:
+        scope.clean(facts_of(described))
+    except ValueError:
+        return False
+
+    return not has_control_character(described["at"]) and all(
+        not has_control_character(described[key]) for key in DESCRIBED_WORDS
+    )
+
+
+def is_went_on(went_on: dict[str, Any]) -> bool:
+    return KEY.fullmatch(went_on["key"]) is not None and not has_control_character(went_on["at"])
+
+
 def is_candidate(value: dict[str, Any]) -> bool:
     """Whether what a record holds as a candidate is one: its paper is a DOI or a link, as it is kept, its code and
     suggestions are addresses of code, and, if a search found it, it has the words of a model and where it was found,
@@ -203,6 +247,7 @@ def is_candidate(value: dict[str, Any]) -> bool:
         and (value["found"] is not None) == (value["added_by"] == BY_SEARCH)
         and (value["found"] is None or is_found(value["found"]))
         and (value["build"] is None or is_build(value["build"]))
+        and (value["went_on"] is None or is_went_on(value["went_on"]))
     )
 
 
@@ -220,6 +265,7 @@ def is_record(value: Any) -> bool:
         and not has_control_character(value["task"])
         and is_amount(value["limit"])
         and is_amount(value["spent"])
+        and (value["described"] is None or is_described(value["described"]))
         and len(value["candidates"]) <= MAX_CANDIDATES
         and len(set(ids)) == len(ids)
         and all(is_candidate(candidate) for candidate in value["candidates"])
@@ -229,15 +275,23 @@ def is_record(value: Any) -> bool:
 
 def upgraded(value: Any) -> Any:
     """What an earlier version kept, as this one keeps it: the first, which had no building, has none said of any
-    candidate. What is not a record of that version is as it was."""
-    if not isinstance(value, dict) or value.get("schema") != 1 or not isinstance(value.get("candidates"), list):
+    candidate, and the first two, which had no saying what the data is, have none and no one gone on with. What is not
+    a record of one of those versions is as it was."""
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") not in (1, 2)
+        or not isinstance(value.get("candidates"), list)
+    ):
         return value
+    earlier = value["schema"]
 
-    return {
-        **value,
-        "schema": SCHEMA,
-        "candidates": [{**each, "build": None} if isinstance(each, dict) else each for each in value["candidates"]],
-    }
+    def made(each: Any) -> Any:
+        if not isinstance(each, dict):
+            return each
+
+        return {**({"build": None} if earlier == 1 else {}), **each, "went_on": None}
+
+    return {**value, "schema": SCHEMA, "described": None, "candidates": [made(each) for each in value["candidates"]]}
 
 
 def load(directory: Path) -> dict[str, Any] | None:
@@ -257,7 +311,9 @@ def keep(directory: Path, record: dict[str, Any]) -> None:
     write_atomically(directory / RECORD_FILE, json.dumps(record, indent=4).encode("utf-8"))
 
 
-def new_record(title: str, task: str, data: str | None, limit: float) -> dict[str, Any]:
+def new_record(
+    title: str, task: str, data: str | None, limit: float, described: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """A bake-off with nothing spent and nobody in the running."""
     return {
         "schema": SCHEMA,
@@ -265,6 +321,7 @@ def new_record(title: str, task: str, data: str | None, limit: float) -> dict[st
         "created_at": utc_timestamp(),
         "task": task,
         "data": {"own": data} if data is not None else None,
+        "described": described,
         "limit": limit,
         "spent": 0.0,
         "cost_known": True,

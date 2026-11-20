@@ -202,6 +202,7 @@ class TestMaking:
             "created_at": record_of(workspace, bakeoff_id)["created_at"],
             "task": TASK,
             "data": None,
+            "described": None,
             "limit": 2.5,
             "spent": 0.0,
             "cost_known": True,
@@ -308,7 +309,7 @@ class TestWhatIsNotABakeOff:
             lambda record: record.update(spent=-1),
             lambda record: record.update(limit=float("nan")),
             lambda record: record.update(spent="0"),
-            lambda record: record.update(schema=3),
+            lambda record: record.update(schema=4),
             lambda record: record.update(task=""),
             lambda record: record.update(title="x" * 500),
             lambda record: record.update(cost_known="yes"),
@@ -1181,6 +1182,7 @@ def person_candidate(doi: str) -> dict[str, Any]:
         "found": None,
         "fit": None,
         "build": None,
+        "went_on": None,
     }
 
 
