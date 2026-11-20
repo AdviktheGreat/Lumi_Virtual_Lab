@@ -681,6 +681,8 @@ class Runner:
     :param stop: Set when whoever started the runs asks to stop them.
     :param label: Whose they are, so that one that is left can be found.
     :param clock: What time is told by, which the limits on the time of all of the runs are kept with.
+    :param mounts: Further files or folders of this machine for the runs to read, each with where in the container it is
+        put. They are read-only, as the data is, and are not the project's.
     """
 
     def __init__(
@@ -693,6 +695,7 @@ class Runner:
         stop: threading.Event | None = None,
         label: str = "",
         clock: Callable[[], float] = time.monotonic,
+        mounts: Sequence[tuple[Path, str]] = (),
     ) -> None:
         if building.BUILD_LABEL.fullmatch(label) is None:
             raise ValueError("The label of a run is lower case letters, digits, and hyphens")
@@ -704,6 +707,7 @@ class Runner:
         self.docker = tuple(docker_command)
         self.stop = stop if stop is not None else threading.Event()
         self.label = label
+        self.mounts = tuple(mounts)
         self.cpus = building.cpus_for(self.docker)
 
     def argv(self, item: Item) -> list[str]:
@@ -733,7 +737,7 @@ class Runner:
             directory=folder.resolve(),
             command=self.argv(item),
             container_name=container,
-            mounts=[(self.data, DATA_PATH)] if self.data is not None else [],
+            mounts=[*([(self.data, DATA_PATH)] if self.data is not None else []), *self.mounts],
         )
         where = len(self.docker) + 1
         label = ("--label", f"{building.AGENT_LABEL}={self.label}") if self.label else ()
