@@ -145,13 +145,44 @@ class TestSharedDatasets:
 
         assert found["basis"] == "name"
 
-    def test_one_relation_of_a_pair_holds_both_the_accession_and_the_name(self) -> None:
+    def test_a_pair_of_facts_that_match_by_accession_and_by_name_is_said_once(self) -> None:
         first = fact(1, name="Tabula Muris", accession="GSE1111")
         second = fact(2, name="Tabula Muris", accession="GSE1111")
 
         (found,) = of_kind(relating.build(self.papers(first, second)), "dataset")
 
-        assert found["basis"] == "accession" and {item["basis"] for item in found["evidence"]} == {"accession", "name"}
+        assert found["basis"] == "accession" and [item["basis"] for item in found["evidence"]] == ["accession"]
+
+    def test_one_relation_of_a_pair_holds_what_matched_by_the_accession_and_what_matched_by_the_name(self) -> None:
+        papers = [
+            paper(
+                "a", facts={"datasets": [fact(1, name="Atlas one", accession="GSE1111"), fact(2, name="Tabula Muris")]}
+            ),
+            paper(
+                "b", facts={"datasets": [fact(3, name="Atlas two", accession="GSE1111"), fact(4, name="Tabula Muris")]}
+            ),
+        ]
+
+        (found,) = of_kind(relating.build(papers), "dataset")
+
+        assert [(item["basis"], item["a"]["fact"], item["b"]["fact"]) for item in found["evidence"]] == [
+            ("accession", "f1", "f3"),
+            ("name", "f2", "f4"),
+        ]
+
+    def test_the_same_name_with_other_accessions_is_not_the_same_dataset(self) -> None:
+        first = fact(1, name="Tabula Muris", accession="GSE1111")
+        second = fact(2, name="Tabula Muris", accession="GSE2222")
+
+        assert of_kind(relating.build(self.papers(first, second)), "dataset") == []
+
+    def test_the_same_name_when_only_one_gives_an_accession_is_the_same_dataset(self) -> None:
+        first = fact(1, name="Tabula Muris", accession="GSE1111")
+        second = fact(2, name="Tabula Muris", accession=None)
+
+        (found,) = of_kind(relating.build(self.papers(first, second)), "dataset")
+
+        assert found["basis"] == "name"
 
     @pytest.mark.parametrize("name", ["data", "Dataset", "cells", "ab"])
     def test_a_name_of_nothing_in_particular_is_not_a_dataset_in_common(self, name: str) -> None:

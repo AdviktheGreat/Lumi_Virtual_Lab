@@ -457,7 +457,7 @@ With two papers or more, the conversation is also given `compare_papers`, which 
 
 | Kind | What it says |
 | --- | --- |
-| `dataset` | Both papers used a dataset, by the same accession (`basis` of `accession`) or, if there is none, the same name. |
+| `dataset` | Both papers used a dataset, by the same accession (`basis` of `accession`) or the same name, unless both give an accession and the two differ, which says they are two datasets. |
 | `software` | Both name the same software, with the version each says and whether they are the same (a name that is on a short list of tools that nearly every paper has is not matched). |
 | `method` | Both name the same method. |
 | `code` | Their code is at the same address (the scheme, `www.`, `.git`, a trailing slash, and the case are not told apart), and whether it is at the same commit, or not, or not known. |

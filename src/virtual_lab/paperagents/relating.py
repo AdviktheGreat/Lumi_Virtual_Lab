@@ -199,9 +199,14 @@ def shared_names(
                 if len(key) >= MIN_NAME_CHARS and key not in generic:
                     buckets.setdefault((basis, key), {}).setdefault(index, fact)
     found: dict[tuple[int, int], dict[str, Any]] = {}
+    used: set[tuple[int, int, int, int]] = set()
     for (basis, _), holders in sorted(buckets.items()):
         for left, right in pairs(holders):
             one, other = holders[left], holders[right]
+            places = (left, right, id(one), id(other))
+            if places in used or (basis == "name" and accessions_differ(one, other)):
+                continue
+            used.add(places)
             entry = found.setdefault((left, right), relation(relation_kind, papers[left], papers[right]))
             if len(entry["evidence"]) < MOST_EVIDENCE:
                 entry["evidence"].append(
@@ -216,6 +221,16 @@ def shared_names(
         entry["basis"] = "accession" if any(item["basis"] == "accession" for item in entry["evidence"]) else "name"
 
     return list(found.values())
+
+
+def accessions_differ(one: Mapping[str, Any], other: Mapping[str, Any]) -> bool:
+    """Whether two facts each give an accession and they are not the same, which says that the datasets that they name
+    alike are not one."""
+    first, second = (
+        normalize_name(fact["accession"]) if isinstance(fact.get("accession"), str) else "" for fact in (one, other)
+    )
+
+    return bool(first) and bool(second) and first != second
 
 
 def dataset_keys(fact: Mapping[str, Any]) -> list[tuple[str, str]]:

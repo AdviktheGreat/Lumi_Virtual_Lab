@@ -317,6 +317,15 @@ class TestTheTool:
         assert len(none["relations"]) == 1
         assert len(many["relations"]) == 2 and many["more"] == 0
 
+    @pytest.mark.parametrize("many", ["all", None, [3]])
+    def test_a_number_of_relations_that_is_not_a_whole_number_is_refused_by_the_arguments_it_is_given(
+        self, tool: tuple[Tool, str, str], many: Any
+    ) -> None:
+        graph_tool, _, _ = tool
+
+        with pytest.raises(ValueError, match="max_relations"):
+            graph_tool.function(max_relations=many)
+
     def test_a_kind_that_is_not_one_is_refused_with_the_kinds_there_are(self, tool: tuple[Tool, str, str]) -> None:
         graph_tool, _, _ = tool
 
