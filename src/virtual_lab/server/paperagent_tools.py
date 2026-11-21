@@ -30,6 +30,8 @@ CHECKS_DIR = "checks"
 RECORD_FILE = "tools.json"
 TOOLS_DIR = "tools"
 TOOL_FILE = "tool.json"
+# Where the package that is made of the tools is kept (paperagent_library.py), which is of no use without them
+EXPORTS_DIR = "exports"
 # Where the checks that are made of the tools are kept, below checks/ (paperagent_checks.py)
 INDEPENDENT_DIR = "independent"
 
@@ -284,8 +286,10 @@ def forget_independent(directory: Path) -> None:
 
 
 def forget(directory: Path) -> None:
-    """Removes the account of the making of tools, and the tools, and with them the checks that were made of them. The
-    account goes first, so that it never names what is gone."""
+    """Removes the account of the making of tools, and the tools, and with them the checks that were made of them and
+    the package that was made of them. The account goes first, so that it never names what is gone."""
     (checks_path(directory) / RECORD_FILE).unlink(missing_ok=True)
+    (directory / EXPORTS_DIR / "export.json").unlink(missing_ok=True)
     shutil.rmtree(tools_path(directory), ignore_errors=True)
+    shutil.rmtree(directory / EXPORTS_DIR, ignore_errors=True)
     forget_independent(directory)
