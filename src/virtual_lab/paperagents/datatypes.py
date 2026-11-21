@@ -28,16 +28,24 @@ LABELS = {
 
 # What the words of a docstring or a parameter name for each kind
 WORDS = {
-    H5AD: re.compile(r"\bh5ad\b|\banndata\b", re.IGNORECASE),
+    H5AD: re.compile(r"\bh5ad\b|\banndata\b|\badata\b", re.IGNORECASE),
     VCF: re.compile(r"\bvcf\b", re.IGNORECASE),
     SUMMARY_STATISTICS: re.compile(r"summary[ _-]?stat|sumstat|\bgwas\b", re.IGNORECASE),
     TABLE: re.compile(r"\b(?:csv|tsv|table|dataframe|parquet)\b", re.IGNORECASE),
 }
 
-TABLE_SUFFIXES = (".csv", ".tsv", ".txt", ".parquet", ".csv.gz", ".tsv.gz", ".txt.gz")
+TABLE_SUFFIXES = (".csv", ".tsv", ".parquet", ".csv.gz", ".tsv.gz")
+# A .txt is anything, so it is of a kind only where its name says that it is of summary statistics
+TEXT_SUFFIXES = (".txt", ".txt.gz")
 SUFFIXES = {".h5ad": H5AD, ".vcf": VCF, ".vcf.gz": VCF}
 STATISTICS_NAME = re.compile(r"sumstat|summary[ _-]?stat|gwas", re.IGNORECASE)
-RETURNS = re.compile(r"^\s*(?::returns?\b|returns?\s*:|returns?\s*$|-{3,}$)", re.IGNORECASE)
+FIELD = re.compile(r"^\s*:returns?\b[^:]*:(.*)$", re.IGNORECASE)
+HEADING = re.compile(r"^\s*(returns?|yields?)\s*:?\s*$", re.IGNORECASE)
+# What else a docstring has a section of, which ends the section of what it returns
+SECTIONS = frozenset(
+    "parameters args arguments other-parameters raises notes note examples example see-also references warns "
+    "attributes receives yields".split()
+)
 # The most characters of a name or docstring that are read
 MOST_READ = 4000
 
@@ -45,7 +53,9 @@ MOST_READ = 4000
 def kinds_in(text: str) -> frozenset[str]:
     """The kinds that words name. A table of summary statistics is not also a table here, so that a tool that gives
     one is told from one that gives any table."""
-    found = {kind for kind, pattern in WORDS.items() if pattern.search(text[:MOST_READ])}
+    # A name is made of words with underscores between them, which are not what a word ends at in a pattern
+    words = text[:MOST_READ].replace("_", " ")
+    found = {kind for kind, pattern in WORDS.items() if pattern.search(words)}
     if SUMMARY_STATISTICS in found:
         found.discard(TABLE)
 
@@ -54,7 +64,7 @@ def kinds_in(text: str) -> frozenset[str]:
 
 def declared_inputs(parameters: Mapping[str, Any]) -> dict[str, frozenset[str]]:
     """What each parameter that takes the name of a file, or a list of them, is declared to take, from its name and
-    its description, for those that say. A parameter that says nothing of a kind is not here.
+    the first sentence of its description, for those that say. A parameter that says nothing of a kind is not here.
 
     :param parameters: The tool's properties, each parameter's JSON schema by name.
     """
@@ -62,22 +72,45 @@ def declared_inputs(parameters: Mapping[str, Any]) -> dict[str, frozenset[str]]:
     for name, schema in parameters.items():
         if not isinstance(schema, Mapping) or schema.get("type") not in ("string", "array", None):
             continue
-        kinds = kinds_in(f"{name} {schema.get('description') or ''}")
+        first = re.split(r"(?<=[.!?])\s", str(schema.get("description") or "").strip(), maxsplit=1)[0]
+        kinds = kinds_in(f"{name} {first}")
         if kinds:
             taken[str(name)] = kinds
 
     return taken
 
 
+def returns_of(docstring: str) -> str | None:
+    """The words of the section of a docstring that says what it returns, in the reST, Google, or NumPy style, or None
+    if it has none: from its heading to the next section, or, in reST, to the next field."""
+    lines = docstring.splitlines()
+    for index, line in enumerate(lines):
+        if (field := FIELD.match(line)) is not None:
+            taken = [field.group(1)]
+            for follow in lines[index + 1 :]:
+                if follow.strip().startswith(":"):
+                    break
+                taken.append(follow)
+            return "\n".join(taken)
+        if HEADING.match(line):
+            taken = []
+            for follow in lines[index + 1 :]:
+                stripped = follow.strip()
+                if stripped and set(stripped) <= {"-", "="}:
+                    continue
+                if stripped.rstrip(":").lower().replace(" ", "-") in SECTIONS:
+                    break
+                taken.append(follow)
+            return "\n".join(taken)
+
+    return None
+
+
 def declared_output(docstring: str) -> frozenset[str] | None:
     """What a tool is declared to give, from what its docstring says it returns, or None if it does not say."""
-    lines = docstring.splitlines()
-    start = next((index for index, line in enumerate(lines) if RETURNS.match(line)), None)
-    if start is None:
-        return None
-    kinds = kinds_in("\n".join(lines[start:]))
+    said = returns_of(docstring)
 
-    return kinds or None
+    return (kinds_in(said) or None) if said is not None else None
 
 
 def type_of_name(name: str) -> str | None:
@@ -87,8 +120,11 @@ def type_of_name(name: str) -> str | None:
     for suffix, kind in SUFFIXES.items():
         if lowered.endswith(suffix):
             return kind
+    base = lowered.rsplit("/", 1)[-1]
     if lowered.endswith(TABLE_SUFFIXES):
-        return SUMMARY_STATISTICS if STATISTICS_NAME.search(lowered.rsplit("/", 1)[-1]) else TABLE
+        return SUMMARY_STATISTICS if STATISTICS_NAME.search(base) else TABLE
+    if lowered.endswith(TEXT_SUFFIXES) and STATISTICS_NAME.search(base):
+        return SUMMARY_STATISTICS
 
     return None
 
