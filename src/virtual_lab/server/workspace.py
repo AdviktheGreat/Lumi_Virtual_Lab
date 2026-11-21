@@ -79,6 +79,7 @@ PAPERAGENTS_DIR_NAME = "paperagents"
 
 # The bake-offs of methods, a directory for each, which are of PaperAgents and are not kept in them
 BAKEOFFS_DIR_NAME = "bakeoffs"
+TRIAGES_DIR_NAME = "triages"
 
 # The most characters of a title a directory is named after
 MAX_SLUG_CHARS = 48
@@ -390,6 +391,11 @@ class Workspace:
     def bakeoffs_dir(self) -> Path:
         """Where the bake-offs of methods are kept, each in a directory of its own, which may be missing."""
         return self.root / BAKEOFFS_DIR_NAME
+
+    @property
+    def triages_dir(self) -> Path:
+        """Where the triages of listings of papers are kept, each in a file of its own, which may be missing."""
+        return self.root / TRIAGES_DIR_NAME
 
     @property
     def skills_dir(self) -> Path:

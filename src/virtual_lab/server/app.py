@@ -79,6 +79,10 @@ and everything else is a request and an answer.
     DELETE /api/paperagents/{id}/tools  takes away the tools, so that they can be made again
     GET    /api/paperagents/library  each agent that has tools: version, environment, tools' hashes and tiers
     GET    /api/paperagents/graph  how the agents' papers relate: shared datasets, methods, code, names, claims
+    GET    /api/paperagents/triage  the triages of papers by their code, and what a page needs to ask for one
+    POST   /api/paperagents/triage  starts looking at the code of papers, given or listed by bioRxiv, to rank them
+    GET    /api/paperagents/triage/{id}  one triage: its papers in order, what the pre-flight said of each, and the job
+    DELETE /api/paperagents/triage/{id}  takes a triage away
     POST   /api/paperagents/{id}/export  starts making a package of the tools (an MCP server) and checking it
     GET    /api/paperagents/{id}/export  the agent as the library lists it, its package, and the job
     GET    /api/paperagents/{id}/export/package  the package, as a ZIP
@@ -234,6 +238,8 @@ from virtual_lab.server.mcp_seen import seen_record
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
 from virtual_lab.server.paperagent_given import view as given_view
 from virtual_lab.server.paperagent_graph import view as graph_view
+from virtual_lab.server.paperagent_triage import MOST_GIVEN as MOST_TRIAGED
+from virtual_lab.server.paperagent_triage import Triages
 from virtual_lab.server.paperagents import MAX_DATASET_CHARS, MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
 from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_PAPERS, MAX_TITLE_CHARS, Papers
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
@@ -657,6 +663,35 @@ class PaperAgentBody(RequestModel):
     repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
 
 
+class TriagePaperBody(RequestModel):
+    """A paper to look at the code of: its DOI, and, if the person knows them, its title, its abstract, and where its
+    code is."""
+
+    doi: str = Field(max_length=MAX_DOI_CHARS * 4)
+    title: str | None = Field(None, max_length=1200)
+    abstract: str | None = Field(None, max_length=24000)
+    code: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+
+
+class TriageListingBody(RequestModel):
+    """What to list of bioRxiv: the first day, the last (today if it is left out), the subject, and how many."""
+
+    since: str = Field(max_length=40)
+    until: str | None = Field(None, max_length=40)
+    subject: str = Field("all", max_length=100)
+    limit: StrictInt | None = None
+
+
+class TriageBody(RequestModel):
+    """The papers to rank by their code: some given, some listed by bioRxiv, or both, and how many to look at, and the
+    most that is fetched of one."""
+
+    papers: list[TriagePaperBody] | None = Field(None, max_length=MOST_TRIAGED)
+    listing: TriageListingBody | None = None
+    most_looked_at: StrictInt | None = None
+    max_megabytes: StrictInt | None = None
+
+
 class PaperAgentImportBody(RequestModel):
     """The server of an agent that someone else made, and which paper it is of, or the agent to add the server to."""
 
@@ -1019,6 +1054,7 @@ def create_app(
         docker_command=docker_command,
     )
     bakeoffs = Bakeoffs(paperagents)
+    triages = Triages(paperagents)
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -1529,6 +1565,29 @@ def create_app(
         about: str | None = Query(None, max_length=300),
     ) -> dict[str, Any]:
         return graph_view(paperagents, ids, agent, kind, about)
+
+    @api.get("/paperagents/triage")
+    def get_paperagent_triages() -> dict[str, Any]:
+        return triages.describe()
+
+    @api.post("/paperagents/triage", status_code=202)
+    def start_paperagent_triage(body: TriageBody) -> dict[str, Any]:
+        return triages.create(
+            [paper.model_dump(exclude_none=True) for paper in body.papers] if body.papers is not None else None,
+            body.listing.model_dump(exclude_none=True) if body.listing is not None else None,
+            body.most_looked_at,
+            body.max_megabytes,
+        )
+
+    @api.get("/paperagents/triage/{triage_id}")
+    def get_paperagent_triage(triage_id: str) -> dict[str, Any]:
+        return triages.view(triage_id)
+
+    @api.delete("/paperagents/triage/{triage_id}")
+    def delete_paperagent_triage(triage_id: str) -> dict[str, Any]:
+        triages.delete(triage_id)
+
+        return triages.describe()
 
     @api.get("/paperagents/{agent_id}")
     def get_paperagent(agent_id: str) -> dict[str, Any]:
