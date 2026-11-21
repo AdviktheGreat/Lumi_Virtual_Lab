@@ -558,6 +558,22 @@ class PaperAgentReimplementationBody(RequestModel):
     goal: str | None = Field(None, max_length=1000)
 
 
+class PaperAgentMatchingBody(RequestModel):
+    """How to check the function written from the paper against its numbers: the most that asking a model for the
+    inputs may spend, in USD, which must be said if one is asked; whether one is asked for the inputs of the claims
+    that the person gave none for; and the most minutes that all of the calls may take together."""
+
+    max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+    ask: StrictBool = True
+    minutes: StrictInt | None = None
+
+
+class PaperAgentInputsBody(RequestModel):
+    """The inputs that the person gives for a claim: the arguments of the function, by the names of its parameters."""
+
+    arguments: dict[str, Any]
+
+
 class PaperAgentVariantBody(RequestModel):
     """What to make a variant of and how: the id of a claim that was tried and was held to a call, the new value of
     each argument to change by its name, the most minutes that both calls may take, how many times each is made, the
@@ -1694,6 +1710,30 @@ def create_app(
     @api.delete("/paperagents/{agent_id}/reimplementation")
     def delete_paperagent_reimplementation(agent_id: str) -> dict[str, Any]:
         paperagents.clear_reimplementation(agent_id)
+
+        return paperagents.reimplementation(agent_id)
+
+    @api.post("/paperagents/{agent_id}/reimplementation/checks", status_code=202)
+    def check_paperagent_reimplementation(agent_id: str, body: PaperAgentMatchingBody) -> dict[str, Any]:
+        return paperagents.start_matching(agent_id, body.max_cost, body.ask, body.minutes).snapshot(0)
+
+    @api.delete("/paperagents/{agent_id}/reimplementation/checks")
+    def delete_paperagent_reimplementation_checks(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_matching(agent_id)
+
+        return paperagents.reimplementation(agent_id)
+
+    @api.put("/paperagents/{agent_id}/reimplementation/inputs/{claim_id}")
+    def put_paperagent_reimplementation_inputs(
+        agent_id: str, claim_id: str, body: PaperAgentInputsBody
+    ) -> dict[str, Any]:
+        paperagents.give_inputs(agent_id, claim_id, body.arguments)
+
+        return paperagents.reimplementation(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/reimplementation/inputs/{claim_id}")
+    def delete_paperagent_reimplementation_inputs(agent_id: str, claim_id: str) -> dict[str, Any]:
+        paperagents.give_inputs(agent_id, claim_id, None)
 
         return paperagents.reimplementation(agent_id)
 
