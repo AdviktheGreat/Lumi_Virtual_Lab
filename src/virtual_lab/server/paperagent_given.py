@@ -39,7 +39,7 @@ import math
 import tempfile
 import threading
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +51,7 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.function_checks import FunctionSourceError, read_function
 from virtual_lab.mcp_presets import MCP_PRESETS
-from virtual_lab.paperagents import checking, matching, reimplementing, wrappers
+from virtual_lab.paperagents import checking, datatypes, matching, reimplementing, wrappers
 from virtual_lab.paperagents import environment as building
 from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import toolmaking as making
@@ -125,6 +125,8 @@ class Entry:
         was made of.
     :param summary: What it does, in a line.
     :param label: What it is to be called wherever it is shown, if it is not only its tier.
+    :param takes: For each parameter that its description says takes a file, the kinds of file it takes.
+    :param gives: The kinds of file that its docstring says it returns, or None if it does not say.
     """
 
     tool: Tool
@@ -132,6 +134,8 @@ class Entry:
     tier: str
     summary: str
     label: str | None = None
+    takes: dict[str, frozenset[str]] = field(default_factory=dict)
+    gives: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -670,6 +674,8 @@ class Caller:
         self.hold = hold
         self.title = title
         self.check_tool = check_tool
+        # The kinds of file that its parameters take, which are known once its tool is made of it
+        self.takes: dict[str, frozenset[str]] = {}
 
     def __call__(self, **arguments: Any) -> dict[str, Any]:
         found, problem = runnable(self.workspace, self.agent_id, self.docker_command)
@@ -708,6 +714,8 @@ class Caller:
             sent = encode(to_jsonable_python(arguments))
         except PydanticSerializationError as error:
             raise PaperAgentToolError(f"The arguments cannot be sent as JSON: {error}") from None
+        if mismatch := datatypes.check_arguments(self.takes, arguments):
+            raise PaperAgentToolError(f"Not run: {mismatch} A file is passed only where it is of the kind taken.")
         if self.hold is None:
             return sent, None
         try:
@@ -874,6 +882,7 @@ def reimplementation_tools(
         tool = tool_from_function(reading.stand_in(caller), name=tool_name(agent_id, function.name))
     except (TypeError, ValueError):
         return []
+    caller.takes = datatypes.declared_inputs(tool.parameters.get("properties", {}))
     checked = function.label.removeprefix(f"{reimplementing.LABEL}, ")
     head = (
         f"[Tier {reimplementing.TIER}, {REIMPLEMENTATION_LABEL.lower()}] From {whose(title)}. A model wrote this "
@@ -892,6 +901,8 @@ def reimplementation_tools(
             reimplementing.TIER,
             summary,
             REIMPLEMENTATION_LABEL,
+            takes=caller.takes,
+            gives=datatypes.declared_output(reading.docstring),
         )
     ]
 
@@ -937,7 +948,17 @@ def running_tools(
             f"{minutes} minutes."
         )
         summary = f"Calls {kept['repo']['module']}.{kept['repo']['function']}, the authors' own function."
-        entries.append(Entry(replace(tool, description=f"{head}\n\n{tool.description}"), "run", kept["tier"], summary))
+        caller.takes = datatypes.declared_inputs(tool.parameters.get("properties", {}))
+        entries.append(
+            Entry(
+                replace(tool, description=f"{head}\n\n{tool.description}"),
+                "run",
+                kept["tier"],
+                summary,
+                takes=caller.takes,
+                gives=datatypes.declared_output(reading.docstring),
+            )
+        )
 
     return entries
 
@@ -989,7 +1010,7 @@ def offer_of(
     )
 
 
-def agent_tools(
+def given_entries(
     workspace: Workspace,
     agents: Iterable[str],
     session: Session | None,
@@ -998,8 +1019,8 @@ def agent_tools(
     docker_command: Sequence[str] = ("docker",),
     stopping: Callable[[], bool] | None = None,
     go_on: GoOn | None = None,
-) -> tuple[Tool, ...]:
-    """The tools of these agents, for a conversation.
+) -> tuple[Entry, ...]:
+    """The tools of these agents, for a conversation, each as an entry.
 
     An agent that is gone is left out, as is a tool whose name a tool already has: a conversation's tools are named
     differently, so of two the first is given. The tools that run are given only where the conversation may run code,
@@ -1013,7 +1034,7 @@ def agent_tools(
         says. If there is none, such a tool is not run.
     """
     names = {*taken, *RESERVED_TOOL_NAMES}
-    tools: list[Tool] = []
+    tools: list[Entry] = []
     hold = Hold(go_on)
     for agent_id in dict.fromkeys(agents):
         offer = offer_of(workspace, agent_id, docker_command, session is not None, stopping, hold)
@@ -1021,9 +1042,25 @@ def agent_tools(
             if entry.tool.name in names or entry.tool.name.startswith(tuple(prefixes)):
                 continue
             names.add(entry.tool.name)
-            tools.append(entry.tool)
+            tools.append(entry)
 
     return tuple(tools)
+
+
+def agent_tools(
+    workspace: Workspace,
+    agents: Iterable[str],
+    session: Session | None,
+    taken: Collection[str] = (),
+    prefixes: Collection[str] = (),
+    docker_command: Sequence[str] = ("docker",),
+    stopping: Callable[[], bool] | None = None,
+    go_on: GoOn | None = None,
+) -> tuple[Tool, ...]:
+    """The tools of these agents, for a conversation, as given_entries has them."""
+    entries = given_entries(workspace, agents, session, taken, prefixes, docker_command, stopping, go_on)
+
+    return tuple(entry.tool for entry in entries)
 
 
 def view(workspace: Workspace, agent_id: str, docker_command: Sequence[str] = ("docker",)) -> dict[str, Any]:
@@ -1071,6 +1108,8 @@ def view(workspace: Workspace, agent_id: str, docker_command: Sequence[str] = ("
                 "summary": entry.summary,
                 "parameters": list(entry.tool.parameters.get("properties", {})),
                 "label": entry.label,
+                "takes": {name: sorted(kinds) for name, kinds in entry.takes.items()},
+                "gives": sorted(entry.gives) if entry.gives else None,
             }
             for entry in offer.entries
             if entry.tool.name not in reserved

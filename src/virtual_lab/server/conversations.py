@@ -36,9 +36,9 @@ from virtual_lab.llm import OPENROUTER_PREFIX, ModelSource, accepts_images, dete
 from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.mcp_tools import MCPTools, tool_prefix
 from virtual_lab.openrouter import Catalog
+from virtual_lab.schemas import normalize_title
 from virtual_lab.server.asking import Asker
 from virtual_lab.server.campaigns import Campaigns
-from virtual_lab.schemas import normalize_title
 from virtual_lab.server.config import (
     ChatConfig,
     check_campaign,
@@ -52,13 +52,14 @@ from virtual_lab.server.config import (
 from virtual_lab.server.connections import Connections
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.functions import function_tools
-from virtual_lab.server.skills import Skills, load_skills
 from virtual_lab.server.library import missing_keys
 from virtual_lab.server.mcp import is_on, server_title
 from virtual_lab.server.mcp_seen import describe_held, seen_record
 from virtual_lab.server.own import given
-from virtual_lab.server.paperagent_given import agent_tools, imported_among
+from virtual_lab.server.paperagent_given import given_entries, imported_among
+from virtual_lab.server.paperagent_team import cross_tools, paper_members
 from virtual_lab.server.setup import Setup
+from virtual_lab.server.skills import Skills, load_skills
 from virtual_lab.server.tools import conversation_tools
 from virtual_lab.server.workspace import Workspace, read_json
 from virtual_lab.session import Session
@@ -747,9 +748,10 @@ class Conversations:
                 handle.tell, handle.stopping, lambda name: titles.get(name) or server_title(name, servers.get(name))
             )
         handle.asker = asker
+        lead = config.lead_agent()
         # What the person gave of a PaperAgent: its tools that read the paper, and those that run its code in its own
         # image where code is allowed
-        agents = agent_tools(
+        entries = given_entries(
             self.workspace,
             config.paperagents,
             session,
@@ -759,6 +761,13 @@ class Conversations:
             handle.stopping,
             go_on=asker.approve_scope if asker is not None else None,
         )
+        agents = tuple(entry.tool for entry in entries)
+        # With two papers or more, what the team works across them with
+        agents += cross_tools(
+            self.workspace, config.paperagents, entries, {tool.name for tool in (*chosen, *written, *agents)}
+        )
+        # Who speaks for each paper in a team session, besides those the person set up
+        team = paper_members(self.workspace, config.paperagents, config.model, config.team_agents(), lead)
         if servers and asker is not None:
 
             def remember(name: str, entry: Mapping[str, Any], opened: MCPTools) -> None:
@@ -773,8 +782,8 @@ class Conversations:
         try:
             handle.chat = Chat(
                 directory,
-                config.lead_agent(),
-                config.team_agents(),
+                lead,
+                team,
                 session=session,
                 client=self.client,
                 chat_models=chat_models,
