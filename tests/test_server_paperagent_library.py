@@ -353,6 +353,86 @@ class TestMakingAPackage:
         assert refused(agents.export_file, made).status == 404
 
     @pytest.mark.parametrize(
+        ("change", "said"),
+        [
+            (lambda report: {**report, "tools": []}, "did not report on the tools"),
+            (lambda report: {**report, "tools": report["tools"][:1]}, "did not report on the tools"),
+            (lambda report: {**report, "name": "other-package"}, "another package"),
+            (lambda report: {**report, "version": "0000000"}, "another package"),
+            (lambda report: {**report, "tools": [{**tool, "cases": []} for tool in report["tools"]]}, "recorded calls"),
+            (
+                lambda report: {
+                    **report,
+                    "tools": [{**tool, "cases": [{**tool["cases"][0], "case": 5}]} for tool in report["tools"]],
+                },
+                "recorded calls",
+            ),
+            (
+                lambda report: {
+                    **report,
+                    "tools": [*report["tools"], report["tools"][0]],
+                },
+                "did not report on the tools",
+            ),
+        ],
+    )
+    def test_a_report_that_is_not_of_what_the_package_holds_is_not_believed_though_it_says_it_passed(
+        self,
+        agents: PaperAgents,
+        made: str,
+        packages: Packages,
+        workspace: Workspace,
+        change: Any,
+        said: str,
+    ) -> None:
+        def play(folder: Path, package: Path) -> tuple[str, int | None, str]:
+            ended, code, text = run_check(folder, package)
+            path = folder / library.REPORT_FILE
+            path.write_text(json.dumps(change({**json.loads(path.read_text()), "ok": True, "problems": []})))
+            return ended, code, text
+
+        packages.play = play
+
+        job = export(agents, made)
+
+        assert job.state == "failed" and job.error is not None and said in job.error, job.error
+        assert library.stored_export(directory_of(workspace, made)) is None
+
+    def test_a_report_is_held_to_the_most_calls_that_the_check_is_asked_to_make_of_a_tool(self) -> None:
+        manifest = {"name": "p", "version": "1", "tools": [{"name": "a", "examples": [{}] * 5}]}
+        cases = [
+            {"case": number, "status": "match", "differences": [], "message": None, "seconds": 1} for number in range(5)
+        ]
+        report = {"name": "p", "version": "1", "tools": [{"name": "a", "cases": cases[: library.MAX_CASES]}]}
+
+        assert library.not_of_the_package(report, manifest) is None
+        report["tools"][0]["cases"] = cases
+        assert "recorded calls" in (library.not_of_the_package(report, manifest) or "")
+
+    def test_a_package_that_the_tutorials_were_given_data_for_is_not_of_what_it_is_made_of_without(
+        self, agents: PaperAgents, made: str, workspace: Workspace
+    ) -> None:
+        directory = directory_of(workspace, made)
+        pieces = agents.library_pieces(directory, agents.lookup(made)[1])
+        assert pieces is not None
+        intake, built, kept = pieces
+        tools_made = library.tools_now(directory, kept)
+
+        without = library.state_for(directory, intake, built, {**kept, "data": None}, tools_made, None)
+        given = library.state_for(directory, intake, built, {**kept, "data": {"x": 1}}, tools_made, None)
+
+        assert without != given
+
+    def test_the_check_is_asked_for_a_number_of_calls_of_each_tool_that_the_report_is_held_to(
+        self, agents: PaperAgents, made: str, packages: Packages
+    ) -> None:
+        export(agents, made)
+
+        argv = packages.runs[0]["argv"]
+
+        assert argv[argv.index("--cases") + 1] == str(library.MAX_CASES)
+
+    @pytest.mark.parametrize(
         ("ended", "code", "wrote", "said"),
         [
             ("timed_out", None, None, "stopped after 20 minutes"),
@@ -578,6 +658,20 @@ class TestTheLicense:
 
 
 class TestWhenWhatItWasMadeOfChanges:
+    def test_a_package_is_stale_when_the_lock_that_the_environment_was_built_to_is_not_the_same(
+        self, agents: PaperAgents, made: str, packages: Packages, workspace: Workspace
+    ) -> None:
+        export(agents, made)
+        directory = directory_of(workspace, made)
+        built = kept_environment.load(directory, COMMIT)
+        assert built is not None
+        lock = kept_environment.env_path(directory) / built["lock"]["name"]
+
+        lock.write_text(lock.read_text() + "\nextra==1.0\n")
+
+        assert entry_of(agents, made)["export"]["current"] is False
+        assert refused(agents.export_file, made).status == 409
+
     def test_a_package_is_stale_once_a_tools_tier_is_not_what_it_was(
         self, agents: PaperAgents, made: str, packages: Packages, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -649,23 +743,49 @@ class TestWhenWhatItWasMadeOfChanges:
         assert refused(agents.export_file, made).status == 404
         assert not library.exports_path(directory_of(workspace, made)).exists()
 
-    @pytest.mark.parametrize("change", ["commit", "image", "flag", "wrapper", "tier", "passed", "tool_gone"])
+    @pytest.mark.parametrize(
+        "change",
+        ["commit", "image", "flag", "wrapper", "tier", "passed", "tool_gone", "cases", "tolerance", "lock", "data"],
+    )
     def test_what_a_package_is_made_of_is_what_its_state_is_of(self, change: str) -> None:
+        evidence = {"cases": [{"args": {"x": 1}}], "tolerance": {"relative": 0.1, "absolute": 0.1}}
         tools = [
-            {"name": "a", "wrapper_sha256": "1", "now": {"tier": "A", "passed": []}},
-            {"name": "b", "wrapper_sha256": "2", "now": {"tier": "A", "passed": []}},
+            {"name": "a", "wrapper_sha256": "1", "now": {"tier": "A", "passed": []}, "evidence": evidence},
+            {"name": "b", "wrapper_sha256": "2", "now": {"tier": "A", "passed": []}, "evidence": evidence},
         ]
-        base = library.state_of("c" * 40, "sha256:i", tools, None)
-        assert library.state_of("c" * 40, "sha256:i", [dict(tool) for tool in reversed(tools)], None) == base
+        base = library.state_of("c" * 40, "sha256:i", tools, None, "lock", False)
+        assert (
+            library.state_of("c" * 40, "sha256:i", [dict(tool) for tool in reversed(tools)], None, "lock", False)
+            == base
+        )
 
+        c, i = "c" * 40, "sha256:i"
         changed = {
-            "commit": ("d" * 40, "sha256:i", tools, None),
-            "image": ("c" * 40, "sha256:j", tools, None),
-            "flag": ("c" * 40, "sha256:i", tools, "none"),
-            "wrapper": ("c" * 40, "sha256:i", [{**tools[0], "wrapper_sha256": "9"}, tools[1]], None),
-            "tier": ("c" * 40, "sha256:i", [{**tools[0], "now": {"tier": "B", "passed": []}}, tools[1]], None),
-            "passed": ("c" * 40, "sha256:i", [{**tools[0], "now": {"tier": "A", "passed": ["x"]}}, tools[1]], None),
-            "tool_gone": ("c" * 40, "sha256:i", tools[:1], None),
+            "commit": ("d" * 40, i, tools, None, "lock", False),
+            "image": (c, "sha256:j", tools, None, "lock", False),
+            "flag": (c, i, tools, "none", "lock", False),
+            "wrapper": (c, i, [{**tools[0], "wrapper_sha256": "9"}, tools[1]], None, "lock", False),
+            "tier": (c, i, [{**tools[0], "now": {"tier": "B", "passed": []}}, tools[1]], None, "lock", False),
+            "passed": (c, i, [{**tools[0], "now": {"tier": "A", "passed": ["x"]}}, tools[1]], None, "lock", False),
+            "tool_gone": (c, i, tools[:1], None, "lock", False),
+            "cases": (
+                c,
+                i,
+                [{**tools[0], "evidence": {**evidence, "cases": [{"args": {"x": 2}}]}}, tools[1]],
+                None,
+                "lock",
+                False,
+            ),
+            "tolerance": (
+                c,
+                i,
+                [{**tools[0], "evidence": {**evidence, "tolerance": {"relative": 0.2, "absolute": 0.1}}}, tools[1]],
+                None,
+                "lock",
+                False,
+            ),
+            "lock": (c, i, tools, None, "other", False),
+            "data": (c, i, tools, None, "lock", True),
         }[change]
 
         assert library.state_of(*changed) != base

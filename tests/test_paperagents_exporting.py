@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -700,6 +701,48 @@ class TestTheServer:
 
         assert answer["result"]["isError"] is True and "TimedOut" in text_of(answer)
 
+    def test_a_server_that_is_told_to_end_takes_the_call_that_it_is_running_with_it(
+        self, unpacked: Path, tmp_path: Path
+    ) -> None:
+        mark = tmp_path / "pid"
+        (unpacked / "repo" / "calc" / "mapping.py").write_text(
+            MAPPING
+            + "\n\ndef tally(counts, scale=1):\n    import os, time\n"
+            + f"    open({str(mark)!r}, 'w').write(str(os.getpid()))\n"
+            + "    time.sleep(120)\n"
+        )
+        found = Client(unpacked, LUMI_CALL_SECONDS="100")
+        assert found.process.stdin is not None
+        found.process.stdin.write(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "tally", "arguments": {"counts": [1]}},
+                }
+            )
+            + "\n"
+        )
+        found.process.stdin.flush()
+        deadline = time.monotonic() + 30
+        while not (mark.exists() and mark.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        pid = int(mark.read_text())
+
+        found.process.terminate()
+        found.process.wait(timeout=20)
+
+        gone = False
+        for _ in range(100):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                gone = True
+                break
+            time.sleep(0.05)
+        assert gone, "the call is still running"
+
     def test_a_value_that_is_not_plain_data_is_described_and_not_sent(self, unpacked: Path) -> None:
         (unpacked / "repo" / "calc" / "mapping.py").write_text(
             MAPPING + "\n\ndef tally(counts, scale=1):\n    return {1, 2, 3}\n"
@@ -726,6 +769,35 @@ def retarget(folder: Path) -> None:
     manifest = json.loads((folder / "package.json").read_text())
     manifest["repo"]["sha256"] = server_module(folder).tree_digest(str(folder / "repo"))
     (folder / "package.json").write_text(json.dumps(manifest))
+
+
+class TestEndingAServer:
+    def test_a_server_that_ends_when_asked_is_not_killed(self, unpacked: Path) -> None:
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+        server_module(unpacked).stop_server(process)
+
+        assert process.returncode == -15
+
+    def test_a_server_that_does_not_end_when_asked_is_killed_after_the_time_it_is_given(self, unpacked: Path) -> None:
+        module = server_module(unpacked)
+        module.STOP_SECONDS = 1
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "print('up', flush=True); time.sleep(60)",
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        assert process.stdout is not None and process.stdout.readline().strip() == "up"
+
+        module.stop_server(process)
+        process.wait(timeout=10)
+
+        assert process.returncode == -9
 
 
 class TestTheCheck:

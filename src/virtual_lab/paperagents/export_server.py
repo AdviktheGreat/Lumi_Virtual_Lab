@@ -44,6 +44,8 @@ PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 DEFAULT_CALL_SECONDS = 1800
 # How many of a tool's recorded calls a check makes, and how much of the time it is given each call may have
 MAX_CASES = 3
+# How long a server that is told to end is given to, with the call that it is running, before it is killed
+STOP_SECONDS = 5
 CHECK_SECONDS = 1200
 MAX_TEXT = 300
 LOG_TAIL = 2000
@@ -183,6 +185,16 @@ def kill(process):
         process.kill()
 
 
+def stop_server(process):
+    """Ends a server that is running as a process of this one, by asking it to, so that a call that it is running goes
+    with it. It is only killed if it does not end."""
+    process.terminate()
+    try:
+        process.wait(timeout=STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
 def read_result(work, name):
     path = os.path.join(work, RESULT_NAME, name)
     try:
@@ -201,6 +213,7 @@ class Server(object):
         self.manifest = manifest
         self.here = here
         self.tools = dict((tool["name"], tool) for tool in manifest["tools"])
+        self.running = None
         limit = os.environ.get("LUMI_CALL_SECONDS", "")
         self.seconds = int(limit) if limit.isdigit() and int(limit) > 0 else DEFAULT_CALL_SECONDS
 
@@ -253,6 +266,7 @@ class Server(object):
                     env=environment,
                     start_new_session=True,
                 )
+                self.running = process
                 try:
                     process.wait(timeout=self.seconds)
                 except subprocess.TimeoutExpired:
@@ -283,6 +297,7 @@ class Server(object):
                 "output": tail,
             }
         finally:
+            self.running = None
             shutil.rmtree(work, ignore_errors=True)
 
     def call(self, params):
@@ -360,9 +375,26 @@ def failure(number, code, message):
     return {"jsonrpc": "2.0", "id": number, "error": {"code": code, "message": message}}
 
 
+def end_with_the_call(server):
+    """Has the server take the call that it is running with it when it is told to end. Each call is in a session of its
+    own, so that a server that was killed would leave it running, writing, until its own time was up."""
+
+    def handler(number, frame):
+        if server.running is not None:
+            kill(server.running)
+        os._exit(1)
+
+    try:
+        signal.signal(signal.SIGTERM, handler)
+    except (ValueError, OSError, AttributeError):
+        pass
+
+
 def serve(manifest, source=None, sink=None):
     """Answers what is sent on standard input, a line at a time, until it ends."""
     server = Server(manifest)
+    if source is None:
+        end_with_the_call(server)
     source = source if source is not None else io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8")
     sink = sink if sink is not None else sys.stdout
 
@@ -588,7 +620,7 @@ def run_check(manifest, cases, seconds, work, here=HERE):
         encoding="utf-8",
     )
     # Ends the server if it does not answer, which a client that waited for it would wait for always
-    watchdog = threading.Timer(seconds, process.kill)
+    watchdog = threading.Timer(seconds, stop_server, [process])
     watchdog.daemon = True
     watchdog.start()
     try:
@@ -610,7 +642,7 @@ def run_check(manifest, cases, seconds, work, here=HERE):
     finally:
         watchdog.cancel()
         if process.poll() is None:
-            process.kill()
+            stop_server(process)
         process.wait()
     calls = [call for tool in report["tools"] for call in tool["cases"]]
     report["ok"] = (

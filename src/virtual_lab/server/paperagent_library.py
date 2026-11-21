@@ -55,6 +55,8 @@ CHECK_MINUTES = 20
 MAX_REPORT_BYTES = 1 << 20
 MAX_REPORT_TEXT = 300
 GIGABYTES = 2
+# How many of each tool's recorded calls the package's check is asked to make
+MAX_CASES = 3
 
 NUMBER = (int, float)
 CASE = {"case": int, "status": str, "differences": [str], "message": (str, None), "seconds": NUMBER}
@@ -123,19 +125,52 @@ def tools_now(directory: Path, kept: dict[str, Any]) -> list[dict[str, Any]]:
     return found
 
 
-def state_of(commit: str, image_id: str, tools: Sequence[dict[str, Any]], flag: str | None) -> str:
-    """What a package is made of, as a hash: so that one is stale when the commit, the image, a wrapper, a tier, or what
-    is said of the license is not what it was made of."""
+def state_of(
+    commit: str,
+    image_id: str,
+    tools: Sequence[dict[str, Any]],
+    flag: str | None,
+    lock: str = "",
+    data: bool = False,
+) -> str:
+    """What a package is made of, as a hash: so that one is stale when the commit, the image, the lock, a wrapper, the
+    calls that it is held to, a tier, whether the tutorials were given data, or what is said of the license is not what
+    it was made of."""
     parts = [
         commit,
         image_id,
         flag,
+        lock,
+        data,
         sorted(
-            [tool["name"], tool["wrapper_sha256"], tool["now"]["tier"], sorted(tool["now"]["passed"])] for tool in tools
+            [
+                tool["name"],
+                tool["wrapper_sha256"],
+                tool["now"]["tier"],
+                sorted(tool["now"]["passed"]),
+                hashlib.sha256(
+                    json.dumps([tool["evidence"]["cases"], tool["evidence"]["tolerance"]], sort_keys=True).encode()
+                ).hexdigest(),
+            ]
+            for tool in tools
         ),
     ]
 
     return hashlib.sha256(json.dumps(parts).encode("utf-8")).hexdigest()
+
+
+def state_for(
+    directory: Path,
+    intake: dict[str, Any],
+    built: dict[str, Any],
+    kept: dict[str, Any],
+    tools: Sequence[dict[str, Any]],
+    flag: str | None,
+) -> str:
+    """What a package of an agent's tools would be made of now, as state_of hashes it."""
+    return state_of(
+        intake["commit"], built["image"]["id"], tools, flag, lock_sha256(directory, built), bool(kept["data"])
+    )
 
 
 def stored_export(directory: Path) -> dict[str, Any] | None:
@@ -204,7 +239,7 @@ def entry_of(
     """
     tools = tools_now(directory, kept)
     found = exporting.license_of(intake["stock"].get("license"))
-    state = state_of(intake["commit"], built["image"]["id"], tools, found["flag"])
+    state = state_for(directory, intake, built, kept, tools, found["flag"])
     tiers = [tool["now"]["tier"] for tool in tools]
 
     return {
@@ -272,6 +307,8 @@ class PackageRunner(referencing.Runner):
             f"{SANDBOX_WORK_DIR}/{REPORT_FILE}",
             "--work",
             f"{SANDBOX_WORK_DIR}/{CALLS_FOLDER}",
+            "--cases",
+            str(MAX_CASES),
             "--seconds",
             str(self.seconds),
         ]
@@ -314,8 +351,33 @@ def read_report(path: Path) -> dict[str, Any] | None:
     return value if matches(REPORT, value) and value["schema"] == 1 else None
 
 
-def why_not(report: dict[str, Any] | None, ended: str, code: int | None, lines: Sequence[str]) -> str | None:
-    """Why a package did not pass its check, in a sentence, or None if it did."""
+def not_of_the_package(report: dict[str, Any], manifest: dict[str, Any]) -> str | None:
+    """Why a report is not of the package that was checked, if it is not: it is of another package, or it does not
+    report on the tools that the package holds, each with the recorded calls it holds. The report is written by a
+    process that ran the paper's code, so that what it says of what it checked is held to what the package holds."""
+    if report["name"] != manifest["name"] or report["version"] != manifest["version"]:
+        return "Its check reported on another package than the one that was made."
+    asked = {tool["name"]: min(len(tool["examples"]), MAX_CASES) for tool in manifest["tools"]}
+    said = {tool["name"]: [case["case"] for case in tool["cases"]] for tool in report["tools"]}
+    if len(report["tools"]) != len(said) or said.keys() != asked.keys():
+        return "Its check did not report on the tools that the package holds."
+    if any(cases != list(range(asked[name])) for name, cases in said.items()):
+        return "Its check did not make the recorded calls of each tool that the package holds."
+
+    return None
+
+
+def why_not(
+    report: dict[str, Any] | None,
+    ended: str,
+    code: int | None,
+    lines: Sequence[str],
+    manifest: dict[str, Any] | None = None,
+) -> str | None:
+    """Why a package did not pass its check, in a sentence, or None if it did.
+
+    :param manifest: What the package holds, which the report is held to if it is given.
+    """
     if ended == "timed_out":
         return f"Its check was stopped after {CHECK_MINUTES} minutes, which is what it was given."
     if ended == "too_big":
@@ -329,6 +391,8 @@ def why_not(report: dict[str, Any] | None, ended: str, code: int | None, lines: 
             if case["status"] != "match":
                 said = "; ".join(case["differences"]) or case["message"] or case["status"]
                 reasons.append(f"{tool['name']}, call {case['case'] + 1}: {said}"[:MAX_REPORT_TEXT])
+    if not reasons and manifest is not None and (other := not_of_the_package(report, manifest)) is not None:
+        reasons.append(other)
     if not report["ok"] and not reasons:
         reasons.append("Its check did not say that it passed, and did not say why.")
 
@@ -370,7 +434,7 @@ def make_package(
     if not tools or len(tools) != len(kept["tools"]):
         raise ExportError("A tool is not as it was made, so a package cannot be made of them. Make the tools again.")
     found = exporting.license_of(intake["stock"].get("license"))
-    state = state_of(intake["commit"], built["image"]["id"], tools, found["flag"])
+    state = state_for(directory, intake, built, kept, tools, found["flag"])
     source = exporting.Source(
         agent_id=agent_id,
         title=agent["title"],
@@ -414,7 +478,7 @@ def make_package(
         )
         began = utc_timestamp()
         report, ended, code, lines = runner.check()
-        reason = why_not(report, ended, code, lines)
+        reason = why_not(report, ended, code, lines, manifest)
         if reason is not None or report is None:
             raise ExportError(f"The package was not kept, as it did not pass its check in a clean container. {reason}")
         calls = sum(len(tool["cases"]) for tool in report["tools"])
