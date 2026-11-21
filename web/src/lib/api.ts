@@ -63,7 +63,9 @@ import type {
   PaperAgentVariants,
   PaperAgentGiven,
   PaperAgentImportCheck,
+  PaperAgentMakeOptions,
   PaperAgentMatchingOptions,
+  PaperAgentOneGo,
   PaperAgentReimplementation,
   PaperAgentReimplementationOptions,
   ReimplementationChoice,
@@ -547,6 +549,12 @@ export const api = {
   paperAgentGiven: (id: string, signal?: AbortSignal) =>
     request<PaperAgentGiven>("GET", `/paperagents/${encodeURIComponent(id)}/given`, undefined, signal),
   givePaperAgent: (id: string, given: boolean) => request<PaperAgent>("PATCH", `/paperagents/${encodeURIComponent(id)}`, { given }),
+  // Making an agent in one go: how it stands, starting it or going on with it, and forgetting how it went
+  paperAgentOneGo: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentOneGo>("GET", `/paperagents/${encodeURIComponent(id)}/make`, undefined, signal),
+  makePaperAgentInOneGo: (id: string, options: PaperAgentMakeOptions) =>
+    request<PaperAgentOneGo>("POST", `/paperagents/${encodeURIComponent(id)}/make`, options),
+  forgetPaperAgentOneGo: (id: string) => request<PaperAgentOneGo>("DELETE", `/paperagents/${encodeURIComponent(id)}/make`),
   // Deletes an agent with the paper uploaded to it, and gives back the agents that are left
   deletePaperAgent: (id: string) => request<PaperAgentsList>("DELETE", `/paperagents/${encodeURIComponent(id)}`),
   // The bake-offs, making one, looking at one, saying again what it is for, and taking one away

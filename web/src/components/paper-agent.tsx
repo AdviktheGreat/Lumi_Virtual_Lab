@@ -15,6 +15,7 @@ import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
 import { ImportedSection } from "@/components/paper-agent-imported";
+import { OneGoSection } from "@/components/paper-agent-onego";
 import { CardSection } from "@/components/paper-agent-card";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { ReferenceSection } from "@/components/paper-agent-reference";
@@ -65,6 +66,7 @@ import {
   lastVariantJob,
   matchingJob,
   MAX_AGENT_TITLE,
+  onegoJob,
   paperFile,
   paperLink,
   readingJob,
@@ -92,6 +94,7 @@ import type {
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentGiven,
+  PaperAgentOneGo,
   PaperAgentReading,
   PaperAgentReference,
   PaperAgentReimplementation,
@@ -109,6 +112,7 @@ import {
   usePaperAgentData,
   usePaperAgentEnvironment,
   usePaperAgentGiven,
+  usePaperAgentOneGo,
   usePaperAgentReading,
   usePaperAgentReference,
   usePaperAgentReimplementation,
@@ -477,6 +481,7 @@ function Agent({
   claims,
   reimplementation,
   given,
+  onego,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
@@ -491,6 +496,7 @@ function Agent({
   claims: LookedAt<PaperAgentClaims>;
   reimplementation: LookedAt<PaperAgentReimplementation>;
   given: LookedAt<PaperAgentGiven>;
+  onego: LookedAt<PaperAgentOneGo>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -575,7 +581,12 @@ function Agent({
   // How the last checking ended is said if it did not end well, and while what it found is kept
   const lastMatchingShown =
     lastMatching !== undefined && (lastMatching.state !== "succeeded" || written?.checks.kept != null) ? lastMatching : undefined;
-  const idle =
+  // Making it in one go, which does the steps one after another, and nothing else is done to the agent in the meantime. The agent
+  // says that it is being made before the jobs have been looked at
+  const going = onegoJob(all, agent.id);
+  const makingInOneGo = going !== undefined || agent.onego != null;
+  // Whether anything but making it in one go is being done to the agent, which starting that waits for
+  const othersIdle =
     !working &&
     !fetchingCode &&
     !makingEnvironment &&
@@ -587,6 +598,7 @@ function Agent({
     makingVariant === undefined &&
     writingFunction === undefined &&
     checkingFunction === undefined;
+  const idle = othersIdle && !makingInOneGo;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
   const changed = (next: PaperAgent) => {
@@ -600,6 +612,7 @@ function Agent({
     reimplementation.reload();
     checks.reload();
     given.reload();
+    onego.reload();
   };
   const shared = { agent, list, working: !idle, onChanged: changed };
   const own = agent.paper.kind === "file";
@@ -608,6 +621,30 @@ function Agent({
     <>
       <AgentHeader agent={agent} working={!idle} />
       <WorkStatus job={job} last={lastReadingJob(all, agent.id)} jobs={jobs} />
+      {agent.imported === null && (
+        <PageSection
+          title="In one go"
+          intro="Every step that needs nothing from you, done one after another, from reading the paper to giving the agent to your conversations. Each is the step of its own section below, which shows what it made. A step that was done is not done again."
+        >
+          <Looked state={onego.value} label="Looking at making it in one go" failure="Making it in one go could not be looked at." onRetry={onego.reload}>
+            {(value) => (
+              <OneGoSection
+                agent={agent}
+                onego={value}
+                busy={!othersIdle}
+                job={going}
+                jobs={jobs}
+                list={list}
+                onChanged={(next) => {
+                  onego.set(next);
+                  // Going on without the code, or with an address, is kept with the agent
+                  onReload();
+                }}
+              />
+            )}
+          </Looked>
+        </PageSection>
+      )}
       <PageSection
         title={own ? "Paper" : "Paper file"}
         intro={
@@ -641,29 +678,31 @@ function Agent({
               reading={value}
               working={working}
               blocked={
-                fetchingCode
-                  ? "The code is being fetched. Reading waits for that."
-                  : makingEnvironment
-                    ? "The environment is being built. Reading waits for that."
-                    : fetchingData
-                      ? "The data is being fetched. Reading waits for that."
-                      : running !== undefined
-                        ? "The tutorials are being run. Reading waits for that."
-                        : makingTools !== undefined
-                          ? "The tools are being made. Reading waits for that."
-                          : checkingTools !== undefined
-                            ? "The tools are being checked. Reading waits for that."
-                            : tryingClaims !== undefined
-                              ? "The claims are being tried. Reading waits for that."
-                              : makingVariant !== undefined
-                                ? "A variant of a claim is being made. Reading waits for that."
-                                : writingFunction !== undefined
-                                  ? "A function is being written from the paper. Reading waits for that."
-                                  : checkingFunction !== undefined
-                                    ? "The function written from the paper is being checked. Reading waits for that."
-                                    : runningTutorials
-                                      ? "The tutorials are being run or the tools made. Reading waits for that."
-                                      : null
+                makingInOneGo
+                  ? "The agent is being made in one go. Reading waits for that."
+                  : fetchingCode
+                    ? "The code is being fetched. Reading waits for that."
+                    : makingEnvironment
+                      ? "The environment is being built. Reading waits for that."
+                      : fetchingData
+                        ? "The data is being fetched. Reading waits for that."
+                        : running !== undefined
+                          ? "The tutorials are being run. Reading waits for that."
+                          : makingTools !== undefined
+                            ? "The tools are being made. Reading waits for that."
+                            : checkingTools !== undefined
+                              ? "The tools are being checked. Reading waits for that."
+                              : tryingClaims !== undefined
+                                ? "The claims are being tried. Reading waits for that."
+                                : makingVariant !== undefined
+                                  ? "A variant of a claim is being made. Reading waits for that."
+                                  : writingFunction !== undefined
+                                    ? "A function is being written from the paper. Reading waits for that."
+                                    : checkingFunction !== undefined
+                                      ? "The function written from the paper is being checked. Reading waits for that."
+                                      : runningTutorials
+                                        ? "The tutorials are being run or the tools made. Reading waits for that."
+                                        : null
               }
               jobs={jobs}
               onCleared={(cleared) => {
@@ -1089,6 +1128,7 @@ export function AgentPage({ id }: { id: string }) {
   const claims = usePaperAgentClaims(id, report, again);
   const reimplementation = usePaperAgentReimplementation(id, report, again);
   const given = usePaperAgentGiven(id, report, again);
+  const onego = usePaperAgentOneGo(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -1123,6 +1163,7 @@ export function AgentPage({ id }: { id: string }) {
                 claims={claims}
                 reimplementation={reimplementation}
                 given={given}
+                onego={onego}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />

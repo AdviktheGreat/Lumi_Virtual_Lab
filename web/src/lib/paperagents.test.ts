@@ -56,6 +56,7 @@ import {
   lastMatchingJob,
   lastReimplementationJob,
   matchingJob,
+  onegoJob,
   reimplementationJob,
   reproductionJob,
   toolsJob,
@@ -930,5 +931,24 @@ describe("the jobs that write a function from the paper of an agent, and check i
     expect(readingKey([matching()], 0, "cells")).toBe("0||matching:m1");
     expect(readingKey([writing({ subject: "dogs" }), matching({ state: "succeeded" })], 0, "cells")).toBe("0|");
     expect(readingKey([matching({ subject: "dogs" })], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the job that makes an agent in one go", () => {
+  const going = (changes: Partial<Job> = {}) => job({ id: "g1", kind: "paperagent-onego", progress: { steps: 8, finished: 2 }, ...changes });
+
+  it("is the one at work on that agent, and not another agent's, another kind, or one that is over", () => {
+    const jobs = [going({ id: "other", subject: "dogs" }), job({ id: "r1", kind: "paperagent-reading" }), going({ id: "old", state: "stopped" }), going()];
+
+    expect(onegoJob(jobs, "cells")?.id).toBe("g1");
+    expect(onegoJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+  });
+
+  it("changes the key that the page looks again by as it goes from step to step, and not for another agent's or one that is over", () => {
+    expect(readingKey([going()], 0, "cells")).toBe("0|onego:g1:2|");
+    expect(readingKey([going()], 0, "cells")).not.toBe(readingKey([going({ progress: { steps: 8, finished: 3 } })], 0, "cells"));
+    expect(readingKey([going({ progress: {} })], 0, "cells")).toBe("0|onego:g1:|");
+    expect(readingKey([going({ subject: "dogs" }), going({ id: "g0", state: "succeeded" })], 0, "cells")).toBe("0|");
+    expect(readingKey([going(), job({ id: "r1", kind: "paperagent-reading", progress: { chunks: 3, finished: 1 } })], 0, "cells")).toBe("0|onego:g1:2|r1:1");
   });
 });
