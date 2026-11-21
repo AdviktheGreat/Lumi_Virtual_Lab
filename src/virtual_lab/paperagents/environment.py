@@ -1313,6 +1313,21 @@ def image_id_of(tag: str, docker_command: Sequence[str] = ("docker",)) -> str | 
     return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
 
 
+def image_is(tag: str, image_id: str, docker_command: Sequence[str] = ("docker",)) -> bool | None:
+    """Whether the image with this name is the one that was made: False if there is none, or it is another, and None if
+    Docker did not say, which is not the same as there being none."""
+    try:
+        result = docker_run(docker_command, "image", "inspect", "--format", "{{.Id}}", tag, timeout=60)
+    except DockerUnavailableError:
+        return None
+    if result.returncode == 0:
+        return result.stdout.strip() == image_id
+    if "no such" in result.stderr.lower():
+        return False
+
+    return None
+
+
 def remove_image(tag: str, docker_command: Sequence[str] = ("docker",)) -> bool:
     """Takes an image away, which is done by its name, so that what the name was moved to is not. Whether it is gone: an
     image that is not there is gone, and one that Docker would not remove, or that it cannot be asked about, is not."""

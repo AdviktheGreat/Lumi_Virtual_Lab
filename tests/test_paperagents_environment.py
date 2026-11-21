@@ -15,7 +15,7 @@ import pytest
 from test_paperagents_stock import tree
 
 from virtual_lab.environment import StoppedError
-from virtual_lab.execution import DockerExecutor
+from virtual_lab.execution import DockerExecutor, DockerUnavailableError
 from virtual_lab.paperagents import environment as env
 from virtual_lab.paperagents.environment import EnvironmentBuildError, EnvironmentUnsupportedError
 
@@ -650,6 +650,47 @@ class TestNeeding:
         watched.deadline = time.monotonic() + 5
         watched.need("copy the code in", "cp")
         assert given[1] == 30
+
+
+class TestWhetherTheImageIsTheOneThatWasMade:
+    @staticmethod
+    def asked(
+        monkeypatch: pytest.MonkeyPatch, code: int = 0, out: str = "", error: str = "", raises: Exception | None = None
+    ) -> None:
+        def run(command: Any, *arguments: str, timeout: float = 0) -> Any:
+            if raises is not None:
+                raise raises
+            return subprocess.CompletedProcess([], code, out, error)
+
+        monkeypatch.setattr(env, "docker_run", run)
+
+    def test_the_image_that_has_the_id_is_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.asked(monkeypatch, out="sha256:aa\n")
+
+        assert env.image_is("lumi:x", "sha256:aa") is True
+
+    def test_an_image_with_another_id_is_not_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.asked(monkeypatch, out="sha256:bb\n")
+
+        assert env.image_is("lumi:x", "sha256:aa") is False
+
+    @pytest.mark.parametrize("error", ["Error: No such image: lumi:x", "Error response from daemon: no such object"])
+    def test_an_image_that_docker_says_is_not_there_is_not_it(
+        self, monkeypatch: pytest.MonkeyPatch, error: str
+    ) -> None:
+        self.asked(monkeypatch, code=1, error=error)
+
+        assert env.image_is("lumi:x", "sha256:aa") is False
+
+    def test_an_answer_that_is_not_that_it_is_not_there_is_not_known(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.asked(monkeypatch, code=1, error="Cannot connect to the Docker daemon")
+
+        assert env.image_is("lumi:x", "sha256:aa") is None
+
+    def test_docker_that_is_not_there_to_ask_is_not_known(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.asked(monkeypatch, raises=DockerUnavailableError("no docker"))
+
+        assert env.image_is("lumi:x", "sha256:aa") is None
 
 
 PYTHON = ["python3", "-u", "-c"]

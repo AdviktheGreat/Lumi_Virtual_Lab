@@ -73,6 +73,7 @@ imported_agents.py.
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -81,6 +82,7 @@ import tempfile
 import threading
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -112,6 +114,7 @@ from virtual_lab.paperagents import (
     reproducing,
     toolmaking,
     varying,
+    watching,
 )
 from virtual_lab.paperagents import card as method_card
 from virtual_lab.paperagents import checking as verifying
@@ -134,6 +137,7 @@ from virtual_lab.server import paperagent_data as kept_data
 from virtual_lab.server import paperagent_divergence as kept_divergence
 from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_library as kept_library
+from virtual_lab.server import paperagent_living as kept_living
 from virtual_lab.server import paperagent_matching as kept_matching
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_reference as kept_reference
@@ -162,6 +166,8 @@ from virtual_lab.server.workspace import Workspace, claim_directory, has_control
 from virtual_lab.utils import MeetingUsage, compute_token_cost, write_atomically
 from virtual_lab.webpages import is_public_address
 
+LOG = logging.getLogger("uvicorn.error")
+
 # What an agent is, and where the paper uploaded to it is kept
 AGENT_FILE = "agent.json"
 PAPER_DIR = "paper"
@@ -189,6 +195,8 @@ CHECKS_JOB = "paperagent-checks"
 # The job that makes a package of the tools and checks it in a clean container, which is not done to an agent while
 # another job is
 EXPORT_JOB = "paperagent-export"
+# The job that looks at an agent: where its code is now, the versions it pins, and its tools' recorded calls run again
+HEALTH_JOB = "paperagent-health"
 # The job that tries the paper's claims against what the tutorials gave, which is not done to an agent while another job
 # is
 REPRODUCTION_JOB = "paperagent-reproduction"
@@ -600,6 +608,9 @@ class PaperAgents:
     ) -> None:
         self.docker_command = tuple(docker_command)
         self.connect = connect
+        # What asks where the code is now, and what asks of the versions that a lock pins, which tests replace
+        self.probe_source = watching.probe_source
+        self.pin_index = watching.Index()
         self.workspace = workspace
         self.max_upload_bytes = min(max_upload_bytes, MAX_PAPER_FILE_BYTES)
         self.jobs = jobs if jobs is not None else Jobs()
@@ -738,6 +749,10 @@ class PaperAgents:
         """The job that is making a package of an agent's tools, if one is."""
         return next((job for job in self.jobs.active(EXPORT_JOB) if job.subject == agent_id), None)
 
+    def health_job(self, agent_id: str) -> Job | None:
+        """The job that is looking at an agent, if one is."""
+        return next((job for job in self.jobs.active(HEALTH_JOB) if job.subject == agent_id), None)
+
     def reproduction_job(self, agent_id: str) -> Job | None:
         """The job that is trying an agent's claims, if one is."""
         return next((job for job in self.jobs.active(REPRODUCTION_JOB) if job.subject == agent_id), None)
@@ -758,9 +773,9 @@ class PaperAgents:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
-            fetched, its tutorials run, its tools made, its tools checked, a package made of them, its claims tried, a
-            variant of one made, or a function written from its paper or checked against it, which what is done to them
-            must wait for.
+            fetched, its tutorials run, its tools made, its tools checked, a package made of them, it looked at, its
+            claims tried, a variant of one made, or a function written from its paper or checked against it, which what
+            is done to them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -771,6 +786,7 @@ class PaperAgents:
             or self.tools_job(agent_id)
             or self.checks_job(agent_id)
             or self.export_job(agent_id)
+            or self.health_job(agent_id)
             or self.reproduction_job(agent_id)
             or self.variant_job(agent_id)
             or self.reimplementation_job(agent_id)
@@ -1629,13 +1645,19 @@ class PaperAgents:
                     409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
                 ) from error
 
-    def cloner(self, agent_id: str, url: str, ref: str, max_bytes: int) -> Callable[[Job], str | None]:
-        """What a job does to fetch the code: fetches it, takes stock of it, and keeps both."""
+    def cloner(
+        self, agent_id: str, url: str, ref: str, max_bytes: int, as_ref: str | None = None
+    ) -> Callable[[Job], str | None]:
+        """What a job does to fetch the code: fetches it, takes stock of it, and keeps both.
+
+        :param as_ref: What to keep as the ref that the code is of, if it is not what was asked for: a commit that was
+            fetched as the newer version of a branch is still of that branch.
+        """
 
         def work(job: Job) -> str | None:
             failed = False
             try:
-                return self.take_repository(job, agent_id, url, ref, max_bytes)
+                return self.take_repository(job, agent_id, url, ref, max_bytes, as_ref)
             except StoppedError:
                 raise
             except BaseException:
@@ -1646,7 +1668,9 @@ class PaperAgents:
 
         return work
 
-    def take_repository(self, job: Job, agent_id: str, url: str, ref: str, max_bytes: int) -> str:
+    def take_repository(
+        self, job: Job, agent_id: str, url: str, ref: str, max_bytes: int, as_ref: str | None = None
+    ) -> str:
         job.update("Fetching the code")
         with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
             fetched = Path(scratch) / kept_repository.REPO_DIR
@@ -1656,9 +1680,10 @@ class PaperAgents:
             stock = stocking.take_stock(fetched)
             if job.stop.is_set():
                 raise StoppedError("Stopped before the code was kept.")
+            kept_ref = as_ref or cloned.ref
             intake = {
                 "url": url,
-                "ref": cloned.ref,
+                "ref": kept_ref,
                 "commit": cloned.commit,
                 "cloned_at": utc_timestamp(),
                 "limit_bytes": max_bytes,
@@ -1670,11 +1695,12 @@ class PaperAgents:
                     raise ValueError("The address of the code was changed while it was fetched. Fetch it again.")
                 self.forget_environment(directory)
                 kept_repository.keep(directory, fetched, intake)
+                kept_living.drop(directory, kept_living.UPDATE_FILE)
                 self.save(
                     directory,
                     {
                         **agent,
-                        "repo": {"url": url, "ref": cloned.ref, "commit": cloned.commit},
+                        "repo": {"url": url, "ref": kept_ref, "commit": cloned.commit},
                         "steps": {
                             **steps_of(agent),
                             "repository": "done",
@@ -1735,6 +1761,7 @@ class PaperAgents:
         """
         self.forget_environment(directory)
         kept_repository.forget(directory)
+        kept_living.drop(directory, kept_living.UPDATE_FILE)
 
     def forget_environment(self, directory: Path) -> None:
         """Takes away an agent's environment: its image in Docker, and the account of it. The image is named from the
@@ -1762,7 +1789,8 @@ class PaperAgents:
             )
         kept_environment.forget(directory)
         # What was run in the image is of no use without it, nor are the tools made from that, nor the claims that were
-        # held to what was run
+        # held to what was run, nor how the tools were found when they were run again in it
+        kept_living.drop(directory, kept_living.HEALTH_FILE)
         kept_tools.forget(directory)
         kept_reproduction.forget(directory)
         kept_variants.forget(directory)
@@ -2541,7 +2569,8 @@ class PaperAgents:
                 continue
             pieces = self.library_pieces(directory, agent)
             if pieces is not None:
-                entries.append(kept_library.entry_of(directory, directory.name, agent, *pieces))
+                entry = kept_library.entry_of(directory, directory.name, agent, *pieces)
+                entries.append({**entry, "health": self.health_summary(directory, pieces)})
         usable, problem = building.ready(self.docker_command)
 
         return {
@@ -2675,6 +2704,277 @@ class PaperAgents:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
             kept_library.forget(directory)
+
+    # Watching an agent, so that it is told how it is and what a newer version of its code would change
+
+    def health_summary(
+        self, directory: Path, pieces: tuple[dict[str, Any], dict[str, Any], dict[str, Any]]
+    ) -> dict[str, Any]:
+        """How an agent was when it was last looked at, in a few words, and whether a newer version of its code is
+        proposed. It is unchecked if it was not looked at, or was looked at in another environment or of other code."""
+        intake, built, kept = pieces
+        found = kept_living.health_view(kept_living.load_health(directory), intake, built, kept)
+        proposed = kept_living.update_view(kept_living.load_update(directory), intake)
+        watch = kept_living.load_watch(directory)
+
+        return {
+            "status": found["status"] if found is not None else watching.UNCHECKED,
+            "checked_at": found["checked_at"] if found is not None else None,
+            "update": proposed is not None,
+            "watched_every_hours": watch["every_hours"] if watch is not None else None,
+        }
+
+    def health(self, agent_id: str) -> dict[str, Any]:
+        """How an agent is, as it was found when it was last looked at: its source, its pinned versions, and its tools
+        run again, with the schedule that it is looked at on, and whether a newer version of its code is proposed.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        pieces = self.library_pieces(directory, agent)
+        intake, built, kept = pieces if pieces is not None else (None, None, None)
+        proposed = kept_living.update_view(kept_living.load_update(directory), intake)
+        usable, problem = building.ready(self.docker_command)
+        job = self.health_job(agent_id)
+
+        return {
+            "id": agent_id,
+            "watchable": pieces is not None,
+            "version": (
+                {"commit": intake["commit"], "ref": intake["ref"], "url": intake["url"]} if intake is not None else None
+            ),
+            "health": kept_living.health_view(kept_living.load_health(directory), intake, built, kept),
+            "watch": kept_living.load_watch(directory),
+            "update": (
+                {
+                    key: proposed[key]
+                    for key in ("proposed_at", "from_commit", "to_commit", "affects", "environment_files")
+                }
+                | {"changed": proposed["diff"]["changed"]}
+                if proposed is not None
+                else None
+            ),
+            "job": job.snapshot() if job is not None else None,
+            "docker": {"ready": usable, "message": problem},
+            "meaning": watching.MEANING,
+            "limits": {"min_hours": kept_living.MIN_HOURS, "max_hours": kept_living.MAX_HOURS},
+        }
+
+    def start_health(self, agent_id: str) -> Job:
+        """Starts looking at an agent: asking where its code is now, what a newer version would change, whether the
+        versions that its lock pins can still be had, and running its tools' recorded calls again in its environment.
+        Nothing that is kept is changed by it.
+
+        :raises ApiError: If there is no agent with this id, it has no tools, or it is being worked on.
+        """
+        self.lookup(agent_id)
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            pieces = self.library_pieces(directory, agent)
+            if pieces is None:
+                raise ApiError(422, "no_tools", "Make the tools first, as an agent is looked at by running them again")
+            folder, _ = data_to_give(directory) if pieces[2]["data"] else (None, None)
+            try:
+                job = self.jobs.start(
+                    HEALTH_JOB,
+                    agent_id,
+                    f"Looking at the agent: {agent['title']}",
+                    self.looker(agent_id, agent, *pieces, folder),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+            watch = kept_living.load_watch(directory)
+            if watch is not None:
+                kept_living.keep(directory, kept_living.WATCH_FILE, {**watch, "last_started_at": utc_timestamp()})
+
+            return job
+
+    def looker(
+        self,
+        agent_id: str,
+        agent: dict[str, Any],
+        intake: dict[str, Any],
+        built: dict[str, Any],
+        kept: dict[str, Any],
+        folder: Path | None,
+    ) -> Callable[[Job], str | None]:
+        """What a job does to look at an agent."""
+
+        def fetch(*arguments: Any, **options: Any) -> Any:
+            return cloning.clone(*arguments, **options)
+
+        def work(job: Job) -> str | None:
+            usable, problem = building.ready(self.docker_command)
+            present = None
+            if usable:
+                tag = building.tag_of(agent_id, intake["commit"])
+                present = building.image_is(tag, built["image"]["id"], self.docker_command)
+
+            return kept_living.check_health(
+                job,
+                self.workspace.paperagents_dir / agent_id,
+                self.workspace.root,
+                agent_id,
+                agent,
+                intake,
+                built,
+                kept,
+                folder,
+                self.docker_command,
+                self.probe_source,
+                self.pin_index,
+                fetch,
+                present,
+                None if usable else problem or "Docker is not running",
+            )
+
+        return work
+
+    def set_watch(self, agent_id: str, every_hours: Any) -> dict[str, Any]:
+        """Has an agent looked at again and again, every so many hours, while the server is running. It is looked at the
+        next time the server checks the schedules.
+
+        :param every_hours: How often, in hours.
+        :raises ApiError: If there is no agent with this id, the hours are not a whole number in range, or it has no
+            tools.
+        """
+        self.lookup(agent_id)
+        hours = check_count(
+            every_hours, "How often an agent is looked at, in hours,", kept_living.MIN_HOURS, kept_living.MAX_HOURS
+        )
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            if self.library_pieces(directory, agent) is None:
+                raise ApiError(422, "no_tools", "Make the tools first, as an agent is looked at by running them again")
+            earlier = kept_living.load_watch(directory)
+            kept_living.keep(
+                directory,
+                kept_living.WATCH_FILE,
+                {
+                    "every_hours": hours,
+                    "set_at": utc_timestamp(),
+                    "last_started_at": earlier["last_started_at"] if earlier is not None else None,
+                },
+            )
+
+        return self.health(agent_id)
+
+    def clear_watch(self, agent_id: str) -> dict[str, Any]:
+        """Stops looking at an agent on a schedule. What was found stays, and it can still be looked at when asked.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            kept_living.drop(directory, kept_living.WATCH_FILE)
+
+        return self.health(agent_id)
+
+    def start_due_checks(self, now: datetime | None = None) -> list[str]:
+        """Looks at each agent whose schedule says it is time, and that is not being worked on.
+
+        :return: The agents that were started.
+        """
+        moment = now if now is not None else datetime.now(timezone.utc)
+        started = []
+        for directory, _ in self.kept():
+            if directory.name in self._deleting or not kept_living.is_due(kept_living.load_watch(directory), moment):
+                continue
+            try:
+                self.start_health(directory.name)
+            except ApiError:
+                continue
+            started.append(directory.name)
+
+        return started
+
+    def watch_schedules(self, stopping: threading.Event, seconds: float) -> None:
+        """Looks at the agents whose schedule says it is time, every so many seconds, until told to stop. A look that
+        fails does not end it."""
+        while not stopping.wait(seconds):
+            try:
+                self.start_due_checks()
+            except Exception:
+                LOG.exception("Looking at the agents that are watched failed")
+
+    def update(self, agent_id: str) -> dict[str, Any]:
+        """The newer version of an agent's code that is proposed, as a diff against the version that is kept, if there
+        is one, and which of the tools are of a file that changed.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        pieces = self.library_pieces(directory, agent)
+        intake = pieces[0] if pieces is not None else None
+
+        return {
+            "id": agent_id,
+            "update": kept_living.update_view(kept_living.load_update(directory), intake),
+            "version": (
+                {"commit": intake["commit"], "ref": intake["ref"], "url": intake["url"]} if intake is not None else None
+            ),
+            "pinned": "The commit, the environment, and the tools stay as they are until a newer version is approved.",
+        }
+
+    def apply_update(self, agent_id: str, commit: Any) -> Job:
+        """Takes the newer version of an agent's code that was proposed, when the person has seen what it changes and
+        says so. The code is fetched at that commit, which replaces the version that is kept; the environment and the
+        tools were made of the commit that is replaced, so they are taken away, and are made again by the steps that
+        made them.
+
+        :param commit: The commit that was proposed, in full, which is what was approved.
+        :raises ApiError: If there is no agent with this id, no newer version is proposed, it is not the one that was
+            approved, the agent is being worked on, or Git is not installed.
+        """
+        self.lookup(agent_id)
+        if not isinstance(commit, str) or not cloning.COMMIT.fullmatch(commit):
+            raise ApiError(422, "invalid", "Say which commit you approve, in full")
+        if shutil.which("git") is None:
+            raise ApiError(422, "git_missing", "Git is not installed on this machine, and fetching code takes it")
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            pieces = self.library_pieces(directory, agent)
+            proposed = kept_living.update_view(
+                kept_living.load_update(directory), pieces[0] if pieces is not None else None
+            )
+            if pieces is None or proposed is None:
+                raise ApiError(409, "no_update", "There is no newer version of the code that is proposed")
+            if proposed["to_commit"] != commit:
+                raise ApiError(
+                    409,
+                    "changed",
+                    "The newer version that is proposed is not the one that you approved. Look at what it changes.",
+                )
+            intake = pieces[0]
+            try:
+                return self.jobs.start(
+                    REPOSITORY_JOB,
+                    agent_id,
+                    f"Fetching the newer version of the code: {agent['title']}",
+                    self.cloner(agent_id, intake["url"], commit, intake["limit_bytes"], intake["ref"]),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def dismiss_update(self, agent_id: str) -> dict[str, Any]:
+        """Puts a proposed newer version aside. It is proposed again the next time the agent is looked at, if the code
+        is still not at the commit that is kept.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            kept_living.drop(directory, kept_living.UPDATE_FILE)
+
+        return self.update(agent_id)
 
     # The checks of the tools, by what their tutorials did not give them
 

@@ -984,6 +984,10 @@ def stand_in_image_id_of(tag: str, docker_command: Any = ("docker",)) -> str | N
     return IMAGES.get(tag)
 
 
+def stand_in_image_is(tag: str, image_id: str, docker_command: Any = ("docker",)) -> bool | None:
+    return IMAGES.get(tag) == image_id
+
+
 def stand_in_remove_image(tag: str, docker_command: Any = ("docker",)) -> bool:
     IMAGES.pop(tag, None)
 
@@ -1820,6 +1824,7 @@ def main() -> None:
     building.ready = stand_in_ready
     building.build_environment = stand_in_build
     building.image_id_of = stand_in_image_id_of
+    building.image_is = stand_in_image_is
     building.remove_image = stand_in_remove_image
     building.remove_images = stand_in_remove_images
     building.remove_builds = stand_in_remove_builds

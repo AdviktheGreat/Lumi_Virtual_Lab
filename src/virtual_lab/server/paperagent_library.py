@@ -21,9 +21,10 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import uuid4
 
 from virtual_lab.constants import SANDBOX_WORK_DIR
@@ -407,7 +408,37 @@ def forget(directory: Path) -> None:
     shutil.rmtree(folder, ignore_errors=True)
 
 
-def make_package(
+class Checked(NamedTuple):
+    """A package that was made and run in a clean container, as it was, for as long as its folder is there.
+
+    :param part: The package's file.
+    :param manifest: What the package holds.
+    :param size: The bytes of the file.
+    :param report: What its own check wrote of itself, if it wrote a report.
+    :param ended: How the container ended: done, timed_out, too_big, or stopped.
+    :param code: The container's exit code.
+    :param lines: The end of what it printed.
+    :param began: When the check began.
+    :param reason: Why it did not pass, or None if it did.
+    :param state: What the package is made of, as state_of says.
+    :param found: What is said of the code's license.
+    """
+
+    part: Path
+    manifest: dict[str, Any]
+    size: int
+    report: dict[str, Any] | None
+    ended: str
+    code: int | None
+    lines: list[str]
+    began: str
+    reason: str | None
+    state: str
+    found: dict[str, Any]
+
+
+@contextmanager
+def checked_package(
     job: Job,
     directory: Path,
     scratch_root: Path,
@@ -418,14 +449,12 @@ def make_package(
     kept: dict[str, Any],
     data: Path | None,
     docker_command: Sequence[str],
-    accepted: bool,
-) -> str:
-    """Makes the package of an agent's tools, checks it in a clean container, and keeps it if it passed.
+) -> Iterator[Checked]:
+    """Makes the package of an agent's tools and runs its own check in a clean container, in a folder of its own that is
+    taken away after. What the check came to is given, whether or not it passed.
 
     :param data: The folder of the data that the tutorials were given, if they were, which the check is given too.
-    :param accepted: Whether the person said to go on though the code's license is flagged.
-    :return: What it came to, in a sentence.
-    :raises ExportError: If the package cannot be made or did not pass.
+    :raises ExportError: If the package cannot be made or cannot be unpacked.
     :raises StoppedError: If the job was stopped.
     :raises DockerUnavailableError: If Docker did not run the check.
     """
@@ -479,8 +508,47 @@ def make_package(
         began = utc_timestamp()
         report, ended, code, lines = runner.check()
         reason = why_not(report, ended, code, lines, manifest)
-        if reason is not None or report is None:
-            raise ExportError(f"The package was not kept, as it did not pass its check in a clean container. {reason}")
+        yield Checked(part, manifest, size, report, ended, code, lines, began, reason, state, found)
+
+
+def make_package(
+    job: Job,
+    directory: Path,
+    scratch_root: Path,
+    agent_id: str,
+    agent: dict[str, Any],
+    intake: dict[str, Any],
+    built: dict[str, Any],
+    kept: dict[str, Any],
+    data: Path | None,
+    docker_command: Sequence[str],
+    accepted: bool,
+) -> str:
+    """Makes the package of an agent's tools, checks it in a clean container, and keeps it if it passed.
+
+    :param data: The folder of the data that the tutorials were given, if they were, which the check is given too.
+    :param accepted: Whether the person said to go on though the code's license is flagged.
+    :return: What it came to, in a sentence.
+    :raises ExportError: If the package cannot be made or did not pass.
+    :raises StoppedError: If the job was stopped.
+    :raises DockerUnavailableError: If Docker did not run the check.
+    """
+    with checked_package(
+        job, directory, scratch_root, agent_id, agent, intake, built, kept, data, docker_command
+    ) as checked:
+        part, manifest, size, report, state, found = (
+            checked.part,
+            checked.manifest,
+            checked.size,
+            checked.report,
+            checked.state,
+            checked.found,
+        )
+        if checked.reason is not None or report is None:
+            raise ExportError(
+                f"The package was not kept, as it did not pass its check in a clean container. {checked.reason}"
+            )
+        began = checked.began
         calls = sum(len(tool["cases"]) for tool in report["tools"])
         job.log(f"Its check passed: {calls} recorded call{'s' if calls != 1 else ''} gave what the tutorials got")
         folder = exports_path(directory)
