@@ -2327,3 +2327,117 @@ export interface PaperAgentClaims {
   divergence: PaperAgentDivergence;
   variants: PaperAgentVariants;
 }
+
+// A bake-off: which method of the literature is best for a task on the person's own data, with one limit on what the whole of it
+// may spend. This is a bake-off as a list of them shows it.
+export interface BakeoffSummary {
+  id: string;
+  title: string;
+  task: string;
+  created_at: string;
+  // How many methods are in the running
+  candidates: number;
+  // The most it may spend, and what has been, in dollars
+  limit: number;
+  spent: number;
+  // Whether every request that was paid for said what it used. If one did not, what was spent is not known, and nothing more is spent.
+  cost_known: boolean;
+  // The job that is finding, building, or running its methods, if one is
+  job: Job | null;
+}
+
+// What the server takes of a bake-off
+export interface BakeoffLimits {
+  max_bakeoffs: number;
+  max_candidates: number;
+  max_task_chars: number;
+  max_title_chars: number;
+  max_name_chars: number;
+  max_queries: number;
+  most_found: number;
+  most_chosen: number;
+}
+
+export interface BakeoffsList {
+  bakeoffs: BakeoffSummary[];
+  // The person's own data, from the Data page, which a bake-off may be run on and may take its right answers from
+  own: OwnDataSummary[];
+  limits: BakeoffLimits;
+  // The model that reading papers and proposing calls is paid for with
+  settings_model: string;
+}
+
+// The data that a bake-off is run on, as it is now: its name, what the Data page says of it, and whether it is gone
+export type BakeoffData = { own: string; missing: boolean } & Partial<OwnDataSummary>;
+
+// Where the right answers are, which is a table of the person's on the Data page, and whether it can be used as it is now. They
+// are the person's word, and nothing checks them.
+export interface BakeoffLabels {
+  own: string;
+  column: string;
+  id_column: string | null;
+  ok: boolean;
+  // Why it cannot be used now, as a short name and in words
+  why: string | null;
+  problem: string | null;
+  bytes: number | null;
+  // Whether the methods are able to read the answers, as the file is the data they are run on, or is in it
+  in_data: boolean;
+  says: string;
+}
+
+// What a person said of their data, as a bake-off keeps it: every part, with what was not said an empty text or a size of none, and
+// when it was said
+export interface BakeoffDescribed {
+  species: string;
+  tissue: string;
+  assay: string;
+  input_format: string;
+  sample_unit: string;
+  sample_size: number;
+  at: string;
+}
+
+// A method that is in the running, of which what is shown of it where the methods are shown is added to this
+export interface BakeoffMethod {
+  id: string;
+}
+
+// A bake-off as one is looked at: its methods are given, and not counted as the list of them has it
+export interface Bakeoff extends Omit<BakeoffSummary, "candidates"> {
+  candidates: BakeoffMethod[];
+  data: BakeoffData | null;
+  // What the person says the data is, if they do
+  described: BakeoffDescribed | null;
+  labels: BakeoffLabels | null;
+  // What may still be spent, which is nothing if what was spent is not known
+  left: number;
+  limits: BakeoffLimits;
+  settings_model: string;
+}
+
+export interface BakeoffLabelsBody {
+  own?: string;
+  column?: string;
+  id_column?: string;
+}
+
+export interface NewBakeoff {
+  task: string;
+  title?: string;
+  data?: string;
+  described?: ScopeData;
+  labels?: BakeoffLabelsBody;
+  limit: number;
+}
+
+// What to say again of a bake-off: what is left out is left as it was, empty data takes the data away, and an empty object for what
+// the data is, or for where the right answers are, takes that away
+export interface BakeoffChange {
+  task?: string;
+  title?: string;
+  data?: string;
+  described?: ScopeData;
+  labels?: BakeoffLabelsBody;
+  limit?: number;
+}
