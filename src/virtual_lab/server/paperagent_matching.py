@@ -15,6 +15,7 @@ import hashlib
 import inspect
 import json
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,7 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.function_checks import FunctionSourceError, read_function
 from virtual_lab.function_generator import cost_of
-from virtual_lab.paperagents import asking, matching
+from virtual_lab.paperagents import asking, matching, reimplementing
 from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents.anchors import Document
 from virtual_lab.paperagents.comparing import shown as shown_value
@@ -140,6 +141,38 @@ def is_current(
         and checks["paper_sha256"] == paper_sha256
         and checks["claims_sha256"] == matching.claims_sha256(claims)
     )
+
+
+@dataclass(frozen=True)
+class Given:
+    """A function written from a paper that is of tier C now, which is what a conversation may be given of it.
+
+    :param name: The function's name.
+    :param source: Its code, as it is kept.
+    :param label: What it is, and what it matched of the paper (matching.standing_of).
+    """
+
+    name: str
+    source: str
+    label: str
+
+
+def given_function(directory: Path, paper_sha256: str | None, claims: list[dict[str, Any]]) -> Given | None:
+    """The function written from the paper, if it is of tier C now: it is of the paper that is there now, its file is
+    the one that was written, and the checking that was kept came to its end, is of this function, paper, and claims,
+    and matched a number of the paper."""
+    record = kept_reimplementation.load(directory)
+    if record is None or not kept_reimplementation.is_current(record, paper_sha256):
+        return None
+    source = kept_reimplementation.source_of(directory, record)
+    checks = load_checks(directory)
+    if source is None or checks is None or checks["status"] != DONE:
+        return None
+    if not is_current(checks, source, paper_sha256, claims):
+        return None
+    tier, label = matching.standing_of(checks["entries"])
+
+    return Given(record["name"], source, label) if tier == reimplementing.TIER else None
 
 
 # The person's inputs

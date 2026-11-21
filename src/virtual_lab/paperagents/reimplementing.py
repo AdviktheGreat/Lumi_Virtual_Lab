@@ -30,7 +30,9 @@ MEANING = (
     "is shown. It is of tier C only if a program found a number that the paper reports in what it gave for inputs "
     "that the paper itself gives, which is a check against that number and no more: it does not show that the "
     "function does what the authors' code does for any other input, or that what it gives is right. A function that "
-    "was written and has not matched a number of the paper is kept, with why, and is given to nothing."
+    "was written and has not matched a number of the paper is kept, with why, and is given to nothing. One that has is "
+    "given to the conversations that are given its agent, as a tool that says it is a re-implementation in its "
+    "description and in everything it gives."
 )
 
 # The most characters of the paper that the writer is given, which leaves room in a task for what the person says of
