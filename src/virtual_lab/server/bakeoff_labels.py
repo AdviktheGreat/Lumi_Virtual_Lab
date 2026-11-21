@@ -48,32 +48,68 @@ def name_of(said: Mapping[str, Any], key: str, what: str, most: int | None = Non
     return value if most is None else value.strip()
 
 
+def fetch(paperagents: PaperAgents, own: str, most: int) -> tuple[tuple[str, str] | None, bytes, int]:
+    """The start of a file that is on the Data page, if it can be read.
+
+    :param most: The most bytes to read of it.
+    :return: What stands in the way, if anything does: a short name for it that a page can go by, and what it is in
+        words. Then what was read, and how many bytes the file has.
+    """
+    entry = paperagents.workspace.load_own()["data"].get(own)
+    if entry is None:
+        return ("unknown_data", f"There is no data called {own[:80]!r} on the Data page"), b"", 0
+    path = location(paperagents.workspace, own, entry)
+    try:
+        # A pipe or a device is not a file, and opening one may wait for ever, so only a file is opened
+        if path.is_dir():
+            return ("invalid", f"{own!r} is a folder, and right answers are read from one file"), b"", 0
+        if not path.is_file():
+            return ("missing_data", f"The data called {own!r} is not where the Data page says it is"), b"", 0
+        with path.open("rb") as file:
+            size = path.stat().st_size
+            start = file.read(most)
+    except OSError:
+        return (
+            ("missing_data", f"The data called {own!r} could not be read from where the Data page says it is"),
+            b"",
+            0,
+        )
+
+    return None, start, size
+
+
 def look(paperagents: PaperAgents, own: str, column: str, id_column: str | None) -> tuple[str, str] | None:
-    """What stands in the way of the table being the right answers that were said of it, by the file as it is now.
+    """What stands in the way of the table being the right answers that were said of it, by the file as it is now,
+    from its first line.
 
     :return: None if nothing does. If something does: a short name for it that a page can go by, and what it is in
         words.
     """
-    entry = paperagents.workspace.load_own()["data"].get(own)
-    if entry is None:
-        return "unknown_data", f"There is no data called {own[:80]!r} on the Data page"
-    path = location(paperagents.workspace, own, entry)
-    try:
-        if path.is_dir():
-            return "invalid", f"{own!r} is a folder, and right answers are read from one file"
-        if not path.is_file():
-            return "missing_data", f"The data called {own!r} is not where the Data page says it is"
-        with path.open("rb") as file:
-            size = path.stat().st_size
-            start = file.read(labelling.MAX_HEADER_BYTES)
-    except OSError:
-        return "missing_data", f"The data called {own!r} could not be read from where the Data page says it is"
+    stands, start, size = fetch(paperagents, own, labelling.MAX_HEADER_BYTES)
+    if stands is not None:
+        return stands
     try:
         labelling.check(own, size, start, column, id_column)
     except labelling.LabelsError as error:
         return "invalid", str(error)
 
     return None
+
+
+def read(
+    paperagents: PaperAgents, own: str, column: str, id_column: str | None
+) -> tuple[tuple[str, str] | None, labelling.Labels | None]:
+    """The right answers, row by row, from the whole of the file as it is now.
+
+    :return: What stands in the way, as `look` says, or the answers.
+    """
+    stands, raw, _ = fetch(paperagents, own, labelling.MAX_BYTES + 1)
+    if stands is not None:
+        return stands, None
+    try:
+        return None, labelling.read_labels(own, raw, column, id_column)
+    except labelling.LabelsError as error:
+        return ("invalid", str(error)), None
 
 
 def check_labels(paperagents: PaperAgents, said: Any) -> dict[str, Any] | None:
@@ -142,14 +178,46 @@ def is_in_data(paperagents: PaperAgents, answers: str, data: str | None) -> bool
 
 
 def shown(paperagents: PaperAgents, labels: dict[str, Any] | None, data: str | None) -> dict[str, Any] | None:
-    """Where the right answers are as a page is shown it, with what stands in the way of using them now, if anything.
+    """Where the right answers are as a page is shown it, with what stands in the way of using them now, if anything,
+    by the first line of the file.
 
     :param labels: What the bake-off keeps of them.
     :param data: The name of the data that the bake-off's methods are run on.
     """
     if labels is None:
         return None
-    stands = look(paperagents, labels["own"], labels["column"], labels["id_column"])
+
+    return described(paperagents, labels, data, look(paperagents, labels["own"], labels["column"], labels["id_column"]))
+
+
+def examined(
+    paperagents: PaperAgents, labels: dict[str, Any] | None, data: str | None
+) -> tuple[dict[str, Any] | None, labelling.Labels | None]:
+    """The same, from the whole of the file, which is what the methods are held to: with how many rows it has, how
+    many of them have an answer, and a hash of the file, so that the scores say which file they are of.
+
+    :return: What a page is shown, and the answers if they could be read.
+    """
+    if labels is None:
+        return None, None
+    stands, read_labels = read(paperagents, labels["own"], labels["column"], labels["id_column"])
+    found = described(paperagents, labels, data, stands)
+    rows = len(read_labels.answers) if read_labels is not None else None
+    labelled = read_labels.labelled if read_labels is not None else None
+
+    return {
+        **found,
+        "rows": rows,
+        "labelled": labelled,
+        "unlabelled": rows - labelled if rows is not None and labelled is not None else None,
+        "sha256": read_labels.sha256 if read_labels is not None else None,
+    }, read_labels
+
+
+def described(
+    paperagents: PaperAgents, labels: dict[str, Any], data: str | None, stands: tuple[str, str] | None
+) -> dict[str, Any]:
+    """Where the right answers are, and whether they can be used, as a page is shown it."""
     in_data = is_in_data(paperagents, labels["own"], data)
     file = paperagents.own_data().get(labels["own"])
 

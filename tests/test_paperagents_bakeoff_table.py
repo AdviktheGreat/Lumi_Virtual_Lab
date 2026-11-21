@@ -22,6 +22,7 @@ def method(name: str, **given: Any) -> dict[str, Any]:
         "by": "person",
         "kept": "whole",
         "since": [],
+        "score": None,
         "agrees": [],
         "differs": [],
         "unknown": [],

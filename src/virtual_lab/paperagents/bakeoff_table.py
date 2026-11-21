@@ -4,9 +4,11 @@ methods that gave an answer.
 The rows are made of what the server shows of the comparison of the methods (which is made of what was kept of each
 run), and say no more than it does. A method that was not built, or was not run, or failed, has its row, with why, so
 that it is not left out of a table for not having an answer; the first table is how each did and what it cost, and the
-second is whether two agreed. Neither ranks the methods: there is no answer that is known to be right, and a table says
-so, in words that go with it. A method's cell for a thing that is not known is left as the word that says so, and not
-as nothing, which would read as none. Some cells are made of a paper's words, and are cleaned when the table is written.
+second is whether two agreed. The first ranks the methods only if the person said where the right answers are, by how
+many of them each matched (scoring.py), and says which methods were not held to them and why; with none, nothing is
+ranked, as there is no answer that is known to be right, and a table says so, in words that go with it. A method's cell
+for a thing that is not known is left as the word that says so, and not as nothing, which would read as none. Some cells
+are made of a paper's words, and are cleaned when the table is written.
 """
 
 from collections.abc import Mapping, Sequence
@@ -31,6 +33,13 @@ METHOD_COLUMNS = (
     "Cost of asking a model for the call",
     "The call was made by",
     "What was kept of its answer",
+    "Score",
+    "Matched",
+    "Of labels",
+    "Rank",
+    "Held to the labels",
+    "Where it differs from the labels",
+    "Not scored because",
     "Agrees with",
     "Differs from",
     "Not known whether it agrees with",
@@ -53,6 +62,7 @@ STATE_TITLES = {"ran": "Ran", "failed": "Failed", "not_run": "Not run", "not_bui
 VERDICT_TITLES = {agreeing.AGREE: "Agree", agreeing.DIFFER: "Differ", agreeing.UNKNOWN: "Not known"}
 KEPT_TITLES = {agreeing.WHOLE: "All of it", agreeing.LOOK: "A look at it", agreeing.HASH: "Only a hash of it"}
 BY_TITLES = {"person": "The person", "model": "A model, checked by a program"}
+HELD_TITLES = {"position": "By position, in the order of the rows", "id": "By what each row is the answer to"}
 SINCE_TITLES = {
     "data": "The data is not as it was listed then",
     "method": "The method was built again or is gone",
@@ -67,6 +77,31 @@ def money(value: float | None) -> Any:
 
 def named(names: Mapping[str, str], ids: Sequence[str]) -> str:
     return "; ".join(names.get(each, each) for each in ids)
+
+
+def score_cells(score: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The cells of a method's row that are of the right answers, which are all empty if there are none, or the method
+    was not held to them."""
+    if score is None:
+        return {
+            "Score": "",
+            "Matched": "",
+            "Of labels": "",
+            "Rank": "",
+            "Held to the labels": "",
+            "Where it differs from the labels": "",
+            "Not scored because": "",
+        }
+
+    return {
+        "Score": round(score["score"], 6) if score["scored"] else "",
+        "Matched": score["matched"] if score["scored"] else "",
+        "Of labels": score["of"] if score["scored"] else "",
+        "Rank": score["rank"] if score["rank"] is not None else "",
+        "Held to the labels": HELD_TITLES.get(score["by"], "") if score["by"] else "",
+        "Where it differs from the labels": "; ".join(score["examples"]),
+        "Not scored because": "" if score["scored"] else score["reason"],
+    }
 
 
 def method_rows(comparison: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -92,6 +127,7 @@ def method_rows(comparison: Mapping[str, Any]) -> list[dict[str, Any]]:
             ),
             "The call was made by": BY_TITLES.get(method["by"], "") if method["by"] else "",
             "What was kept of its answer": KEPT_TITLES.get(method["kept"], "") if method["kept"] else "",
+            **score_cells(method["score"]),
             "Agrees with": named(names, method["agrees"]),
             "Differs from": named(names, method["differs"]),
             "Not known whether it agrees with": named(names, method["unknown"]),
