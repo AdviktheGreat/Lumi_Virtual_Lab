@@ -68,6 +68,10 @@ An agent that someone else made of a paper, such as a server that Paper2Agent ho
 agent of that paper, with where the server is reached and the tools it listed. It is of the tier Imported, which says
 that nothing of Lumi's has been done to it, and what it gives a conversation is in paperagent_given.py and
 imported_agents.py.
+
+The steps of making an agent can be asked for one at a time, or all that need no decision in one go
+(paperagent_onego.py): a job that starts each as a page would, waits for it, and stops where the person is to say
+something. While it goes, nothing else is done to the agent.
 """
 
 import hashlib
@@ -81,7 +85,8 @@ import shutil
 import tempfile
 import threading
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -197,6 +202,9 @@ CHECKS_JOB = "paperagent-checks"
 EXPORT_JOB = "paperagent-export"
 # The job that looks at an agent: where its code is now, the versions it pins, and its tools' recorded calls run again
 HEALTH_JOB = "paperagent-health"
+# The job that makes an agent in one go, by doing to it the steps that need no decision one after another, each as its
+# own job (paperagent_onego.py). Nothing else is done to the agent while it is going, but by it.
+ONEGO_JOB = "paperagent-onego"
 # The job that tries the paper's claims against what the tutorials gave, which is not done to an agent while another job
 # is
 REPRODUCTION_JOB = "paperagent-reproduction"
@@ -625,6 +633,9 @@ class PaperAgents:
         # The agents that are being deleted, which cannot be looked up or listed from when the deleting begins. They are
         # still counted, and their papers are still taken, as one whose deleting fails comes back.
         self._deleting: set[str] = set()
+        # The agent that the thread is making in one go, if it is the thread that does that, which is not kept waiting
+        # for the job that it is itself
+        self._driving = threading.local()
 
     def describe(self) -> dict[str, Any]:
         """Every agent, the latest first, and what a page needs to make one."""
@@ -715,6 +726,7 @@ class PaperAgents:
             "steps": steps,
             "given": is_given(agent),
             "imported": importing.describe(agent["imported"]) if agent.get("imported") is not None else None,
+            "onego": going.snapshot() if (going := self.onego_job(agent_id)) is not None else None,
         }
 
     def running(self, agent_id: str) -> Job | None:
@@ -769,13 +781,32 @@ class PaperAgents:
         """The job that is checking the function written from an agent's paper against its numbers, if one is."""
         return next((job for job in self.jobs.active(MATCHING_JOB) if job.subject == agent_id), None)
 
+    def onego_job(self, agent_id: str) -> Job | None:
+        """The job that is making an agent in one go, if one is."""
+        return next((job for job in self.jobs.active(ONEGO_JOB) if job.subject == agent_id), None)
+
+    def going(self, agent_id: str) -> Job | None:
+        """The job that is making an agent in one go, if one is and it is not what is asking."""
+        return None if getattr(self._driving, "agent", None) == agent_id else self.onego_job(agent_id)
+
+    @contextmanager
+    def driving(self, agent_id: str) -> Iterator[None]:
+        """Within it, the steps that are started on this thread are the making of this agent in one go, which is not
+        kept from them by the job that it is."""
+        before = getattr(self._driving, "agent", None)
+        self._driving.agent = agent_id
+        try:
+            yield
+        finally:
+            self._driving.agent = before
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
             fetched, its tutorials run, its tools made, its tools checked, a package made of them, it looked at, its
-            claims tried, a variant of one made, or a function written from its paper or checked against it, which what
-            is done to them must wait for.
+            claims tried, a variant of one made, a function written from its paper or checked against it, or it is
+            being made in one go, which what is done to them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -791,6 +822,7 @@ class PaperAgents:
             or self.variant_job(agent_id)
             or self.reimplementation_job(agent_id)
             or self.matching_job(agent_id)
+            or self.going(agent_id)
         )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
@@ -890,6 +922,9 @@ class PaperAgents:
         wanted = check_flag(given, "given") if given is not None else None
         with self._lock:
             directory, agent = self.lookup(agent_id)
+            if wanted is not None and (going := self.going(agent_id)) is not None:
+                # Whether it is given is said by what is asked of the making of it, while it is being made in one go
+                raise ApiError(409, "busy", f"{going.title} is still going. Stop that first", job=going.snapshot())
             if title is not None:
                 agent = {**agent, "title": check_title(title)}
             if wanted is not None:
@@ -1333,6 +1368,8 @@ class PaperAgents:
             # Looked for again, as an agent that was deleted, or whose paper was changed, while the checks above were
             # made has nothing to read, or another paper
             _, current = self.lookup(agent_id)
+            if (going := self.going(agent_id)) is not None:
+                raise ApiError(409, "busy", f"{going.title} is still going. Stop that first", job=going.snapshot())
             if (current["paper"].get("file") or {}).get("sha256") != (file["sha256"] if file is not None else None):
                 raise ApiError(409, "changed", "The paper was changed. Read it again")
             try:
