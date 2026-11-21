@@ -9,11 +9,13 @@ finding that out is held to what a program can check:
   first and then in the order of the paper.
 - The inputs of a claim are the person's, if they gave them, or a model's. A model is shown the function's signature
   and the passage of the paper around the claim's sentence, and may give only values that are written in that passage,
-  which a program then checks: each number must be one that the passage has, and each word must be in it. A parameter
-  that it does not give is called with its default, and one that has none must be given. No input, the person's or a
-  model's, may hold the number that is looked for, as a function that is given the answer can give it back.
-- A function whose code holds a literal that rounds to the number, or a sum or product of literals that does, is
-  hard-coded for that number, and the number is not looked for.
+  which a program then checks: each number must be one that the passage has, and each word must be in it, and not as
+  a piece of one of its numbers. A parameter that it does not give is called with its default, and one that has none
+  must be given. No input, the person's or a model's, may hold the number that is looked for, with either sign, as a
+  function that is given the answer can give it back.
+- A function whose code holds a literal that rounds to the number with either sign, or a sum or product of literals
+  that does, or a text, docstring, or comment that has it, is hard-coded for that number, and the number is not looked
+  for. A number that the code works out from other literals through names or calls is not found this way.
 - The function is called with the inputs, twice, in a container with no network, and the number is looked for in what
   it gave by the paper's own rounding. It matched if it is in one place, and in the same place both times. In two places
   or more it is ambiguous, as which of them the paper means cannot be told.
@@ -26,10 +28,12 @@ tier C, and it is still a re-implementation, which is shown wherever it is.
 import ast
 import hashlib
 import inspect
+import io
 import json
 import math
 import re
 import threading
+import tokenize
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -103,8 +107,8 @@ MEANING = {
     UNSTABLE: "What the function gave did not have the number in the same places both times it was called.",
     ERROR: "The function raised an error for the inputs, or took longer than it was given.",
     NOT_RUN: "The function was not called for the claim, as the time ran out or the run was stopped.",
-    HARD_CODED: "The function's code has a literal that rounds to the number, so finding the number would show "
-    "nothing.",
+    HARD_CODED: "The function's code has the number in it, as a literal, a sum of literals, a text, a docstring, or a "
+    "comment, so finding the number would show nothing.",
     NO_INPUTS: "There were no inputs to call it with: the passage did not give them, what was given was refused, or "
     "no one was asked.",
 }
@@ -262,12 +266,17 @@ def folded(text: str) -> str:
 
 def written_in(value: Any, passage: str, numbers: Sequence[float]) -> bool:
     """Whether a number or a text is written in a passage: a number if the passage has one that says the same, and a
-    text if the passage has it as words, whatever their case and spacing."""
+    text if the passage has it as words, whatever their case and spacing, neither starting nor ending within a number
+    of the passage (85 of 0.85), and with each number in it one that the passage has."""
     if written.is_number(value):
         return any(math.isclose(float(value), each, rel_tol=1e-9, abs_tol=0.0) for each in numbers)
     if isinstance(value, str):
         words = folded(value)
-        return bool(words) and re.search(rf"(?<!\w){re.escape(words)}(?!\w)", folded(passage)) is not None
+        if not words:
+            return False
+        if re.search(rf"(?<!\w)(?<!\d[.,]){re.escape(words)}(?!\w)(?![.,]\d)", folded(passage)) is None:
+            return False
+        return all(written_in(each, passage, numbers) for each in numbers_written(value))
 
     return False
 
@@ -305,12 +314,18 @@ def shaped(value: Any, depth: int = 0) -> bool:
     return value is None or isinstance(value, bool) or written.is_number(value)
 
 
+def rounds_to(number: written.Written, value: float) -> bool:
+    """Whether a value, or the same with the other sign, rounds to the number, as a function that is given the one can
+    give back the other."""
+    return written.close(number, value) is not None or written.close(number, -value) is not None
+
+
 def holds(value: Any, number: written.Written) -> bool:
-    """Whether a value is, or has in its words, a number that rounds to the one that is looked for."""
+    """Whether a value is, or has in its words, a number that rounds to the one that is looked for, with either sign."""
     if written.is_number(value):
-        return written.close(number, float(value)) is not None
+        return rounds_to(number, float(value))
     if isinstance(value, str):
-        return any(written.close(number, each) is not None for each in numbers_written(value))
+        return any(rounds_to(number, each) for each in numbers_written(value))
 
     return False
 
@@ -490,45 +505,52 @@ def fold(node: ast.AST, depth: int = 0) -> float | None:
 
 
 def hard_coded(source: str, number: written.Written) -> list[str]:
-    """The literals of the code that round to the number, each with its line: a number, a sum or product of numbers,
-    or a text that has the number in it. A text that is only there as a docstring is not, as the code does not use it,
-    unless the code reads its docstrings."""
+    """The places of the code that hold the number, with either sign, each with its line: a literal number, a sum or
+    product of literal numbers, or a text, a docstring, or a comment that has it in it. Docstrings and comments count,
+    as code can read its own docstrings and its own file. A number that the code works out from other literals through
+    names or calls is not found, which is one reason that the code is shown to the person to read."""
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return []
-    nodes = list(ast.walk(tree))
-    reads_docs = any(
-        (isinstance(node, ast.Attribute) and node.attr == "__doc__")
-        or (isinstance(node, ast.Name) and node.id == "__doc__")
-        for node in nodes
-    )
-    unused = (
-        set()
-        if reads_docs
-        else {
-            id(node.value)
-            for node in nodes
-            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
-        }
-    )
     found: list[str] = []
-    for node in nodes:
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            hit = id(node) not in unused and holds(node.value, number)
-        elif isinstance(node, ast.Constant | ast.BinOp | ast.UnaryOp):
-            value = fold(node)
-            hit = value is not None and written.close(number, value) is not None
-        else:
-            continue
-        if hit:
-            said = f"{shown_code(node)} on line {getattr(node, 'lineno', '?')}"
-            if said not in found:
-                found.append(said)
+    for node in ast.walk(tree):
         if len(found) >= MOST_LITERALS:
             break
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            hit = holds(node.value, number)
+        elif isinstance(node, ast.Constant | ast.BinOp | ast.UnaryOp):
+            value = fold(node)
+            hit = value is not None and rounds_to(number, value)
+        else:
+            continue
+        said = f"{shown_code(node)} on line {getattr(node, 'lineno', '?')}"
+        if hit and said not in found:
+            found.append(said)
+    for line, comment in comments_of(source):
+        if len(found) >= MOST_LITERALS:
+            break
+        said = f"{shown_text(comment)} on line {line}"
+        if holds(comment, number) and said not in found:
+            found.append(said)
 
     return found
+
+
+def comments_of(source: str) -> list[tuple[int, str]]:
+    """The comments of code that can be read, each with its line."""
+    try:
+        return [
+            (token.start[0], token.string)
+            for token in tokenize.generate_tokens(io.StringIO(source).readline)
+            if token.type == tokenize.COMMENT
+        ]
+    except (tokenize.TokenError, SyntaxError):
+        return []
+
+
+def shown_text(text: str) -> str:
+    return text if len(text) <= 60 else text[:57] + "..."
 
 
 def shown_code(node: ast.AST) -> str:
@@ -537,7 +559,7 @@ def shown_code(node: ast.AST) -> str:
     except (RecursionError, ValueError):
         return "a literal"
 
-    return text if len(text) <= 60 else text[:57] + "..."
+    return shown_text(text)
 
 
 # Where the number is in what the function gave

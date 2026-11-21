@@ -178,6 +178,15 @@ class TestWhatAPassageHasWritten:
         assert not matching.written_in("median", PASSAGE, [])
         assert not matching.written_in("  ", PASSAGE, [])
 
+    def test_words_that_are_a_piece_of_a_number_of_the_passage_are_not_written(self) -> None:
+        passage = "The AUC was 0.85 on 12,000 cells, against 15 cells before."
+        numbers = matching.numbers_written(passage)
+
+        for piece in ("85", "0", "12", "000", "5 on", "auc was 0"):
+            assert not matching.written_in(piece, passage, numbers), piece
+        assert matching.written_in("15 cells", passage, numbers)
+        assert matching.written_in("0.85", passage, numbers)
+
     def test_what_is_neither_a_number_nor_words_is_not_written(self) -> None:
         assert not matching.written_in(None, PASSAGE, [1.0])
         assert not matching.written_in(True, PASSAGE, [1.0])
@@ -211,6 +220,16 @@ class TestCheckingInputs:
         ):
             why = self.check(arguments, None)
             assert why is not None and "holds 1.025" in why, arguments
+
+    def test_the_number_with_the_other_sign_is_held_too(self) -> None:
+        number = number_of("-0.425")
+        passage = "The correlation was -0.425 for the k = 2 largest."
+
+        for arguments in ({"values": [0.425], "k": 2}, {"values": [-0.425], "k": 2}):
+            why = matching.check_arguments(arguments, READING, number, passage)
+            assert why is not None and "holds -0.425" in why, arguments
+        why = matching.check_arguments({"values": [-1.025], "k": 2}, READING, self.NUMBER, None)
+        assert why is not None and "holds 1.025" in why
 
     def test_a_percentage_is_held_as_a_part_of_one_too(self) -> None:
         why = matching.check_arguments({"values": [0.125], "k": 1}, READING, number_of("12.5%"), None)
@@ -486,7 +505,17 @@ class TestCodeThatHoldsTheNumber:
 
         assert matching.hard_coded("x = 25 / 2\n", number) == ["25 / 2 on line 1"]
         assert matching.hard_coded("x = 10 + 2.5\n", number) == ["10 + 2.5 on line 1"]
-        assert matching.hard_coded("x = -(-12.5)\n", number) == ["--12.5 on line 1", "12.5 on line 1"]
+        assert matching.hard_coded("x = -(-12.5)\n", number) == [
+            "--12.5 on line 1",
+            "-12.5 on line 1",
+            "12.5 on line 1",
+        ]
+
+    def test_a_literal_with_the_other_sign_is_found(self) -> None:
+        source = "def f() -> float:\n    '''F.'''\n    x = 0.42\n    return -x\n"
+
+        assert matching.hard_coded(source, number_of("-0.42")) == ["0.42 on line 3"]
+        assert matching.hard_coded("x = -(25 / 2)\n", number_of("12.5")) != []
 
     def test_a_part_of_one_is_found_for_a_percentage(self) -> None:
         assert matching.hard_coded("x = 0.125\n", number_of("12.5%")) == ["0.125 on line 1"]
@@ -494,11 +523,20 @@ class TestCodeThatHoldsTheNumber:
     def test_a_text_that_has_the_number_is_found(self) -> None:
         assert matching.hard_coded("x = float('0.912')\n", number_of("0.912")) == ["'0.912' on line 1"]
 
-    def test_a_docstring_that_says_the_number_is_not_found_unless_the_code_reads_it(self) -> None:
-        source = 'def f() -> float:\n    """It gives 0.912 on the paper\'s data."""\n    return 1.0\n'
+    def test_a_docstring_or_a_comment_that_says_the_number_is_found_as_code_can_read_them(self) -> None:
+        number = number_of("0.912")
+        docstring = (
+            "import inspect\n\ndef f() -> float:\n"
+            '    """Reports 0.912 on the paper\'s data."""\n'
+            "    return float(inspect.getdoc(f).split()[1])\n"
+        )
+        comment = "def f() -> float:\n    '''F.'''\n    # The paper reports 0.912\n    return 1.0\n"
 
-        assert matching.hard_coded(source, number_of("0.912")) == []
-        assert matching.hard_coded(source + "y = f.__doc__\n", number_of("0.912")) != []
+        assert matching.hard_coded(docstring, number) == ['"Reports 0.912 on the paper\'s data." on line 4']
+        assert matching.hard_coded(comment, number) == ["# The paper reports 0.912 on line 3"]
+        assert matching.hard_coded("def f() -> float:\n    # Of 1.5 and 2\n    return 1.0\n", number) == []
+        [long] = matching.hard_coded(f"# It gives 0.912, {'and so on ' * 10}\n", number)
+        assert long == f"# It gives 0.912, {'and so on ' * 10}"[:57] + "... on line 1"
 
     def test_a_literal_that_does_not_round_to_it_is_not_found(self) -> None:
         source = "x = 0.9126 + y\nz = 2 ** 0.5\nw = 'k=15'\n"
@@ -510,8 +548,10 @@ class TestCodeThatHoldsTheNumber:
 
     def test_at_most_five_are_said(self) -> None:
         source = "\n".join(f"x{index} = 0.912" for index in range(9))
+        commented = "\n".join(f"x{index} = 1  # 0.912" for index in range(9))
 
         assert len(matching.hard_coded(source, number_of("0.912"))) == matching.MOST_LITERALS == 5
+        assert len(matching.hard_coded(commented, number_of("0.912"))) == 5
 
     @pytest.mark.parametrize(
         ("expression", "value"),

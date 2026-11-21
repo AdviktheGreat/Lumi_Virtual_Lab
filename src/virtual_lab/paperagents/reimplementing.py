@@ -55,7 +55,8 @@ docstring.
 in a comment that you chose it. Do not use what you remember of the authors' own code, and do not fetch anything: \
 there is no network.
 3. Use the Python standard library only.
-4. Never put a number that the paper reports as a result into the code. A result is worked out from the inputs.
+4. Never put a number that the paper reports as a result into the code, its comments, or its docstring. A result is \
+worked out from the inputs.
 5. The code will be called as a tool, by a program that sends JSON, so it must define one function named `{name}` \
 that carries out the method. Give every parameter of it a type hint, of one of the types JSON has: str, int, float, \
 bool, list, dict, or an Optional, union, or Literal of them. Give the function a docstring that says what it does, \
