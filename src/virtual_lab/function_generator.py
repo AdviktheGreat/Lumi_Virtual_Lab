@@ -352,6 +352,7 @@ def generate_function(
     client: Any = None,
     usage: MeetingUsage | None = None,
     on_progress: Callable[[str], None] | None = None,
+    system_prompt: str | None = None,
 ) -> GeneratedFunction:
     """Asks a model for a function that does a task, and checks it.
 
@@ -380,6 +381,9 @@ def generate_function(
     :param usage: A count to add what the requests use to as well, so that a caller writing many
         functions keeps one account.
     :param on_progress: Called with a line saying what is being done, before each request.
+    :param system_prompt: What the model is told it is to do and how, with {name} where the function's name goes
+        (and any other brace doubled), in place of SYSTEM_PROMPT, which is Biomni's. It must still ask for one
+        function of that name, with typed parameters, since what is written is read as a tool's function.
     :raises ValueError: If an option or the name is out of range, or the task too long.
     :raises FunctionBudgetExceededError: Before a request, if max_cost has been reached.
     :raises FunctionGenerationError: If no usable function was written. It holds the last code
@@ -429,7 +433,7 @@ def generate_function(
 
         return reply
 
-    system = SYSTEM_PROMPT.format(name=name)
+    system = (SYSTEM_PROMPT if system_prompt is None else system_prompt).format(name=name)
     task_prompt = TASK_PROMPT.format(task=task.brief)
     # What was last written that could be read as Python, which is kept for a person to use even
     # if it never passed, and what the problems being corrected are of, which is the last reply's

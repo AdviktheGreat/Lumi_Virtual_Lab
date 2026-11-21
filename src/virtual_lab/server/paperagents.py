@@ -54,6 +54,12 @@ being shown any value, and a program holds what was kept there to the number (pa
 is reproduced, partly, not, or not attempted, with why, and a claim that no code could be linked to is not attempted and
 not failed. It is of the tutorials as they ran here, and does not say that they were run on the paper's data.
 
+A paper that has none of its code can have a function written from its words instead, when the person says so and
+agrees to the words of the paper that the model is to be given, which they are shown first
+(paperagent_reimplementation.py). It is a re-implementation, of tier C if it comes to be checked, and is shown as one
+wherever it is shown. A function that was written has not been checked against anything of the paper, and is given to
+nothing.
+
 An agent is given to conversations when the person says so (the flag `given` in its agent.json), or when they name it
 for one. What a conversation is then given of it is in paperagent_given.py: tools that read what was found in the
 paper, which are of tier D, and its tools of tier A, which run the authors' code where the conversation may run code.
@@ -88,7 +94,8 @@ from virtual_lab.constants import (
     MAX_PAPER_FILE_BYTES,
 )
 from virtual_lab.environment import StoppedError
-from virtual_lab.execution import DockerUnavailableError
+from virtual_lab.execution import DockerExecutor, DockerUnavailableError
+from virtual_lab.function_generator import check_function_name
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
 from virtual_lab.paper_batch import csv_bytes
@@ -97,6 +104,7 @@ from virtual_lab.paperagents import (
     diverging,
     linking,
     proposing,
+    reimplementing,
     reporting,
     reproducing,
     toolmaking,
@@ -124,6 +132,7 @@ from virtual_lab.server import paperagent_divergence as kept_divergence
 from virtual_lab.server import paperagent_environment as kept_environment
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_reference as kept_reference
+from virtual_lab.server import paperagent_reimplementation as kept_reimplementation
 from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server import paperagent_reproduction as kept_reproduction
 from virtual_lab.server import paperagent_tools as kept_tools
@@ -177,6 +186,8 @@ CHECKS_JOB = "paperagent-checks"
 REPRODUCTION_JOB = "paperagent-reproduction"
 # The job that makes a claim's call again with something changed, which is not done to an agent while another job is
 VARIANT_JOB = "paperagent-variant"
+# The job that writes a function from the words of the paper, which is not done to an agent while another job is
+REIMPLEMENTATION_JOB = "paperagent-reimplementation"
 # What is left free on the disk when data is fetched, and the longest that a note of which data stands in for what is
 DISK_RESERVE_BYTES = 1 << 30
 MAX_DATASET_CHARS = 200
@@ -713,12 +724,16 @@ class PaperAgents:
         """The job that is making a variant of one of an agent's claims, if one is."""
         return next((job for job in self.jobs.active(VARIANT_JOB) if job.subject == agent_id), None)
 
+    def reimplementation_job(self, agent_id: str) -> Job | None:
+        """The job that is writing a function from an agent's paper, if one is."""
+        return next((job for job in self.jobs.active(REIMPLEMENTATION_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
-            fetched, its tutorials run, its tools made, its tools checked, its claims tried, or a variant of one made,
-            which what is done to them must wait for.
+            fetched, its tutorials run, its tools made, its tools checked, its claims tried, a variant of one made, or a
+            function written from its paper, which what is done to them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -730,6 +745,7 @@ class PaperAgents:
             or self.checks_job(agent_id)
             or self.reproduction_job(agent_id)
             or self.variant_job(agent_id)
+            or self.reimplementation_job(agent_id)
         )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
@@ -2867,6 +2883,236 @@ class PaperAgents:
             self.check_idle(agent_id)
             kept_reproduction.forget(directory)
             kept_variants.forget(directory)
+
+    # A function written from the words of a paper that has none of its code
+
+    def reimplementation_problem(self, directory: Path, agent: dict[str, Any]) -> tuple[str, str] | None:
+        """Why a function cannot be written from an agent's paper, if it cannot: it is the code of someone else's
+        server, the paper's words have not been read, the paper reports no number that a function could be checked
+        against, or the agent has tools that run the authors' own code, which are of the method as they ran it."""
+        if agent.get("imported") is not None:
+            return ("imported", "This agent was imported, and what it can do is what the server that it came from does")
+        if agent["paper"].get("file") is None or kept_reading.load_document(directory / PAPER_DIR) is None:
+            return ("no_text", "Read the paper first, as it is its words that the function is written from")
+        if not linking.usable_numbers(kept_reading.number_claims(directory)):
+            return (
+                "no_numbers",
+                "The paper reports no number with digits enough to be told from one by chance, so a function written "
+                "from it could not be checked against anything. Read the paper first if it has not been read",
+            )
+        _, kept = kept_tools_of(directory, agent)
+        if kept is not None and kept["tools"]:
+            return (
+                "has_tools",
+                "This agent has tools that run the authors' own code, which is the method as they ran it",
+            )
+
+        return None
+
+    def reimplementation_offer(
+        self,
+        directory: Path,
+        agent: dict[str, Any],
+        sections: Any,
+        search: Any,
+        name: Any,
+        goal: Any,
+    ) -> dict[str, Any]:
+        """What a person is shown, and agrees to, before a function is written: the words of the paper that the model
+        would be given, which a program chooses from what the person says and never the model, what the function would
+        be called, the model that would write it, and a key that is bound to all of that.
+
+        :param sections: The numbers of the sections to give, as the view lists them. Without it, and without a search,
+            those whose headings say that they are of how something was done.
+        :param search: Words to look for in the paper, whose best places are given as well.
+        :param name: What the function is called, or None for a name made from the paper's title.
+        :param goal: What the person wants of it, in their words, which the model is told as theirs.
+        :raises ValueError: If what is said is not fit, or the words of the paper that it chooses are none or too many.
+        """
+        file = agent["paper"]["file"]
+        document = kept_reading.load_document(directory / PAPER_DIR)
+        assert document is not None
+        if sections is not None and not isinstance(sections, list):
+            raise ValueError("The sections are a list of their numbers")
+        if search is not None:
+            if not isinstance(search, str) or has_control_character(search):
+                raise ValueError("The words to search for are a few words")
+            search = search.strip() or None
+        if goal is not None:
+            if not isinstance(goal, str) or has_control_character(goal.replace("\n", " ")):
+                raise ValueError("What is wanted of the function is said in words")
+            goal = goal.strip() or None
+            if goal is not None and len(goal) > reimplementing.MAX_GOAL_CHARS:
+                raise ValueError(
+                    f"What is wanted of the function is at most {reimplementing.MAX_GOAL_CHARS} characters"
+                )
+        title = agent["title"]
+        if name is None:
+            name = reimplementing.default_name(title)
+        if not isinstance(name, str):
+            raise ValueError("A function's name is a name")
+        check_function_name(name)
+        found = kept_reading.search(document, search, reimplementing.MOST_SEARCHED) if search is not None else []
+        chosen = (
+            list(sections)
+            if sections is not None
+            else ([] if search is not None else reimplementing.default_sections(reimplementing.spans_of(document)))
+        )
+        places, cut = reimplementing.fit(document, reimplementing.choose(document, chosen, found))
+        brief = reimplementing.brief_of(title, document, places, goal)
+        model = self.workspace.load_settings().model
+
+        return {
+            "name": name,
+            "goal": goal,
+            "search": search,
+            "sections": chosen,
+            "places": [{**place.to_dict(), "chars": place.end - place.start} for place in places],
+            "cut": cut,
+            "brief": brief,
+            "chars": len(brief),
+            "model": model,
+            "file_sha256": file["sha256"],
+            "key": reimplementing.key_of(brief, name, model, file["sha256"]),
+        }
+
+    def reimplementation(
+        self,
+        agent_id: str,
+        sections: Any = None,
+        search: Any = None,
+        name: Any = None,
+        goal: Any = None,
+    ) -> dict[str, Any]:
+        """What there is of writing a function from an agent's paper: whether it can be, the sections of the paper that
+        can be chosen, what the person would be shown and agree to for what they have chosen so far, and what was kept
+        of a writing, with the function's code, which they are to read before they rely on it.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        file = agent["paper"].get("file")
+        problem = self.reimplementation_problem(directory, agent)
+        spans: list[reimplementing.Span] = []
+        offer = None
+        trouble = None
+        if problem is None:
+            document = kept_reading.load_document(directory / PAPER_DIR)
+            assert document is not None
+            spans = reimplementing.spans_of(document)
+            try:
+                offer = self.reimplementation_offer(directory, agent, sections, search, name, goal)
+            except ValueError as error:
+                trouble = str(error)
+        job = self.reimplementation_job(agent_id)
+
+        return {
+            "id": agent_id,
+            "ready": problem is None,
+            "problem": {"code": problem[0], "message": problem[1]} if problem is not None else None,
+            "settings_model": self.workspace.load_settings().model,
+            "tier": reimplementing.TIER,
+            "label": reimplementing.LABEL,
+            "meaning": reimplementing.MEANING,
+            "sections": [span.to_dict() for span in spans],
+            "default_sections": reimplementing.default_sections(spans),
+            "offer": offer,
+            "choice_problem": trouble,
+            "kept": kept_reimplementation.shown(directory, file["sha256"] if file is not None else None),
+            "job": job.snapshot() if job is not None else None,
+            "limits": {
+                "most_chars": reimplementing.MAX_PASSAGES_CHARS,
+                "most_goal_chars": reimplementing.MAX_GOAL_CHARS,
+                "most_search_chars": kept_reading.MAX_QUERY_CHARS,
+                "most_searched": reimplementing.MOST_SEARCHED,
+                "most_sections": reimplementing.MAX_SECTIONS,
+            },
+        }
+
+    def start_reimplementation(
+        self,
+        agent_id: str,
+        agreed: Any,
+        max_cost: Any = None,
+        sections: Any = None,
+        search: Any = None,
+        name: Any = None,
+        goal: Any = None,
+    ) -> Job:
+        """Starts writing a function from the words of the paper that the person was shown. A model of the settings is
+        given those words, and nothing else of the paper, and writes the function; it is read as Python and imported in
+        a container with no network. Nothing else is run, and nothing is checked against the paper yet. What was kept
+        of an earlier writing is taken away when the job begins.
+
+        :param agreed: The key of what the person was shown, which must be that of what would be sent now.
+        :param max_cost: The most that asking the model may spend, in USD, which must be said.
+        :raises ApiError: If there is no agent with this id, the limit is not fit, the person has not agreed, what they
+            agreed to is not what would be sent now (409 changed), a key or a price is missing, Docker is not running,
+            a function cannot be written from this paper, or the agent is being worked on.
+        """
+        self.lookup(agent_id)
+        budget = check_budget(max_cost, "The most it may spend", required=True)
+        assert budget is not None
+        if not isinstance(agreed, str) or not agreed:
+            raise ApiError(
+                422,
+                "not_agreed",
+                "Agree first, to the words of the paper that the model is to be given, which are shown with their key",
+            )
+        model = self.usable_model()
+        usable, problem = building.ready(self.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and writing a function takes it")
+
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            trouble = self.reimplementation_problem(directory, agent)
+            if trouble is not None:
+                raise ApiError(422, trouble[0], trouble[1])
+            try:
+                offer = self.reimplementation_offer(directory, agent, sections, search, name, goal)
+            except ValueError as error:
+                raise ApiError(422, "invalid", str(error)) from error
+            if offer["key"] != agreed:
+                raise ApiError(
+                    409,
+                    "changed",
+                    "What would be sent is not what was shown when you agreed: the words of the paper, the name, the "
+                    "model, or the paper itself is not the same. Look at what is offered now",
+                    offer=offer,
+                )
+            offer["agreed_at"] = utc_timestamp()
+            usage = MeetingUsage()
+            executor = DockerExecutor(allow_network=False, docker_command=self.docker_command)
+
+            def work(job: Job) -> str:
+                return kept_reimplementation.write_function(
+                    job, directory, offer, agent["title"], model, budget, executor, self.chat_models, self.client, usage
+                )
+
+            try:
+                return self.jobs.start(
+                    REIMPLEMENTATION_JOB,
+                    agent_id,
+                    f"Writing a function from the paper: {agent['title']}",
+                    work,
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def clear_reimplementation(self, agent_id: str) -> None:
+        """Takes away the function that was written from the paper and what was kept of writing it.
+
+        :raises ApiError: If there is no agent with this id, or something is being done to it.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            kept_reimplementation.forget(directory)
 
     def divergence(self, agent_id: str) -> dict[str, Any]:
         """Where the tutorials of an agent first part from the paper for each claim that was not reproduced, or only
