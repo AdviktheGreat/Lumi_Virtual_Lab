@@ -1,3 +1,4 @@
+import { toleranceQuery } from "./bakeoff-runs";
 import { exportNameOf, type ExportFormat } from "./export";
 import { fileUrl } from "./files";
 import type { PickedFolder } from "./skill-folder";
@@ -6,9 +7,13 @@ import type {
   Bakeoff,
   BakeoffBuildBody,
   BakeoffChange,
+  BakeoffComparison,
   BakeoffMethodChange,
+  BakeoffRun,
+  BakeoffRunBody,
   BakeoffShortlistBody,
   BakeoffsList,
+  BakeoffTolerance,
   ChatFiles,
   ChatInfo,
   ChatSummary,
@@ -545,6 +550,13 @@ export const api = {
     request<Bakeoff>("DELETE", `/bakeoffs/${encodeURIComponent(id)}/candidates/${encodeURIComponent(method)}/go-on`),
   shortlistBakeoff: (id: string, body: BakeoffShortlistBody) => request<Job>("POST", `/bakeoffs/${encodeURIComponent(id)}/shortlist`, body),
   buildBakeoff: (id: string, body: BakeoffBuildBody) => request<Job>("POST", `/bakeoffs/${encodeURIComponent(id)}/build`, body),
+  runBakeoff: (id: string, body: BakeoffRunBody) => request<Job>("POST", `/bakeoffs/${encodeURIComponent(id)}/run`, body),
+  // The whole of the last run of a method, with its result as it was kept, which a list of methods shows only the start of
+  bakeoffRun: (id: string, method: string, signal?: AbortSignal) =>
+    request<BakeoffRun>("GET", `/bakeoffs/${encodeURIComponent(id)}/candidates/${encodeURIComponent(method)}/run`, undefined, signal),
+  // The methods side by side, with the tolerance for two numbers to be the same if the person says one
+  bakeoffComparison: (id: string, tolerance?: Partial<BakeoffTolerance>, signal?: AbortSignal) =>
+    request<BakeoffComparison>("GET", `/bakeoffs/${encodeURIComponent(id)}/comparison${toleranceQuery(tolerance)}`, undefined, signal),
   uploadAgentPaper,
   removeAgentPaper: (id: string) => request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/paper`),
   // What has been read of an agent's paper, starting to read it, which goes on as a job, taking away what was read, and

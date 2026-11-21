@@ -2470,6 +2470,114 @@ export interface BakeoffScope {
   went_on_at: string | null;
 }
 
+// How a call ended: it gave an answer, it was made and did not give one, or it was not made
+export type BakeoffRunState = "ran" | "failed" | "not_run";
+
+// Why a call that was made did not give an answer, and why one was not made, as short names. A name that is not here is shown as the
+// server says it.
+export type BakeoffRunWhy =
+  | "error"
+  | "timed_out"
+  | "too_big"
+  | "no_answer"
+  | "outside"
+  | "no_data"
+  | "data_missing"
+  | "cannot_mount"
+  | "not_built"
+  | "no_tool"
+  | "bad_call"
+  | "not_proposed"
+  | "limit";
+
+// The tool that a call was of: its name, the function of the authors' code that it calls, and the tier it had when it was called
+export interface BakeoffRunTool {
+  name: string;
+  called: string;
+  tier: string;
+}
+
+// The data a call was made on, as it was listed then. The fingerprint is of the names, sizes and times of change of its files, and is not
+// a hash of what is in them.
+export interface BakeoffRunData {
+  own: string;
+  path: string;
+  files: number;
+  bytes: number;
+  fingerprint: string;
+  // Whether every file was listed, which is not so if there were very many
+  complete: boolean;
+}
+
+// What a call was proposed by a model as: which model, what it said of why, what asking it cost, and what it proposed before a
+// program checked it
+export interface BakeoffRunProposed {
+  model: string;
+  reason: string;
+  cost: number | null;
+  tool: string | null;
+  arguments: string | null;
+}
+
+// What the data was put against the card of the method's paper as when the call was made
+export interface BakeoffRunScope {
+  checked: boolean;
+  why: string | null;
+  outcome: ScopeOutcome | null;
+  key: string | null;
+  went_on: boolean;
+  warnings: string[];
+}
+
+// The PaperAgent that a call was made with, and the commit and image that its tools were made of
+export interface BakeoffRunMethod {
+  agent: string;
+  commit: string;
+  image_id: string;
+}
+
+// A call that was made, as it is kept: what it was, what it was on, and what it gave, took, or failed with. It does not say that what
+// it gave is right. The result is the start of it in a list of methods, and all of it, or what was kept of it, when the run is asked for.
+export interface BakeoffRunOf<Result> {
+  schema: number;
+  candidate: string;
+  state: BakeoffRunState;
+  why: BakeoffRunWhy | null;
+  // In words, why it failed or was not made
+  reason: string;
+  at: string;
+  by: "person" | "model";
+  proposed: BakeoffRunProposed | null;
+  tool: BakeoffRunTool | null;
+  arguments: Record<string, unknown> | null;
+  seconds: number | null;
+  result: Result | null;
+  // The last of what it printed
+  printed: string | null;
+  data: BakeoffRunData | null;
+  scope: BakeoffRunScope;
+  method: BakeoffRunMethod | null;
+  // What is not as it was when it ran, which is the data, or the method if it was built again
+  since: ("data" | "method")[];
+}
+
+// The start of a result, which a list of methods shows before the whole of it is asked for. It is plain data if `plain`, and otherwise
+// a look at what was too much to be kept as it was.
+export interface BakeoffRunPreview {
+  type: string;
+  plain: boolean;
+  chars: number;
+  start: string;
+  cut: boolean;
+}
+
+export type BakeoffRunSummary = BakeoffRunOf<BakeoffRunPreview>;
+
+// What a run kept of a result: the value if it was plain data that fitted, and otherwise a look at it, or only its size and a hash
+export type BakeoffRunResult = { type: string } & Record<string, unknown>;
+
+export type BakeoffRun = BakeoffRunOf<BakeoffRunResult>;
+
 // A method that is in the running
 export interface BakeoffMethod {
   id: string;
@@ -2487,6 +2595,8 @@ export interface BakeoffMethod {
   agent: BakeoffAgent | null;
   standing: BakeoffStanding;
   scope: BakeoffScope;
+  // What came of running it the last time, with only the start of its result, or null if it has not been run
+  run: BakeoffRunSummary | null;
 }
 
 // Why choices that a model made were thrown away, and how many of each
@@ -2577,4 +2687,138 @@ export interface BakeoffShortlistBody {
 export interface BakeoffBuildBody {
   candidates?: string[];
   go_on?: string[];
+}
+
+// What one method is called with: the name of one of its tools and the arguments, by the names of the tool's parameters, or for a model
+// to propose the call. Whoever chose it, a program checks it against the tool before it is made.
+export type BakeoffCallBody = { tool: string; arguments: Record<string, unknown> } | { propose: true };
+
+// How to run methods: the call of each, by the id of the method, and the most minutes that one call may take
+export interface BakeoffRunBody {
+  calls: Record<string, BakeoffCallBody>;
+  minutes?: number;
+}
+
+// How a method came out when the methods were put side by side. A method that was not built is a row of the table too.
+export type BakeoffComparedState = BakeoffRunState | "not_built";
+
+// How much of a result was kept, which decides what it can be compared by: all of it, a look at it, or only a hash of it
+export type BakeoffKept = "whole" | "look" | "hash";
+
+// Why a method was not held to the right answers
+export type BakeoffUnscoredWhy =
+  | "labels_unusable"
+  | "no_answer"
+  | "data_changed"
+  | "not_kept"
+  | "not_a_list_or_object"
+  | "not_values"
+  | "length"
+  | "no_id_column"
+  | "ids_unusable"
+  | "none_in_common";
+
+// How a method did against the right answers, which is its score if it was held to them and why it was not if it was not. A score is
+// null in the table of a bake-off that has no right answers.
+export interface BakeoffScore {
+  scored: boolean;
+  why: BakeoffUnscoredWhy | null;
+  reason: string;
+  // Whether its answers were matched to the labels by their place in the data or by what each is the answer to
+  by: "position" | "id" | null;
+  matched: number | null;
+  of: number | null;
+  score: number | null;
+  // How many of the labels it gave no answer to, and how many answers it gave that there is no label for
+  missing: number | null;
+  extra: number | null;
+  examples: string[];
+  // Its place among the methods that were scored, which methods that matched the same number share
+  rank: number | null;
+}
+
+// A method as the table puts it: where it stands, what running it came to, what it cost, and which of the others it agrees with
+export interface BakeoffComparedMethod {
+  id: string;
+  name: string;
+  title: string;
+  agent: BakeoffAgent | null;
+  state: BakeoffComparedState;
+  // Why it failed or was not run, as a short name, which is for a method that was not built the name that it stood in the way of
+  why: string | null;
+  reason: string;
+  // The tier of the tool that was called, when it was called
+  tier: string | null;
+  tool: string | null;
+  seconds: number | null;
+  // What it cost: reading its paper, which may have been paid before the bake-off was made, and asking a model for the call, which
+  // is nothing if the person chose it. Either is null if it is not known, or the method was not run.
+  cost: { reading: number | null; asking: number | null };
+  by: "person" | "model" | null;
+  kept: BakeoffKept | null;
+  // What is not as it was when it ran
+  since: ("data" | "method")[];
+  score: BakeoffScore | null;
+  // The ids of the methods that it gave the same answer as, another answer than, and whose answer is not known to be the same or not
+  agrees: string[];
+  differs: string[];
+  unknown: string[];
+}
+
+// Whether two methods gave the same answer, as far as what was kept of each shows, which is that it is not known if it does not show it
+export type BakeoffVerdict = "agree" | "differ" | "unknown";
+
+export interface BakeoffPair {
+  first: string;
+  second: string;
+  verdict: BakeoffVerdict;
+  how: string;
+  differences: string[];
+  // How much was kept of the answer of each
+  kept: [BakeoffKept, BakeoffKept];
+}
+
+// The right answers, as the table holds the methods to them: where they are, whether they could be used, and how many there are. They are
+// the person's word, and nothing checks them.
+export interface BakeoffGroundTruth {
+  own: string;
+  column: string;
+  id_column: string | null;
+  ok: boolean;
+  why: string | null;
+  problem: string | null;
+  bytes: number | null;
+  in_data: boolean;
+  says: string;
+  rows: number | null;
+  labelled: number | null;
+  unlabelled: number | null;
+  sha256: string | null;
+}
+
+// How closely two numbers must be to be the same
+export interface BakeoffTolerance {
+  relative: number;
+  absolute: number;
+}
+
+// The methods of a bake-off side by side, as of now: how each came out, what it cost, whether they agree, and, if the person gave right
+// answers, how each did against them
+export interface BakeoffComparison {
+  id: string;
+  title: string;
+  task: string;
+  limit: number;
+  spent: number;
+  cost_known: boolean;
+  tolerance: BakeoffTolerance;
+  ground_truth: BakeoffGroundTruth | null;
+  // Whether any method was ranked
+  ranked: boolean;
+  // What the table is of, in words: that there are or are not right answers to hold the methods to
+  says: string;
+  // What agreeing, and being scored, mean and do not
+  meaning: string;
+  methods: BakeoffComparedMethod[];
+  pairs: BakeoffPair[];
 }

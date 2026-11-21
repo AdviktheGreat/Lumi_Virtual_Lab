@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BAKEOFFS_ADDRESS,
+  BAKEOFF_JOBS,
   bakeoffAddress,
   bakeoffJob,
   bakeoffKey,
@@ -19,6 +20,8 @@ import {
   MAX_BAKEOFF_TASK,
   MAX_BAKEOFF_TITLE,
   MAX_COLUMN_CHARS,
+  METHOD_JOBS,
+  RUN_JOBS,
   type BakeoffDraft,
 } from "./bakeoffs";
 import { EMPTY_SCOPE_DRAFT } from "./paperagent-scope";
@@ -118,6 +121,15 @@ describe("the job at work on a bake-off", () => {
   it("takes a job that is stopping as still at work, and no jobs as none", () => {
     expect(bakeoffJob([job({ state: "stopping" })], "b1")).toBeDefined();
     expect(bakeoffJob(null, "b1")).toBeUndefined();
+  });
+
+  it("is of the kinds that are asked for, if any are", () => {
+    const running = job({ kind: "bakeoff-run" });
+    expect(bakeoffJob([running], "b1", METHOD_JOBS)).toBeUndefined();
+    expect(bakeoffJob([running], "b1", RUN_JOBS)).toBe(running);
+    expect(bakeoffJob([job({ kind: "bakeoff-build" })], "b1", RUN_JOBS)).toBeUndefined();
+    expect(bakeoffJob([job({ kind: "bakeoff-shortlist" })], "b1", METHOD_JOBS)).toBeDefined();
+    expect([...METHOD_JOBS, ...RUN_JOBS].sort()).toEqual([...BAKEOFF_JOBS].sort());
   });
 });
 

@@ -92,6 +92,7 @@ function method(changes: Partial<BakeoffMethod> = {}): BakeoffMethod {
     agent: null,
     standing: { state: "new", step: null, reason: "" },
     scope: NOT_CHECKED,
+    run: null,
     ...changes,
   };
 }
@@ -120,6 +121,13 @@ describe("lastBakeoffJob", () => {
   it("takes a job that failed or was stopped as the last one", () => {
     expect(lastBakeoffJob([job({ state: "failed" })], "b1")?.state).toBe("failed");
     expect(lastBakeoffJob([job({ state: "stopped" })], "b1")?.state).toBe("stopped");
+  });
+
+  it("is of the kinds that are asked for, if any are", () => {
+    const jobs = [job({ id: "run", kind: "bakeoff-run" }), job({ id: "build", kind: "bakeoff-build" })];
+    expect(lastBakeoffJob(jobs, "b1", ["bakeoff-build", "bakeoff-shortlist"])?.id).toBe("build");
+    expect(lastBakeoffJob(jobs, "b1", ["bakeoff-run"])?.id).toBe("run");
+    expect(lastBakeoffJob([jobs[0]], "b1", ["bakeoff-build"])).toBeUndefined();
   });
 });
 

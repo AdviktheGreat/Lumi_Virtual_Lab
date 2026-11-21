@@ -12,18 +12,19 @@ import { Input } from "@/components/ui/input";
 import { WorkStatus } from "@/components/work-status";
 import { api } from "@/lib/api";
 import { buildableCount, checkMethod, describeBuildAll, EMPTY_METHOD, lastBakeoffJob, type MethodDraft } from "@/lib/bakeoff-methods";
-import { bakeoffJob, describeLeft } from "@/lib/bakeoffs";
+import { bakeoffJob, describeLeft, METHOD_JOBS } from "@/lib/bakeoffs";
 import type { Bakeoff, BakeoffBuildBody } from "@/lib/types";
 import { useAttempt } from "@/lib/use-looked";
 
-// What is being done to the methods and how it ended the last time, with the way to stop it
+// What is being done to find or build the methods and how it ended the last time, with the way to stop it. Running them is shown with
+// the way to run them.
 export function MethodsWork({ bakeoff }: { bakeoff: Bakeoff }) {
   const jobs = useSetupJobs();
 
   return (
     <WorkStatus
-      job={bakeoffJob(jobs.jobs, bakeoff.id)}
-      last={lastBakeoffJob(jobs.jobs, bakeoff.id)}
+      job={bakeoffJob(jobs.jobs, bakeoff.id, METHOD_JOBS)}
+      last={lastBakeoffJob(jobs.jobs, bakeoff.id, METHOD_JOBS)}
       jobs={jobs}
       label="What is being done to the methods"
     />
