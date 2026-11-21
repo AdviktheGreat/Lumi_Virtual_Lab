@@ -439,6 +439,7 @@ test("shows what came of the last run of each method: what ran, on what, who cho
   await expect(ofRan).toContainText("It called normalise, a tool of tier A, which calls scanpy.pp.normalize_total in the code of its paper.");
   await expect(ofRan).toContainText("You chose the call.");
   await expect(ofRan).toContainText("It was run on cells.csv, at /data/cells.csv: 1 file, 34 B.");
+  await expect(ofRan).toContainText("told by its file names, sizes, and times of change, and not by what is in the files");
   await expect(ofRan).toContainText("Your data was not put against a card");
   await expect(ofRan).toContainText("It took 2.4 s.");
   await expect(ofRan.getByTestId("run-since")).toContainText("Your data is not as it was when this ran");

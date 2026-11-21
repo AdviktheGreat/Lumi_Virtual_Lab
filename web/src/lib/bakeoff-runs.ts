@@ -80,11 +80,11 @@ function numberProblem(text: string): string | null {
     if (token.startsWith('"')) continue;
     const number = Number(token);
     if (!Number.isFinite(number)) return `${token} is too big to be a number here.`;
-    const isWhole = /^-?\d+$/.test(token);
-    if (isWhole && !Number.isSafeInteger(number)) {
+    // Too big to be exact whether it was typed with a point or not, so a rewrite of it would be refused for the same reason
+    if (Number.isInteger(number) && !Number.isSafeInteger(number)) {
       return `${token} has too many digits to be sent exactly. Give it as text if the tool takes text.`;
     }
-    if (!isWhole && Number.isInteger(number)) {
+    if (!/^-?\d+$/.test(token) && Number.isInteger(number)) {
       return `${token} is a whole number written as a decimal, and is sent without its decimal point. Write it as ${number}, which a tool that wants a decimal takes too.`;
     }
   }

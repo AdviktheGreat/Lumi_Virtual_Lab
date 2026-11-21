@@ -99,7 +99,12 @@ export function RunSummary({ bakeoffId, run }: { bakeoffId: string; run: Bakeoff
             What it said of why: {run.proposed.reason}
           </p>
         )}
-        {run.data !== null && <p className="break-words">It was run on {describeRunData(run.data)}.</p>}
+        {run.data !== null && (
+          <p className="break-words">
+            It was run on {describeRunData(run.data)}. Whether the data is as it was is told by its file names, sizes, and times of change, and not by what is in
+            the files.
+          </p>
+        )}
         <p>{describeScopeAtRun(run.scope)}</p>
         {run.scope.warnings.length > 0 && (
           <ul aria-label="What was said against its card" className="flex list-disc flex-col gap-0.5 pl-4">

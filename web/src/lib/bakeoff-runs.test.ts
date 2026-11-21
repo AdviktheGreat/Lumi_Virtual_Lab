@@ -179,6 +179,14 @@ describe("the arguments of a call", () => {
     expect(checkArguments('{"n": -2.00}').problem).toMatch(/Write it as -2/);
   });
 
+  it("is not told to write a number in a way that would be refused for the same reason", () => {
+    for (const text of ['{"n": 12345678901234567890.5}', '{"n": 1e19}', '{"n": 1e300}', '{"n": 9007199254740993.0}']) {
+      const problem = checkArguments(text).problem;
+      expect(problem).toMatch(/too many digits/);
+      expect(problem).not.toMatch(/Write it as/);
+    }
+  });
+
   it("takes a number that is exact, and ones that are not whole", () => {
     expect(checkArguments('{"n": 9007199254740991}').value).toEqual({ n: 9007199254740991 });
     expect(checkArguments('{"n": 0.5, "m": 1e-7, "k": -0}').problem).toBeUndefined();
