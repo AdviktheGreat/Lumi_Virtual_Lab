@@ -59,6 +59,8 @@ function bakeoff(changes: Partial<Bakeoff> = {}): Bakeoff {
     task: "Cluster my cells",
     created_at: "2026-01-01T00:00:00Z",
     candidates: [],
+    shortlist: null,
+    meaning: "",
     limit: 5,
     spent: 0,
     cost_known: true,

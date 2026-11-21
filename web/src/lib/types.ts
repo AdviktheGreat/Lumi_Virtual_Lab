@@ -1095,9 +1095,8 @@ export interface ScopeNotChecked {
   says: ScopeStatement[];
 }
 
-// Data put against the card. The whole is outside if anything is, and inside only if everything that was said is.
-export interface ScopeCheck {
-  id: string;
+// What an answer of a scope check says: what each thing that was said is against the card, and how far the card is to be trusted
+export interface ScopeView {
   outcome: ScopeOutcome;
   aspects: ScopeAnswer[];
   // One for each thing that is outside, with the card's words and the paper's
@@ -1108,6 +1107,11 @@ export interface ScopeCheck {
   // How far the paper was read, where chunks is null if it was not
   reading: { complete: boolean; chunks: number | null; read: number; failed: number };
   notes: string[];
+}
+
+// Data put against the card. The whole is outside if anything is, and inside only if everything that was said is.
+export interface ScopeCheck extends ScopeView {
+  id: string;
 }
 
 export interface ReadSoftware extends ReadFact {
@@ -2398,14 +2402,123 @@ export interface BakeoffDescribed {
   at: string;
 }
 
-// A method that is in the running, of which what is shown of it where the methods are shown is added to this
+// The paper of a method, which is given by its DOI or a link to it
+export type BakeoffPaper = { kind: "doi"; doi: string } | { kind: "url"; url: string };
+
+// Who put a method in the running: a search, which is a model's reading of abstracts, or the person
+export type BakeoffBy = "search" | "person";
+
+// Where a method that a search found was found, as the service gave it. A link is the service's own page for it, or empty.
+export interface BakeoffFound {
+  source: string;
+  url: string;
+  credit: string;
+  venue: string;
+  year: number | null;
+  cited_by: number;
+  preprint: boolean;
+  // Whether Europe PMC holds its full text, which reading it needs. Null for a paper of arXiv, which is read from its PDF.
+  full_text: boolean | null;
+}
+
+// The words of the abstract that the model went by in choosing a method, which a program found in it, and which model
+export interface BakeoffFit {
+  quote: string;
+  model: string;
+}
+
+// Where a method stands: not gone at, being built, built, or stood in the way of, which is for the person to say (waiting), so of the
+// method (blocked), a step that went wrong (failed), or not got to (pending)
+export type BakeoffState = "new" | "building" | "built" | "waiting" | "blocked" | "failed" | "pending";
+
+export interface BakeoffStanding {
+  state: BakeoffState;
+  // Which step it is at, or was at when it was stood in the way of
+  step: string | null;
+  reason: string;
+  // A short name for the reason, which is only given with what stood in the way
+  why?: string;
+  at?: string;
+}
+
+// The PaperAgent that a method's paper has, which building the method makes if there is none
+export interface BakeoffAgent {
+  id: string;
+  title: string;
+  repo: string | null;
+  steps: PaperAgent["steps"];
+}
+
+// A method's data put against the card of its paper: the answer of a scope check, or why there is none. It is worked out each time and
+// is not kept. What is kept is that the person goes on, with the key of what they were shown.
+export interface BakeoffScope {
+  checked: boolean;
+  // Why it was not put against a card, as a short name, and in words
+  why: string | null;
+  reason: string;
+  outcome: ScopeOutcome | null;
+  of: ScopeAnswer[];
+  not_checked: ScopeNotChecked[];
+  warnings: string[];
+  card: ScopeView["card"] | null;
+  reading: ScopeView["reading"] | null;
+  notes: string[];
+  // What the person was shown, which going on is said by. Null where it was not put against a card.
+  key: string | null;
+  // Whether the person goes on with it on this data, outside as it is, and when they said so
+  went_on: boolean;
+  went_on_at: string | null;
+}
+
+// A method that is in the running
 export interface BakeoffMethod {
   id: string;
+  name: string;
+  paper: BakeoffPaper;
+  // The title of its paper, if a search found it
+  title: string;
+  // Where its code is, as the person said, and what its abstract pointed to, which is not the code until they say so
+  repo: string | null;
+  suggested: string[];
+  added_by: BakeoffBy;
+  added_at: string;
+  found: BakeoffFound | null;
+  fit: BakeoffFit | null;
+  agent: BakeoffAgent | null;
+  standing: BakeoffStanding;
+  scope: BakeoffScope;
+}
+
+// Why choices that a model made were thrown away, and how many of each
+export type BakeoffDropped = Record<"not_shown" | "twice" | "quote" | "more" | "already" | "no_room", number>;
+
+// What finding methods in the literature came to
+export interface BakeoffShortlist {
+  started_at: string;
+  finished_at: string;
+  model: string;
+  // Whether a model wrote the searches or the person did
+  written_by: "model" | "person";
+  queries: string[];
+  // How many papers were found to choose from, of how many were found before there were more than a model is shown
+  found: number;
+  total: number;
+  chosen: number;
+  added: number;
+  dropped: BakeoffDropped;
+  notes: string[];
+  // Whether it came to its end, and what stopped it if it did not
+  complete: boolean;
+  note: string | null;
+  cost: number;
 }
 
 // A bake-off as one is looked at: its methods are given, and not counted as the list of them has it
 export interface Bakeoff extends Omit<BakeoffSummary, "candidates"> {
   candidates: BakeoffMethod[];
+  shortlist: BakeoffShortlist | null;
+  // What the methods that a search found are, and are not, which is said beside them
+  meaning: string;
   data: BakeoffData | null;
   // What the person says the data is, if they do
   described: BakeoffDescribed | null;
@@ -2440,4 +2553,28 @@ export interface BakeoffChange {
   described?: ScopeData;
   labels?: BakeoffLabelsBody;
   limit?: number;
+}
+
+// A method to put in the running: its paper, what it is called, and where its code is
+export interface NewBakeoffMethod {
+  paper: BakeoffPaper;
+  name?: string;
+  repo?: string;
+}
+
+// What to say again of a method: any of these, and an empty address takes the code away
+export interface BakeoffMethodChange {
+  name?: string;
+  repo?: string;
+}
+
+// How to find methods: the searches, if the person says them and a model does not write them
+export interface BakeoffShortlistBody {
+  queries?: string[];
+}
+
+// How to build methods: which, all that are not built if left out, and which of those that are waiting to be gone on with
+export interface BakeoffBuildBody {
+  candidates?: string[];
+  go_on?: string[];
 }
