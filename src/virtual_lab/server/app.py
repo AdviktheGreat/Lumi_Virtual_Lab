@@ -545,6 +545,19 @@ class PaperAgentReproductionBody(RequestModel):
     max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
 
 
+class PaperAgentReimplementationBody(RequestModel):
+    """What the person agreed to and how: the key of the words of the paper that the model is to be given, the most
+    that asking it may spend, in USD, which must be said, and the choice the key is of: the sections of the paper, the
+    words that were searched for, the name of the function, and what is wanted of it, each as it was shown."""
+
+    agreed: str | None = Field(None, max_length=64)
+    max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+    sections: list[StrictInt] | None = Field(default=None, max_length=100)
+    search: str | None = Field(None, max_length=300)
+    name: str | None = Field(None, max_length=MAX_FUNCTION_NAME_CHARS)
+    goal: str | None = Field(None, max_length=1000)
+
+
 class PaperAgentVariantBody(RequestModel):
     """What to make a variant of and how: the id of a claim that was tried and was held to a call, the new value of
     each argument to change by its name, the most minutes that both calls may take, how many times each is made, the
@@ -787,7 +800,8 @@ class ModelBody(RequestModel):
 
 class LimitsBody(RequestModel):
     """Any of what a conversation may spend, the most team sessions the lead may start in answering a message, and
-    the most rounds it may ask one for: null is no spending limit, or what the lead is given unless it is told otherwise."""
+    the most rounds it may ask one for: null is no spending limit, or what the lead is given unless it is told
+    otherwise."""
 
     max_cost: float | None = Field(None, ge=0, allow_inf_nan=False)
     max_delegations: StrictInt | None = Field(None, ge=0, le=CEILING_CHAT_DELEGATIONS)
@@ -1658,6 +1672,30 @@ def create_app(
         paperagents.clear_reproduction(agent_id)
 
         return paperagents.reproduction(agent_id)
+
+    @api.get("/paperagents/{agent_id}/reimplementation")
+    def get_paperagent_reimplementation(
+        agent_id: str,
+        sections: list[int] | None = Query(None),
+        search: str | None = Query(None, max_length=300),
+        name: str | None = Query(None, max_length=MAX_FUNCTION_NAME_CHARS),
+        goal: str | None = Query(None, max_length=1000),
+    ) -> dict[str, Any]:
+        return paperagents.reimplementation(agent_id, sections, search, name, goal)
+
+    @api.post("/paperagents/{agent_id}/reimplementation", status_code=202)
+    def write_paperagent_reimplementation(agent_id: str, body: PaperAgentReimplementationBody) -> dict[str, Any]:
+        job = paperagents.start_reimplementation(
+            agent_id, body.agreed, body.max_cost, body.sections, body.search, body.name, body.goal
+        )
+
+        return job.snapshot(0)
+
+    @api.delete("/paperagents/{agent_id}/reimplementation")
+    def delete_paperagent_reimplementation(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_reimplementation(agent_id)
+
+        return paperagents.reimplementation(agent_id)
 
     @api.get("/paperagents/{agent_id}/divergence")
     def get_paperagent_divergence(agent_id: str) -> dict[str, Any]:
