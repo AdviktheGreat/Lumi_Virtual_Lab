@@ -82,6 +82,13 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}/export  the agent as the library lists it, its package, and the job
     GET    /api/paperagents/{id}/export/package  the package, as a ZIP
     DELETE /api/paperagents/{id}/export  takes away the package
+    GET    /api/paperagents/{id}/health  how the agent was when last looked at, its schedule, any newer version
+    POST   /api/paperagents/{id}/health  starts looking at it: its source, its pinned versions, its tools run again
+    PUT    /api/paperagents/{id}/watch  has it looked at every so many hours while the server is running
+    DELETE /api/paperagents/{id}/watch  stops that
+    GET    /api/paperagents/{id}/update  the newer version of the code that is proposed, as a diff
+    POST   /api/paperagents/{id}/update/apply  takes the newer version, if it is the commit that the person approves
+    DELETE /api/paperagents/{id}/update  puts the proposal aside
     POST   /api/paperagents/{id}/checks  starts checking the tools by what their tutorials did not give them
     GET    /api/paperagents/{id}/checks  each tool, its tier, and how each kind of check of it went, and what is allowed
     GET    /api/paperagents/{id}/checks/{name}  one tool's checks, each with what it was made of
@@ -237,6 +244,8 @@ from virtual_lab.skills import MAX_COPIED_BYTES, MAX_COPIED_FILES, MAX_SKILLS
 # Where the server's own messages go, which the server shows as it runs
 LOG = logging.getLogger("uvicorn.error")
 
+# How often the schedules that people set for looking at agents are asked whether it is time
+SCHEDULE_SECONDS = 60.0
 MAX_MESSAGE_CHARS = 200_000
 
 # What a prompt of an MCP server may be filled in with: the most arguments, and the most characters of the name of a
@@ -528,6 +537,18 @@ class PaperAgentExportBody(RequestModel):
     non-commercial use or is a copyleft one. The person has read what is said of it and goes on."""
 
     accept_license: StrictBool = False
+
+
+class PaperAgentWatchBody(RequestModel):
+    """How often an agent is to be looked at, in hours."""
+
+    every_hours: StrictInt
+
+
+class PaperAgentUpdateBody(RequestModel):
+    """The newer version of the code that the person has seen what it changes, and takes: its commit, in full."""
+
+    commit: str = Field(max_length=100)
 
 
 class PaperAgentChecksBody(RequestModel):
@@ -1004,9 +1025,18 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         conversations.loop = asyncio.get_running_loop()
+        stopping = threading.Event()
+        schedule = threading.Thread(
+            target=paperagents.watch_schedules,
+            args=(stopping, SCHEDULE_SECONDS),
+            name="paperagent-schedule",
+            daemon=True,
+        )
+        schedule.start()
         try:
             yield
         finally:
+            stopping.set()
             await anyio.to_thread.run_sync(conversations.close)
             await anyio.to_thread.run_sync(setup.close)
 
@@ -1014,6 +1044,7 @@ def create_app(
         title="Virtual Lab", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
     )
     app.state.conversations = conversations
+    app.state.paperagents = paperagents
     app.state.setup = setup
     app.state.workspace = store
 
@@ -1678,6 +1709,34 @@ def create_app(
         paperagents.clear_export(agent_id)
 
         return paperagents.export(agent_id)
+
+    @api.get("/paperagents/{agent_id}/health")
+    def get_paperagent_health(agent_id: str) -> dict[str, Any]:
+        return paperagents.health(agent_id)
+
+    @api.post("/paperagents/{agent_id}/health", status_code=202)
+    def look_at_paperagent(agent_id: str) -> dict[str, Any]:
+        return paperagents.start_health(agent_id).snapshot(0)
+
+    @api.put("/paperagents/{agent_id}/watch")
+    def watch_paperagent(agent_id: str, body: PaperAgentWatchBody) -> dict[str, Any]:
+        return paperagents.set_watch(agent_id, body.every_hours)
+
+    @api.delete("/paperagents/{agent_id}/watch")
+    def stop_watching_paperagent(agent_id: str) -> dict[str, Any]:
+        return paperagents.clear_watch(agent_id)
+
+    @api.get("/paperagents/{agent_id}/update")
+    def get_paperagent_update(agent_id: str) -> dict[str, Any]:
+        return paperagents.update(agent_id)
+
+    @api.post("/paperagents/{agent_id}/update/apply", status_code=202)
+    def apply_paperagent_update(agent_id: str, body: PaperAgentUpdateBody) -> dict[str, Any]:
+        return paperagents.apply_update(agent_id, body.commit).snapshot(0)
+
+    @api.delete("/paperagents/{agent_id}/update")
+    def dismiss_paperagent_update(agent_id: str) -> dict[str, Any]:
+        return paperagents.dismiss_update(agent_id)
 
     @api.post("/paperagents/{agent_id}/checks", status_code=202)
     def check_paperagent_tools(agent_id: str, body: PaperAgentChecksBody) -> dict[str, Any]:
