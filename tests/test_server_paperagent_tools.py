@@ -118,6 +118,7 @@ class Replays:
                 "data": runner.data,
                 "mounts": runner.mounts,
                 "label": runner.label,
+                "prefix": runner.prefix,
                 "tag": runner.tag,
                 "limits": runner.tools,
                 "scratch": runner.scratch,
@@ -356,6 +357,7 @@ class TestMaking:
         assert replays.functions() == ["map_cells", "tally"]
         first = replays.runs[0]
         assert first["tag"] == reference.tag_of(referenced) and first["label"] == referenced
+        assert first["prefix"] == referencing.RUN_PREFIX
         assert first["limits"] == making.ToolLimits() and first["repeats"] == 2 and first["data"] is None
         assert first["cases"] == [
             {"id": 0, "args": {"counts": [1, 2]}, "cwd": "examples"},
@@ -518,9 +520,11 @@ class TestMaking:
         self, agents: PaperAgents, referenced: str, docker: Docker
     ) -> None:
         docker.runs_cleaned.clear()
+        docker.run_prefixes.clear()
         make(agents, referenced)
 
         assert docker.runs_cleaned == [referenced]
+        assert docker.run_prefixes == [(referencing.RUN_PREFIX,)]
 
     def test_what_is_made_is_not_made_again_until_it_is_taken_away_and_what_the_tutorials_gave_is_kept(
         self, agents: PaperAgents, referenced: str, replays: Replays, workspace: Workspace

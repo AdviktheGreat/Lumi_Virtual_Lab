@@ -48,6 +48,7 @@ from virtual_lab.paperagents.anchors import Document
 from virtual_lab.paperagents.asking import Asker, neutralize
 from virtual_lab.paperagents.comparing import shown
 from virtual_lab.paperagents.environment import REPO_PATH
+from virtual_lab.paperagents.reference import RUN_PREFIX
 
 # How many of the paper's numbers are tried, and how much of the paper around a claim's sentence its passage has
 MOST_TRIED = 10
@@ -710,7 +711,12 @@ def describe(reading: FunctionReading, claim: Mapping[str, Any], number: written
 
 
 def runner_for(
-    scratch: Path, docker_command: Sequence[str], stop: threading.Event, label: str, repeats: int = REPEATS
+    scratch: Path,
+    docker_command: Sequence[str],
+    stop: threading.Event,
+    label: str,
+    repeats: int = REPEATS,
+    prefix: str = RUN_PREFIX,
 ) -> making.ToolRunner:
     """What calls a function that was written from a paper: the runner of a tool's calls (toolmaking.py), with its
     ceilings and no network, in the lab's sandbox image, as the function uses Python's standard library alone. Where a
@@ -719,6 +725,8 @@ def runner_for(
     :param scratch: A folder of this machine's for the runs, in which the empty folder is made.
     :param stop: Set when whoever started the calls asks to stop them.
     :param label: Whose they are, so that a container that is left can be found.
+    :param prefix: What the names of the containers begin with: that of a run, for a job, or of a call, for a
+        conversation.
     """
     project = scratch / PROJECT_DIR
     project.mkdir(exist_ok=True)
@@ -732,6 +740,7 @@ def runner_for(
         stop,
         label,
         mounts=[(project, REPO_PATH)],
+        prefix=prefix,
     )
 
 

@@ -1008,7 +1008,7 @@ MISSING_PACKAGE = "ModuleNotFoundError: No module named 'scanpy'"
 WRITTEN_FILE = {"path": "embedding.csv", "bytes": 120, "sha256": "e" * 64, "new": True, "kept": False}
 
 
-def stand_in_remove_runs(label: str, docker_command: Any = ("docker",)) -> int:
+def stand_in_remove_runs(label: str, docker_command: Any = ("docker",), prefixes: Any = ()) -> int:
     return 0
 
 

@@ -1227,6 +1227,32 @@ class TestCommand:
         with pytest.raises(ValueError, match="label"):
             Runner("image:tag", Limits(), tmp_path, label="Not Allowed")
 
+    def named(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **options: Any) -> str:
+        """What a container of a runner is named, as it is made, with what runs in it replaced by what does nothing."""
+        scratch = tmp_path / "scratch"
+        scratch.mkdir(exist_ok=True)
+        runner = Runner("image:tag", Limits(), scratch, label="abc-1", **options)
+        names: list[str] = []
+
+        def command(folder: Path, item: Item, seconds: float, container: str) -> tuple[str, ...]:
+            names.append(container)
+            return (sys.executable, "-c", "pass")
+
+        monkeypatch.setattr(runner, "command", command)
+        runner.execute(tmp_path, ITEM, 10)
+
+        return names[0]
+
+    def test_a_container_is_named_from_a_run_unless_it_is_asked_to_be_of_a_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert self.named(tmp_path, monkeypatch).startswith(f"{ref.RUN_PREFIX}abc-1-")
+        assert self.named(tmp_path, monkeypatch, prefix=ref.CALL_PREFIX).startswith(f"{ref.CALL_PREFIX}abc-1-")
+
+    def test_a_container_cannot_be_named_from_anything_but_the_prefix_of_a_run_or_a_call(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="prefix"):
+            Runner("image:tag", Limits(), tmp_path, prefix="virtual-lab-build-")
+
 
 @pytest.fixture(scope="module")
 def image(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
@@ -1408,6 +1434,24 @@ class TestInContainers:
             assert ref.remove_runs("left-over") == 0
         finally:
             subprocess.run(["docker", "rm", "--force", name], capture_output=True, check=False)
+
+    def test_a_call_of_a_conversation_is_taken_away_only_where_it_is_asked_for(self, image: str) -> None:
+        stamp = time.time_ns()
+        names = {prefix: f"{prefix}left-{stamp}" for prefix in ref.PREFIXES}
+        for name in names.values():
+            subprocess.run(
+                ["docker", "run", "--detach", "--name", name, "--label", f"{env.AGENT_LABEL}=left-over", image]
+                + ["sleep", "300"],
+                capture_output=True,
+                check=True,
+            )
+        try:
+            assert ref.remove_runs("left-over") == 1
+            assert run_ids("left-over") == [names[ref.CALL_PREFIX]]
+            assert ref.remove_runs("left-over", prefixes=ref.PREFIXES) == 1
+            assert run_ids("left-over") == []
+        finally:
+            subprocess.run(["docker", "rm", "--force", *names.values()], capture_output=True, check=False)
 
     def test_what_is_not_a_label_removes_nothing(self) -> None:
         assert ref.remove_runs("") == 0 and ref.remove_runs("Not A Label") == 0

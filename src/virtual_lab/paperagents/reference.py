@@ -45,7 +45,11 @@ RUNNER_FILE = "tutorial_runner.py"
 RUNNER_AT = ".lumi-runner.py"
 RESULT_FOLDER = ".lumi-result"
 DATA_PATH = "/opt/paper/data"
+# What a container is named from: a run that a job makes, which is of nothing else, and a call that a conversation
+# makes of a tool, which a job that starts must not take away as it takes away a run that a stopped server left
 RUN_PREFIX = "virtual-lab-run-"
+CALL_PREFIX = "virtual-lab-call-"
+PREFIXES = (RUN_PREFIX, CALL_PREFIX)
 
 # What a person may allow, by default and at most: minutes for one run of one tutorial, minutes for all, how many
 # tutorials, how many times each is run, and gigabytes that one may write
@@ -640,10 +644,15 @@ def kill_container(docker: Sequence[str], name: str) -> None:
         pass
 
 
-def remove_runs(label: str, docker_command: Sequence[str] = ("docker",)) -> int:
+def remove_runs(
+    label: str, docker_command: Sequence[str] = ("docker",), prefixes: Sequence[str] = (RUN_PREFIX,)
+) -> int:
     """Removes the containers of runs that were left behind, as a run is not left by anything but a server that was
     stopped hard. Those of one label only, which is of an agent that has no run going.
 
+    :param prefixes: Which are taken: by default the runs of jobs alone, as a conversation may be calling one of the
+        agent's tools while a job begins. The calls of conversations are taken (PREFIXES) only where the image they
+        run in is to be removed, which they would keep.
     :return: How many were removed.
     """
     if not label or building.BUILD_LABEL.fullmatch(label) is None:
@@ -659,7 +668,7 @@ def remove_runs(label: str, docker_command: Sequence[str] = ("docker",)) -> int:
             "{{.Names}}",
             timeout=60,
         )
-        names = [name for name in listed.stdout.split() if name.startswith(RUN_PREFIX)]
+        names = [name for name in listed.stdout.split() if name.startswith(tuple(prefixes))]
         if listed.returncode != 0 or not names:
             return 0
         building.docker_run(docker_command, "rm", "--force", "--volumes", *names, timeout=300)
@@ -683,6 +692,7 @@ class Runner:
     :param clock: What time is told by, which the limits on the time of all of the runs are kept with.
     :param mounts: Further files or folders of this machine for the runs to read, each with where in the container it is
         put. They are read-only, as the data is, and are not the project's.
+    :param prefix: What the name of each container begins with, which is that of a call for a runner of a conversation.
     """
 
     def __init__(
@@ -696,9 +706,13 @@ class Runner:
         label: str = "",
         clock: Callable[[], float] = time.monotonic,
         mounts: Sequence[tuple[Path, str]] = (),
+        prefix: str = RUN_PREFIX,
     ) -> None:
         if building.BUILD_LABEL.fullmatch(label) is None:
             raise ValueError("The label of a run is lower case letters, digits, and hyphens")
+        if prefix not in PREFIXES:
+            raise ValueError("A run is named from the prefix of a run or of a call")
+        self.prefix = prefix
         self.clock = clock
         self.tag = tag
         self.limits = limits
@@ -749,7 +763,7 @@ class Runner:
 
         :return: How it ended: done, timed_out, too_big, or stopped; its exit code; and what it printed, the end of it.
         """
-        container = f"{RUN_PREFIX}{self.label + '-' if self.label else ''}{uuid4().hex[:12]}"
+        container = f"{self.prefix}{self.label + '-' if self.label else ''}{uuid4().hex[:12]}"
         arguments = self.command(folder, item, seconds, container)
         process = subprocess.Popen(
             list(arguments), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL

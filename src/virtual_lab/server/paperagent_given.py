@@ -53,6 +53,7 @@ from virtual_lab.function_checks import FunctionSourceError, read_function
 from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.paperagents import checking, matching, reimplementing, wrappers
 from virtual_lab.paperagents import environment as building
+from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import toolmaking as making
 from virtual_lab.paperagents.reading import CARD_KINDS, RESOURCE_KINDS
 from virtual_lab.server import imported_agents as importing
@@ -619,6 +620,7 @@ def call_once(
             Asked(stopping),
             agent_id,
             mounts=mounts,
+            prefix=referencing.CALL_PREFIX,
         )
 
         return runner.replay(tool["source"], tool["name"], [case], seconds, room), limits
@@ -804,7 +806,12 @@ class Reimplementation(Caller):
         try:
             with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
                 runner = matching.runner_for(
-                    Path(scratch), self.docker_command, Asked(self.stopping), self.agent_id, limits.repeats
+                    Path(scratch),
+                    self.docker_command,
+                    Asked(self.stopping),
+                    self.agent_id,
+                    limits.repeats,
+                    referencing.CALL_PREFIX,
                 )
                 replay = matching.run_calls(runner, function.source, function.name, [sent], CALL_SECONDS)
         except StoppedError:

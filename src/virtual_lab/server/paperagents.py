@@ -606,10 +606,17 @@ class PaperAgents:
         self._lock = threading.Lock()
         # The imported agents whose server is being connected to, which is one connection at a time to each
         self._looking: set[str] = set()
+        # The agents that are being deleted, which cannot be looked up or listed from when the deleting begins. They are
+        # still counted, and their papers are still taken, as one whose deleting fails comes back.
+        self._deleting: set[str] = set()
 
     def describe(self) -> dict[str, Any]:
         """Every agent, the latest first, and what a page needs to make one."""
-        agents = [self.entry(directory.name, agent) for directory, agent in self.kept()]
+        agents = [
+            self.entry(directory.name, agent)
+            for directory, agent in self.kept()
+            if directory.name not in self._deleting
+        ]
 
         return {
             "agents": sorted(agents, key=lambda agent: (agent["created_at"], agent["id"]), reverse=True),
@@ -768,7 +775,9 @@ class PaperAgents:
         """
         directory = self.workspace.paperagents_dir / agent_id
         agent = (
-            read_json(directory / AGENT_FILE) if RUN_ID.fullmatch(agent_id) and is_real_directory(directory) else None
+            read_json(directory / AGENT_FILE)
+            if RUN_ID.fullmatch(agent_id) and agent_id not in self._deleting and is_real_directory(directory)
+            else None
         )
         if not is_agent(agent):
             raise not_found("PaperAgent with that id")
@@ -1016,11 +1025,18 @@ class PaperAgents:
         with self._lock:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
+            self._deleting.add(agent_id)
+        # The lock is let go while Docker removes what it holds, which can take minutes when it is slow, as every other
+        # agent waits on it. The agent is gone to everything else meanwhile, and is back if the deleting fails.
+        try:
             self.forget_environment(directory)
             # A container that a build left when the server was stopped hard, which nothing else would take away
             building.remove_builds(directory.name, self.docker_command)
             # The code that was fetched is read only, which a platform may not remove without being mended first
             kept_repository.remove_tree(directory)
+        finally:
+            with self._lock:
+                self._deleting.discard(agent_id)
 
     def put_paper(self, agent_id: str, name: str, content: BinaryIO) -> None:
         """Keeps the paper that was uploaded to an agent, in place of one that was, with what was read of it taken away.
@@ -1721,8 +1737,9 @@ class PaperAgents:
         """
         record = kept_environment.stored(directory)
         gone = True
-        # A container that a run left when the server was stopped hard, which would keep its image from being removed
-        referencing.remove_runs(directory.name, self.docker_command)
+        # A container that a run left when the server was stopped hard, which would keep its image from being removed,
+        # and one that a conversation is calling a tool in, which would as well
+        referencing.remove_runs(directory.name, self.docker_command, referencing.PREFIXES)
         if record is not None:
             gone = building.remove_image(building.tag_of(directory.name, record["commit"]), self.docker_command)
         if not (building.remove_images(directory.name, self.docker_command) and gone):
@@ -3063,14 +3080,14 @@ class PaperAgents:
             a function cannot be written from this paper, or the agent is being worked on.
         """
         self.lookup(agent_id)
-        budget = check_budget(max_cost, "The most it may spend", required=True)
-        assert budget is not None
         if not isinstance(agreed, str) or not agreed:
             raise ApiError(
                 422,
                 "not_agreed",
                 "Agree first, to the words of the paper that the model is to be given, which are shown with their key",
             )
+        budget = check_budget(max_cost, "The most it may spend", required=True)
+        assert budget is not None
         usable, problem = building.ready(self.docker_command)
         if not usable:
             raise ApiError(422, "docker_missing", problem or "Docker is not running, and writing a function takes it")

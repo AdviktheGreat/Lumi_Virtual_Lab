@@ -40,6 +40,7 @@ from virtual_lab.constants import DEFAULT_SANDBOX_IMAGE
 from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerUnavailableError
 from virtual_lab.paperagents import matching
+from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import toolmaking as making
 from virtual_lab.paperagents.reading import ReadScope
 from virtual_lab.server import paperagent_given as given
@@ -87,6 +88,7 @@ class Sandbox:
                 "data": runner.data,
                 "repeats": runner.tools.repeats,
                 "label": runner.label,
+                "prefix": runner.prefix,
                 "mounts": list(runner.mounts),
                 "empty": project.is_dir() and not any(project.iterdir()),
                 "scratch": runner.scratch,
@@ -310,6 +312,7 @@ class TestACall:
         [run] = sandbox.runs
         assert run["tag"] == DEFAULT_SANDBOX_IMAGE and run["data"] is None and run["repeats"] == 1
         assert run["label"] == tier_c and run["empty"] is True
+        assert run["prefix"] == referencing.CALL_PREFIX
         assert run["mounts"] == [(run["scratch"] / matching.PROJECT_DIR, matching.REPO_PATH)]
         assert run["source"] == FUNCTION and run["function"] == NAME
         assert run["arguments"] == [{"numbers": [0.2, 0.25, 0.015]}] and run["seconds"] == given.CALL_SECONDS

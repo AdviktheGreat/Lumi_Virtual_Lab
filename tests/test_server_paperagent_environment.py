@@ -55,6 +55,8 @@ class Docker:
         self.swept: list[str] = []
         self.cleaned: list[str] = []
         self.runs_cleaned: list[str] = []
+        self.run_prefixes: list[tuple[str, ...]] = []
+        self.during_removal: Any = None
         self.usable: tuple[bool, str | None] = (True, None)
         self.error: BaseException | None = None
         self.gate: threading.Event | None = None
@@ -137,6 +139,8 @@ class Docker:
     def remove_images(self, label: str, docker_command: Any = ("docker",)) -> bool:
         """Takes away the images that carry the label, which are named from the agent and a commit."""
         self.swept.append(label)
+        if self.during_removal is not None:
+            self.during_removal()
         ours = [tag for tag in self.images if tag.split(":", 1)[1].rsplit("-", 1)[0] == label]
         if self.refuses and ours:
             return False
@@ -150,8 +154,11 @@ class Docker:
 
         return 0
 
-    def remove_runs(self, label: str, docker_command: Any = ("docker",)) -> int:
+    def remove_runs(
+        self, label: str, docker_command: Any = ("docker",), prefixes: Any = (referencing.RUN_PREFIX,)
+    ) -> int:
         self.runs_cleaned.append(label)
+        self.run_prefixes.append(tuple(prefixes))
 
         return 0
 
@@ -837,6 +844,74 @@ class TestRemoving:
         agents.delete(fetched)
 
         assert docker.cleaned == [fetched]
+
+    def test_deleting_the_agent_takes_away_the_containers_of_runs_and_of_calls_that_were_left(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        agents.delete(fetched)
+
+        assert docker.run_prefixes[-1] == referencing.PREFIXES
+
+    def test_taking_away_the_environment_takes_away_the_containers_of_runs_and_of_calls_that_were_left(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        build(agents, fetched)
+        docker.run_prefixes.clear()
+
+        agents.clear_environment(fetched)
+
+        assert docker.run_prefixes == [referencing.PREFIXES]
+
+    def test_other_agents_are_not_held_up_while_docker_removes_the_image_of_one_that_is_deleted(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        build(agents, fetched)
+        other = agents.create("Another", {"kind": "doi", "doi": "10.1000/another"})
+        seen: dict[str, Any] = {}
+
+        def meanwhile() -> None:
+            made = threading.Thread(target=lambda: agents.change(other, title="Renamed"))
+            made.start()
+            made.join(timeout=5)
+            seen["changed"] = not made.is_alive() and agents.view(other)["title"] == "Renamed"
+            seen["gone"] = refused(agents.view, fetched).status
+            seen["listed"] = [agent["id"] for agent in agents.describe()["agents"]]
+
+        docker.during_removal = meanwhile
+
+        agents.delete(fetched)
+
+        assert seen == {"changed": True, "gone": 404, "listed": [other]}
+        assert [agent["id"] for agent in agents.describe()["agents"]] == [other]
+
+    def test_an_agent_whose_deleting_fails_is_there_again_and_can_be_deleted_later(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        build(agents, fetched)
+        docker.refuses = True
+        seen: dict[str, Any] = {}
+        docker.during_removal = lambda: seen.update(gone=refused(agents.view, fetched).status)
+
+        error = refused(agents.delete, fetched)
+
+        assert (error.status, error.code) == (409, "docker")
+        assert seen == {"gone": 404}
+        assert agents.view(fetched)["id"] == fetched
+        assert [agent["id"] for agent in agents.describe()["agents"]] == [fetched]
+        docker.refuses = False
+        docker.during_removal = None
+        agents.delete(fetched)
+        assert refused(agents.view, fetched).status == 404
+
+    def test_an_agent_that_is_being_deleted_cannot_be_deleted_again(
+        self, agents: PaperAgents, fetched: str, docker: Docker
+    ) -> None:
+        seen: dict[str, Any] = {}
+        docker.during_removal = lambda: seen.update(again=refused(agents.delete, fetched).status)
+
+        agents.delete(fetched)
+
+        assert seen == {"again": 404}
 
     def test_an_agent_whose_image_cannot_be_removed_is_not_deleted(
         self, agents: PaperAgents, workspace: Workspace, fetched: str, docker: Docker
