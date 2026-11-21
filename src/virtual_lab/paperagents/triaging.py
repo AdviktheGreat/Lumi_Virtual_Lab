@@ -54,8 +54,10 @@ MEANING = {
     "checked": "The files were read and nothing was run, so a check can be wrong in either direction.",
 }
 
+# Not preceded by what makes the host part of another word or address (notgithub.com, evil.com/github.com, a@github.com)
 ADDRESS = re.compile(
-    r"(?:https?://)?(?:github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)/[^\s<>\"'`]+", re.IGNORECASE
+    r"(?<![\w./@-])(?:https?://)?(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)/[^\s<>\"'`]+",
+    re.IGNORECASE,
 )
 
 

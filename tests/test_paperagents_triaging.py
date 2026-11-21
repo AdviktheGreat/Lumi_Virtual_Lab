@@ -81,6 +81,30 @@ class TestTheAddressesOfCode:
     def test_a_host_is_found_in_any_case(self) -> None:
         assert triaging.project_links("Code: https://GitHub.COM/Lab/One.", as_repo) == ["https://github.com/Lab/One"]
 
+    def test_a_host_that_is_the_end_of_another_word_or_address_is_not_one(self) -> None:
+        text = (
+            "Not notgithub.com/lab/one nor https://evil.example/github.com/lab/two "
+            "nor https://user@github.com/lab/three nor see-github.com/lab/four, "
+            "and not https://example.org/?u=https://evil.example/gitlab.com/lab/five."
+        )
+
+        assert triaging.project_links(text, as_repo) == []
+
+    def test_a_host_after_a_bracket_a_quote_a_colon_or_a_line_is_one(self) -> None:
+        text = (
+            'Code:github.com/lab/one, ("gitlab.com/lab/two") <https://www.github.com/lab/three>\ncodeberg.org/lab/four'
+        )
+
+        assert triaging.project_links(text, as_repo) == [
+            f"https://{host}/lab/{name}"
+            for host, name in (
+                ("github.com", "one"),
+                ("gitlab.com", "two"),
+                ("github.com", "three"),
+                ("codeberg.org", "four"),
+            )
+        ]
+
     def test_what_ends_a_sentence_or_a_bracket_is_not_part_of_the_address(self) -> None:
         text = "Code (https://github.com/lab/one), https://github.com/lab/two; https://github.com/lab/three!?"
 

@@ -381,6 +381,16 @@ class TestWhichCodeIsLookedAt:
 
         assert len(found["entries"][0]["title"]) <= module.MAX_TITLE_CHARS
 
+    def test_a_stop_between_abstract_lookups_is_honoured_at_the_next_paper(
+        self, triages: Triages, lookups: Lookups
+    ) -> None:
+        lookups.during = lambda: stop_the_triage(triages)
+
+        started = triages.create(papers=[{"doi": doi(1)}, {"doi": doi(2)}])
+        job = finish(triages.jobs.get(started["job"]["id"]))
+
+        assert job.state == "stopped" and lookups.asked == [doi(1)]
+
     def test_a_stop_while_abstracts_are_looked_up_comes_before_the_listing_is_read(
         self, triages: Triages, lookups: Lookups, listed: Listed
     ) -> None:
@@ -479,6 +489,35 @@ class TestWhatIsFoundOfTheCode:
         found = made(triages, papers=[given(1, says(ONE))])
 
         assert 20 < len(found["entries"][0]["why"]) <= 500
+
+    def test_a_paper_whose_code_cannot_be_read_does_not_cost_the_others_theirs(
+        self, triages: Triages, code: Code, workspace: Workspace, marker: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for url in (ONE, TWO, THREE):
+            code.projects[url] = project(marker)
+        real = module.stocking.take_stock
+        calls: list[Path] = []
+
+        def take_stock(path: Path, *arguments: Any, **options: Any) -> Any:
+            calls.append(path)
+            if len(calls) == 2:
+                raise OSError("an odd layout " * 100)
+
+            return real(path, *arguments, **options)
+
+        monkeypatch.setattr(module.stocking, "take_stock", take_stock)
+
+        found = made(triages, papers=[given(1, says(ONE)), given(2, says(TWO)), given(3, says(THREE))])
+
+        assert found["state"] == "done" and found["note"] is None
+        assert {entry["doi"]: entry["tier"] for entry in found["entries"]} == {
+            doi(1): "go",
+            doi(2): "not_looked_at",
+            doi(3): "go",
+        }
+        why = by_doi(found)[doi(2)]["why"]
+        assert why.startswith("Its code could not be read: an odd layout") and len(why) == 500
+        assert [path.name for path in workspace.root.iterdir() if path.name.startswith("triage.")] == []
 
     def test_the_guess_of_the_cost_is_priced_at_the_model_of_the_settings(
         self, triages: Triages, code: Code, marker: Path

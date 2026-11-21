@@ -62,6 +62,7 @@ MAX_MEGABYTES = 200
 MOST_LOOKED_UP = 30
 MAX_TITLE_CHARS = 300
 MAX_ABSTRACT_CHARS = 6000
+MAX_WHY_CHARS = 500
 GIVEN_KEYS = frozenset({"doi", "title", "abstract", "code"})
 LISTING_KEYS = frozenset({"since", "until", "subject", "limit"})
 
@@ -359,6 +360,8 @@ class Triages:
         for item in entries:
             if item["abstract"] or item["code"] is not None or looked_up >= MOST_LOOKED_UP:
                 continue
+            if job.stop.is_set():
+                raise StoppedError("Stopped while the abstracts were looked up.")
             looked_up += 1
             job.update(f"Looking up the abstract of {item['doi']}")
             try:
@@ -429,6 +432,12 @@ class Triages:
             except StoppedError:
                 self.leave(queued[number - 1 :], records)
                 raise
+            except Exception as error:
+                records.append(
+                    triaging.unlooked(
+                        entry, position, code, source, others, f"Its code could not be read: {error}"[:MAX_WHY_CHARS]
+                    )
+                )
         job.update(looked=len(queued))
 
     @staticmethod
@@ -470,7 +479,7 @@ class Triages:
                 )
             except cloning.RepositoryError as error:
                 return triaging.unlooked(
-                    entry, position, code, source, others, f"Its code could not be fetched: {error}"[:500]
+                    entry, position, code, source, others, f"Its code could not be fetched: {error}"[:MAX_WHY_CHARS]
                 )
             stock = stocking.take_stock(fetched)
             checked = preflight.preflight(stock, None, price)
