@@ -18,9 +18,14 @@ export const bakeoffAddress = (id: string) => `/papers?bakeoff=${encodeURICompon
 // The jobs that find, build, or run the methods of a bake-off, of which one is at work on it at a time
 export const BAKEOFF_JOBS = ["bakeoff-shortlist", "bakeoff-build", "bakeoff-run"];
 
-// Which bake-off a job is at work on, if it is one that works on a bake-off
-export function bakeoffJob(jobs: readonly Job[] | null, id: string): Job | undefined {
-  return (jobs ?? []).find((job) => isActive(job) && BAKEOFF_JOBS.includes(job.kind) && job.subject === id);
+// Of those, the ones that find and build the methods, which are shown where the methods are, and the one that runs them, which is shown
+// where they are run
+export const METHOD_JOBS = ["bakeoff-shortlist", "bakeoff-build"];
+export const RUN_JOBS = ["bakeoff-run"];
+
+// Which bake-off a job is at work on, if it is one that works on a bake-off, and, if kinds are given, of one of those kinds
+export function bakeoffJob(jobs: readonly Job[] | null, id: string, kinds: readonly string[] = BAKEOFF_JOBS): Job | undefined {
+  return (jobs ?? []).find((job) => isActive(job) && kinds.includes(job.kind) && job.subject === id);
 }
 
 // What changes as the methods of a bake-off are found, built, or run, so that what a page shows is looked at again when it does:

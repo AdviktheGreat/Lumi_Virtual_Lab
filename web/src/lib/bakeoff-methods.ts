@@ -20,9 +20,10 @@ import type {
   ScopeView,
 } from "./types";
 
-// The latest job on a bake-off's methods that is over, which is how finding or building them was last ended
-export function lastBakeoffJob(jobs: readonly Job[] | null, id: string): Job | undefined {
-  return (jobs ?? []).find((job) => !isActive(job) && BAKEOFF_JOBS.includes(job.kind) && job.subject === id);
+// The latest job on a bake-off's methods that is over, which is how finding, building, or running them was last ended. If kinds are
+// given, it is the latest of one of those.
+export function lastBakeoffJob(jobs: readonly Job[] | null, id: string, kinds: readonly string[] = BAKEOFF_JOBS): Job | undefined {
+  return (jobs ?? []).find((job) => !isActive(job) && kinds.includes(job.kind) && job.subject === id);
 }
 
 // What the paper of a method is, in the words a person gave it: its DOI, or its link
