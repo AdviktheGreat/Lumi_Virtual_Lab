@@ -4,6 +4,7 @@ of it is run, the papers come out in order with the reason for each, a paper who
 limits hold, a stop keeps what was looked at, and what is kept is read back with care. Git is replaced by a stand-in
 that writes a project's files, and the listing of bioRxiv and the look-up of an abstract are replaced as well."""
 
+import dataclasses
 import json
 import os
 import shutil
@@ -154,14 +155,18 @@ class Lookups:
     def __init__(self) -> None:
         self.abstracts: dict[str, str | BaseException] = {}
         self.asked: list[str] = []
+        self.title = "Looked up title"
+        self.during: Callable[[], None] | None = None
 
     def __call__(self, identifier: str) -> literature.Article:
         self.asked.append(identifier)
+        if self.during is not None:
+            self.during()
         found = self.abstracts.get(identifier, RecordNotFoundError("none"))
         if isinstance(found, BaseException):
             raise found
 
-        return literature.Article(article_id="1", doi=identifier, title="Looked up title", abstract=found)
+        return literature.Article(article_id="1", doi=identifier, title=self.title, abstract=found)
 
 
 @pytest.fixture
@@ -192,6 +197,48 @@ def by_doi(found: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def given(number: int, abstract: str = "", **fields: Any) -> dict[str, Any]:
     return {"doi": doi(number), "title": f"Paper {number}", "abstract": abstract, **fields}
+
+
+def stop_the_triage(triages: Triages) -> list[Any]:
+    return [triages.jobs.stop(job.id) for job in triages.jobs.active(TRIAGE_JOB)]
+
+
+class TestWhatIsGiven:
+    def test_the_most_that_may_be_given_are_taken(self) -> None:
+        assert len(module.check_given([given(n) for n in range(module.MOST_GIVEN)])) == module.MOST_GIVEN
+
+    def test_what_is_not_a_list_is_said_to_be_wanted_as_one(self) -> None:
+        error = refused(module.check_given, "10.1101/2025.01.01.000001")
+
+        assert error.status == 422 and "list" in error.message
+
+    def test_a_title_and_an_abstract_may_be_as_long_as_the_most(self) -> None:
+        [paper] = module.check_given([given(1, "a" * module.MAX_ABSTRACT_CHARS, title="t" * module.MAX_TITLE_CHARS)])
+
+        assert len(paper["abstract"]) == module.MAX_ABSTRACT_CHARS and len(paper["title"]) == module.MAX_TITLE_CHARS
+
+    def test_an_abstract_may_run_over_lines_but_holds_no_other_control_character(self) -> None:
+        [paper] = module.check_given([given(1, "One.\nTwo.\n")])
+
+        assert paper["abstract"] == "One.\nTwo."
+        for text in ("One.\x00Two.", "One.\x07", "One.\tTwo."):
+            assert refused(module.check_given, [given(1, text)]).status == 422
+
+    def test_a_title_and_an_abstract_are_kept_without_the_space_round_them(self) -> None:
+        [paper] = module.check_given([given(1, "  An abstract.  ", title="  A title ")])
+
+        assert (paper["title"], paper["abstract"]) == ("A title", "An abstract.")
+
+    def test_a_paper_is_the_same_paper_in_any_case_or_given_as_a_link(self) -> None:
+        papers = module.check_given([given(1), {**given(1), "doi": f"https://doi.org/{doi(1).upper()}"}])
+
+        assert [paper["doi"] for paper in papers] == [doi(1)]
+
+    def test_a_subject_is_taken_in_any_case_and_kept_as_biorxiv_has_it(self) -> None:
+        listing = module.check_listing({"since": "2025-01-06", "subject": " Neuroscience "})
+
+        assert listing["subject"] == "neuroscience"
+        assert module.check_listing({"since": "2025-01-06"})["subject"] == "all"
 
 
 class TestWhatIsAsked:
@@ -314,6 +361,37 @@ class TestWhichCodeIsLookedAt:
         assert found["state"] == "done"
         assert by_doi(found)[doi(1)]["tier"] == "no_code" and by_doi(found)[doi(2)]["tier"] == "go"
 
+    def test_a_title_that_was_given_is_kept_and_one_that_was_not_is_the_looked_up_one_on_a_line(
+        self, triages: Triages, code: Code, lookups: Lookups, marker: Path
+    ) -> None:
+        code.projects[ONE] = project(marker)
+        lookups.title = "Looked\n  up   title"
+        lookups.abstracts[doi(1)] = lookups.abstracts[doi(2)] = says(ONE)
+
+        found = made(triages, papers=[{"doi": doi(1), "title": "Given title"}, {"doi": doi(2)}])
+
+        assert by_doi(found)[doi(1)]["title"] == "Given title"
+        assert by_doi(found)[doi(2)]["title"] == "Looked up title"
+
+    def test_a_looked_up_title_is_kept_short(self, triages: Triages, lookups: Lookups) -> None:
+        lookups.title = "word " * 500
+        lookups.abstracts[doi(1)] = "No code."
+
+        found = made(triages, papers=[{"doi": doi(1)}])
+
+        assert len(found["entries"][0]["title"]) <= module.MAX_TITLE_CHARS
+
+    def test_a_stop_while_abstracts_are_looked_up_comes_before_the_listing_is_read(
+        self, triages: Triages, lookups: Lookups, listed: Listed
+    ) -> None:
+        lookups.during = lambda: stop_the_triage(triages)
+
+        started = triages.create(papers=[{"doi": doi(1)}], listing={"since": "2025-01-06"})
+        job = finish(triages.jobs.get(started["job"]["id"]))
+
+        assert job.state == "stopped" and listed.calls == []
+        assert triages.view(started["id"])["state"] == "stopped"
+
     def test_only_so_many_abstracts_are_looked_up(
         self, triages: Triages, code: Code, lookups: Lookups, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -371,6 +449,16 @@ class TestWhatIsFoundOfTheCode:
         assert entries[doi(2)]["paper"] == {"kind": "doi", "doi": doi(2)}
         assert found["job"] is None and "ranking" in found["meaning"]
 
+    def test_the_job_says_how_many_were_looked_at(self, triages: Triages, code: Code, marker: Path) -> None:
+        code.projects[ONE] = project(marker)
+        code.projects[TWO] = project(marker, LICENSE=None)
+
+        started = triages.create(papers=[given(1, says(ONE)), given(2, says(TWO)), given(3)])
+        job = finish(triages.jobs.get(started["job"]["id"]))
+
+        assert job.state == "succeeded" and job.message == "Looked at 2 of 3 papers: 1 go, 1 ask, 0 no-go."
+        assert job.snapshot()["progress"]["looked"] == 2
+
     def test_the_code_is_fetched_at_its_default_branch_within_the_limit_and_is_taken_away_and_never_run(
         self, triages: Triages, code: Code, marker: Path, workspace: Workspace
     ) -> None:
@@ -384,6 +472,33 @@ class TestWhatIsFoundOfTheCode:
         assert not marker.exists()
         assert not any(path.exists() for path in code.seen)
         assert [path.name for path in workspace.root.iterdir() if path.name.startswith("triage.")] == []
+
+    def test_what_could_not_be_fetched_is_said_in_few_words(self, triages: Triages, code: Code) -> None:
+        code.projects[ONE] = cloning.RepositoryError("It is gone. " * 100)
+
+        found = made(triages, papers=[given(1, says(ONE))])
+
+        assert 20 < len(found["entries"][0]["why"]) <= 500
+
+    def test_the_guess_of_the_cost_is_priced_at_the_model_of_the_settings(
+        self, triages: Triages, code: Code, marker: Path
+    ) -> None:
+        code.projects[ONE] = project(marker)
+
+        found = made(triages, papers=[given(1, says(ONE))])
+
+        assert found["entries"][0]["estimate"]["high"] is not None
+
+    def test_a_triage_that_was_taken_away_by_hand_while_it_was_made_is_not_made_again_by_its_end(
+        self, triages: Triages, code: Code, workspace: Workspace, marker: Path
+    ) -> None:
+        code.projects[ONE] = project(marker)
+        code.after[1] = lambda: [path.unlink() for path in workspace.triages_dir.glob("*.json")]
+
+        started = triages.create(papers=[given(1, says(ONE))])
+        job = finish(triages.jobs.get(started["job"]["id"]))
+
+        assert job.state == "succeeded" and list(workspace.triages_dir.glob("*.json")) == []
 
     def test_the_code_is_taken_away_when_it_could_not_be_read(
         self, triages: Triages, code: Code, workspace: Workspace
@@ -468,6 +583,31 @@ class TestAListing:
         assert [entry["doi"] for entry in found["entries"]] == [doi(1), doi(2)]
         assert by_doi(found)[doi(1)]["code"] == ONE and by_doi(found)[doi(1)]["title"] == "Paper 1"
 
+    def test_what_a_failure_said_is_kept_short(self, triages: Triages, listed: Listed) -> None:
+        listed.error = WebRequestError("x" * 1000)
+
+        started = triages.create(listing={"since": "2025-01-06"})
+        finish(triages.jobs.get(started["job"]["id"]))
+
+        assert len(triages.view(started["id"])["note"]) == 500
+
+    def test_a_listed_paper_is_the_same_as_a_given_one_in_any_case_and_has_its_doi_for_a_title_if_it_has_none(
+        self, triages: Triages, listed: Listed
+    ) -> None:
+        listed.add(1)
+        listed.add(2)
+        listed.papers[0] = dataclasses.replace(listed.papers[0], doi="10.1101/2025.01.01.ABC")
+        listed.papers[1] = dataclasses.replace(listed.papers[1], title="")
+
+        found = made(
+            triages,
+            papers=[{"doi": "10.1101/2025.01.01.abc", "title": "Given", "abstract": "No code."}],
+            listing={"since": "2025-01-06"},
+        )
+
+        assert [entry["doi"] for entry in found["entries"]] == ["10.1101/2025.01.01.abc", doi(2)]
+        assert found["entries"][0]["title"] == "Given" and by_doi(found)[doi(2)]["title"] == doi(2)
+
     def test_a_listing_that_cannot_be_read_fails_with_what_it_said(self, triages: Triages, listed: Listed) -> None:
         listed.error = WebRequestError("bioRxiv could not be reached")
 
@@ -486,7 +626,7 @@ class TestStopping:
     ) -> None:
         for url in (ONE, TWO, THREE):
             code.projects[url] = project(marker)
-        code.after[2] = lambda: [triages.jobs.stop(job.id) for job in triages.jobs.active(TRIAGE_JOB)]
+        code.after[2] = lambda: stop_the_triage(triages)
         started = triages.create(papers=[given(1, says(ONE)), given(2, says(TWO)), given(3, says(THREE))])
         job = triages.jobs.get(started["job"]["id"])
         finish(job)
@@ -517,7 +657,10 @@ class TestStopping:
         assert len(triages.kept()) == 1
         triages.jobs.stop(job.id)
         finish(job)
-        assert triages.view(started["id"])["state"] == "stopped"
+        after = triages.view(started["id"])
+        assert after["state"] == "stopped"
+        [left] = after["entries"]
+        assert left["tier"] == "not_looked_at" and left["code"] == ONE and "stopped" in left["why"]
 
 
 class TestWhatIsKept:
@@ -549,6 +692,31 @@ class TestWhatIsKept:
         assert "bioinformatics" in described["subjects"] and described["git"] is True
         assert described["limits"]["most_looked_at"] == module.MOST_LOOKED_AT
 
+    def test_a_page_is_told_whether_git_is_there(self, triages: Triages, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(shutil, "which", lambda name, *rest, **options: None)
+
+        assert triages.describe()["git"] is False
+
+    def test_a_triage_that_is_being_made_does_not_hold_another_from_being_taken_away(
+        self, triages: Triages, code: Code, workspace: Workspace, marker: Path
+    ) -> None:
+        code.projects[ONE] = project(marker)
+        old = made(triages, papers=[given(1, says(ONE))])
+        path = workspace.triages_dir / f"{old['id']}.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "state": "running"}))
+        code.entered.clear()
+        code.gate = threading.Event()
+        started = triages.create(papers=[given(2, says(ONE))])
+        job = triages.jobs.get(started["job"]["id"])
+        assert code.entered.wait(10)
+
+        shown = triages.view(old["id"])
+        triages.delete(old["id"])
+        stop_the_triage(triages)
+        finish(job)
+
+        assert shown["state"] == "interrupted" and shown["job"] is None and not path.exists()
+
     def test_a_triage_that_says_it_is_running_and_has_no_job_was_interrupted(
         self, triages: Triages, code: Code, workspace: Workspace, marker: Path
     ) -> None:
@@ -575,6 +743,9 @@ class TestWhatIsKept:
             "state": {**record, "state": "lost"},
             "entries": {**record, "entries": {}},
             "counts": {key: value for key, value in record.items() if key != "counts"},
+            "created_at": {**record, "created_at": 5},
+            "source": {**record, "source": []},
+            "settings": {**record, "settings": "x"},
         }
 
         for text in [json.dumps(each) for each in wrong.values()] + ["not json", "[]"]:
@@ -600,7 +771,14 @@ class TestWhatIsKept:
         monkeypatch.setattr(module, "MAX_RECORD_BYTES", 10)
         assert triages.kept() == []
 
-    def test_an_id_that_is_not_one_is_not_looked_for(self, triages: Triages) -> None:
+    def test_an_id_that_is_not_one_is_not_looked_for(
+        self, triages: Triages, code: Code, workspace: Workspace, marker: Path
+    ) -> None:
+        code.projects[ONE] = project(marker)
+        found = made(triages, papers=[given(1, says(ONE))])
+        record = json.loads((workspace.triages_dir / f"{found['id']}.json").read_text())
+        (workspace.root / "x.json").write_text(json.dumps({**record, "id": "../x"}))
+
         for bad in ("../x", "nothing", "0" * 11, "G" * 12, "0" * 13):
             assert refused(triages.view, bad).status == 404
             assert refused(triages.delete, bad).status == 404

@@ -78,6 +78,16 @@ class TestTheAddressesOfCode:
             "https://codeberg.org/lab/fourth",
         ]
 
+    def test_a_host_is_found_in_any_case(self) -> None:
+        assert triaging.project_links("Code: https://GitHub.COM/Lab/One.", as_repo) == ["https://github.com/Lab/One"]
+
+    def test_what_ends_a_sentence_or_a_bracket_is_not_part_of_the_address(self) -> None:
+        text = "Code (https://github.com/lab/one), https://github.com/lab/two; https://github.com/lab/three!?"
+
+        assert triaging.project_links(text, as_repo) == [
+            f"https://github.com/lab/{name}" for name in ("one", "two", "three")
+        ]
+
     def test_an_address_that_is_not_a_project_or_is_given_twice_is_left_out(self) -> None:
         text = "See https://github.com/orgs/lab/people and https://github.com/lab and https://example.org/lab/tool."
         repeated = "https://github.com/lab/tool then https://github.com/lab/tool.git and https://github.com/lab/tool/"
@@ -102,6 +112,14 @@ class TestTheAddressesOfCode:
         code, source, others = triaging.choose_code("https://github.com/lab/given", abstract, as_repo)
 
         assert (code, source, others) == ("https://github.com/lab/given", "person", ["https://github.com/lab/one"])
+
+    def test_the_abstracts_other_addresses_are_few_beside_a_persons_too(self) -> None:
+        names = ("one", "two", "three", "four", "five")
+        abstract = " ".join(f"https://github.com/lab/{name}" for name in names)
+
+        code, source, others = triaging.choose_code("https://github.com/lab/given", abstract, as_repo)
+
+        assert source == "person" and others == [f"https://github.com/lab/{name}" for name in names[:3]]
 
     def test_a_paper_that_gives_none_has_none(self) -> None:
         assert triaging.choose_code(None, "Code on request.", as_repo) == (None, None, [])
@@ -150,6 +168,14 @@ class TestWhatIsKeptOfAPaper:
         for record in (none, left):
             assert record["verdict"] is None and record["checks"] == [] and record["stock"] is None
             assert record["tutorials"] is None and record["estimate"] is None
+
+    def test_a_paper_with_no_license_says_none_of_it(self, tmp_path: Path) -> None:
+        assert looked_at(tmp_path, NO_LICENSE)["stock"]["license"] is None
+
+    def test_a_paper_that_is_without_a_doi_has_no_paper_to_point_to(self) -> None:
+        record = triaging.unlooked({"title": "A title", "doi": None}, 1, None, None, [], "None.")
+
+        assert record["doi"] is None and record["paper"] is None
 
     def test_a_paper_with_no_date_or_category_says_none(self) -> None:
         record = triaging.unlooked(entry(date="", category=""), 1, None, None, [], "None.")
@@ -231,6 +257,12 @@ class TestTheOrder:
         ranked = triaging.rank([dear, same, one, two, cheap])
 
         assert [item["position"] for item in ranked] == [2, 5, 4, 1, 3]
+
+    def test_the_cost_is_that_of_the_dearer_end_of_the_guess(self, tmp_path: Path) -> None:
+        wide = {**looked_at(tmp_path, GOOD, 1), "estimate": {"low": 0.1, "high": 9.0, "tutorials": 1}}
+        narrow = {**looked_at(tmp_path, GOOD, 2), "estimate": {"low": 0.5, "high": 0.9, "tutorials": 1}}
+
+        assert [item["position"] for item in triaging.rank([wide, narrow])] == [2, 1]
 
     def test_what_has_no_estimate_comes_after_what_has_one(self, tmp_path: Path) -> None:
         priced = {**looked_at(tmp_path, GOOD, 2), "estimate": {"low": 1.0, "high": 2.0, "tutorials": 1}}

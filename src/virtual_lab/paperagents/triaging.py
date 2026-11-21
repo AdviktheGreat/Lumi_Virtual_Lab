@@ -55,7 +55,7 @@ MEANING = {
 }
 
 ADDRESS = re.compile(
-    r"(?:https?://)?(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)/[^\s<>\"'`]+", re.IGNORECASE
+    r"(?:https?://)?(?:github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)/[^\s<>\"'`]+", re.IGNORECASE
 )
 
 

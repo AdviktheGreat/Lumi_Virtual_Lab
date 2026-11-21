@@ -90,7 +90,7 @@ def check_given(papers: Any) -> list[dict[str, Any]]:
                 raise ApiError(422, "invalid", f"The {name} of a paper is text of at most {most} characters")
             texts.append((value or "").strip())
         code = None if is_blank(item.get("code")) else check_repo(item["code"])
-        found.setdefault(doi.lower(), {"doi": doi, "title": texts[0] or doi, "abstract": texts[1], "code": code})
+        found.setdefault(doi, {"doi": doi, "title": texts[0] or doi, "abstract": texts[1], "code": code})
 
     return list(found.values())
 
@@ -309,7 +309,6 @@ class Triages:
                     triage_id,
                     "Looking at the code of a listing of papers",
                     self.worker(triage_id, given, asked, most, megabytes * cloning.MEGABYTE),
-                    exclusive=TRIAGE_JOB,
                 )
             except JobConflictError as error:
                 self.path(triage_id).unlink(missing_ok=True)
@@ -390,7 +389,7 @@ class Triages:
                     {
                         "doi": paper.doi,
                         "title": paper.title or paper.doi,
-                        "abstract": paper.abstract or "",
+                        "abstract": paper.abstract,
                         "code": None,
                         "date": paper.date,
                         "category": paper.category,
