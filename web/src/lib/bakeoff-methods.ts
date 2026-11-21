@@ -109,8 +109,8 @@ export function checkMethodChange(
 
 // The words of what a step is, where a method stood in the way at one or is at it
 const STEP_WORDS: Record<string, string> = {
-  agent: "making its PaperAgent",
-  code: "finding its code",
+  agent: "finding its PaperAgent",
+  code: "fetching its code",
   paper: "reading its paper",
   preflight: "looking at its code",
   environment: "building its environment",

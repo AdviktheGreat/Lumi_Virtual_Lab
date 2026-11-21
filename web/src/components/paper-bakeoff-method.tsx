@@ -58,10 +58,12 @@ const STANDING_BADGE: Record<BakeoffState, { variant: "default" | "secondary" | 
 function ChangeMethod({
   bakeoff,
   method,
+  working,
   onChanged,
 }: {
   bakeoff: Bakeoff;
   method: BakeoffMethod;
+  working: boolean;
   onChanged: (next: Bakeoff) => void;
 }) {
   const { report } = useServer();
@@ -76,7 +78,7 @@ function ChangeMethod({
   async function save() {
     setTried(true);
     const change = checked.value;
-    if (change === null || Object.keys(change).length === 0) return;
+    if (working || change === null || Object.keys(change).length === 0) return;
     const next = await attempt.run(() => api.changeBakeoffMethod(bakeoff.id, method.id, change));
     if (next) {
       onChanged(next);
@@ -100,6 +102,7 @@ function ChangeMethod({
           onChange={(event) => setDraft((was) => ({ ...was, name: event.target.value }))}
           maxLength={bakeoff.limits.max_name_chars * 4}
           autoComplete="off"
+          readOnly={working}
           aria-invalid={problems.name !== undefined}
           aria-describedby={describedBy(`${id}-name`, { problem: problems.name !== undefined })}
         />
@@ -116,13 +119,15 @@ function ChangeMethod({
           onChange={(event) => setDraft((was) => ({ ...was, repo: event.target.value }))}
           autoComplete="off"
           spellCheck={false}
+          readOnly={working}
           aria-invalid={problems.repo !== undefined}
           aria-describedby={describedBy(`${id}-repo`, { hint: true, problem: problems.repo !== undefined })}
         />
       </Field>
+      {working && <p className="text-xs text-muted-foreground">It cannot be changed while the methods are being found, built, or run.</p>}
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}
       <div>
-        <Button type="submit" size="sm" disabled={attempt.busy || unchanged}>
+        <Button type="submit" size="sm" disabled={working || attempt.busy || unchanged}>
           {attempt.busy ? "Saving…" : "Save"}
         </Button>
       </div>
@@ -132,7 +137,19 @@ function ChangeMethod({
 
 // What the method's data being outside its card, or inside it, comes to, with the person's going on if it is outside. Going on is theirs
 // to say, and is kept only for this data and this card.
-function MethodScope({ bakeoff, method, onChanged, reload }: { bakeoff: Bakeoff; method: BakeoffMethod; onChanged: (next: Bakeoff) => void; reload: () => void }) {
+function MethodScope({
+  bakeoff,
+  method,
+  working,
+  onChanged,
+  reload,
+}: {
+  bakeoff: Bakeoff;
+  method: BakeoffMethod;
+  working: boolean;
+  onChanged: (next: Bakeoff) => void;
+  reload: () => void;
+}) {
   const { report } = useServer();
   const attempt = useAttempt(report);
   const scope = method.scope;
@@ -174,7 +191,7 @@ function MethodScope({ bakeoff, method, onChanged, reload }: { bakeoff: Bakeoff;
             Going on is yours to say. It is kept for this data and this card as they are shown, and is not kept if either changes.
           </p>
           <div>
-            <Button variant="outline" size="sm" onClick={() => void goOn()} disabled={attempt.busy}>
+            <Button variant="outline" size="sm" onClick={() => void goOn()} disabled={working || attempt.busy}>
               Go on with it on my data
             </Button>
           </div>
@@ -186,7 +203,7 @@ function MethodScope({ bakeoff, method, onChanged, reload }: { bakeoff: Bakeoff;
           <span className="text-xs text-muted-foreground">
             You said so {scope.went_on_at !== null ? `${timeAgo(scope.went_on_at)}, ` : ""}for this data as it is shown, outside what this card says.
           </span>
-          <Button variant="outline" size="xs" onClick={() => void takeBack()} disabled={attempt.busy}>
+          <Button variant="outline" size="xs" onClick={() => void takeBack()} disabled={working || attempt.busy}>
             Take it back
           </Button>
         </div>
@@ -308,7 +325,7 @@ export function BakeoffMethodCard({
         )}
       </div>
 
-      <MethodScope bakeoff={bakeoff} method={method} onChanged={onChanged} reload={reload} />
+      <MethodScope bakeoff={bakeoff} method={method} working={working} onChanged={onChanged} reload={reload} />
 
       <div className="flex flex-wrap items-center gap-2">
         {isAsking(method) && (
@@ -332,7 +349,7 @@ export function BakeoffMethodCard({
       <details className="rounded-lg border border-border px-3 py-2">
         <summary className="cursor-pointer text-sm">Change its name or where its code is</summary>
         {/* Made again when what the method is changes, so that it shows what it is and not what was typed before */}
-        <ChangeMethod key={JSON.stringify(methodDraftOf(method))} bakeoff={bakeoff} method={method} onChanged={onChanged} />
+        <ChangeMethod key={JSON.stringify(methodDraftOf(method))} bakeoff={bakeoff} method={method} working={working} onChanged={onChanged} />
       </details>
 
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}

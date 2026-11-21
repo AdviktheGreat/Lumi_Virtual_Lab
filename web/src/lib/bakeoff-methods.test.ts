@@ -234,10 +234,16 @@ describe("where a method stands", () => {
     expect(describeStanding(standing("blocked", { step: "unheard-of" }))).toEqual({ label: "Cannot be built", step: "Unheard-of" });
   });
 
-  it("names the steps that building has", () => {
-    for (const step of ["agent", "code", "paper", "preflight", "environment", "tutorials", "tools"]) {
-      expect(describeStep(step)).not.toBe(step);
-    }
+  it("names the steps that building has, in the words that the server says them in", () => {
+    expect(["agent", "code", "paper", "preflight", "environment", "tutorials", "tools"].map(describeStep)).toEqual([
+      "finding its PaperAgent",
+      "fetching its code",
+      "reading its paper",
+      "looking at its code",
+      "building its environment",
+      "running its tutorials",
+      "making its tools",
+    ]);
   });
 
   it("may be built unless it is built or is being built", () => {

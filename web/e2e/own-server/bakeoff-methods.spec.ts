@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { accessibilityProblems } from "../axe";
 import { expect, test } from "../fixtures";
 
@@ -88,6 +88,17 @@ function jobOf(bakeoff: string, kind: string, title: string, changes: Record<str
     log_total: 0,
     ...changes,
   };
+}
+
+// Shows the page a job at work on the bake-off, as the server lists one, until what is given back is called
+async function withJobAtWork(page: Page, id: string) {
+  const list = (route: Route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({ json: { jobs: [jobOf(id, "bakeoff-run", "Running the methods: Cell types")] } })
+      : route.fallback();
+  await page.route("**/api/setup/jobs", list);
+
+  return () => page.unroute("**/api/setup/jobs", list);
 }
 
 test("puts a method in the running by its DOI or its link, and says what is wrong before anything is sent", async ({ page }) => {
@@ -270,9 +281,21 @@ test("puts the data against the card of a method's paper, warns where it is outs
   await expect(card.getByRole("button", { name: "Go on with it on my data" })).toBeVisible();
   expect((await viewOf(page, id)).candidates[0].scope).toMatchObject({ went_on: false, went_on_at: null });
 
+  // Nothing is said of a method while its methods are being found, built, or run
+  const over = await withJobAtWork(page, id);
+  await page.reload();
+  await expect(card.getByRole("button", { name: "Go on with it on my data" })).toBeDisabled();
+  await over();
+  await page.reload();
+  await expect(card.getByRole("button", { name: "Go on with it on my data" })).toBeEnabled();
+
   // It is not kept for data that is said otherwise, though that is outside too, as it is not what they were shown
   await card.getByRole("button", { name: "Go on with it on my data" }).click();
   await expect(card.getByTestId("method-went-on")).toBeVisible();
+  const again = await withJobAtWork(page, id);
+  await page.reload();
+  await expect(card.getByRole("button", { name: "Take it back" })).toBeDisabled();
+  await again();
   expect((await page.request.patch(`/api/bakeoffs/${id}`, { data: { described: { species: "rat" } } })).status()).toBe(200);
   await page.reload();
   await expect(card.getByTestId("method-scope")).toHaveAttribute("data-outcome", "outside");
@@ -313,7 +336,7 @@ test("offers the addresses that a paper points to as its code only for the perso
   const card = methodNamed(page, "Scanpy");
 
   await expect(card.getByTestId("method-standing")).toHaveText("Waiting for you");
-  await expect(card.getByTestId("method-standing-text")).toContainText("Finding its code");
+  await expect(card.getByTestId("method-standing-text")).toContainText("Fetching its code");
   await expect(card.getByTestId("method-standing-text")).toContainText("No address of the code was given.");
   await expect(card.getByTestId("method-code")).toContainText("not said");
   const pointed = card.getByTestId("method-pointed");
@@ -377,6 +400,12 @@ test("builds the methods that are not built, one or all, and goes on with one wh
   await expect(page.getByRole("button", { name: "Add the method" })).toBeDisabled();
   await expect(finding(page).getByRole("button", { name: "Find methods" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Delete Cell types" })).toBeDisabled();
+  await waiting.getByText("Change its name or where its code is").click();
+  const frozen = waiting.getByRole("form", { name: "Change Scanpy" });
+  await expect(frozen.getByLabel("Name")).not.toBeEditable();
+  await expect(frozen.getByLabel("Where its code is")).not.toBeEditable();
+  await expect(frozen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await expect(frozen).toContainText("It cannot be changed while the methods are being found, built, or run.");
   expect(await accessibilityProblems(page)).toEqual([]);
 
   await page.route(`**/api/setup/jobs/job-1/stop`, (route) => {
