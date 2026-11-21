@@ -249,6 +249,19 @@ class TestTheLibrary:
         assert agents.library()["agents"] == []
         assert agents.export(referenced)["entry"] is None
 
+    def test_an_agent_that_is_being_removed_is_not_in_it(self, agents: PaperAgents, made: str) -> None:
+        agents._deleting.add(made)
+
+        assert agents.library()["agents"] == []
+
+    def test_a_package_of_an_agent_that_has_no_tools_now_is_not_given(
+        self, agents: PaperAgents, made: str, packages: Packages, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        export(agents, made)
+        monkeypatch.setattr(agents, "library_pieces", lambda directory, agent: None)
+
+        assert refused(agents.export_file, made).status == 404
+
     def test_an_agent_that_is_not_there_has_no_package(self, agents: PaperAgents) -> None:
         for call in (agents.export, agents.export_file, agents.start_export, agents.clear_export):
             error = refused(call, "nothing")
@@ -433,6 +446,30 @@ class TestMakingAPackage:
         assert job.state == "stopped"
         assert library.stored_export(directory_of(workspace, made)) is None
         assert agents.export(made)["job"] is None
+
+
+class TestWhatIsMadeOf:
+    def test_a_tool_that_is_not_as_it_was_made_is_a_package_that_is_not_made(
+        self, agents: PaperAgents, made: str, packages: Packages, workspace: Workspace
+    ) -> None:
+        (kept_tools.tool_path(directory_of(workspace, made), "tally") / "tool.json").write_text("{")
+
+        job = export(agents, made)
+
+        assert job.state == "failed" and job.error is not None and "Make the tools again" in job.error
+        assert packages.runs == []
+
+    def test_a_package_made_again_under_another_name_takes_the_earlier_one_away(
+        self, agents: PaperAgents, made: str, packages: Packages, workspace: Workspace
+    ) -> None:
+        export(agents, made)
+        agents.change(made, title="Another name")
+
+        job = export(agents, made)
+
+        assert job.state == "succeeded", job.error
+        files = [path.name for path in library.exports_path(directory_of(workspace, made)).iterdir()]
+        assert sorted(files) == sorted([library.EXPORT_FILE, "another-name-" + COMMIT[:7] + ".zip"])
 
 
 class TestWhenItIsRefused:
@@ -691,6 +728,16 @@ class TestWhatIsKept:
 
         assert library.stored_export(tmp_path) is None and library.export_file(tmp_path) is None
 
+    @pytest.mark.parametrize("name", ["../outside.zip", ".hidden.zip", "inside/p.zip"])
+    def test_a_name_that_leads_out_of_the_folder_or_hides_is_not_one_that_is_kept_even_when_the_file_is_there(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        folder = self.record(tmp_path, file=name)
+        (folder / name).parent.mkdir(exist_ok=True)
+        (folder / name).write_bytes(b"zip")
+
+        assert library.stored_export(tmp_path) is None
+
     def test_a_file_that_is_a_link_is_not_followed(self, tmp_path: Path) -> None:
         folder = self.record(tmp_path)
         (folder / "p.zip").unlink()
@@ -783,7 +830,7 @@ class TestWhatTheCheckSays:
         for text in ("{", "[]", json.dumps({**self.REPORT, "schema": 2}), json.dumps({**self.REPORT, "ok": "yes"})):
             path.write_text(text)
             assert library.read_report(path) is None
-        path.write_text("x" * (library.MAX_REPORT_BYTES + 1))
+        path.write_text(json.dumps(self.REPORT) + " " * library.MAX_REPORT_BYTES)
         assert library.read_report(path) is None
         path.unlink()
         assert library.read_report(path) is None

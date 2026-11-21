@@ -51,6 +51,10 @@ def scaled(values, factor):
     return [value * factor for value in values]
 
 
+def read_note():
+    return open("note.txt").read()
+
+
 def leaves_a_file(counts):
     open("left.txt", "w").write("x")
     return os.listdir(".")
@@ -107,6 +111,17 @@ def tool_of(name: str, function: str, source: str, cases: list[dict[str, Any]], 
 
 TALLY = tool_of(
     "tally", "tally", WRAPPER, [case_of({"counts": [1, 2, 3], "scale": 2}, {"type": "int", "plain": True, "value": 12})]
+)
+NOTE_WRAPPER = '''def read_note() -> str:
+    """Reads the note."""
+    import calc.mapping as _repo
+    return _repo.read_note()
+'''
+NOTE = tool_of(
+    "read_note",
+    "read_note",
+    NOTE_WRAPPER,
+    [case_of({}, {"type": "str", "plain": True, "value": "hello"}, cwd="docs")],
 )
 SCALED = tool_of("scaled", "scaled", SCALE, [case_of({"values": [1.0, 2.0, 3.0], "factor": 0.5}, EXPECTED_SCALED)])
 
@@ -195,6 +210,12 @@ class TestWhatIsMade:
         } <= names
         assert all(name.startswith(f"{root}/") for name in names)
 
+    def test_a_long_title_is_cut_in_the_name_of_the_package(self) -> None:
+        name = exporting.package_name("A very long title " * 10, COMMIT)
+
+        assert name == "a-very-long-title-a-very-long-title-a-ve-aaaaaaa"
+        assert exporting.package_name("???", COMMIT) == "paperagent-aaaaaaa"
+
     def test_it_is_the_same_each_time(self, tmp_path: Path) -> None:
         first = exporting.build_package(source_in(tmp_path), tmp_path / "one.zip")
         second = exporting.build_package(source_in(tmp_path), tmp_path / "two.zip")
@@ -282,6 +303,18 @@ class TestWhatIsMade:
     def test_nothing_is_made_of_no_tools(self, tmp_path: Path) -> None:
         with pytest.raises(exporting.PackageError, match="no tools"):
             exporting.build_package(source_in(tmp_path, tools=[]), tmp_path / "p.zip")
+
+    def test_a_call_is_made_from_the_folder_that_the_tutorial_made_it_from(self, tmp_path: Path) -> None:
+        source = source_in(tmp_path, tools=[NOTE])
+        (source.repo / "docs").mkdir()
+        (source.repo / "docs" / "note.txt").write_text("hello")
+        manifest = exporting.build_package(source, tmp_path / "p.zip")
+        folder = exporting.unpack(tmp_path / "p.zip", tmp_path / "o")
+
+        _, report = run_check(folder)
+
+        assert manifest["tools"][0]["cwd"] == "docs"
+        assert report["ok"] is True and report["tools"][0]["cases"][0]["status"] == "match"
 
     def test_a_tool_with_no_call_that_can_be_carried_is_left_out_and_the_package_says_so(self, tmp_path: Path) -> None:
         too_big = case_of({"counts": [3] * 40_000, "scale": 1}, {"type": "int", "plain": True, "value": 3})
@@ -557,10 +590,7 @@ class TestTheServer:
     def test_it_lists_its_tools_with_what_each_takes(self, client: Client) -> None:
         listed = client.request("tools/list")["result"]["tools"]
 
-        assert [tool["name"] for tool in listed] == ["tally", "scaled"] or {tool["name"] for tool in listed} == {
-            "tally",
-            "scaled",
-        }
+        assert {tool["name"] for tool in listed} == {"tally", "scaled"}
         tally = next(tool for tool in listed if tool["name"] == "tally")
         assert tally["inputSchema"]["required"] == ["counts"] and "[Tier A]" in tally["description"]
 
@@ -634,6 +664,17 @@ class TestTheServer:
         assert client.send_raw("{not json")["error"]["code"] == -32700
         assert client.request("ping")["result"] == {}
 
+    def test_what_is_not_a_request_of_the_protocol_is_refused(self, client: Client) -> None:
+        for message in (
+            {"id": 1, "method": "ping"},
+            {"jsonrpc": "1.0", "id": 2, "method": "ping"},
+            {"jsonrpc": "2.0", "id": 3, "method": 5},
+        ):
+            answer = client.send_raw(json.dumps(message))
+            assert answer["error"]["code"] == -32600 and answer["id"] == message["id"], message
+        assert client.send_raw("[1]")  # a batch holds objects, and what is not one is answered as such
+        assert client.request("ping")["result"] == {}
+
     def test_a_batch_is_answered_with_a_batch(self, client: Client) -> None:
         answer = client.send_raw(
             json.dumps(
@@ -680,6 +721,13 @@ def run_check(folder: Path, *options: str) -> tuple[int, dict[str, Any]]:
     return done.returncode, json.loads(done.stdout)
 
 
+def retarget(folder: Path) -> None:
+    """Says in the manifest that the code is as it is now, so that only what the calls give is what is looked at."""
+    manifest = json.loads((folder / "package.json").read_text())
+    manifest["repo"]["sha256"] = server_module(folder).tree_digest(str(folder / "repo"))
+    (folder / "package.json").write_text(json.dumps(manifest))
+
+
 class TestTheCheck:
     def test_it_holds_what_each_tool_gives_to_what_the_tutorial_got(self, unpacked: Path, tmp_path: Path) -> None:
         code, report = run_check(unpacked, "--report", str(tmp_path / "report.json"))
@@ -695,17 +743,24 @@ class TestTheCheck:
         (unpacked / "repo" / "calc" / "mapping.py").write_text(
             MAPPING.replace("sum(counts) * scale", "sum(counts) * scale + 1")
         )
-        manifest = json.loads((unpacked / "package.json").read_text())
-        manifest["repo"]["sha256"] = None
+        retarget(unpacked)
 
         code, report = run_check(unpacked)
 
-        assert code == 1 and report["ok"] is False
+        assert report["problems"] == [] and code == 1 and report["ok"] is False
         tally = next(tool for tool in report["tools"] if tool["name"] == "tally")
         assert (
             tally["cases"][0]["status"] == "differs" and "is 13 where it was 12" in tally["cases"][0]["differences"][0]
         )
+
+    def test_code_that_is_not_what_it_was_made_as_is_said_whatever_it_gives(self, unpacked: Path) -> None:
+        (unpacked / "repo" / "calc" / "mapping.py").write_text(MAPPING + "\n# changed\n")
+
+        code, report = run_check(unpacked)
+
+        assert code == 1 and report["ok"] is False
         assert any("The code in repo/ is not as it was made" in problem for problem in report["problems"])
+        assert all(case["status"] == "match" for tool in report["tools"] for case in tool["cases"])
 
     def test_a_file_that_was_changed_or_taken_away_is_said(self, unpacked: Path) -> None:
         (unpacked / "tools" / "tally" / "wrapper.py").write_text(WRAPPER + "\n# changed\n")
@@ -738,10 +793,11 @@ class TestTheCheck:
 
     def test_a_function_that_fails_is_an_error_of_the_check(self, unpacked: Path) -> None:
         (unpacked / "repo" / "calc" / "mapping.py").write_text("raise RuntimeError('broken')\n")
+        retarget(unpacked)
 
         code, report = run_check(unpacked)
 
-        assert code == 1
+        assert report["problems"] == [] and code == 1 and report["ok"] is False
         assert all(
             case["status"] == "error" and "RuntimeError" in case["message"]
             for tool in report["tools"]
@@ -782,6 +838,15 @@ RECORDED = [
     {"type": "Thing", "plain": False, "repr": "<Thing at 0x1234>"},
     {"type": "Thing", "plain": False, "repr": "Thing(1)"},
     {"type": "Thing", "plain": False, "repr": "Thing(2)"},
+    {"type": "Thing", "plain": True, "value": 1},
+    {"type": "list", "plain": True, "value": [1]},
+    {"type": "list", "plain": True, "value": ["1"]},
+    {"type": "list", "plain": True, "value": [1.0]},
+    {"type": "list", "plain": True, "value": [True]},
+    {"type": "list", "plain": True, "value": [1, 2]},
+    {"type": "dict", "plain": True, "value": {"a": 1}},
+    {"type": "dict", "plain": True, "value": {"b": 1}},
+    {"type": "dict", "plain": True, "value": {"a": 1, "b": 2}},
     {
         "type": "ndarray",
         "plain": False,
@@ -814,6 +879,61 @@ class TestHoldingToWhatTheTutorialGot:
             server.differences(RECORDED[1], close, tolerance) == comparing.differences(RECORDED[1], close, mine) == []
         )
         assert server.differences(RECORDED[1], far, tolerance) == comparing.differences(RECORDED[1], far, mine) != []
+
+    @pytest.mark.parametrize(
+        ("schema", "value", "fits"),
+        [
+            ({"type": "integer"}, 3, True),
+            ({"type": "integer"}, 3.0, True),
+            ({"type": "integer"}, 3.5, False),
+            ({"type": "integer"}, True, False),
+            ({"type": "integer"}, "3", False),
+            ({"type": "number"}, 1, True),
+            ({"type": "number"}, 1.5, True),
+            ({"type": "number"}, True, False),
+            ({"type": "number"}, {"$float": "nan"}, True),
+            ({"type": "string"}, {"$float": "nan"}, False),
+            ({"type": "string"}, "a", True),
+            ({"type": "boolean"}, 1, False),
+            ({"type": "array"}, [1], True),
+            ({"type": "array"}, {}, False),
+            ({"type": "object"}, {}, True),
+            ({"type": ["integer", "null"]}, None, True),
+            ({"type": ["integer", "null"]}, "a", False),
+            ({"anyOf": [{"type": "integer"}, {"type": "string"}]}, 1, True),
+            ({"anyOf": [{"type": "integer"}, {"type": "string"}]}, "a", True),
+            ({"anyOf": [{"type": "integer"}, {"type": "string"}]}, [], False),
+            ({}, [1, "a"], True),
+        ],
+    )
+    def test_what_a_tool_takes_is_held_to_the_kind_it_says(
+        self, unpacked: Path, schema: dict[str, Any], value: Any, fits: bool
+    ) -> None:
+        server = server_module(unpacked)
+
+        problem = server.check_arguments({"properties": {"x": schema}}, {"x": value})
+
+        assert (problem is None) is fits, problem
+
+    def test_what_is_not_given_or_is_not_taken_is_said(self, unpacked: Path) -> None:
+        server = server_module(unpacked)
+        schema = {"properties": {"a": {}, "b": {}}, "required": ["a"]}
+
+        assert server.check_arguments(schema, {"a": 1}) is None
+        assert "b must be given" in server.check_arguments({**schema, "required": ["a", "b"]}, {"a": 1})
+        assert "c is not a parameter" in server.check_arguments(schema, {"a": 1, "c": 2})
+        assert "object" in server.check_arguments(schema, [1])
+
+    def test_a_link_is_not_followed_and_is_not_what_it_points_to(self, unpacked: Path) -> None:
+        server = server_module(unpacked)
+        manifest = json.loads((unpacked / "package.json").read_text())
+        (unpacked / "repo" / "calc" / "alias.py").symlink_to(unpacked / "repo" / "calc" / "mapping.py")
+        assert server.tree_digest(str(unpacked / "repo")) == manifest["repo"]["sha256"]
+
+        (unpacked / "Dockerfile").rename(unpacked / "Dockerfile.real")
+        (unpacked / "Dockerfile").symlink_to(unpacked / "Dockerfile.real")
+
+        assert "Dockerfile is not there." in server.files_problems(manifest, str(unpacked))
 
     def test_the_hash_of_the_code_is_worked_out_as_the_package_works_it_out(self, unpacked: Path) -> None:
         server = server_module(unpacked)
