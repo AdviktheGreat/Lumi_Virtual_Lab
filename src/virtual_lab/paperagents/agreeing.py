@@ -98,7 +98,10 @@ def verdict(
 
 def of_values(first: Any, second: Any, tolerance: comparing.Tolerance, kept: tuple[str, str]) -> dict[str, Any]:
     found: list[str] = []
-    differences_in(first, second, tolerance, "", found)
+    try:
+        differences_in(first, second, tolerance, "", found)
+    except RecursionError:
+        return verdict(UNKNOWN, "They are nested too deeply to be compared.", None, kept)
     if found:
         return verdict(DIFFER, "They give different answers.", found, kept)
 
@@ -132,7 +135,7 @@ def compare(first: Mapping[str, Any], second: Mapping[str, Any], tolerance: comp
             kept,
         )
     if HASH in kept:
-        if kept == (HASH, HASH) and first["sha256"] == second["sha256"]:
+        if kept == (HASH, HASH) and first.get("sha256") is not None and first.get("sha256") == second.get("sha256"):
             return verdict(AGREE, "Both were more than could be kept, and the hashes of them are the same.", None, kept)
 
         return verdict(

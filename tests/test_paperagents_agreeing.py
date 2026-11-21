@@ -182,6 +182,21 @@ class TestResultsThatWereNotKeptWhole:
         assert verdict(too_big("a" * 64), too_big("a" * 64, "dict")) == ag.UNKNOWN
         assert verdict(too_big(), whole([1])) == ag.UNKNOWN
 
+    def test_results_that_were_more_than_could_be_kept_and_have_no_hash_are_not_told_to_agree(self) -> None:
+        bare = {"type": "list", "chars": 5}
+
+        assert verdict(bare, dict(bare)) == ag.UNKNOWN
+        assert verdict(bare, too_big(kind="list")) == ag.UNKNOWN
+
+    def test_a_value_that_is_nested_too_deeply_to_be_compared_is_not_told_to_agree_or_to_differ(self) -> None:
+        deep: Any = 1
+        for _ in range(5000):
+            deep = [deep]
+
+        found = ag.compare(whole(deep), whole(deep), TOLERANCE)
+
+        assert found["verdict"] == ag.UNKNOWN and "nested too deeply" in found["how"]
+
 
 def run_of(result: dict[str, Any] | None, state: str = "ran", fingerprint: str = "f" * 64, own: str = "x.csv") -> Any:
     return {
