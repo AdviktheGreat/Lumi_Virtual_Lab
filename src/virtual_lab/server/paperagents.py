@@ -2705,6 +2705,14 @@ class PaperAgents:
             self.check_idle(agent_id)
             kept_library.forget(directory)
 
+    def agent_ids(self) -> list[str]:
+        """The ids of the agents that there are and that are not being removed, by title."""
+        return [
+            directory.name
+            for directory, agent in sorted(self.kept(), key=lambda item: item[1]["title"].lower())
+            if directory.name not in self._deleting
+        ]
+
     # Watching an agent, so that it is told how it is and what a newer version of its code would change
 
     def health_summary(

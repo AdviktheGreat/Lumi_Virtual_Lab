@@ -193,8 +193,8 @@ class TestTwoPapers:
         one = {tool.name for tool in conversations.create(local(team=[], paperagents=[made])).chat.tools}
         two = {tool.name for tool in conversations.create(local(team=[], paperagents=[made, other])).chat.tools}
 
-        assert team.COMPARE_TOOL not in one and team.JOIN_TOOL not in one
-        assert {team.COMPARE_TOOL, team.JOIN_TOOL} <= two
+        assert not {team.COMPARE_TOOL, team.JOIN_TOOL, team.GRAPH_TOOL} & one
+        assert {team.COMPARE_TOOL, team.JOIN_TOOL, team.GRAPH_TOOL} <= two
 
     def test_no_join_tool_is_given_where_no_tool_runs(
         self, agents: PaperAgents, conversations: Conversations, read: str, fake_client: FakeClient
@@ -203,7 +203,7 @@ class TestTwoPapers:
 
         names = {tool.name for tool in conversations.create(local(team=[], paperagents=[read, other])).chat.tools}
 
-        assert team.COMPARE_TOOL in names and team.JOIN_TOOL not in names
+        assert {team.COMPARE_TOOL, team.GRAPH_TOOL} <= names and team.JOIN_TOOL not in names
 
     def test_a_tool_the_conversation_has_with_the_name_is_not_replaced(
         self, agents: PaperAgents, workspace: Workspace, made: str, fake_client: FakeClient
@@ -214,7 +214,11 @@ class TestTwoPapers:
 
         found = team.cross_tools(workspace, [made, other], offer.entries, {team.COMPARE_TOOL})
 
-        assert [tool.name for tool in found] == [team.JOIN_TOOL]
+        assert [tool.name for tool in found] == [team.GRAPH_TOOL, team.JOIN_TOOL]
+        assert [tool.name for tool in team.cross_tools(workspace, [made, other], offer.entries, {team.GRAPH_TOOL})] == [
+            team.COMPARE_TOOL,
+            team.JOIN_TOOL,
+        ]
 
     def test_an_agent_that_is_gone_does_not_make_two(
         self, agents: PaperAgents, workspace: Workspace, made: str, fake_client: FakeClient
