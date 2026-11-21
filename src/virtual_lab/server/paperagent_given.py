@@ -781,14 +781,25 @@ class Reimplementation(Caller):
         super().__init__(*arguments, **options)
         self.source = source
 
-    def __call__(self, **arguments: Any) -> dict[str, Any]:
+    def current(self) -> kept_matching.Given:
+        """The function as it is kept now, if it is still the one the tool was made of and still of tier C.
+
+        :raises PaperAgentToolError: If it is not.
+        """
         function = reimplemented(self.workspace, self.agent_id)
         if function is None or (function.name, function.source) != (self.name, self.source):
             raise PaperAgentToolError(
                 "This tool is gone: the function written from the paper was taken away or written again, or it is not "
                 "of tier C now."
             )
+
+        return function
+
+    def __call__(self, **arguments: Any) -> dict[str, Any]:
+        self.current()
         sent, said = self.before(arguments)
+        # The hold can wait on the person for a while, and the function or its checks can change meanwhile.
+        function = self.current()
         limits = making.ToolLimits(repeats=1)
         try:
             with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:

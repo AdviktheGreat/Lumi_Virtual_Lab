@@ -447,6 +447,23 @@ class TestTheHold:
         assert "the person chose not" in said(caught)
         assert sandbox.runs == []
 
+    def test_checks_that_are_cleared_while_the_person_is_asked_leave_the_function_not_run(
+        self, agents: PaperAgents, workspace: Workspace, scoped: str, sandbox: Sandbox
+    ) -> None:
+        class Clearing(Person):
+            def __call__(self, hold: Any) -> bool:
+                agents.clear_matching(scoped)
+                return super().__call__(hold)
+
+        person = Clearing(True)
+        found = self.run_tools(workspace, scoped, person)
+        found[given.tool_name(scoped, "check_scope")](tissue="liver")
+
+        with pytest.raises(given.PaperAgentToolError, match=r"^\[Re-implementation, not the authors' code\] This tool"):
+            found[name_of(scoped)](numbers=[1.0])
+
+        assert len(person.asked) == 1 and sandbox.runs == []
+
     def test_data_inside_is_run_without_asking(self, workspace: Workspace, scoped: str, sandbox: Sandbox) -> None:
         person = Person()
         found = self.run_tools(workspace, scoped, person)
