@@ -103,6 +103,7 @@ from virtual_lab.paper_batch import csv_bytes
 from virtual_lab.paperagents import (
     asking,
     diverging,
+    exporting,
     linking,
     matching,
     proposing,
@@ -132,6 +133,7 @@ from virtual_lab.server import paperagent_checkwork as checkwork
 from virtual_lab.server import paperagent_data as kept_data
 from virtual_lab.server import paperagent_divergence as kept_divergence
 from virtual_lab.server import paperagent_environment as kept_environment
+from virtual_lab.server import paperagent_library as kept_library
 from virtual_lab.server import paperagent_matching as kept_matching
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_reference as kept_reference
@@ -184,6 +186,9 @@ TOOLS_JOB = "paperagent-tools"
 # The job that checks the tools by what their tutorials did not give them, which is not done to an agent while another
 # job is
 CHECKS_JOB = "paperagent-checks"
+# The job that makes a package of the tools and checks it in a clean container, which is not done to an agent while
+# another job is
+EXPORT_JOB = "paperagent-export"
 # The job that tries the paper's claims against what the tutorials gave, which is not done to an agent while another job
 # is
 REPRODUCTION_JOB = "paperagent-reproduction"
@@ -729,6 +734,10 @@ class PaperAgents:
         """The job that is checking an agent's tools, if one is."""
         return next((job for job in self.jobs.active(CHECKS_JOB) if job.subject == agent_id), None)
 
+    def export_job(self, agent_id: str) -> Job | None:
+        """The job that is making a package of an agent's tools, if one is."""
+        return next((job for job in self.jobs.active(EXPORT_JOB) if job.subject == agent_id), None)
+
     def reproduction_job(self, agent_id: str) -> Job | None:
         """The job that is trying an agent's claims, if one is."""
         return next((job for job in self.jobs.active(REPRODUCTION_JOB) if job.subject == agent_id), None)
@@ -749,8 +758,9 @@ class PaperAgents:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
-            fetched, its tutorials run, its tools made, its tools checked, its claims tried, a variant of one made, or a
-            function written from its paper or checked against it, which what is done to them must wait for.
+            fetched, its tutorials run, its tools made, its tools checked, a package made of them, its claims tried, a
+            variant of one made, or a function written from its paper or checked against it, which what is done to them
+            must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -760,6 +770,7 @@ class PaperAgents:
             or self.reference_job(agent_id)
             or self.tools_job(agent_id)
             or self.checks_job(agent_id)
+            or self.export_job(agent_id)
             or self.reproduction_job(agent_id)
             or self.variant_job(agent_id)
             or self.reimplementation_job(agent_id)
@@ -2503,6 +2514,167 @@ class PaperAgents:
             kept_tools.forget(directory)
             if steps_of(agent)["tools"] in ("done", "failed"):
                 self.save(directory, {**agent, "steps": {**steps_of(agent), "tools": "pending"}})
+
+    # The library, and packages that are made of the tools
+
+    def library_pieces(
+        self, directory: Path, agent: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+        """What an agent's tools are made of, which are what was found of its code, what was built of it, and the
+        account of the tools, if it has tools that were made to their end."""
+        code = agent.get("repo")
+        intake = kept_repository.load(directory, code["url"] if code is not None else None)
+        built = kept_environment.load(directory, intake["commit"] if intake is not None else None)
+        _, kept = kept_tools_of(directory, agent)
+        if intake is None or built is None or kept is None or not kept["complete"] or not kept["tools"]:
+            return None
+
+        return intake, built, kept
+
+    def library(self) -> dict[str, Any]:
+        """The agents that have tools, each with the version of the code that they are of, the environment that they
+        are pinned to, the hash of each tool's wrapper, its tier, and the code's license, and whether a package has been
+        made of them."""
+        entries = []
+        for directory, agent in self.kept():
+            if directory.name in self._deleting:
+                continue
+            pieces = self.library_pieces(directory, agent)
+            if pieces is not None:
+                entries.append(kept_library.entry_of(directory, directory.name, agent, *pieces))
+        usable, problem = building.ready(self.docker_command)
+
+        return {
+            "agents": sorted(entries, key=lambda entry: entry["title"].lower()),
+            "docker": {"ready": usable, "message": problem},
+            "meaning": exporting.MEANING,
+            "flags": exporting.FLAGS,
+        }
+
+    def export(self, agent_id: str) -> dict[str, Any]:
+        """What there is of a package of an agent's tools: the agent as the library lists it, if it has tools, and
+        whether a package is being made.
+
+        :raises ApiError: If there is no agent with this id.
+        """
+        directory, agent = self.lookup(agent_id)
+        pieces = self.library_pieces(directory, agent)
+        usable, problem = building.ready(self.docker_command)
+        job = self.export_job(agent_id)
+
+        return {
+            "id": agent_id,
+            "docker": {"ready": usable, "message": problem},
+            "entry": kept_library.entry_of(directory, agent_id, agent, *pieces) if pieces is not None else None,
+            "job": job.snapshot() if job is not None else None,
+            "meaning": exporting.MEANING,
+            "flags": exporting.FLAGS,
+        }
+
+    def export_file(self, agent_id: str) -> Path:
+        """The file of the package that was made of an agent's tools.
+
+        :raises ApiError: If there is no agent with this id, or no package was made, or it is not of what is kept now.
+        """
+        directory, agent = self.lookup(agent_id)
+        pieces = self.library_pieces(directory, agent)
+        record = kept_library.stored_export(directory)
+        if record is None or pieces is None:
+            raise not_found("package of that PaperAgent")
+        entry = kept_library.entry_of(directory, agent_id, agent, *pieces)
+        if entry["export"] is None or not entry["export"]["current"]:
+            raise ApiError(
+                409,
+                "stale",
+                "The package was made of tools, a version of the code, or an environment that are not what is kept "
+                "now. Make it again.",
+            )
+
+        return kept_library.exports_path(directory) / record["file"]
+
+    def start_export(self, agent_id: str, accept_license: Any = False) -> Job:
+        """Starts making a package of an agent's tools that can be run as a server of the Model Context Protocol
+        anywhere: the code, each tool's wrapper, the lock of the environment, a Dockerfile, a server, and what a person
+        needs to know. It is checked in a clean container before it is kept.
+
+        :param accept_license: Whether the person has read what is flagged of the code's license and goes on. A package
+            of code with no license, with one that is not recognized, or with one for non-commercial use or a copyleft
+            one is not made without it.
+        :raises ApiError: If there is no agent with this id, accept_license is not yes or no, Docker is not running, the
+            code has not been fetched or its environment not built or its image is not in Docker, there are no tools,
+            the license is flagged and was not accepted, or the agent is being worked on.
+        """
+        self.lookup(agent_id)
+        accepted = check_flag(accept_license, "accept_license")
+        usable, problem = building.ready(self.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and a package is checked in it")
+
+        with self._lock:
+            directory, agent, intake, built, _ = self.image_for_runs(agent_id, "the package is checked")
+            _, kept = kept_tools_of(directory, agent)
+            if kept is None or not kept["complete"] or not kept["tools"]:
+                raise ApiError(422, "no_tools", "Make the tools first, as a package is made of them")
+            found = exporting.license_of(intake["stock"].get("license"))
+            if found["flag"] is not None and not accepted:
+                raise ApiError(
+                    409,
+                    "license",
+                    f"{found['said']} Say that you have read this to make the package.",
+                    license=found,
+                )
+            folder, _ = data_to_give(directory) if kept["data"] else (None, None)
+            try:
+                return self.jobs.start(
+                    EXPORT_JOB,
+                    agent_id,
+                    f"Making a package: {agent['title']}",
+                    self.exporter(agent_id, agent, intake, built, kept, folder, accepted),
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def exporter(
+        self,
+        agent_id: str,
+        agent: dict[str, Any],
+        intake: dict[str, Any],
+        built: dict[str, Any],
+        kept: dict[str, Any],
+        folder: Path | None,
+        accepted: bool,
+    ) -> Callable[[Job], str | None]:
+        """What a job does to make a package: makes it, checks it in a clean container, and keeps it if it passed."""
+
+        def work(job: Job) -> str | None:
+            return kept_library.make_package(
+                job,
+                self.workspace.paperagents_dir / agent_id,
+                self.workspace.root,
+                agent_id,
+                agent,
+                intake,
+                built,
+                kept,
+                folder,
+                self.docker_command,
+                accepted,
+            )
+
+        return work
+
+    def clear_export(self, agent_id: str) -> None:
+        """Takes away the package that was made of an agent's tools.
+
+        :raises ApiError: If there is no agent with this id, or it is being worked on.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            kept_library.forget(directory)
 
     # The checks of the tools, by what their tutorials did not give them
 

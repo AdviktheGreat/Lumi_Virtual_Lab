@@ -77,6 +77,11 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}/tools  which would be made, which would not and why, what was made, and what is allowed
     GET    /api/paperagents/{id}/tools/{name}  one tool: its wrapper, its signature, and each call that was made again
     DELETE /api/paperagents/{id}/tools  takes away the tools, so that they can be made again
+    GET    /api/paperagents/library  each agent that has tools: version, environment, tools' hashes and tiers
+    POST   /api/paperagents/{id}/export  starts making a package of the tools (an MCP server) and checking it
+    GET    /api/paperagents/{id}/export  the agent as the library lists it, its package, and the job
+    GET    /api/paperagents/{id}/export/package  the package, as a ZIP
+    DELETE /api/paperagents/{id}/export  takes away the package
     POST   /api/paperagents/{id}/checks  starts checking the tools by what their tutorials did not give them
     GET    /api/paperagents/{id}/checks  each tool, its tier, and how each kind of check of it went, and what is allowed
     GET    /api/paperagents/{id}/checks/{name}  one tool's checks, each with what it was made of
@@ -516,6 +521,13 @@ class PaperAgentToolsBody(RequestModel):
     repeats: StrictInt | None = None
     repairs: StrictInt | None = None
     gigabytes: StrictInt | None = None
+
+
+class PaperAgentExportBody(RequestModel):
+    """Whether to go on with a package of code whose license is flagged: it has none, it is not recognized, or it is for
+    non-commercial use or is a copyleft one. The person has read what is said of it and goes on."""
+
+    accept_license: StrictBool = False
 
 
 class PaperAgentChecksBody(RequestModel):
@@ -1470,6 +1482,10 @@ def create_app(
 
         return paperagents.view(agent_id)
 
+    @api.get("/paperagents/library")
+    def get_paperagent_library() -> dict[str, Any]:
+        return paperagents.library()
+
     @api.get("/paperagents/{agent_id}")
     def get_paperagent(agent_id: str) -> dict[str, Any]:
         return paperagents.view(agent_id)
@@ -1644,6 +1660,24 @@ def create_app(
         paperagents.clear_tools(agent_id)
 
         return paperagents.tools(agent_id)
+
+    @api.post("/paperagents/{agent_id}/export", status_code=202)
+    def make_paperagent_export(agent_id: str, body: PaperAgentExportBody) -> dict[str, Any]:
+        return paperagents.start_export(agent_id, body.accept_license).snapshot(0)
+
+    @api.get("/paperagents/{agent_id}/export")
+    def get_paperagent_export(agent_id: str) -> dict[str, Any]:
+        return paperagents.export(agent_id)
+
+    @api.get("/paperagents/{agent_id}/export/package")
+    def download_paperagent_export(agent_id: str) -> FileResponse:
+        return file_response(paperagents.export_file(agent_id), download=True)
+
+    @api.delete("/paperagents/{agent_id}/export")
+    def delete_paperagent_export(agent_id: str) -> dict[str, Any]:
+        paperagents.clear_export(agent_id)
+
+        return paperagents.export(agent_id)
 
     @api.post("/paperagents/{agent_id}/checks", status_code=202)
     def check_paperagent_tools(agent_id: str, body: PaperAgentChecksBody) -> dict[str, Any]:
