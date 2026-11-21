@@ -63,6 +63,10 @@ import type {
   PaperAgentVariants,
   PaperAgentGiven,
   PaperAgentImportCheck,
+  PaperAgentMatchingOptions,
+  PaperAgentReimplementation,
+  PaperAgentReimplementationOptions,
+  ReimplementationChoice,
   PaperAgentData,
   PaperAgentDataFetch,
   PaperAgentEnvironment,
@@ -155,6 +159,18 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   }
 
   return parsed as T;
+}
+
+// What an offer is asked for, as the query of its address: each section by itself, and what is left out is not said
+export function choiceQuery(choice: ReimplementationChoice): string {
+  const query = new URLSearchParams();
+  for (const section of choice.sections ?? []) query.append("sections", String(section));
+  if (choice.search !== undefined) query.set("search", choice.search);
+  if (choice.name !== undefined) query.set("name", choice.name);
+  if (choice.goal !== undefined) query.set("goal", choice.goal);
+  const text = query.toString();
+
+  return text === "" ? "" : `?${text}`;
 }
 
 function isAttachment(value: unknown): value is Attachment {
@@ -656,6 +672,31 @@ export const api = {
   startPaperAgentVariant: (id: string, options: PaperAgentVariantOptions) =>
     request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/variants`, options),
   clearPaperAgentVariants: (id: string) => request<PaperAgentVariants>("DELETE", `/paperagents/${encodeURIComponent(id)}/variants`),
+  // A function written from the paper's words where it has no code: what there is of it, with what would be sent for what was chosen,
+  // writing it once the person agreed, which goes on as a job, and taking it away
+  paperAgentReimplementation: (id: string, choice: ReimplementationChoice = {}, signal?: AbortSignal) =>
+    request<PaperAgentReimplementation>("GET", `/paperagents/${encodeURIComponent(id)}/reimplementation${choiceQuery(choice)}`, undefined, signal),
+  writePaperAgentReimplementation: (id: string, options: PaperAgentReimplementationOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/reimplementation`, options),
+  clearPaperAgentReimplementation: (id: string) =>
+    request<PaperAgentReimplementation>("DELETE", `/paperagents/${encodeURIComponent(id)}/reimplementation`),
+  // Checking that function against the numbers that the paper reports, which goes on as a job, taking the checks away, and the inputs
+  // that the person gives for a claim, or takes away
+  checkPaperAgentReimplementation: (id: string, options: PaperAgentMatchingOptions) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/reimplementation/checks`, options),
+  clearPaperAgentReimplementationChecks: (id: string) =>
+    request<PaperAgentReimplementation>("DELETE", `/paperagents/${encodeURIComponent(id)}/reimplementation/checks`),
+  givePaperAgentInputs: (id: string, claim: string, args: Record<string, unknown>) =>
+    request<PaperAgentReimplementation>(
+      "PUT",
+      `/paperagents/${encodeURIComponent(id)}/reimplementation/inputs/${encodeURIComponent(claim)}`,
+      { arguments: args },
+    ),
+  clearPaperAgentInputs: (id: string, claim: string) =>
+    request<PaperAgentReimplementation>(
+      "DELETE",
+      `/paperagents/${encodeURIComponent(id)}/reimplementation/inputs/${encodeURIComponent(claim)}`,
+    ),
   // What a person does to the method card, each giving back the reading as it is then: adding a fact, changing one, taking one
   // off and putting it back, approving the card and taking the approval back, and taking away all that they changed
   addPaperAgentCardFact: (id: string, kind: CardKind, fields: CardFields) =>

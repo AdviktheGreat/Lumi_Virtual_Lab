@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { describeGiving, describeKind, describeLimits, describeTier, describeTools, whyNone } from "./paperagent-given";
+import { describeGiving, describeKind, describeLimits, describeTier, describeTools, runsCode, whyNone } from "./paperagent-given";
 import type { GivenTool, PaperAgent, PaperAgentGiven } from "./types";
 
 function tool(name: string, kind: GivenTool["kind"]): GivenTool {
-  return { name, kind, tier: kind === "run" ? "A" : kind === "imported" ? "Imported" : "D", summary: "Does it.", parameters: [] };
+  const tier = kind === "run" ? "A" : kind === "reimplementation" ? "C" : kind === "imported" ? "Imported" : "D";
+
+  return { name, kind, tier, summary: "Does it.", parameters: [], label: kind === "reimplementation" ? "Re-implementation, not the authors' code" : null };
 }
 
 function agentOf(changes: Partial<PaperAgent> = {}): PaperAgent {
@@ -24,7 +26,15 @@ function givenOf(tools: GivenTool[], changes: Partial<PaperAgentGiven> = {}): Pa
   return {
     id: "cell",
     given: false,
-    tier: tools.some((one) => one.kind === "run") ? "A" : tools.some((one) => one.kind === "reading") ? "D" : tools.length > 0 ? "Imported" : null,
+    tier: tools.some((one) => one.kind === "run")
+      ? "A"
+      : tools.some((one) => one.kind === "reimplementation")
+        ? "C"
+        : tools.some((one) => one.kind === "reading")
+          ? "D"
+          : tools.length > 0
+            ? "Imported"
+            : null,
     tools,
     problem: null,
     meaning: "",
@@ -38,6 +48,7 @@ describe("describeTier", () => {
   it("says what a tier is, and that there is none when there is nothing to give", () => {
     expect(describeTier("A")).toBe("Tier A: runs the authors' code");
     expect(describeTier("B")).toBe("Tier B: runs the authors' code, and passed checks that its tutorial did not give it");
+    expect(describeTier("C")).toBe("Tier C: a re-implementation, not the authors' code, which gave a number that the paper reports");
     expect(describeTier("D")).toBe("Tier D: reads the paper");
     expect(describeTier("Imported")).toBe("Tier Imported: made by someone else, and not checked here");
     expect(describeTier(null)).toBe("Nothing to give yet");
@@ -53,6 +64,16 @@ describe("describeKind", () => {
     expect(describeKind("run")).toBe("Runs the authors' own function");
     expect(describeKind("reading")).toBe("Reads what was found in the paper");
     expect(describeKind("imported")).toBe("Calls the server that someone else runs, and asks you first");
+    expect(describeKind("reimplementation")).toBe("Runs a function that a model wrote from the paper's words, in a sandbox with no network");
+  });
+});
+
+describe("runsCode", () => {
+  it("is so of the tools that run code when they are called, the authors' or a re-implementation", () => {
+    expect(runsCode(tool("a", "run"))).toBe(true);
+    expect(runsCode(tool("a", "reimplementation"))).toBe(true);
+    expect(runsCode(tool("a", "reading"))).toBe(false);
+    expect(runsCode(tool("a", "imported"))).toBe(false);
   });
 });
 
@@ -73,6 +94,15 @@ describe("describeTools", () => {
       "1 tool that reads the paper and 2 that call the server it was imported from.",
     );
     expect(describeTools([tool("a", "run"), tool("b", "imported")])).toBe("1 tool that runs its code and 1 that calls the server it was imported from.");
+  });
+
+  it("counts a re-implementation apart from the tools that run the authors' code", () => {
+    expect(describeTools([tool("a", "reading"), tool("b", "reimplementation")])).toBe(
+      "1 tool that reads the paper and 1 that runs a re-implementation of it, not the authors' code.",
+    );
+    expect(describeTools([tool("a", "reading"), tool("b", "reimplementation"), tool("c", "reimplementation")])).toBe(
+      "1 tool that reads the paper and 2 that run a re-implementation of it, not the authors' code.",
+    );
   });
 });
 
@@ -97,8 +127,16 @@ describe("whyNone", () => {
     expect(whyNone(agentOf({ repo: null, steps: { ...agentOf().steps, reading: "running" } }), givenOf([]))[0]).toContain("is being read");
   });
 
-  it("says why there is no tool that runs, by whether it has code", () => {
-    expect(whyNone(agentOf({ repo: null }), givenOf([tool("a", "reading")]))).toEqual(["It has no code, so it has no tool that runs."]);
+  it("says nothing of tools that run when a re-implementation is given", () => {
+    expect(whyNone(agentOf({ repo: null }), givenOf([tool("a", "reading"), tool("b", "reimplementation")]))).toEqual([]);
+  });
+
+  it("says why there is no tool that runs, by whether it has code, and where a function can be written from the paper", () => {
+    expect(whyNone(agentOf({ repo: null }), givenOf([tool("a", "reading")]))).toEqual([
+      "It has no code, so it has no tool that runs the authors' code. A function can be written from the paper's words under Re-implementation, and is given once it matches a number that the paper reports.",
+    ]);
+    const imported = agentOf({ repo: null, imported: { url: "https://example.org/mcp" } as PaperAgent["imported"] });
+    expect(whyNone(imported, givenOf([tool("a", "imported")])).at(-1)).toBe("It has no code, so it has no tool that runs.");
     expect(whyNone(agentOf(), givenOf([tool("a", "reading")]))).toEqual([
       "It has no tool that runs. Tools that run are made of what the tutorials did, under Tools.",
     ]);

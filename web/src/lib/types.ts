@@ -1202,26 +1202,29 @@ export interface PaperAgentChange {
   given?: boolean;
 }
 
-// One tool that a conversation is given of an agent: one that reads what was kept of its paper, or one that runs the
-// authors' code
+// One tool that a conversation is given of an agent: one that reads what was kept of its paper, one that runs the authors' code,
+// or one that runs a function that a model wrote from the paper
 export interface GivenTool {
   name: string;
   // One of an imported agent calls the server that someone else runs, and was not checked here
-  kind: "reading" | "run" | "imported";
-  // D for one that reads, and for one that runs, the tier it was made as, and Imported for one of an imported agent
+  kind: "reading" | "run" | "reimplementation" | "imported";
+  // D for one that reads, for one that runs, the tier it was made as, C for a re-implementation, and Imported for one of an imported
+  // agent
   tier: string;
   // What it does, in a line
   summary: string;
   // The names of what it is passed
   parameters: string[];
+  // What a re-implementation is labelled wherever it is shown, and null for any other tool
+  label: string | null;
 }
 
 // What an agent gives a conversation, worked out from what is kept now
 export interface PaperAgentGiven {
   id: string;
   given: boolean;
-  // A if it has tools that run, D if it has only tools that read, Imported if it has only those of the server it was imported from, and
-  // null if it has none
+  // A or B if it has tools that run the authors' code, C if what runs is a re-implementation, D if it has only tools that read, Imported
+  // if it has only those of the server it was imported from, and null if it has none
   tier: string | null;
   tools: GivenTool[];
   // Why the tools that run are not given, if they would be and cannot be, such as Docker not running
@@ -2330,6 +2333,198 @@ export interface PaperAgentClaims {
   reproduction: PaperAgentReproduction;
   divergence: PaperAgentDivergence;
   variants: PaperAgentVariants;
+}
+
+// A heading of the paper and the words under it, which can be chosen to be given to the model that writes a function
+export interface ReimplementationSpan {
+  index: number;
+  title: string;
+  start: number;
+  end: number;
+  chars: number;
+  page: number | null;
+}
+
+// A place in the paper whose words the model is given
+export interface ReimplementationPlace {
+  start: number;
+  end: number;
+  section: string | null;
+  page: number | null;
+  chars: number;
+}
+
+// What a person is shown, and agrees to, before a function is written: the words of the paper that a program chose from what they said,
+// what the function is called, the model that would write it, and a key that is bound to all of that
+export interface ReimplementationOffer {
+  name: string;
+  goal: string | null;
+  search: string | null;
+  sections: number[];
+  places: ReimplementationPlace[];
+  // Whether the words were cut to the most that is given
+  cut: boolean;
+  // All that the model is given of the paper, as it is sent
+  brief: string;
+  chars: number;
+  model: string;
+  file_sha256: string;
+  key: string;
+}
+
+export type ReimplementationStatus = "written" | "failed" | "stopped";
+
+// What was kept of writing a function from the paper, with its code if one was written
+export interface ReimplementationKept {
+  name: string;
+  paper_sha256: string;
+  agreed_at: string;
+  model: string;
+  limit: number;
+  started_at: string;
+  finished_at: string;
+  status: ReimplementationStatus;
+  error: string | null;
+  // What was wrong with each answer that could not be used
+  problems: string[];
+  attempts: number;
+  cost: number | null;
+  task: {
+    goal: string | null;
+    search: string | null;
+    sections: number[];
+    places: ReimplementationPlace[];
+    cut: boolean;
+    chars: number;
+    brief_sha256: string;
+  };
+  // Verified if it was imported in a container with no network, unverified if it was only read
+  function: { status: "verified" | "unverified"; source_sha256: string; modules: string[] } | null;
+  // Whether it is of the paper's file that the agent has now
+  current: boolean;
+  // The code, if there is a function and its file is the one that was written
+  source: string | null;
+}
+
+export type MatchingStatus = "matched" | "not_found" | "ambiguous" | "unstable" | "error" | "not_run" | "hard_coded" | "no_inputs";
+
+// What one claim came to when the function was checked: what it was called with and whose that was, and what it gave
+export interface MatchingEntry {
+  claim: string;
+  value: string;
+  quote: string;
+  by: "model" | "person" | null;
+  arguments: Record<string, unknown> | null;
+  // The words of the passage that the model said give the inputs
+  where: string | null;
+  // Why there were no inputs, and in words
+  reason: string | null;
+  note: string | null;
+  // The literals of the code that round to the claim's number
+  hard_coded: string[];
+  status: MatchingStatus;
+  found: { path: (string | number)[]; text: string; value: number; how: string } | null;
+  places: number;
+  error: string | null;
+  // What it gave, in words, cut if it is long
+  gave: string | null;
+  seconds: number | null;
+}
+
+// The inputs that the person gave for a claim, which the function is called with in place of what a model reads
+export interface MatchingInputs {
+  claim: string;
+  arguments: Record<string, unknown>;
+  given_at: string;
+}
+
+// A claim of the paper that the function is checked against, with the passage around it
+export interface MatchingClaim {
+  id: string;
+  value: string;
+  quote: string;
+  passage: string | null;
+  inputs: MatchingInputs | null;
+  entry: MatchingEntry | null;
+}
+
+// A parameter of the function, which inputs are given for
+export interface MatchingParameter {
+  name: string;
+  hint: string;
+  required: boolean;
+  default: string | null;
+}
+
+// What there is of checking the function against the numbers that the paper reports
+export interface PaperAgentMatching {
+  kept: {
+    started_at: string;
+    finished_at: string;
+    status: "done" | "stopped" | "failed";
+    error: string | null;
+    model: string | null;
+    limit: number | null;
+    cost: number | null;
+    requests: number;
+    minutes: number;
+    ended: string | null;
+    output: string[];
+  } | null;
+  // Whether what is kept is of this function, the paper's file, and the claims that are kept now
+  current: boolean;
+  // C if it matched a number of the paper, and null otherwise
+  tier: string | null;
+  label: string;
+  claims: MatchingClaim[];
+  counts: Record<MatchingStatus, number> | null;
+  parameters: MatchingParameter[] | null;
+  meaning: Record<MatchingStatus, string>;
+  limits: { most_tried: number; repeats: number; default_minutes: number; most_minutes: number; most_arguments_chars: number };
+  job: Job | null;
+}
+
+// What there is of writing a function from an agent's paper, which has none of its code: whether it can be, what the person would be
+// shown and agree to, what was kept of a writing, and of checking it against the paper
+export interface PaperAgentReimplementation {
+  id: string;
+  ready: boolean;
+  problem: { code: string; message: string } | null;
+  settings_model: string;
+  tier: string;
+  label: string;
+  meaning: string;
+  sections: ReimplementationSpan[];
+  default_sections: number[];
+  offer: ReimplementationOffer | null;
+  // Why what was asked for cannot be offered, such as a name that is not one
+  choice_problem: string | null;
+  kept: ReimplementationKept | null;
+  job: Job | null;
+  checks: PaperAgentMatching;
+  limits: { most_chars: number; most_goal_chars: number; most_search_chars: number; most_searched: number; most_sections: number };
+}
+
+// What the offer is to be made of: the sections by their numbers, words to search for, the function's name, and what is wanted of it.
+// What is left out is what the server chooses
+export interface ReimplementationChoice {
+  sections?: number[];
+  search?: string;
+  name?: string;
+  goal?: string;
+}
+
+// What to say to write the function: the key of what was agreed to, what was chosen, and the most that asking the model may spend
+export interface PaperAgentReimplementationOptions extends ReimplementationChoice {
+  agreed: string;
+  max_cost: number;
+}
+
+// What to say to check the function: whether a model reads the inputs, the most it may spend if so, and the most minutes for the calls
+export interface PaperAgentMatchingOptions {
+  ask: boolean;
+  max_cost?: number;
+  minutes: number;
 }
 
 // A bake-off: which method of the literature is best for a task on the person's own data, with one limit on what the whole of it
