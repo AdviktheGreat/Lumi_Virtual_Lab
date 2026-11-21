@@ -303,7 +303,8 @@ def write_function(
     attempts = f"{written.attempts} {'attempt' if written.attempts == 1 else 'attempts'}"
     said = (
         f"Wrote {offer['name']} in {attempts}: {imported}. "
-        "It has not been checked against anything of the paper, and is given to nothing."
+        "It has not been checked against anything of the paper, and is given to no conversation until it matches a "
+        "number that the paper reports."
     )
     job.log(said)
 
