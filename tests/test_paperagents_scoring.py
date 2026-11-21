@@ -2,6 +2,7 @@
 the rows, what an item has to be to match a label, that a missing item is wrong and an extra one is counted, that what
 cannot be held to the labels is not scored and says why, and that ranking is by the number matched and shares a rank."""
 
+import time
 from typing import Any
 
 import pytest
@@ -170,6 +171,26 @@ class TestAnObjectIsMatchedByWhatEachRowIsTheAnswerTo:
 
         assert found["scored"] is False and found["why"] == "ids_unusable"
         assert "'c1'" in found["reason"] and "more than one row" in found["reason"]
+
+    def test_the_name_said_to_be_repeated_is_the_first_of_the_rows_that_is_and_not_the_first_to_be_seen_twice(
+        self,
+    ) -> None:
+        labels = labels_of(["T", "B", "B", "T"], ids=["c1", "c2", "c2", "c1"])
+
+        found = scoring.score(whole({"c1": "T"}), labels, TOLERANCE)
+
+        assert found["why"] == "ids_unusable" and "'c1'" in found["reason"]
+
+    def test_a_file_of_many_rows_that_has_a_name_twice_at_its_end_is_not_slow_to_say_so(self) -> None:
+        count = 60_000
+        names = [f"c{number}" for number in range(count - 1)] + ["c0"]
+        labels = labels_of(["T"] * count, ids=names)
+
+        started = time.monotonic()
+        found = scoring.score(whole({"c1": "T"}), labels, TOLERANCE)
+
+        assert found["why"] == "ids_unusable" and "'c0'" in found["reason"]
+        assert time.monotonic() - started < 2
 
     def test_a_name_that_is_repeated_only_by_a_row_that_has_no_answer_is_no_matter(self) -> None:
         labels = labels_of(["T", None, "NK"], ids=["c1", "c1", "c3"])

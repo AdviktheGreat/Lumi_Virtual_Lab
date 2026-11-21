@@ -21,6 +21,7 @@ that is a number is read as one, in the plain way), or the same truth if it is t
 not another case of the same word, and not a number written as words.
 """
 
+from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
@@ -178,7 +179,8 @@ def by_id(items: Mapping[str, Any], labels: labelling.Labels, tolerance: compari
             "matched.",
         )
     if len(set(names)) != len(names):
-        repeated = next(name for name in names if names.count(name) > 1)
+        counts = Counter(names)
+        repeated = next(name for name in names if counts[name] > 1)
         return unscored(
             IDS_UNUSABLE,
             f"{repeated!r} is in the column {labels.id_column!r} of more than one row that has an answer, so which "
