@@ -24,6 +24,9 @@ raised, and which is never less than what has been spent.
 The person may say what their data is, and each method is then shown with what the method card of its paper says of it,
 once the paper is read: inside, outside, or not covered (bakeoff_scope.py). A method whose card the data is outside of
 is not run on it until the person has said to go on with that method, which they say of what they were shown.
+
+The person may say where the right answers are: a table on the Data page and its column of them (bakeoff_labels.py).
+Only the names are kept, and the table is read from where it is each time.
 """
 
 import secrets
@@ -38,8 +41,8 @@ from virtual_lab.environment import StoppedError
 from virtual_lab.paperagents import applying, asking, shortlisting
 from virtual_lab.paperagents import environment as building
 from virtual_lab.provenance import utc_timestamp
+from virtual_lab.server import bakeoff_labels, bakeoff_scope
 from virtual_lab.server import bakeoff_runs as kept_runs
-from virtual_lab.server import bakeoff_scope
 from virtual_lab.server import paperagent_bakeoff as kept_bakeoff
 from virtual_lab.server.bakeoff_building import Builder
 from virtual_lab.server.bakeoff_comparing import Comparer
@@ -242,6 +245,7 @@ class Bakeoffs:
                 else None
             ),
             "described": record["described"],
+            "labels": bakeoff_labels.shown(self.paperagents, record["labels"], named),
             "left": kept_bakeoff.left_of(record),
             "shortlist": record["shortlist"],
             "candidates": [
@@ -315,7 +319,9 @@ class Bakeoffs:
 
         return str(name)
 
-    def create(self, title: Any, task: Any, data: Any = None, limit: Any = None, described: Any = None) -> str:
+    def create(
+        self, title: Any, task: Any, data: Any = None, limit: Any = None, described: Any = None, labels: Any = None
+    ) -> str:
         """Makes a bake-off, with no methods in it yet.
 
         :param title: What it is called, which may be left out, and is then made of the task.
@@ -323,6 +329,7 @@ class Bakeoffs:
         :param data: The name of the person's own data that the methods are to be run on, if it is known.
         :param limit: The most that the whole of it may spend, in USD, which must be said.
         :param described: What the data is, if the person says, as a scope check takes it.
+        :param labels: Where the right answers are, if the person says: a table on the Data page and its column.
         :raises ApiError: If what is given is not fit, or there are too many bake-offs.
         :return: Its id.
         """
@@ -334,6 +341,7 @@ class Bakeoffs:
         )
         chosen = self.check_data(data)
         said = bakeoff_scope.check_described(described) if described is not None else None
+        answers = bakeoff_labels.check_labels(self.paperagents, labels) if labels is not None else None
         budget = check_budget(limit, "The most it may spend", required=True)
         assert budget is not None
         root = self.workspace.bakeoffs_dir
@@ -347,7 +355,7 @@ class Bakeoffs:
                 )
             directory = claim_directory(root, named)
             try:
-                kept_bakeoff.keep(directory, kept_bakeoff.new_record(named, made, chosen, budget, said))
+                kept_bakeoff.keep(directory, kept_bakeoff.new_record(named, made, chosen, budget, said, answers))
             except BaseException:
                 shutil.rmtree(directory, ignore_errors=True)
                 raise
@@ -362,19 +370,24 @@ class Bakeoffs:
         data: Any = None,
         limit: Any = None,
         described: Any = None,
+        labels: Any = None,
     ) -> None:
-        """Says again what a bake-off is called, what it is for, which data it is run on, what that is, and what it may
-        spend. What is left out is left as it was, an empty name of data takes the data away, and saying nothing of what
-        the data is takes that away.
+        """Says again what a bake-off is called, what it is for, which data it is run on, what that is, where the right
+        answers are, and what it may spend. What is left out is left as it was, an empty name of data takes the data
+        away, and saying nothing of what the data is, or of where the right answers are, takes that away.
 
         :raises ApiError: If there is no bake-off with this id, nothing is said, what is said is not fit, the limit is
             less than what has been spent, or the methods are being found.
         """
-        if title is None and task is None and data is None and limit is None and described is None:
+        if title is None and task is None and data is None and limit is None and described is None and labels is None:
             raise ApiError(
-                422, "invalid", "Say what to change: the title, the task, the data, what the data is, or the limit"
+                422,
+                "invalid",
+                "Say what to change: the title, the task, the data, what the data is, where the right answers are, or "
+                "the limit",
             )
         said = bakeoff_scope.check_described(described) if described is not None else None
+        answers = bakeoff_labels.check_labels(self.paperagents, labels) if labels is not None else None
         with self._lock:
             directory, record = self.lookup(bakeoff_id)
             self.check_idle(bakeoff_id)
@@ -387,6 +400,8 @@ class Bakeoffs:
                 record = {**record, "data": {"own": chosen} if chosen is not None else None}
             if described is not None:
                 record = {**record, "described": said}
+            if labels is not None:
+                record = {**record, "labels": answers}
             if limit is not None:
                 budget = check_budget(limit, "The most it may spend", required=True)
                 assert budget is not None
