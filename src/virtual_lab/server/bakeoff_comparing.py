@@ -4,9 +4,12 @@ It is made each time from what is kept, with nothing run and no model asked: eac
 latest run of it, and what it cost to read its paper. A method that was not built, was not run, or failed is a row of
 the table with why, and is not left out of it.
 
-There is no ground truth here, and the table says so: the methods are held to each other and not to what the answer
-should be, so they are not ranked, and agreeing is not being right (paperagents/agreeing.py). A person who has labels
-for their data can have the methods scored against them, and ranked only by that.
+Without right answers there is no ground truth here, and the table says so: the methods are held to each other and not
+to what the answer should be, so they are not ranked, and agreeing is not being right (paperagents/agreeing.py). A
+person who has said where the right answers are for their data (bakeoff_labels.py) has the methods held to them too,
+each scored by how many of the labels it matched, and ranked by that and by nothing else (paperagents/scoring.py). The
+labels are read from where they are each time, and the table says which file they were, by its hash, and that they are
+the person's word.
 
 What a method cost is of two kinds, which are kept apart: reading its paper, which is what its PaperAgent's reading
 cost, and may have been paid before the bake-off was made, and asking a model to propose the call, which is what the
@@ -16,8 +19,9 @@ run says it cost, and is nothing if the person made the call.
 from typing import TYPE_CHECKING, Any
 
 from virtual_lab.paper_batch import csv_bytes
-from virtual_lab.paperagents import agreeing, comparing
+from virtual_lab.paperagents import agreeing, comparing, labelling, scoring
 from virtual_lab.paperagents import bakeoff_table as table
+from virtual_lab.server import bakeoff_labels
 from virtual_lab.server import bakeoff_runs as kept_runs
 from virtual_lab.server.errors import ApiError, not_found
 
@@ -30,6 +34,15 @@ LISTS = {agreeing.AGREE: "agrees", agreeing.DIFFER: "differs", agreeing.UNKNOWN:
 SAYS = (
     "No answer that is known to be right was given, so the methods are compared with each other and are not ranked. "
     "Agreeing is not being right."
+)
+SAYS_SCORED = (
+    "The methods were held to the right answers that the person gave, which are their word and are not checked here, "
+    "and ranked by how many of them each matched. A method that could not be held to them is not ranked, and says why. "
+    "Agreeing with each other is still not being right."
+)
+SAYS_UNUSABLE = (
+    "The person said where the right answers are, and they cannot be used now ({problem}), so the methods are compared "
+    "with each other and are not scored or ranked. Agreeing is not being right."
 )
 
 
@@ -83,6 +96,7 @@ class Comparer:
         building_now = self.bakeoffs.building(bakeoff_id)
         snapshot = building_now.snapshot() if building_now is not None else None
         pairs = agreeing.pairs(runs, tolerance)
+        truth, labels = bakeoff_labels.examined(self.paperagents, record["labels"], named)
         methods = [
             self.method_of(
                 self.bakeoffs.shown(candidate, agents, snapshot, record["described"], runs[candidate["id"]], data_now),
@@ -91,6 +105,7 @@ class Comparer:
             )
             for candidate in record["candidates"]
         ]
+        ranked = self.score(methods, runs, truth, labels, tolerance)
 
         return {
             "id": bakeoff_id,
@@ -100,13 +115,65 @@ class Comparer:
             "spent": record["spent"],
             "cost_known": record["cost_known"],
             "tolerance": tolerance.to_dict(),
-            "ground_truth": None,
-            "ranked": False,
-            "says": SAYS,
-            "meaning": agreeing.MEANING,
+            "ground_truth": truth,
+            "ranked": ranked,
+            "says": (
+                SAYS
+                if truth is None
+                else SAYS_SCORED
+                if truth["ok"]
+                else SAYS_UNUSABLE.format(problem=truth["problem"].rstrip("."))
+            ),
+            "meaning": agreeing.MEANING + (" " + scoring.MEANING if truth is not None and truth["ok"] else ""),
             "methods": methods,
             "pairs": pairs,
         }
+
+    def score(
+        self,
+        methods: list[dict[str, Any]],
+        runs: dict[str, dict[str, Any] | None],
+        truth: dict[str, Any] | None,
+        labels: labelling.Labels | None,
+        tolerance: comparing.Tolerance,
+    ) -> bool:
+        """Holds each method to the right answers, if there are any, and ranks the ones that were scored, putting what
+        it found in each method's `score`.
+
+        :return: Whether any method was ranked.
+        """
+        if truth is None:
+            return False
+        scores = {
+            method["id"]: self.score_of(method, runs[method["id"]], truth, labels, tolerance) for method in methods
+        }
+        ranks = scoring.ranks(scores)
+        for method in methods:
+            method["score"] = {**scores[method["id"]], "rank": ranks.get(method["id"])}
+
+        return bool(ranks)
+
+    def score_of(
+        self,
+        method: dict[str, Any],
+        run: dict[str, Any] | None,
+        truth: dict[str, Any],
+        labels: labelling.Labels | None,
+        tolerance: comparing.Tolerance,
+    ) -> dict[str, Any]:
+        """How one method does against the right answers, or why it was not held to them."""
+        if labels is None:
+            return scoring.unscored(scoring.LABELS_UNUSABLE, truth["problem"] or "The right answers cannot be used.")
+        if run is None or run["state"] != kept_runs.RAN:
+            return scoring.unscored(scoring.NO_ANSWER, "It gave no answer, so there is nothing to hold to the labels.")
+        if "data" in method["since"]:
+            return scoring.unscored(
+                scoring.DATA_CHANGED,
+                "The data is not as it was listed when this was run, so what it gave may not be of the rows that the "
+                "labels are of. Run it again.",
+            )
+
+        return scoring.score(run["result"], labels, tolerance)
 
     def method_of(
         self, shown: dict[str, Any], run: dict[str, Any] | None, pairs: list[dict[str, Any]]
@@ -149,6 +216,7 @@ class Comparer:
             "by": run["by"] if run is not None else None,
             "kept": agreeing.kept_as(run["result"]) if run is not None and run["result"] is not None else None,
             "since": shown["run"]["since"] if shown["run"] is not None else [],
+            "score": None,
             **others,
         }
 

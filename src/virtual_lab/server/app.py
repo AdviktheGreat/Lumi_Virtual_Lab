@@ -113,7 +113,8 @@ and everything else is a request and an answer.
                                          in a container with the data read-only; what is not run is kept with why
     GET    /api/bakeoffs/{id}/candidates/{method}/run  the whole of the last run of a method, with its result
     GET    /api/bakeoffs/{id}/comparison  how each method came out, what it cost, and whether the methods agree, as of
-                                         now, with a tolerance for numbers if the person gives one; there is no ranking
+                                         now, with a tolerance for numbers if the person gives one; held to the right
+                                         answers, scored and ranked only if the person said where they are
     GET    /api/bakeoffs/{id}/tables/{kind}  the methods, or each two that gave an answer, as a table to open in a
                                          spreadsheet (methods, pairs)
     GET    /api/mcp                     the MCP servers: the presets, and those the person set up, and what each needs

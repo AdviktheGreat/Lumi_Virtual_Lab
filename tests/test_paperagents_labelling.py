@@ -1,6 +1,8 @@
-"""Tests of reading the first line of a file of right answers, to say whether the columns that the person named are in
-it: what kind of file is read, how its header is found, and what is said when it cannot be or a column is not there."""
+"""Tests of reading a file of right answers: its first line, to say whether the columns that the person named are in
+it, what kind of file is read and how its header is found; and the whole of it, row by row, as text, with what is said
+when it cannot be read or a column is not there."""
 
+import hashlib
 from typing import Any
 
 import pytest
@@ -162,3 +164,127 @@ class TestCheck:
 
     def test_a_column_that_is_not_there_is_refused(self) -> None:
         assert "There is no column called 'truth'" in refused(labelling.check, "t.csv", 9, b"id,label\n", "truth", None)
+
+
+class TestReadingTheRows:
+    def read(self, text: bytes, column: str = "type", id_column: str | None = None, name: str = "t.csv") -> Any:
+        return labelling.read_labels(name, text, column, id_column)
+
+    def test_a_row_is_what_is_in_its_cells_as_text_without_the_space_round_it(self) -> None:
+        found = self.read(b"cell,type\nc1, T \nc2,1.50\nc3,  true\n", id_column="cell")
+
+        assert found.answers == ("T", "1.50", "true") and found.ids == ("c1", "c2", "c3")
+        assert (found.column, found.id_column, found.labelled) == ("type", "cell", 3)
+
+    def test_the_names_of_the_columns_are_found_without_the_space_round_them(self) -> None:
+        found = self.read(b"  cell ,\t type  \nc1,T\n", id_column="cell")
+
+        assert found.answers == ("T",) and found.ids == ("c1",)
+
+    def test_the_rows_are_in_the_order_of_the_file_and_the_columns_may_be_in_any_place(self) -> None:
+        found = self.read(b"x,type,y,cell\n1,a,2,c1\n3,b,4,c2\n", id_column="cell")
+
+        assert found.answers == ("a", "b") and found.ids == ("c1", "c2")
+
+    def test_a_row_with_an_empty_cell_for_the_answer_is_a_row_that_has_no_answer_and_is_not_an_answer_of_nothing(
+        self,
+    ) -> None:
+        found = self.read(b"cell,type\nc1,T\nc2,\nc3,   \nc4,B\n", id_column="cell")
+
+        assert found.answers == ("T", None, None, "B") and found.ids == ("c1", "c2", "c3", "c4")
+        assert found.labelled == 2
+
+    def test_a_row_that_stops_short_has_no_answer_where_the_header_has_a_column(self) -> None:
+        found = self.read(b"cell,other,type\nc1,x\nc2,y,B\n", id_column="cell")
+
+        assert found.answers == (None, "B")
+
+    def test_a_blank_line_is_not_a_row_and_nor_is_one_that_has_nothing_in_any_cell(self) -> None:
+        found = self.read(b"cell,type\nc1,T\n\n  \n,\nc2,B\n\n", id_column="cell")
+
+        assert found.answers == ("T", "B") and found.ids == ("c1", "c2")
+
+    def test_a_row_that_has_a_name_and_no_answer_is_a_row_all_the_same(self) -> None:
+        found = self.read(b"cell,type\nc1,\nc2,B\n", id_column="cell")
+
+        assert found.answers == (None, "B") and found.ids == ("c1", "c2")
+
+    def test_without_a_column_of_what_each_is_the_answer_to_there_are_no_names(self) -> None:
+        found = self.read(b"cell,type\nc1,T\n")
+
+        assert found.ids is None and found.id_column is None
+
+    def test_commented_lines_above_the_header_are_skipped_and_a_byte_order_mark_is_no_part_of_a_name(self) -> None:
+        found = self.read(b"\xef\xbb\xbf# made by a pipeline\n\ncell,type\nc1,T\n", column="type", id_column="cell")
+
+        assert found.answers == ("T",)
+
+    def test_a_tab_separated_file_is_read_at_tabs_and_a_quoted_cell_may_have_a_delimiter_and_a_line_ending_in_it(
+        self,
+    ) -> None:
+        found = self.read(b'cell\ttype\nc1\t"a\tb"\nc2\t"line\nbreak"\n', id_column="cell", name="t.tsv")
+
+        assert found.answers == ("a\tb", "line\nbreak")
+
+    def test_a_file_that_is_not_utf8_is_read_as_windows_text(self) -> None:
+        found = self.read("cell,type\nc1,caf\xe9\n".encode("cp1252"), id_column="cell")
+
+        assert found.answers == ("caf\xe9",)
+
+    def test_which_file_it_was_is_said_by_a_hash_of_all_of_its_bytes_and_how_many_there_are(self) -> None:
+        raw = b"cell,type\nc1,T\n"
+
+        found = self.read(raw)
+
+        assert found.sha256 == hashlib.sha256(raw).hexdigest() and found.size == len(raw)
+
+    def test_the_answers_and_the_names_are_kept_so_that_they_cannot_be_changed_by_what_holds_them(self) -> None:
+        found = self.read(b"cell,type\nc1,T\n", id_column="cell")
+
+        assert isinstance(found.answers, tuple) and isinstance(found.ids, tuple)
+        with pytest.raises(AttributeError):
+            found.answers = ()  # type: ignore[misc]
+
+    def test_the_most_rows_are_read_and_one_more_is_refused_rather_than_cut(self) -> None:
+        most = b"type\n" + b"a\n" * labelling.MAX_ROWS
+
+        assert len(self.read(most).answers) == labelling.MAX_ROWS
+        assert "more than 200,000 rows" in refused(self.read, most + b"a\n")
+
+    def test_blank_lines_are_not_counted_towards_the_most_rows(self) -> None:
+        text = b"type\n" + b"a\n" * labelling.MAX_ROWS + b"\n\n"
+
+        assert len(self.read(text).answers) == labelling.MAX_ROWS
+
+    def test_a_file_with_no_answer_in_it_is_refused_since_there_is_nothing_to_hold_a_method_to(self) -> None:
+        assert "No row of the file has an answer in the column 'type'" in refused(self.read, b"cell,type\nc1,\nc2, \n")
+        assert "No row of the file has an answer" in refused(self.read, b"type\n")
+
+    @pytest.mark.parametrize(
+        ("raw", "name", "words"),
+        [
+            (b"cell,type\nc1,T\n", "t.xlsx", "not a .csv or a .tsv"),
+            (b"cell,type\nc1,T\x00\n", "t.csv", "not text, so it has no answers"),
+            (b"cell,type\nc1,caf\x81\n", "t.csv", "not text that can be read"),
+            (b"", "t.csv", "nothing in it but comments and blank lines"),
+            (b"# only\n\n", "t.csv", "nothing in it but comments and blank lines"),
+            (b"cell,other\nc1,T\n", "t.csv", "There is no column called 'type'"),
+            (b"type,type\nT,B\n", "t.csv", "2 columns of the file are called 'type'"),
+            (b"type\n" + b"a" * 200_000, "t.csv", "could not be read as a table"),
+        ],
+    )
+    def test_what_cannot_be_read_is_refused_and_said_why(self, raw: bytes, name: str, words: str) -> None:
+        assert words in refused(self.read, raw, "type", None, name)
+
+    def test_a_file_that_has_more_bytes_than_may_be_read_is_refused_whole_and_one_of_the_most_is_not(self) -> None:
+        head, row = b"type\n", b"a" * 99 + b"\n"
+        rows = (labelling.MAX_BYTES - len(head)) // len(row)
+        most = head + row * rows
+        most += b"a" * (labelling.MAX_BYTES - len(most))
+
+        assert len(most) == labelling.MAX_BYTES and len(self.read(most).answers) == rows + 1
+        assert f"{labelling.MAX_BYTES:,} bytes" in refused(self.read, most + b"a")
+
+    def test_the_column_of_names_has_to_be_there_too_and_the_two_may_not_be_one(self) -> None:
+        assert "There is no column called 'who'" in refused(self.read, b"cell,type\nc1,T\n", "type", "who")
+        assert "cannot be both" in refused(self.read, b"cell,type\nc1,T\n", "type", "type")
