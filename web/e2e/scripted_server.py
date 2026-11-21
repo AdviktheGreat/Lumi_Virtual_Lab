@@ -1008,7 +1008,7 @@ MISSING_PACKAGE = "ModuleNotFoundError: No module named 'scanpy'"
 WRITTEN_FILE = {"path": "embedding.csv", "bytes": 120, "sha256": "e" * 64, "new": True, "kept": False}
 
 
-def stand_in_remove_runs(label: str, docker_command: Any = ("docker",)) -> int:
+def stand_in_remove_runs(label: str, docker_command: Any = ("docker",), prefixes: Any = ()) -> int:
     return 0
 
 
@@ -1443,7 +1443,12 @@ class CallingRun:
 
 
 def stand_in_calling_runner(
-    scratch: Path, docker_command: Any, stop: threading.Event, label: str, repeats: int = matching.REPEATS
+    scratch: Path,
+    docker_command: Any,
+    stop: threading.Event,
+    label: str,
+    repeats: int = matching.REPEATS,
+    prefix: str = referencing.RUN_PREFIX,
 ) -> CallingRun:
     """Stands in for the container that a function written from a paper's words is called in, when it is checked
     against the paper or given to a conversation."""

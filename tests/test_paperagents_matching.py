@@ -14,6 +14,7 @@ from test_paperagents_environment import needs_docker
 
 from virtual_lab.function_checks import read_function
 from virtual_lab.paperagents import asking, matching, reimplementing, written
+from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.matching import ProposedArgument, ProposedInputs
 
@@ -688,6 +689,16 @@ class TestWhatItComesTo:
             "seconds": None,
         }
         json.dumps(entry)
+
+
+class TestTheRunnerOfAFunction:
+    def test_a_function_is_called_in_a_container_of_a_run_unless_it_is_a_conversation_that_calls_it(
+        self, tmp_path: Path
+    ) -> None:
+        assert matching.runner_for(tmp_path, ("docker",), threading.Event(), "abc").prefix == referencing.RUN_PREFIX
+        called = matching.runner_for(tmp_path, ("docker",), threading.Event(), "abc", 1, referencing.CALL_PREFIX)
+
+        assert called.prefix == referencing.CALL_PREFIX and called.label == "abc"
 
 
 @needs_docker

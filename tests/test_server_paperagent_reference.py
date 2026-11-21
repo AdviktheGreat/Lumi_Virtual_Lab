@@ -378,9 +378,12 @@ class TestRunning:
         self, agents: PaperAgents, prepared: str, docker: Docker, containers: Containers
     ) -> None:
         docker.runs_cleaned.clear()
+        docker.run_prefixes.clear()
         run(agents, prepared, repeats=1)
 
         assert docker.runs_cleaned == [prepared]
+        # Not the calls that a conversation may be making of the agent's tools as the run begins
+        assert docker.run_prefixes == [(referencing.RUN_PREFIX,)]
 
     def test_what_is_kept_is_not_run_again_until_it_is_taken_away(
         self, agents: PaperAgents, prepared: str, containers: Containers

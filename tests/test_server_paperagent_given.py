@@ -22,6 +22,7 @@ from test_server_paperagent_tools import Replays, gives, make
 
 from virtual_lab.chat import RESERVED_TOOL_NAMES
 from virtual_lab.execution import DockerUnavailableError
+from virtual_lab.paperagents import reference as referencing
 from virtual_lab.paperagents import toolmaking as making
 from virtual_lab.paperagents.anchors import document_from
 from virtual_lab.paperagents.reading import ChunkReading
@@ -539,6 +540,8 @@ class TestTheToolsThatRun:
         assert run["function"] == "tally" and run["repeats"] == 1
         assert [case["args"] for case in run["cases"]] == [{"counts": [1, 2, 3], "scale": 2}]
         assert run["tag"] == tools.reference.tag_of(made) and run["label"] == made
+        # Named so that a job that begins does not take away the container of a call that is going
+        assert run["prefix"] == referencing.CALL_PREFIX
         assert run["data"] is None and run["seconds"] == making.DEFAULT_MINUTES * 60
         assert run["room"] is None
         assert "def tally(" in run["source"] and "import cellmapper.mapping as _repo" in run["source"]

@@ -238,6 +238,11 @@ class TestAgreeing:
 
         assert error.status == 422 and error.code == "not_agreed"
 
+    def test_agreeing_is_asked_for_before_the_limit_when_neither_is_said(self, agents: PaperAgents, read: str) -> None:
+        error = refused(agents.start_reimplementation, read, None, None)
+
+        assert error.status == 422 and error.code == "not_agreed"
+
     def test_the_limit_must_be_said(self, agents: PaperAgents, read: str) -> None:
         key = offer_of(agents, read)["key"]
         error = refused(agents.start_reimplementation, read, key, None)
@@ -491,6 +496,14 @@ class TestOverHttp:
 
     def test_nothing_is_written_with_no_key_at_all(self, client: Any, agents: PaperAgents, read: str) -> None:
         answer = client.post(f"/api/paperagents/{read}/reimplementation", json={"max_cost": 1.0})
+
+        assert answer.status_code == 422
+        assert answer.json()["error"]["code"] == "not_agreed"
+
+    def test_nothing_is_written_with_neither_a_key_nor_a_limit(
+        self, client: Any, agents: PaperAgents, read: str
+    ) -> None:
+        answer = client.post(f"/api/paperagents/{read}/reimplementation", json={})
 
         assert answer.status_code == 422
         assert answer.json()["error"]["code"] == "not_agreed"
