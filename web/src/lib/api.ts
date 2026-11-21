@@ -3,6 +3,9 @@ import { fileUrl } from "./files";
 import type { PickedFolder } from "./skill-folder";
 import type {
   Attachment,
+  Bakeoff,
+  BakeoffChange,
+  BakeoffsList,
   ChatFiles,
   ChatInfo,
   ChatSummary,
@@ -28,6 +31,7 @@ import type {
   NewCampaign,
   NewChat,
   NewImport,
+  NewBakeoff,
   NewPaperAgent,
   NewPaperRun,
   OpenRouterList,
@@ -520,6 +524,12 @@ export const api = {
   givePaperAgent: (id: string, given: boolean) => request<PaperAgent>("PATCH", `/paperagents/${encodeURIComponent(id)}`, { given }),
   // Deletes an agent with the paper uploaded to it, and gives back the agents that are left
   deletePaperAgent: (id: string) => request<PaperAgentsList>("DELETE", `/paperagents/${encodeURIComponent(id)}`),
+  // The bake-offs, making one, looking at one, saying again what it is for, and taking one away
+  bakeoffs: (signal?: AbortSignal) => request<BakeoffsList>("GET", "/bakeoffs", undefined, signal),
+  makeBakeoff: (bakeoff: NewBakeoff) => request<Bakeoff>("POST", "/bakeoffs", bakeoff),
+  bakeoff: (id: string, signal?: AbortSignal) => request<Bakeoff>("GET", `/bakeoffs/${encodeURIComponent(id)}`, undefined, signal),
+  changeBakeoff: (id: string, change: BakeoffChange) => request<Bakeoff>("PATCH", `/bakeoffs/${encodeURIComponent(id)}`, change),
+  deleteBakeoff: (id: string) => request<BakeoffsList>("DELETE", `/bakeoffs/${encodeURIComponent(id)}`),
   uploadAgentPaper,
   removeAgentPaper: (id: string) => request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/paper`),
   // What has been read of an agent's paper, starting to read it, which goes on as a job, taking away what was read, and

@@ -24,6 +24,7 @@ import {
   repoName,
   type AgentDraft,
 } from "@/lib/paperagents";
+import { BAKEOFFS_ADDRESS } from "@/lib/bakeoffs";
 import { SURVEYS_ADDRESS, type PaperView } from "@/lib/papers";
 import type { PaperAgent, PaperAgentsList } from "@/lib/types";
 import { useAttempt } from "@/lib/use-looked";
@@ -32,13 +33,14 @@ import { cn } from "@/lib/utils";
 
 const VIEWS: { view: PaperView; label: string; href: string }[] = [
   { view: "agents", label: "Agents", href: AGENTS_ADDRESS },
+  { view: "bakeoffs", label: "Bake-offs", href: BAKEOFFS_ADDRESS },
   { view: "surveys", label: "Surveys", href: SURVEYS_ADDRESS },
 ];
 
 const INTRO =
   "A PaperAgent is one paper made usable: its text read, with each claim traced to the place it is made, a note of what its method was tested on, and tools built from the code that came with it. For now an agent keeps which paper it is of and where its code is. The steps that read the paper and build its tools are added one at a time.";
 
-// The two parts of the page, each reached by an address of its own, as the pages of the rail are
+// The parts of the page, each reached by an address of its own, as the pages of the rail are
 export function PaperAgentsNav({ view }: { view: PaperView }) {
   return (
     <nav aria-label="PaperAgents" className="flex gap-1 border-b border-border">

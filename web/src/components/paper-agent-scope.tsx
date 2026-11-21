@@ -3,10 +3,9 @@
 import { useId, useState } from "react";
 import { ProblemNotice } from "@/components/messages";
 import { useServer } from "@/components/server-provider";
-import { describedBy, Field } from "@/components/settings-fields";
+import { ScopeFields } from "@/components/paper-agent-scope-fields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { describeStatus } from "@/lib/paperagent-card";
 import {
@@ -18,8 +17,6 @@ import {
   describeStatementPlace,
   describeStatementWhose,
   EMPTY_SCOPE_DRAFT,
-  MAX_SCOPE_CHARS,
-  MAX_UNIT_CHARS,
   OUTCOME_TEXT,
   type ScopeDraft,
 } from "@/lib/paperagent-scope";
@@ -148,7 +145,7 @@ export function ScopeCheckSection({ agent, card }: { agent: PaperAgent; card: Me
   const checked = checkScope(draft);
   const problems = tried ? checked.problems : {};
   const current = answer !== null && answer.version === version ? answer.check : null;
-  const set = (part: keyof ScopeDraft) => (value: string) => setDraft((was) => ({ ...was, [part]: value }));
+  const set = (part: keyof ScopeDraft, value: string) => setDraft((was) => ({ ...was, [part]: value }));
 
   async function run() {
     setTried(true);
@@ -157,20 +154,6 @@ export function ScopeCheckSection({ agent, card }: { agent: PaperAgent; card: Me
     const found = await attempt.run(() => api.checkPaperAgentScope(agent.id, data));
     if (found) setAnswer({ check: found, version });
   }
-
-  const text = (part: Exclude<keyof ScopeDraft, "size">, label: string, hint?: string, max = MAX_SCOPE_CHARS) => (
-    <Field id={`${id}-${part}`} label={label} hint={hint} problem={problems[part]}>
-      <Input
-        id={`${id}-${part}`}
-        value={draft[part]}
-        onChange={(event) => set(part)(event.target.value)}
-        maxLength={max * 2}
-        autoComplete="off"
-        aria-invalid={problems[part] !== undefined}
-        aria-describedby={describedBy(`${id}-${part}`, { hint: hint !== undefined, problem: problems[part] !== undefined })}
-      />
-    </Field>
-  );
 
   return (
     <section aria-labelledby={`${id}-title`} className="flex flex-col gap-3" data-testid="scope-check">
@@ -197,25 +180,7 @@ export function ScopeCheckSection({ agent, card }: { agent: PaperAgent; card: Me
         }}
         className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3"
       >
-        <div className="grid gap-3 sm:grid-cols-2">
-          {text("species", "Species", "Such as human, or Mus musculus.")}
-          {text("tissue", "Tissue", "Such as liver, or PBMC.")}
-          {text("assay", "Assay", "Such as single-cell RNA-seq.")}
-          {text("format", "Input format", "Such as h5ad, or a CSV of counts.")}
-          <Field id={`${id}-size`} label="Sample size" hint="A whole number. Say what it counts, if you can." problem={problems.size}>
-            <Input
-              id={`${id}-size`}
-              value={draft.size}
-              onChange={(event) => set("size")(event.target.value)}
-              inputMode="numeric"
-              maxLength={20}
-              autoComplete="off"
-              aria-invalid={problems.size !== undefined}
-              aria-describedby={describedBy(`${id}-size`, { hint: true, problem: problems.size !== undefined })}
-            />
-          </Field>
-          {text("unit", "What the size counts", "Such as cells, nuclei, or patients.", MAX_UNIT_CHARS)}
-        </div>
+        <ScopeFields draft={draft} change={set} problems={problems} id={id} />
         {problems.form && (
           <p role="alert" className="text-xs text-destructive">
             {problems.form}
