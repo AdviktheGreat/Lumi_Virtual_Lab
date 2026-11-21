@@ -4530,6 +4530,11 @@ test("shows what the model would be given of a paper with no code before anythin
   await expect(offer).toContainText(`What ${(await reimplementationOf(page, id)).settings_model} would be given`);
   expect(await accessibilityProblems(page)).toEqual([]);
 
+  // Looking at what would be given is not asking for it to be written, so what is wrong with the budget is not said yet
+  await writingForm(page).getByRole("button", { name: "Show what it would be given" }).click();
+  await expect(offer).toHaveAttribute("data-current", "true");
+  await expect(writingForm(page).getByText("Say the most it may spend.")).toHaveCount(0);
+
   // Nothing is sent without agreeing, and the agreement is of what was read
   await expect(writingForm(page).getByRole("button", { name: /^Agree, and write/ })).toBeDisabled();
   await agreeBox(page).check();
@@ -4759,6 +4764,9 @@ test("gives the inputs of a claim in the person's own words, holds them to the f
   await box.fill('{"numbers": "many"}');
   await keep.click();
   await expect(inputs.getByRole("alert")).toBeVisible();
+  await box.fill('{"numbers": [1e400]}');
+  await keep.click();
+  await expect(inputs.getByText("A number in the inputs is too big to be sent exactly.")).toBeVisible();
   expect((await reimplementationOf(page, id)).checks.claims.every((one: { inputs: unknown }) => one.inputs === null)).toBe(true);
 
   // Inputs that fit the function are kept as the person's, and are what it is called with when it is checked next

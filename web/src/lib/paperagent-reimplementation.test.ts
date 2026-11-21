@@ -17,6 +17,7 @@ import {
   inputsText,
   MAX_NAME_CHARS,
   matchingTitle,
+  offerFormKey,
   sameChoice,
   writingTitle,
 } from "./paperagent-reimplementation";
@@ -184,6 +185,18 @@ describe("sameChoice", () => {
     expect(sameChoice({ ...choice, name: "other" }, offer)).toBe(false);
     expect(sameChoice({ ...choice, goal: undefined }, offer)).toBe(false);
     expect(sameChoice({ name: "doubled_sum" }, offerOf({ sections: [] }))).toBe(true);
+  });
+});
+
+describe("offerFormKey", () => {
+  it("is of what is kept and of what would be given to begin with, so that the form starts over when either is not what it was", () => {
+    const view = { kept: null, offer: offerOf() };
+
+    expect(offerFormKey(view)).toBe(offerFormKey({ kept: null, offer: offerOf() }));
+    expect(offerFormKey(view)).not.toBe(offerFormKey({ kept: null, offer: offerOf({ key: "another" }) }));
+    expect(offerFormKey(view)).not.toBe(offerFormKey({ kept: null, offer: null }));
+    expect(offerFormKey(view)).not.toBe(offerFormKey({ kept: keptOf(), offer: offerOf() }));
+    expect(offerFormKey({ kept: keptOf(), offer: offerOf() })).not.toBe(offerFormKey({ kept: keptOf({ finished_at: "2026-01-02T00:00:00Z" }), offer: offerOf() }));
   });
 });
 
@@ -386,11 +399,25 @@ describe("the inputs that the person gives", () => {
     expect(checkInputs("{}", [NUMBERS, { ...NUMBERS, name: "weights" }], 4000).problem).toBe("Give numbers, weights, which have no default.");
   });
 
-  it("are held to the most characters that a call may be given", () => {
+  it("are held to the most characters that a call may be given, as the compact JSON that is sent and not as they were typed", () => {
     const text = JSON.stringify({ numbers: "a".repeat(20) });
 
-    expect(checkInputs(text, [NUMBERS], text.length - 1).problem).toBe(`The inputs are at most ${text.length - 1} characters.`);
+    expect(checkInputs(text, [NUMBERS], text.length - 1).problem).toBe(`The inputs are at most ${text.length - 1} characters as JSON.`);
     expect(checkInputs(text, [NUMBERS], text.length).problem).toBeUndefined();
+    // Spaces and lines that were typed are not sent
+    const typed = JSON.stringify({ numbers: "a".repeat(20) }, null, 8);
+    expect(typed.length).toBeGreaterThan(text.length);
+    expect(checkInputs(typed, [NUMBERS], text.length).problem).toBeUndefined();
+  });
+
+  it("are refused when a number in them would not be sent as it was typed", () => {
+    const refused = "A number in the inputs is too big to be sent exactly. Give it as text if the function takes text.";
+
+    expect(checkInputs('{"numbers": [1e400]}', [NUMBERS], 4000).problem).toBe(refused);
+    expect(checkInputs('{"numbers": [-1e400]}', [NUMBERS], 4000).problem).toBe(refused);
+    expect(checkInputs('{"numbers": [9007199254740993]}', [NUMBERS], 4000).problem).toBe(refused);
+    expect(checkInputs('{"numbers": [[1, {"deep": 12345678901234567890}]]}', [NUMBERS], 4000).problem).toBe(refused);
+    expect(checkInputs('{"numbers": [9007199254740991, -9007199254740991, 1.5e-300, 0.1]}', [NUMBERS], 4000).problem).toBeUndefined();
   });
 });
 

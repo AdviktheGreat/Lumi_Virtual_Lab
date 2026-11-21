@@ -80,6 +80,12 @@ export function sameChoice(choice: ReimplementationChoice, offer: Reimplementati
   );
 }
 
+// What the form that writes starts over by: another function is kept, or what it would be given by default is not what it was, as the
+// paper or the model or the agent's title is not what it was
+export function offerFormKey(reimplementation: Pick<PaperAgentReimplementation, "kept" | "offer">): string {
+  return `${reimplementation.kept?.finished_at ?? "none"}|${reimplementation.offer?.key ?? "none"}`;
+}
+
 // The most that writing the function may spend, which must be said
 export function checkBudget(budget: string): { value: number | null; problem?: string } {
   return dollars(budget, "the most it may spend", false);
@@ -234,12 +240,21 @@ export function inputsText(
   return JSON.stringify(given, null, 2);
 }
 
+// Whether a number is in the value that would not be sent as it was typed: it is not finite, or a whole number beyond what a JSON number of
+// the page holds exactly
+function hasUnsafeNumber(value: unknown): boolean {
+  if (typeof value === "number") return !Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value));
+  if (Array.isArray(value)) return value.some(hasUnsafeNumber);
+  if (typeof value === "object" && value !== null) return Object.values(value).some(hasUnsafeNumber);
+
+  return false;
+}
+
 // The inputs that the person typed for a claim, read as JSON and held to the function's parameters. What else the server checks, such as
 // a value that holds the claim's number, it says
 export function checkInputs(text: string, parameters: readonly MatchingParameter[], mostChars: number): { value: Record<string, unknown> | null; problem?: string } {
   const typed = text.trim();
   if (typed === "") return { value: null, problem: 'Give the inputs as JSON, by the names of the parameters, such as {"numbers": [1, 2]}.' };
-  if (characters(typed) > mostChars) return { value: null, problem: `The inputs are at most ${mostChars.toLocaleString("en-US")} characters.` };
   let parsed: unknown;
   try {
     parsed = JSON.parse(typed);
@@ -250,6 +265,10 @@ export function checkInputs(text: string, parameters: readonly MatchingParameter
     return { value: null, problem: "The inputs are a JSON object, by the names of the parameters." };
   }
   const args = parsed as Record<string, unknown>;
+  // The server counts the characters of the inputs as JSON, which are at least those of the compact form, so what is over the most in
+  // the compact form is over it there, and what is under it here is for the server to count
+  if (characters(JSON.stringify(args)) > mostChars) return { value: null, problem: `The inputs are at most ${mostChars.toLocaleString("en-US")} characters as JSON.` };
+  if (hasUnsafeNumber(args)) return { value: null, problem: "A number in the inputs is too big to be sent exactly. Give it as text if the function takes text." };
   const names = new Set(parameters.map((parameter) => parameter.name));
   const unknown = Object.keys(args).filter((name) => !names.has(name));
   if (unknown.length > 0) return { value: null, problem: `The function has no parameter named ${unknown.join(", ")}.` };

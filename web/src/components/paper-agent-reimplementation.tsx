@@ -41,6 +41,7 @@ import {
   emptyMatching,
   inputsText,
   matchingTitle,
+  offerFormKey,
   sameChoice,
   writingTitle,
   type MatchingDraft,
@@ -534,11 +535,13 @@ function OfferForm({
   const [budget, setBudget] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [tried, setTried] = useState(false);
+  // What is wrong with the budget is said when the writing is asked for, and not when only what it would be given is looked at
+  const [triedToWrite, setTriedToWrite] = useState(false);
   const checked = checkChoice(draft, limits);
   const said = checkBudget(budget);
   const current = shown !== null && checked.value !== null && sameChoice(checked.value, shown);
   const problems = tried ? checked.problems : {};
-  const budgetProblem = tried ? said.problem : undefined;
+  const budgetProblem = triedToWrite ? said.problem : undefined;
   const change = (part: Partial<OfferDraft>) => setDraft({ ...draft, ...part });
 
   // What is shown is what is agreed to, so a new one is read again before it is agreed to
@@ -564,6 +567,7 @@ function OfferForm({
 
   async function write() {
     setTried(true);
+    setTriedToWrite(true);
     const choice = checked.value;
     if (choice === null || shown === null || !current || !agreed || said.value === null) return;
     const job = await attempt.run(async () => {
@@ -781,7 +785,7 @@ export function ReimplementationSection({
       {idle && <KeptFunction {...shared} onChanged={onChanged} />}
       {idle && canCheck(reimplementation) && <Checks {...shared} jobs={jobs} onChanged={onChanged} onStale={onStale} />}
       {idle && canCheck(reimplementation) && <MatchingForm {...shared} jobs={jobs} onStale={onStale} />}
-      {idle && reimplementation.ready && <OfferForm key={kept?.finished_at ?? "none"} {...shared} jobs={jobs} onStale={onStale} />}
+      {idle && reimplementation.ready && <OfferForm key={offerFormKey(reimplementation)} {...shared} jobs={jobs} onStale={onStale} />}
       <p className="text-xs text-muted-foreground" data-testid="reimplementation-meaning">
         {reimplementation.meaning}
       </p>
