@@ -253,8 +253,10 @@ export function readingKey(jobs: readonly Job[] | null, ended: number, agent: st
   const checking = (jobs ?? []).filter((job) => isActive(job) && job.kind === CHECKS_JOB && job.subject === agent).map((job) => job.id);
   const trying = (jobs ?? []).filter((job) => isActive(job) && job.kind === REPRODUCTION_JOB && job.subject === agent).map((job) => job.id);
   const varying = (jobs ?? []).filter((job) => isActive(job) && job.kind === VARIANT_JOB && job.subject === agent).map((job) => job.id);
+  const writing = (jobs ?? []).filter((job) => isActive(job) && job.kind === REIMPLEMENTATION_JOB && job.subject === agent).map((job) => job.id);
+  const matching = (jobs ?? []).filter((job) => isActive(job) && job.kind === MATCHING_JOB && job.subject === agent).map((job) => job.id);
 
-  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}${checking.length > 0 ? `|checks:${checking.join(",")}` : ""}${trying.length > 0 ? `|trying:${trying.join(",")}` : ""}${varying.length > 0 ? `|varying:${varying.join(",")}` : ""}`;
+  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}${checking.length > 0 ? `|checks:${checking.join(",")}` : ""}${trying.length > 0 ? `|trying:${trying.join(",")}` : ""}${varying.length > 0 ? `|varying:${varying.join(",")}` : ""}${writing.length > 0 ? `|writing:${writing.join(",")}` : ""}${matching.length > 0 ? `|matching:${matching.join(",")}` : ""}`;
 }
 
 // The job that fetches the code of an agent, which the server runs with the agent's id as its subject
@@ -359,6 +361,32 @@ export function variantJob(jobs: readonly Job[], agent: string): Job | undefined
 // The latest making of a variant that is over, whose outcome is what it was last done with
 export function lastVariantJob(jobs: readonly Job[], agent: string): Job | undefined {
   return jobs.find((job) => !isActive(job) && job.kind === VARIANT_JOB && job.subject === agent);
+}
+
+// The job that writes a function from the words of an agent's paper, which the server runs with the agent's id as its subject
+export const REIMPLEMENTATION_JOB = "paperagent-reimplementation";
+
+// The job at work writing a function from an agent's paper, which nothing else is done to the agent in the meantime
+export function reimplementationJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === REIMPLEMENTATION_JOB && job.subject === agent);
+}
+
+// The latest writing of a function from an agent's paper that is over, whose outcome is what it was last done with
+export function lastReimplementationJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => !isActive(job) && job.kind === REIMPLEMENTATION_JOB && job.subject === agent);
+}
+
+// The job that checks that function against the numbers that the paper reports, which the server runs with the agent's id as its subject
+export const MATCHING_JOB = "paperagent-reimplementation-checks";
+
+// The job at work checking the function written from an agent's paper, which nothing else is done to the agent in the meantime
+export function matchingJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === MATCHING_JOB && job.subject === agent);
+}
+
+// The latest checking of that function that is over, whose outcome is what it was last done with
+export function lastMatchingJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => !isActive(job) && job.kind === MATCHING_JOB && job.subject === agent);
 }
 
 export interface ReadingDraft {

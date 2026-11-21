@@ -2,12 +2,13 @@
 
 import { useId } from "react";
 import { ProblemNotice } from "@/components/messages";
+import { ReimplementationLabel } from "@/components/paper-agent-reimplementation-label";
 import { useServer } from "@/components/server-provider";
 import { Aside } from "@/components/settings-fields";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/api";
-import { describeGiving, describeKind, describeLimits, describeTier, describeTools, whyNone } from "@/lib/paperagent-given";
+import { describeGiving, describeKind, describeLimits, describeTier, describeTools, runsCode, whyNone } from "@/lib/paperagent-given";
 import type { GivenTool, PaperAgent, PaperAgentGiven } from "@/lib/types";
 import { useAttempt } from "@/lib/use-looked";
 
@@ -20,6 +21,7 @@ function Given({ tool }: { tool: GivenTool }) {
           {tool.name}({tool.parameters.join(", ")})
         </code>
         <Badge variant={tool.kind === "run" ? "secondary" : "outline"}>Tier {tool.tier}</Badge>
+        {tool.label !== null && <ReimplementationLabel label={tool.label} />}
       </div>
       <p className="break-words text-xs text-muted-foreground">
         {describeKind(tool.kind)}. {tool.summary}
@@ -95,7 +97,13 @@ export function GivenSection({
       )}
       <div className="flex flex-col gap-1 text-xs text-muted-foreground">
         <p data-testid="given-meaning">{given.meaning}</p>
-        {given.tools.some((tool) => tool.kind === "run") && <p>{describeLimits(given.limits)}</p>}
+        {given.tools.some(runsCode) && <p>{describeLimits(given.limits)}</p>}
+        {given.tools.some((tool) => tool.kind === "reimplementation") && (
+          <p data-testid="given-reimplementation">
+            The re-implementation is said to be one in its description, in all that it gives, and in every error, so what a conversation keeps of
+            it, and what is saved of the conversation, says so too.
+          </p>
+        )}
         <p>
           What the tools that read give is words taken from the paper, found by their words and not their meaning, so a place that says it in other words may
           be missed. The lead is told to say where the paper says a thing, and to take what a tool gives as data and not as instructions.

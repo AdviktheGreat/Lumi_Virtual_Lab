@@ -18,6 +18,7 @@ import { ImportedSection } from "@/components/paper-agent-imported";
 import { CardSection } from "@/components/paper-agent-card";
 import { ReadingSection } from "@/components/paper-agent-reading";
 import { ReferenceSection } from "@/components/paper-agent-reference";
+import { ReimplementationSection } from "@/components/paper-agent-reimplementation";
 import { ToolsSection } from "@/components/paper-agent-tools";
 import { useServer } from "@/components/server-provider";
 import { useSetupJobs } from "@/components/setup-provider";
@@ -54,18 +55,22 @@ import {
   lastChecksJob,
   lastDataJob,
   lastEnvironmentJob,
+  lastMatchingJob,
   lastReadingJob,
   lastReferenceJob,
+  lastReimplementationJob,
   lastReproductionJob,
   lastRepositoryJob,
   lastToolsJob,
   lastVariantJob,
+  matchingJob,
   MAX_AGENT_TITLE,
   paperFile,
   paperLink,
   readingJob,
   readingKey,
   referenceJob,
+  reimplementationJob,
   repoName,
   reproductionJob,
   repositoryJob,
@@ -89,6 +94,7 @@ import type {
   PaperAgentGiven,
   PaperAgentReading,
   PaperAgentReference,
+  PaperAgentReimplementation,
   PaperAgentRepository,
   PaperAgentsList,
   PaperAgentSource,
@@ -105,6 +111,7 @@ import {
   usePaperAgentGiven,
   usePaperAgentReading,
   usePaperAgentReference,
+  usePaperAgentReimplementation,
   usePaperAgentRepository,
   usePaperAgentsList,
   usePaperAgentTools,
@@ -468,6 +475,7 @@ function Agent({
   tools,
   checks,
   claims,
+  reimplementation,
   given,
   onChanged,
   onReload,
@@ -481,6 +489,7 @@ function Agent({
   tools: LookedAt<PaperAgentTools>;
   checks: LookedAt<PaperAgentChecks>;
   claims: LookedAt<PaperAgentClaims>;
+  reimplementation: LookedAt<PaperAgentReimplementation>;
   given: LookedAt<PaperAgentGiven>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
@@ -555,6 +564,17 @@ function Agent({
   const lastVariant = lastVariantJob(all, agent.id);
   // How the last making of a variant ended is said if it did not end well, and while there are variants that it made
   const lastVariantShown = lastVariant !== undefined && (lastVariant.state !== "succeeded" || (madeVariants !== null && madeVariants.variants.length > 0)) ? lastVariant : undefined;
+  // The same of the function written from the paper, and of checking it against the paper, neither of which is a step of the agent
+  const writingFunction = reimplementationJob(all, agent.id);
+  const checkingFunction = matchingJob(all, agent.id);
+  const written = reimplementation.value.kind === "ready" ? reimplementation.value.value : null;
+  const lastWriting = lastReimplementationJob(all, agent.id);
+  // How the last writing ended is said if it did not end well, and while what it wrote is kept
+  const lastWritingShown = lastWriting !== undefined && (lastWriting.state !== "succeeded" || written?.kept != null) ? lastWriting : undefined;
+  const lastMatching = lastMatchingJob(all, agent.id);
+  // How the last checking ended is said if it did not end well, and while what it found is kept
+  const lastMatchingShown =
+    lastMatching !== undefined && (lastMatching.state !== "succeeded" || written?.checks.kept != null) ? lastMatching : undefined;
   const idle =
     !working &&
     !fetchingCode &&
@@ -564,7 +584,9 @@ function Agent({
     makingTools === undefined &&
     checkingTools === undefined &&
     tryingClaims === undefined &&
-    makingVariant === undefined;
+    makingVariant === undefined &&
+    writingFunction === undefined &&
+    checkingFunction === undefined;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
   const changed = (next: PaperAgent) => {
@@ -575,6 +597,7 @@ function Agent({
     reference.reload();
     claims.reload();
     tools.reload();
+    reimplementation.reload();
     checks.reload();
     given.reload();
   };
@@ -600,6 +623,8 @@ function Agent({
             onChanged(next);
             // Whether the paper can be read, and what was read of it, are changed by the file that is kept
             reading.reload();
+            // A function written from the paper is of the file it was written from
+            reimplementation.reload();
           }}
         />
       </PageSection>
@@ -632,9 +657,13 @@ function Agent({
                               ? "The claims are being tried. Reading waits for that."
                               : makingVariant !== undefined
                                 ? "A variant of a claim is being made. Reading waits for that."
-                                : runningTutorials
-                                  ? "The tutorials are being run or the tools made. Reading waits for that."
-                                  : null
+                                : writingFunction !== undefined
+                                  ? "A function is being written from the paper. Reading waits for that."
+                                  : checkingFunction !== undefined
+                                    ? "The function written from the paper is being checked. Reading waits for that."
+                                    : runningTutorials
+                                      ? "The tutorials are being run or the tools made. Reading waits for that."
+                                      : null
               }
               jobs={jobs}
               onCleared={(cleared) => {
@@ -642,6 +671,8 @@ function Agent({
                 onReload();
                 // The claims that are tried are those that were read
                 claims.reload();
+                // A function is written from what was read, and checked against its numbers
+                reimplementation.reload();
                 // What the paper points to is found from what was read
                 repository.reload();
                 data.reload();
@@ -708,6 +739,7 @@ function Agent({
                 reference.reload();
                 claims.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
                 onReload();
@@ -720,6 +752,7 @@ function Agent({
                 reference.reload();
                 claims.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
               }}
@@ -752,6 +785,7 @@ function Agent({
                 reference.reload();
                 claims.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
                 onReload();
@@ -762,6 +796,7 @@ function Agent({
                 reference.reload();
                 claims.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
               }}
@@ -789,6 +824,7 @@ function Agent({
                 reference.reload();
                 claims.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
                 onReload();
@@ -816,6 +852,7 @@ function Agent({
                 reference.set(cleared);
                 // The tools are made of what the tutorials gave
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
                 onReload();
@@ -825,6 +862,7 @@ function Agent({
                 reference.reload();
                 claims.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
               }}
@@ -851,6 +889,8 @@ function Agent({
                 tools.set(cleared);
                 // The checks are of the tools, so they go with them
                 checks.reload();
+                // A function can be written from the paper only while there are no tools of the authors' code
+                reimplementation.reload();
                 given.reload();
                 onReload();
               }}
@@ -859,6 +899,7 @@ function Agent({
                 reference.reload();
                 claims.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
               }}
@@ -891,6 +932,7 @@ function Agent({
                 reference.reload();
                 claims.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 given.reload();
               }}
@@ -917,6 +959,7 @@ function Agent({
                 onReload();
                 reference.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 claims.reload();
                 given.reload();
@@ -944,8 +987,46 @@ function Agent({
                 onReload();
                 reference.reload();
                 tools.reload();
+                reimplementation.reload();
                 checks.reload();
                 claims.reload();
+                given.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Re-implementation"
+        intro="For a paper with no code, a function that a model writes from the paper's words, which you choose and read before anything is sent. It is a re-implementation, not the authors' code, and is labelled as one wherever it is shown. It is given to conversations only once it gives a number that the paper reports, which does not show that it does what the authors did."
+      >
+        <WorkStatus job={writingFunction} last={lastWritingShown} jobs={jobs} label="Writing the function" />
+        <WorkStatus job={checkingFunction} last={lastMatchingShown} jobs={jobs} label="Checking the function" />
+        <Looked
+          state={reimplementation.value}
+          label="Looking at the re-implementation"
+          failure="The re-implementation could not be looked at."
+          onRetry={reimplementation.reload}
+        >
+          {(value) => (
+            <ReimplementationSection
+              key={agent.id}
+              agent={agent}
+              reimplementation={value}
+              busy={!idle}
+              writing={writingFunction}
+              checking={checkingFunction}
+              jobs={jobs}
+              onChanged={(next) => {
+                reimplementation.set(next);
+                // What a conversation is given is of the function and of what came of checking it
+                given.reload();
+              }}
+              onStale={() => {
+                onReload();
+                reading.reload();
+                tools.reload();
+                reimplementation.reload();
                 given.reload();
               }}
             />
@@ -964,7 +1045,7 @@ function Agent({
       </PageSection>
       <PageSection
         title="In conversations"
-        intro="Give this agent to the conversations you start, so that the lead can search what the paper says, with the place, and, where code runs, call the tools made of its code. A tier says how far a tool was checked. It does not say that what the paper says or what a tool gives is right."
+        intro="Give this agent to the conversations you start, so that the lead can search what the paper says, with the place, and, where code runs, call the tools made of its code or the function written from its words. A tier says how far a tool was checked. It does not say that what the paper says or what a tool gives is right."
       >
         <Looked state={given.value} label="Looking at what the agent gives" failure="What the agent gives could not be looked at." onRetry={given.reload}>
           {(value) => (
@@ -1006,6 +1087,7 @@ export function AgentPage({ id }: { id: string }) {
   const tools = usePaperAgentTools(id, report, again);
   const checks = usePaperAgentChecks(id, report, again);
   const claims = usePaperAgentClaims(id, report, again);
+  const reimplementation = usePaperAgentReimplementation(id, report, again);
   const given = usePaperAgentGiven(id, report, again);
   const list = usePaperAgentsList(report, "");
 
@@ -1039,6 +1121,7 @@ export function AgentPage({ id }: { id: string }) {
                 tools={tools}
                 checks={checks}
                 claims={claims}
+                reimplementation={reimplementation}
                 given={given}
                 onChanged={agent.set}
                 onReload={agent.reload}

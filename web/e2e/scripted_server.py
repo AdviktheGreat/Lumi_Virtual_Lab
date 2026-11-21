@@ -76,6 +76,13 @@ from a script: no key is needed, and every run says the same. What it says depen
   that the tutorial got for what the tutorial passed, a hundredth more or less for each that the sum of the values is
   from 6, and an error for values that are not a list of numbers. "differing" gives a hundredth more even for what the
   tutorial passed, so that the call alone does not stand for what it did, and "tedious" makes the calls take a while.
+- A function written from the words of a PaperAgent's paper, which has no code, is the doubling function below whatever
+  its name: it adds the numbers it is given and takes the sum twice over, which is what the papers the tests make say
+  their method does. The container it is imported in is a stand-in that says the import went well, and the one it is
+  called in when it is checked against the paper, or given to a conversation, is a stand-in that calls it here. A model
+  that is asked for the inputs of a claim gives the numbers the passage names, for the parameter that must be given.
+  "tedious" in the agent's title makes the writing, and the calls, take a while, so that they can be followed and
+  stopped.
 - The data of a PaperAgent is listed and fetched by stand-ins for the places it is kept at, which have a few records,
   named by their keys: Zenodo record 1000001 has files of which one is corrupt (what it sends is not what its checksum
   says), one gives no checksum, and one is restricted; 1000002 has a file larger than the most that is fetched at first;
@@ -140,11 +147,13 @@ from virtual_lab.environment import DATA_LAKE  # noqa: E402
 from virtual_lab.export import PDFExportError  # noqa: E402
 from virtual_lab import openrouter  # noqa: E402
 from virtual_lab.environment import StoppedError  # noqa: E402
+from virtual_lab.execution import ExecutionResult  # noqa: E402
 from virtual_lab.paperagents import checking  # noqa: E402
 from virtual_lab.paperagents import data as finding  # noqa: E402
 from virtual_lab.paperagents import datahosts as hosting  # noqa: E402
 from virtual_lab.paperagents import environment as building  # noqa: E402
 from virtual_lab.paperagents import fetch as fetching  # noqa: E402
+from virtual_lab.paperagents import matching  # noqa: E402
 from virtual_lab.paperagents import proposing  # noqa: E402
 from virtual_lab.paperagents import reference as referencing  # noqa: E402
 from virtual_lab.paperagents import repository as cloning  # noqa: E402
@@ -163,6 +172,7 @@ from virtual_lab.paperagents.reading import (  # noqa: E402
 from virtual_lab.papers import PaperFindings  # noqa: E402
 from virtual_lab.prompts import result_check_prompt  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
+from virtual_lab.server import paperagents as server_paperagents  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
 from virtual_lab.server.keychain import Keychain  # noqa: E402
 from virtual_lab.server.skills import (  # noqa: E402
@@ -198,6 +208,21 @@ def {name}(path: str) -> int:
         path: The file.
     \"\"\"
     return 1
+```"""
+
+# How the request to write a function from a paper's words is told from any other, and what such a function is written
+# as: it adds the numbers it is given and takes the sum twice over, which is what the papers the tests make say their
+# method does, so that it gives the number their results report when it is called with the numbers their methods name
+REIMPLEMENTATION_MARK = "you write that method as a Python function"
+REIMPLEMENTATION_CODE = """```python
+def {name}(numbers: list[float], times: int = 2) -> float:
+    \"\"\"Adds the numbers and takes the sum so many times over.
+
+    Args:
+        numbers: The numbers to add.
+        times: How many times the sum is taken.
+    \"\"\"
+    return times * sum(numbers)
 ```"""
 
 
@@ -1279,8 +1304,12 @@ def function_named(kwargs: dict[str, Any]) -> str | None:
     return found.group(1) if found else None
 
 
-def function_code(name: str) -> str:
-    return FUNCTION_CODE.format(name=name)
+def function_code(name: str, kwargs: dict[str, Any]) -> str:
+    """What the model writes, which is the doubling function when it is asked to write from a paper's words."""
+    system = next((message["content"] for message in kwargs["messages"] if message["role"] == "system"), "")
+    code = REIMPLEMENTATION_CODE if REIMPLEMENTATION_MARK in str(system) else FUNCTION_CODE
+
+    return code.format(name=name)
 
 
 SKILL_TRIGGER = re.compile(r"skill:(build|save|use):([a-z0-9-]+)")
@@ -1374,6 +1403,83 @@ def stand_in_proposals() -> proposing.Proposals:
     )
 
 
+def stand_in_inputs(kwargs: dict[str, Any]) -> matching.ProposedInputs:
+    """The inputs that a model gives for a claim that a function written from a paper's words is checked against: the
+    numbers the passage names, for the parameter that must be given, which is what the doubling function takes. Where
+    the passage names none, it says it gives nothing, as a model would of a passage without them."""
+    text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")
+    named = re.search(r"numbers\s+((?:\d+(?:\.\d+)?(?:\s*,\s*|\s+and\s+))+)", text)
+    parameter = re.search(r"- (\w+): [^\n]* \(must be given\)", text)
+    if named is None or parameter is None:
+        return matching.ProposedInputs(found=False, arguments=[], where="The passage names no numbers to take.")
+
+    values = [float(each) for each in re.findall(r"\d+(?:\.\d+)?", named.group(1))]
+
+    return matching.ProposedInputs(
+        found=True,
+        arguments=[matching.ProposedArgument(name=parameter.group(1), value=json.dumps(values))],
+        where=named.group(0).strip(" ,"),
+    )
+
+
+class ImportContainer:
+    """Stands in for the container that a function written from a paper's words is imported in: says the import went
+    well, without Docker."""
+
+    def __init__(self, **options: Any) -> None:
+        self.options = options
+
+    def run(self, directory: Any, command: Any, timeout: Any = None) -> ExecutionResult:
+        return ExecutionResult(command=tuple(command), exit_code=0, stdout="", stderr="", duration=0.1)
+
+
+@dataclass
+class CallingRun:
+    """What one runner of the calls of a function written from a paper's words is made with."""
+
+    stop: threading.Event
+    label: str
+    repeats: int
+
+
+def stand_in_calling_runner(
+    scratch: Path, docker_command: Any, stop: threading.Event, label: str, repeats: int = matching.REPEATS
+) -> CallingRun:
+    """Stands in for the container that a function written from a paper's words is called in, when it is checked
+    against the paper or given to a conversation."""
+    return CallingRun(stop, label, repeats)
+
+
+def stand_in_calling(
+    runner: CallingRun, source: str, name: str, calls: list[dict[str, Any]], seconds: float
+) -> making.Replay:
+    """Calls the function here, as the runner would, as many times each as the runner makes a call. "tedious" in the
+    agent's id makes the calls take a while, so that the checking can be followed and stopped."""
+    if "tedious" in runner.label:
+        for _ in range(int(TOOL_DELAY * 10)):
+            if runner.stop.is_set():
+                raise StoppedError("Stopped.")
+            time.sleep(0.1)
+    namespace: dict[str, Any] = {}
+    exec(source, namespace)  # noqa: S102
+    results = []
+    for arguments in calls:
+        each: list[dict[str, Any] | None] = []
+        for _ in range(runner.repeats):
+            try:
+                value = namespace[name](**arguments)
+            except Exception as error:
+                failure = {"type": type(error).__name__, "message": str(error), "traceback": [], "cell": None}
+                each.append({"schema": 1, "ok": False, "error": failure, "result": None, "seconds": 0.1, "output": ""})
+                each += [None] * (runner.repeats - len(each))
+                break
+            described = {"type": type(value).__name__, "plain": True, "value": value}
+            each.append({"schema": 1, "ok": True, "error": None, "result": described, "seconds": 0.1, "output": ""})
+        results.append(each)
+
+    return making.Replay("done", 0, results, ["runner: done"])
+
+
 def stand_in_picks(kwargs: dict[str, Any]) -> reproducing.Picks:
     """What a model says of which place each sentence is about: the first of those it is shown, for every claim.
     The tutorials of an agent that gives a number that a paper reports give it at one place, which is the only one that
@@ -1414,7 +1520,10 @@ class ScriptedCompletions(FakeCompletions):
         done = tool_results(kwargs["messages"])
         written = function_named(kwargs)
         if written is not None:
-            response = text_response(function_code(written))
+            if "tedious" in question:
+                # The writing of a function takes a while, so that it can be followed and stopped
+                time.sleep(TOOL_DELAY)
+            response = text_response(function_code(written, kwargs))
         elif question == result_check_prompt() and previous_answer(kwargs["messages"]):
             # Asked to check the result that code gave, which it does, and gives the answer again in full, as it is asked to
             response = text_response(previous_answer(kwargs["messages"]))
@@ -1452,6 +1561,8 @@ class ScriptedCompletions(FakeCompletions):
             return parsed_response(stand_in_proposals())
         if schema is reproducing.Picks:
             return parsed_response(stand_in_picks(kwargs))
+        if schema is matching.ProposedInputs:
+            return parsed_response(stand_in_inputs(kwargs))
         if schema is not PaperFindings and schema is not ChunkReading:
             return super().parse(**kwargs)
         text = " ".join(str(message["content"]) for message in kwargs["messages"] if message["role"] == "user")
@@ -1637,7 +1748,13 @@ LIBRARY_SKILLS = [
     ("rna-counts", "Genomics", "Apache-2.0", "Counts reads per gene from aligned RNA-seq files.", "scripts/count.py"),
     ("cell-types", "Genomics", None, "Labels the cell types of a single-cell dataset.", None),
     ("pathway-flux", "Systems biology", "GPL-3.0-or-later", "Estimates the flux through a metabolic pathway.", None),
-    ("spatial-guess", "Imaging", "PolyForm-Noncommercial-1.0.0", "Predicts spatial expression from a tissue image.", None),
+    (
+        "spatial-guess",
+        "Imaging",
+        "PolyForm-Noncommercial-1.0.0",
+        "Predicts spatial expression from a tissue image.",
+        None,
+    ),
 ]
 LIBRARY_FILLERS = 45
 
@@ -1645,7 +1762,10 @@ LIBRARY_FILLERS = 45
 def write_skill_library(folder: Path) -> None:
     """A library of skills of the shape that ships with the lab, with an index of what is in it."""
     entries = [*LIBRARY_SKILLS]
-    entries += [(f"filler-{number:02d}", "Fillers", "MIT", f"Does filler job {number:02d}.", None) for number in range(LIBRARY_FILLERS)]
+    entries += [
+        (f"filler-{number:02d}", "Fillers", "MIT", f"Does filler job {number:02d}.", None)
+        for number in range(LIBRARY_FILLERS)
+    ]
     index: dict[str, Any] = {
         "source": {
             "name": "Test Skills",
@@ -1703,6 +1823,10 @@ def main() -> None:
     making.ToolRunner.replay = stand_in_replay  # type: ignore[method-assign]
     checking.CheckRunner.run_tests = stand_in_run_tests  # type: ignore[method-assign]
     openrouter.fetch_models = stand_in_openrouter_models
+    # The containers that a function written from a paper's words is imported and called in are stand-ins too
+    server_paperagents.DockerExecutor = ImportContainer  # type: ignore[misc,assignment]
+    matching.runner_for = stand_in_calling_runner  # type: ignore[assignment]
+    matching.run_calls = stand_in_calling  # type: ignore[assignment]
     workspace = Path(tempfile.mkdtemp(prefix="virtual-lab-e2e-"))
     # The sign-ins to MCP servers are kept away from those of the person running the tests, and no browser is opened
     # for one: a test follows the link the page shows, as a person would

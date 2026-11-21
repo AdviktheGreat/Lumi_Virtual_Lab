@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, Route } from "@playwright/test";
 import { accessibilityProblems } from "../axe";
 import { answered, askWhereCodeRuns, expect, test } from "../fixtures";
 
@@ -16,7 +16,7 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools", "paperagent-checks", "paperagent-reproduction", "paperagent-variant"];
+  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools", "paperagent-checks", "paperagent-reproduction", "paperagent-variant", "paperagent-reimplementation", "paperagent-reimplementation-checks"];
   for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
@@ -3531,7 +3531,9 @@ test("says that an agent whose paper has not been read has nothing to give yet, 
   await expect(givenSummary(page)).toContainText("No tool is given.");
   await expect(givenTools(page)).toHaveCount(0);
   await expect(page.getByTestId("given-why")).toContainText("The paper has not been read, so the tools that read it are not given. Read it under Reading.");
-  await expect(page.getByTestId("given-why")).toContainText("It has no code, so it has no tool that runs.");
+  await expect(page.getByTestId("given-why")).toContainText(
+    "It has no code, so it has no tool that runs the authors' code. A function can be written from the paper's words under Re-implementation, and is given once it matches a number that the paper reports.",
+  );
   expect(await givenOf(page, id)).toMatchObject({ given: false, tier: null, tools: [], problem: null });
   expect(await accessibilityProblems(page)).toEqual([]);
 
@@ -4455,5 +4457,594 @@ test("says that no claim was held to a call that a variant can be made of", asyn
   await expect(page.getByTestId("variants-none-to-make")).toContainText("No claim was held to a call that a variant can be made of.");
   await page.getByRole("button", { name: "Why 4 claims cannot be varied" }).click();
   await expect(page.getByRole("list", { name: "Claims that cannot be varied" }).locator("li")).toHaveCount(4);
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+const SUMS_TITLE = "Adding and doubling: a method";
+const SUMS_FUNCTION = "reimplemented_adding_and_doubling_a_method";
+const SUMS_METHOD = "We take the numbers 0.2, 0.25 and 0.015, add them one to another, and double the sum.";
+// A paper that has no code, whose method adds numbers and doubles the sum, and whose results are two numbers that follow from it
+const SUMS = [
+  SUMS_TITLE,
+  "Abstract",
+  "A method that doubles.",
+  "Methods",
+  SUMS_METHOD,
+  "Results",
+  "The doubled sum reached an AUROC of 0.930 on the held-out set.",
+  "Doubled once more, the same numbers reached an AUROC of 1.860 in all.",
+  "References",
+  "A. One.",
+].join("\n\n");
+
+const reimplementation = (page: Page) => page.getByRole("region", { name: "Re-implementation", exact: true });
+const writingForm = (page: Page) => form(page, "Write a function from the paper");
+const matchingForm = (page: Page) => form(page, "Check the function against the paper");
+const sectionOf = (page: Page, title: string) => writingForm(page).getByTestId("reimplementation-section").filter({ hasText: title });
+const keptFunction = (page: Page) => page.getByTestId("reimplementation-kept");
+const matchingChecks = (page: Page) => page.getByTestId("reimplementation-checks");
+const matchingClaim = (page: Page, value: string) => matchingChecks(page).getByTestId("matching-claim").filter({ hasText: value });
+const agreeBox = (page: Page) => writingForm(page).getByRole("checkbox", { name: /I have read what the model would be given/ });
+const reimplementationOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/reimplementation`)).json();
+
+// An agent whose paper has no code and has been read, through the server, so that what a test is about is the page
+async function agentWithSums(page: Page, title: string, text = SUMS): Promise<string> {
+  const id = await makeAgent(page, { title, paper: { kind: "file" } });
+  await sendPaper(page, id, "sums.txt", text);
+  await readTheAgent(page, id);
+
+  return id;
+}
+
+// Agrees to what the model would be given, with the most that asking it may spend, and starts the writing
+async function writeFunction(page: Page, budget = "1") {
+  await agreeBox(page).check();
+  await writingForm(page).getByLabel("Most it may spend, in dollars").fill(budget);
+  await writingForm(page).getByRole("button", { name: /^Agree, and write/ }).click();
+}
+
+test("shows what the model would be given of a paper with no code before anything is sent, and sends nothing until that is agreed to", async ({ page }) => {
+  const id = await agentWithSums(page, SUMS_TITLE);
+  await openAgent(page, id, SUMS_TITLE);
+
+  await expect(reimplementation(page)).toBeVisible();
+  await expect(page.getByTestId("reimplementation")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByTestId("reimplementation-meaning")).toContainText("A tool of tier C is a re-implementation");
+  await expect(keptFunction(page)).toHaveCount(0);
+  await expect(matchingChecks(page)).toHaveCount(0);
+
+  // The sections of the paper are listed, and those of the method are the ones that are chosen to begin with
+  await expect(writingForm(page).getByTestId("reimplementation-section")).toHaveCount(3);
+  await expect(sectionOf(page, "Methods").getByRole("checkbox")).toBeChecked();
+  await expect(sectionOf(page, "Methods")).toContainText("Of the method");
+  await expect(sectionOf(page, "Abstract").getByRole("checkbox")).not.toBeChecked();
+  await expect(sectionOf(page, "Results").getByRole("checkbox")).not.toBeChecked();
+
+  // What the model would be given is shown as it is sent, and it is only the words that were chosen
+  const offer = page.getByTestId("reimplementation-offer");
+  await expect(offer).toHaveAttribute("data-current", "true");
+  await expect(page.getByTestId("reimplementation-offer-what")).toContainText("1 place of the paper (Methods)");
+  await expect(page.getByTestId("reimplementation-offer-what")).toContainText(`The function would be called ${SUMS_FUNCTION}.`);
+  await expect(offer.getByRole("region", { name: "What the model would be given" })).toContainText(SUMS_METHOD);
+  await expect(offer.getByRole("region", { name: "What the model would be given" })).not.toContainText("AUROC");
+  await expect(offer).toContainText(`What ${(await reimplementationOf(page, id)).settings_model} would be given`);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Looking at what would be given is not asking for it to be written, so what is wrong with the budget is not said yet
+  await writingForm(page).getByRole("button", { name: "Show what it would be given" }).click();
+  await expect(offer).toHaveAttribute("data-current", "true");
+  await expect(writingForm(page).getByText("Say the most it may spend.")).toHaveCount(0);
+
+  // Nothing is sent without agreeing, and the agreement is of what was read
+  await expect(writingForm(page).getByRole("button", { name: /^Agree, and write/ })).toBeDisabled();
+  await agreeBox(page).check();
+  await expect(writingForm(page).getByRole("button", { name: /^Agree, and write/ })).toBeEnabled();
+  await writingForm(page).getByRole("button", { name: /^Agree, and write/ }).click();
+  await expect(writingForm(page).getByText("Say the most it may spend.")).toBeVisible();
+  await writingForm(page).getByLabel("Most it may spend, in dollars").fill("lots");
+  await writingForm(page).getByRole("button", { name: /^Agree, and write/ }).click();
+  await expect(writingForm(page).getByText(/is an amount in dollars, such as 1 or 0.50/)).toBeVisible();
+  expect((await reimplementationOf(page, id)).kept).toBeNull();
+
+  // Choosing another section makes what was read not what would be sent, so the agreement is taken back until it is read again
+  await sectionOf(page, "Results").getByRole("checkbox").check();
+  await expect(offer).toHaveAttribute("data-current", "false");
+  await expect(page.getByTestId("reimplementation-offer-changed")).toContainText("What you chose is not what this is of.");
+  await expect(agreeBox(page)).toBeDisabled();
+  await expect(agreeBox(page)).not.toBeChecked();
+  await expect(writingForm(page).getByRole("button", { name: /^Agree, and write/ })).toBeDisabled();
+  await writingForm(page).getByRole("button", { name: "Show what it would be given" }).click();
+  await expect(offer).toHaveAttribute("data-current", "true");
+  await expect(page.getByTestId("reimplementation-offer-what")).toContainText("1 place of the paper (Methods, Results)");
+  await expect(offer.getByRole("region", { name: "What the model would be given" })).toContainText("AUROC of 0.930");
+  await expect(agreeBox(page)).not.toBeChecked();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Words to look for are given too, a name that is not one is said before anything is asked, and what the server cannot offer is said
+  await sectionOf(page, "Results").getByRole("checkbox").uncheck();
+  await writingForm(page).getByLabel("What the function is called").fill("Doubled Sum");
+  await writingForm(page).getByRole("button", { name: "Show what it would be given" }).click();
+  await expect(writingForm(page).getByText(/lowercase letters, digits, and underscores/).first()).toBeVisible();
+  await writingForm(page).getByLabel("What the function is called").fill("doubled_sum");
+  await sectionOf(page, "Methods").getByRole("checkbox").uncheck();
+  await writingForm(page).getByRole("button", { name: "Show what it would be given" }).click();
+  await expect(writingForm(page).getByText("Choose a section of the paper, or say words to look for in it.")).toBeVisible();
+  await writingForm(page).getByLabel("Words to look for in the paper").fill("zzzzqq");
+  await writingForm(page).getByRole("button", { name: "Show what it would be given" }).click();
+  await expect(page.getByTestId("reimplementation-choice-problem")).toContainText("Choose a section of the paper, or search for the words");
+  await expect(offer).toHaveCount(0);
+  await writingForm(page).getByLabel("Words to look for in the paper").fill("numbers");
+  await writingForm(page).getByRole("button", { name: "Show what it would be given" }).click();
+  await expect(page.getByTestId("reimplementation-choice-problem")).toHaveCount(0);
+  await expect(offer).toHaveAttribute("data-current", "true");
+  await expect(page.getByTestId("reimplementation-offer-what")).toContainText("The function would be called doubled_sum.");
+  await expect(offer.getByRole("region", { name: "What the model would be given" })).toContainText(SUMS_METHOD);
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await reimplementationOf(page, id)).kept).toBeNull();
+});
+
+test("writes a function from the paper's words, shows its code as a re-implementation, checks it against the paper's numbers, which makes it of tier C, gives it to conversations, and takes it away", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const id = await agentWithSums(page, SUMS_TITLE);
+  await openAgent(page, id, SUMS_TITLE);
+  const prefix = "adding_and_doubling_a_method_";
+
+  await writeFunction(page);
+  await expect(keptFunction(page)).toHaveAttribute("data-status", "written", { timeout: 30_000 });
+  await expect(page.getByTestId("reimplementation-status")).toHaveText("Written");
+  await expect(page.getByTestId("reimplementation-how")).toContainText("by gpt-5.2 in 1 attempt");
+  await expect(page.getByTestId("reimplementation-how")).toContainText("imported in a container with no network, and nothing else of it was run");
+  await expect(page.getByTestId("reimplementation-how")).toContainText("It was given 1 place of the paper (Methods)");
+  await expect(keptFunction(page).getByTestId("reimplementation-label")).toBeVisible();
+  const code = keptFunction(page).getByRole("region", { name: "The function's code" });
+  await expect(code).toContainText(`def ${SUMS_FUNCTION}(numbers: list[float], times: int = 2) -> float:`);
+  await expect(keptFunction(page)).toContainText("None of the authors' code is in it.");
+  // What the model was given is not shown again, and the writing goes with the job that did it
+  await expect(page.getByRole("region", { name: "Writing the function" })).toContainText("Done");
+  const kept = await reimplementationOf(page, id);
+  expect(kept.kept).toMatchObject({ status: "written", name: SUMS_FUNCTION, current: true });
+
+  // The claims it can be checked against are listed, none tried, and it is of no tier and is given to nothing
+  await expect(matchingChecks(page)).toHaveAttribute("data-tier", "none");
+  await expect(page.getByTestId("matching-label")).toContainText("It is given to no conversation until it gives a number that the paper reports.");
+  await expect(matchingChecks(page).getByTestId("matching-claim")).toHaveCount(2);
+  await expect(matchingClaim(page, "0.930").getByText("Not tried yet")).toBeVisible();
+  await expect(matchingClaim(page, "1.860").getByText("Not tried yet")).toBeVisible();
+  await expect(givenTools(page)).toHaveCount(4);
+  await expect(givenSummary(page)).toContainText("Tier D: reads the paper");
+  await expect(page.getByTestId("given-why")).toContainText("A function can be written from the paper's words under Re-implementation");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A model is asked for the inputs, within what it may spend, or the person gives them: with neither, there is nothing to call it with
+  await expect(matchingForm(page).getByLabel("Most time for all of the calls, in minutes")).toHaveValue("5");
+  await matchingForm(page).getByRole("checkbox", { name: "Let a model read the inputs from the paper" }).uncheck();
+  await expect(matchingForm(page).getByLabel("Most it may spend, in dollars")).toHaveCount(0);
+  await matchingForm(page).getByRole("button", { name: "Check it against the paper" }).click();
+  await expect(matchingForm(page).getByText(/Give the inputs of a claim first, or let a model read them from the paper/)).toBeVisible();
+  await matchingForm(page).getByRole("checkbox", { name: "Let a model read the inputs from the paper" }).check();
+  await matchingForm(page).getByRole("button", { name: "Check it against the paper" }).click();
+  await expect(matchingForm(page).getByText("Say the most it may spend.")).toBeVisible();
+  await matchingForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await matchingForm(page).getByLabel("Most time for all of the calls, in minutes").fill("0");
+  await matchingForm(page).getByRole("button", { name: "Check it against the paper" }).click();
+  await expect(matchingForm(page).getByText(/is a whole number from 1 to 30/)).toBeVisible();
+  expect((await reimplementationOf(page, id)).checks.kept).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // It is called with what the paper's own words give, and the number that the paper reports is looked for in what it gave
+  await matchingForm(page).getByLabel("Most time for all of the calls, in minutes").fill("5");
+  await matchingForm(page).getByRole("button", { name: "Check it against the paper" }).click();
+  await expect(matchingChecks(page)).toHaveAttribute("data-tier", "C", { timeout: 30_000 });
+  await expect(matchingChecks(page).getByText("Tier C", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("matching-label")).toContainText("Re-implementation, matched 1 of 2 tried.");
+  await expect(page.getByTestId("matching-counts")).toHaveText("1 matched, 1 not found.");
+  await expect(page.getByTestId("matching-how")).toContainText("gpt-5.2 was asked for inputs 2 times");
+  await expect(matchingClaim(page, "0.930")).toHaveAttribute("data-status", "matched");
+  await expect(matchingClaim(page, "1.860")).toHaveAttribute("data-status", "not_found");
+  await expect(matchingClaim(page, "0.930").getByTestId("matching-status")).toHaveText("Matched");
+  await expect(matchingClaim(page, "0.930")).toContainText("Called with the inputs that the model read in the passage:");
+  await expect(matchingClaim(page, "0.930")).toContainText('{"numbers":[0.2,0.25,0.015]}');
+  await expect(matchingClaim(page, "0.930")).toContainText("It gave 0.93, and 0.93 at");
+  await expect(matchingClaim(page, "1.860")).toContainText("It gave 0.93.");
+  await expect(page.getByRole("region", { name: "Checking the function" })).toContainText("Done");
+  expect((await reimplementationOf(page, id)).checks).toMatchObject({ tier: "C", label: "Re-implementation, matched 1 of 2 tried" });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A conversation is given it as a re-implementation, labelled so in what the page says of each tool
+  await expect(givenTools(page)).toHaveCount(5);
+  await expect(givenSummary(page)).toContainText("Tier C: a re-implementation, not the authors' code, which gave a number that the paper reports");
+  await expect(givenSummary(page)).toContainText("4 tools that read the paper and 1 that runs a re-implementation of it, not the authors' code.");
+  const reimplemented = inConversations(page).locator("[data-testid=given-tool][data-kind=reimplementation]");
+  await expect(reimplemented).toHaveCount(1);
+  await expect(reimplemented).toContainText("Tier C");
+  await expect(reimplemented.getByTestId("reimplementation-label")).toHaveText("Re-implementation, not the authors' code");
+  await expect(reimplemented).toContainText("Runs a function that a model wrote from the paper's words, in a sandbox with no network");
+  await expect(page.getByTestId("given-reimplementation")).toContainText("says so too");
+  await expect(inConversations(page)).toContainText("A call may take up to 5 minutes, in a container with no network");
+  await expect(page.getByTestId("given-why")).toHaveCount(0);
+  const tool = (await givenOf(page, id)).tools.find((one: { kind: string }) => one.kind === "reimplementation");
+  expect(tool).toMatchObject({ tier: "C", label: "Re-implementation, not the authors' code" });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // It is offered to a conversation that is made after the agent is given, and only where code runs
+  await openAgent(page, id, SUMS_TITLE);
+  await giveBox(page).click();
+  await expect(giveBox(page)).toBeChecked();
+  expect(await offeredIn(page, "local")).toContain(tool.name);
+  expect(await offeredIn(page, "nowhere")).not.toContain(tool.name);
+  expect((await offeredIn(page, "local")).filter((name) => name.startsWith(prefix))).toHaveLength(5);
+
+  // The checks are taken away, after asking: it is of no tier again, and is given to nothing, and the function stays
+  await openAgent(page, id, SUMS_TITLE);
+  await matchingChecks(page).getByRole("button", { name: "Take the checks away" }).click();
+  const away = page.getByRole("alertdialog", { name: `Take away the checks of the function written from ${SUMS_TITLE}?` });
+  await away.getByRole("button", { name: "Keep" }).click();
+  await expect(away).toHaveCount(0);
+  await expect(matchingChecks(page)).toHaveAttribute("data-tier", "C");
+  await matchingChecks(page).getByRole("button", { name: "Take the checks away" }).click();
+  await away.getByRole("button", { name: "Take away", exact: true }).click();
+  await expect(matchingChecks(page)).toHaveAttribute("data-tier", "none");
+  await expect(matchingClaim(page, "0.930").getByText("Not tried yet")).toBeVisible();
+  await expect(matchingChecks(page).getByRole("button", { name: "Take the checks away" })).toHaveCount(0);
+  await expect(givenTools(page)).toHaveCount(4);
+  await expect(givenSummary(page)).toContainText("Tier D: reads the paper");
+  await expect(keptFunction(page)).toHaveAttribute("data-status", "written");
+  expect((await offeredIn(page, "local")).filter((name) => name.startsWith(prefix))).toHaveLength(4);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // The function is taken away, after asking, with what was kept of writing it, and it can be written again
+  await openAgent(page, id, SUMS_TITLE);
+  await keptFunction(page).getByRole("button", { name: "Take the function away" }).click();
+  const gone = page.getByRole("alertdialog", { name: `Take away the function written from ${SUMS_TITLE}?` });
+  await gone.getByRole("button", { name: "Take away", exact: true }).click();
+  await expect(keptFunction(page)).toHaveCount(0);
+  await expect(matchingChecks(page)).toHaveCount(0);
+  await expect(writingForm(page).getByRole("heading", { name: "Write a function from the paper" })).toBeVisible();
+  expect((await reimplementationOf(page, id)).kept).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+// Writes the function through the server, agreeing to what is offered, and waits until that is done
+async function writeThrough(page: Page, id: string) {
+  const { offer } = await reimplementationOf(page, id);
+  const started = await page.request.post(`/api/paperagents/${id}/reimplementation`, { data: { name: offer.name, sections: offer.sections, agreed: offer.key, max_cost: 1 } });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await reimplementationOf(page, id)).job, { timeout: 20_000 }).toBeNull();
+  expect((await reimplementationOf(page, id)).kept).toMatchObject({ status: "written" });
+}
+
+// Checks the function against the paper through the server, and waits until that is done
+async function matchThrough(page: Page, id: string, data: Record<string, unknown> = { ask: true, max_cost: 1 }) {
+  const started = await page.request.post(`/api/paperagents/${id}/reimplementation/checks`, { data });
+  expect(started.status()).toBe(202);
+  await expect.poll(async () => (await reimplementationOf(page, id)).checks.job, { timeout: 30_000 }).toBeNull();
+}
+
+const inputsForm = (page: Page, value: string) => form(page, `Your inputs for the claim of ${value}`);
+
+test("gives the inputs of a claim in the person's own words, holds them to the function, and calls the function with them in place of what a model reads", async ({ page }) => {
+  test.setTimeout(120_000);
+  const id = await agentWithSums(page, SUMS_TITLE);
+  await writeThrough(page, id);
+  await matchThrough(page, id);
+  await openAgent(page, id, SUMS_TITLE);
+  await expect(matchingClaim(page, "1.860")).toHaveAttribute("data-status", "not_found");
+
+  // The passage that a model is shown is what the person is shown too, and the inputs begin as what the model read
+  const claim = matchingClaim(page, "1.860");
+  await claim.getByRole("button", { name: /Show the passage, and give inputs/ }).click();
+  await expect(claim.getByRole("region", { name: "The passage around the claim of 1.860" })).toContainText(SUMS_METHOD);
+  const inputs = inputsForm(page, "1.860");
+  const box = inputs.getByLabel("Your inputs, as JSON");
+  await expect(box).toHaveValue(JSON.stringify({ numbers: [0.2, 0.25, 0.015] }, null, 2));
+  await expect(inputs).toContainText("Its parameters: numbers (list[float], must be given); times (int, 2 if not given).");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What is wrong with them is said before they are sent, and by the server when only it can tell
+  const keep = inputs.getByRole("button", { name: "Keep these inputs" });
+  await box.fill("not json");
+  await keep.click();
+  await expect(inputs.getByText("This is not JSON. Give the inputs as an object, by the names of the parameters.")).toBeVisible();
+  await box.fill("[1, 2]");
+  await keep.click();
+  await expect(inputs.getByText("The inputs are a JSON object, by the names of the parameters.")).toBeVisible();
+  await box.fill('{"count": 3}');
+  await keep.click();
+  await expect(inputs.getByText("The function has no parameter named count.")).toBeVisible();
+  await box.fill("{}");
+  await keep.click();
+  await expect(inputs.getByText("Give numbers, which has no default.")).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await box.fill('{"numbers": [1.86]}');
+  await keep.click();
+  await expect(inputs.getByRole("alert")).toBeVisible();
+  await expect(inputs).toContainText(/1\.86/);
+  await box.fill('{"numbers": "many"}');
+  await keep.click();
+  await expect(inputs.getByRole("alert")).toBeVisible();
+  await box.fill('{"numbers": [1e400]}');
+  await keep.click();
+  await expect(inputs.getByText("A number in the inputs is too big to be sent exactly.")).toBeVisible();
+  expect((await reimplementationOf(page, id)).checks.claims.every((one: { inputs: unknown }) => one.inputs === null)).toBe(true);
+
+  // Inputs that fit the function are kept as the person's, and are what it is called with when it is checked next
+  await box.fill('{"numbers": [0.4, 0.5, 0.03], "times": 2}');
+  await keep.click();
+  await expect(claim.getByText("Your inputs", { exact: true })).toBeVisible();
+  await expect(inputs.getByRole("button", { name: "Take your inputs away" })).toBeVisible();
+  expect((await reimplementationOf(page, id)).checks.claims.find((one: { value: string }) => one.value === "1.860").inputs).toMatchObject({
+    arguments: { numbers: [0.4, 0.5, 0.03], times: 2 },
+  });
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await page.reload();
+  await expect(matchingClaim(page, "1.860").getByText("Your inputs", { exact: true })).toBeVisible();
+  await expect(matchingClaim(page, "0.930").getByText("Your inputs", { exact: true })).toHaveCount(0);
+
+  await matchingForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await matchingForm(page).getByRole("button", { name: /^Check it again/ }).click();
+  await expect(matchingClaim(page, "1.860")).toHaveAttribute("data-status", "matched", { timeout: 30_000 });
+  await expect(matchingClaim(page, "0.930")).toHaveAttribute("data-status", "matched");
+  await expect(matchingClaim(page, "1.860")).toContainText("Called with the inputs that you gave:");
+  await expect(matchingClaim(page, "0.930")).toContainText("Called with the inputs that the model read in the passage:");
+  await expect(page.getByTestId("matching-label")).toContainText("Re-implementation, matched 2 of 2 tried.");
+  await expect(page.getByTestId("matching-counts")).toHaveText("2 matched.");
+  // A model was asked for the one claim that the person gave no inputs for
+  await expect(page.getByTestId("matching-how")).toContainText("gpt-5.2 was asked for inputs 1 time");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Without a model, only the claim that the person gave inputs for is tried
+  await matchingForm(page).getByRole("checkbox", { name: "Let a model read the inputs from the paper" }).uncheck();
+  await matchingForm(page).getByRole("button", { name: /^Check it again/ }).click();
+  await expect(page.getByTestId("matching-how")).toContainText("No model was asked for inputs", { timeout: 30_000 });
+  await expect(matchingClaim(page, "1.860")).toHaveAttribute("data-status", "matched");
+  await expect(matchingClaim(page, "0.930")).toHaveAttribute("data-status", "no_inputs");
+  await expect(page.getByTestId("matching-label")).toContainText("matched 1 of 1 tried");
+  await expect(matchingChecks(page)).toHaveAttribute("data-tier", "C");
+
+  // The inputs are taken away, and what the function was called with by them is no more
+  await matchingClaim(page, "1.860").getByRole("button", { name: /Show the passage, and change your inputs/ }).click();
+  await inputsForm(page, "1.860").getByRole("button", { name: "Take your inputs away" }).click();
+  await expect(matchingClaim(page, "1.860").getByText("Your inputs", { exact: true })).toHaveCount(0);
+  expect((await reimplementationOf(page, id)).checks.claims.every((one: { inputs: unknown }) => one.inputs === null)).toBe(true);
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("follows the writing of a function while it goes on, waits for it before anything else is done to the agent, and keeps that it was stopped", async ({ page }) => {
+  test.setTimeout(90_000);
+  const title = "Doubling tedious";
+  const id = await agentWithSums(page, title);
+  await openAgent(page, id, title);
+  await writeFunction(page);
+
+  const writing = page.getByRole("region", { name: "Writing the function" });
+  const stop = writing.getByRole("button", { name: `Stop: Writing a function from the paper: ${title}` });
+  await expect(stop).toBeVisible();
+  await expect(writingForm(page)).toHaveCount(0);
+  await expect(keptFunction(page)).toHaveCount(0);
+  expect((await reimplementationOf(page, id)).job).not.toBeNull();
+  await page.reload();
+  await expect(stop).toBeVisible();
+  await expect(writingForm(page)).toHaveCount(0);
+  // Nothing else is done to the agent while it goes on
+  await expect(reading(page)).toContainText("A function is being written from the paper. Reading waits for that.");
+  await expect(reading(page).getByRole("button", { name: /^(Read the paper|Carry on reading)$/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: `Delete ${title}` })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  const { offer } = await reimplementationOf(page, id);
+  expect((await page.request.post(`/api/paperagents/${id}/reimplementation`, { data: { name: offer.name, sections: offer.sections, agreed: offer.key, max_cost: 1 } })).status()).toBe(409);
+  expect((await page.request.delete(`/api/paperagents/${id}/reimplementation`)).status()).toBe(409);
+
+  await stop.click();
+
+  await expect(writing.getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(writingForm(page)).toBeVisible();
+  await expect(keptFunction(page)).toHaveAttribute("data-status", "stopped");
+  await expect(page.getByTestId("reimplementation-status")).toHaveText("Stopped");
+  await expect(page.getByTestId("reimplementation-how")).toContainText("before a function was written");
+  await expect(keptFunction(page).getByRole("region", { name: "The function's code" })).toHaveCount(0);
+  await expect(matchingChecks(page)).toHaveCount(0);
+  expect(await reimplementationOf(page, id)).toMatchObject({ job: null, kept: { status: "stopped", source: null } });
+  await expect(page.getByRole("button", { name: `Delete ${title}` })).toBeEnabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What was kept of it is taken away, and it can be written again
+  await keptFunction(page).getByRole("button", { name: "Take this away" }).click();
+  await page.getByRole("alertdialog", { name: `Take away the function written from ${title}?` }).getByRole("button", { name: "Take away", exact: true }).click();
+  await expect(keptFunction(page)).toHaveCount(0);
+  expect((await reimplementationOf(page, id)).kept).toBeNull();
+});
+
+test("follows the checking of a function while it goes on, waits for it before anything else is done to the agent, and keeps it of no tier if it is stopped", async ({ page }) => {
+  test.setTimeout(120_000);
+  const title = "Doubling tedious";
+  const id = await agentWithSums(page, title);
+  await writeThrough(page, id);
+  await openAgent(page, id, title);
+  await matchingForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await matchingForm(page).getByRole("button", { name: "Check it against the paper" }).click();
+
+  const checking = page.getByRole("region", { name: "Checking the function" });
+  const stop = checking.getByRole("button", { name: `Stop: Checking the function against the paper: ${title}` });
+  await expect(stop).toBeVisible();
+  await expect(matchingForm(page)).toHaveCount(0);
+  await expect(matchingChecks(page)).toHaveCount(0);
+  expect((await reimplementationOf(page, id)).checks.job).not.toBeNull();
+  await page.reload();
+  await expect(stop).toBeVisible();
+  await expect(matchingForm(page)).toHaveCount(0);
+  // Nothing else is done to the agent while it goes on
+  await expect(reading(page)).toContainText("The function written from the paper is being checked. Reading waits for that.");
+  await expect(reading(page).getByRole("button", { name: /^(Read the paper|Carry on reading)$/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: `Delete ${title}` })).toBeDisabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await page.request.post(`/api/paperagents/${id}/reimplementation/checks`, { data: { ask: true, max_cost: 1 } })).status()).toBe(409);
+  expect((await page.request.delete(`/api/paperagents/${id}/reimplementation/checks`)).status()).toBe(409);
+  expect((await page.request.delete(`/api/paperagents/${id}/reimplementation`)).status()).toBe(409);
+
+  await stop.click();
+
+  await expect(checking.getByText("Stopped", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(matchingForm(page)).toBeVisible();
+  await expect(matchingChecks(page)).toHaveAttribute("data-tier", "none");
+  await expect(page.getByTestId("matching-how")).toContainText("It was stopped before it came to its end.");
+  await expect(page.getByTestId("matching-label")).toContainText("It is given to no conversation until it gives a number that the paper reports.");
+  await expect(keptFunction(page)).toHaveAttribute("data-status", "written");
+  await expect(givenSummary(page)).toContainText("Tier D: reads the paper");
+  expect((await reimplementationOf(page, id)).checks).toMatchObject({ job: null, tier: null, kept: { status: "stopped" } });
+  await expect(page.getByRole("button", { name: `Delete ${title}` })).toBeEnabled();
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+const problem = (page: Page) => page.getByTestId("reimplementation-problem");
+
+test("says why a function cannot be written from the paper of an agent: it was not read, it reports no number, or it has the authors' code", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  // A paper that is not there to be read
+  const apart = await makeAgent(page, { title: "Paper apart", paper: { kind: "doi", doi: "10.1000/apart" } });
+  await openAgent(page, apart, "Paper apart");
+  await expect(reimplementation(page)).toBeVisible();
+  await expect(page.getByTestId("reimplementation")).toHaveAttribute("data-ready", "false");
+  await expect(problem(page)).toHaveText("Read the paper first, as it is its words that the function is written from.");
+  await expect(writingForm(page)).toHaveCount(0);
+  await expect(matchingForm(page)).toHaveCount(0);
+  await expect(page.getByTestId("reimplementation-meaning")).toContainText("A tool of tier C is a re-implementation");
+  expect((await reimplementationOf(page, apart)).problem).toMatchObject({ code: "no_text" });
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A paper that reports nothing that a function could be checked against
+  const bare = await makeAgent(page, { title: "Paper with no numbers", paper: { kind: "file" } });
+  await sendPaper(page, bare, "bare.txt", ["Paper with no numbers", "Methods", "We add the numbers one to another and double the sum.", "References", "A. One."].join("\n\n"));
+  await readTheAgent(page, bare);
+  await openAgent(page, bare, "Paper with no numbers");
+  await expect(page.getByTestId("reimplementation")).toHaveAttribute("data-ready", "false");
+  await expect(problem(page)).toContainText("The paper reports no number with digits enough to be told from one by chance");
+  await expect(writingForm(page)).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // An agent that has the authors' code is of that code, and says so, and nothing is offered
+  const coded = await agentWithTools(page, "Agent with code");
+  await sendPaper(page, coded, "coded.txt", claimsPaper("Agent with code"));
+  await readTheAgent(page, coded);
+  await openAgent(page, coded, "Agent with code");
+  await expect(page.getByTestId("reimplementation")).toHaveAttribute("data-ready", "false");
+  await expect(problem(page)).toContainText("This agent has tools that run the authors' own code, which is the method as they ran it.");
+  await expect(page.getByTestId("reimplementation")).toContainText("A function written from the paper is only for a paper with no code.");
+  await expect(writingForm(page)).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What was written is kept and is still shown, with the reason that it cannot be written again
+  const written = await agentWithSums(page, "Written then coded");
+  await writeThrough(page, written);
+  await openAgent(page, written, "Written then coded");
+  await page.route("**/api/paperagents/*/reimplementation", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+
+    return route.fulfill({
+      response,
+      json: { ...body, ready: false, problem: { code: "has_tools", message: "This agent has tools that run the authors' own code, which is the method as they ran it" } },
+    });
+  });
+  await page.reload();
+  await expect(problem(page)).toContainText("This agent has tools that run the authors' own code");
+  await expect(keptFunction(page)).toHaveAttribute("data-status", "written");
+  await expect(writingForm(page)).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await page.unroute("**/api/paperagents/*/reimplementation");
+
+  // An agent that was imported is of the server that it came from
+  await page.route("**/api/paperagents/*/reimplementation", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+
+    return route.fulfill({
+      response,
+      json: { ...body, ready: false, kept: null, problem: { code: "imported", message: "This agent was imported, and what it can do is what the server that it came from does" } },
+    });
+  });
+  await page.reload();
+  await expect(problem(page)).toHaveText("This agent was imported, and what it can do is what the server that it came from does.");
+  await expect(keptFunction(page)).toHaveCount(0);
+  await expect(writingForm(page)).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/reimplementation");
+});
+
+test("shows what would be sent again when it is not what was shown, says why the server refused to write or to check, and looks again when what the page shows is out of date", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const id = await agentWithSums(page, "Refused function");
+  await openAgent(page, id, "Refused function");
+  const { offer } = await reimplementationOf(page, id);
+  const refuse = (code: string, message: string, status = 422, more: Record<string, unknown> = {}) => (route: Route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: { code, message, ...more } }) })
+      : route.fallback();
+
+  // What would be sent is not what was shown: what it is is shown in its place, and is to be read and agreed to again
+  await page.route("**/api/paperagents/*/reimplementation", refuse("changed", "What would be sent is not what you were shown", 409, { offer: { ...offer, brief: `${offer.brief}\n\nA sentence that was added.`, key: "another-key" } }));
+  await agreeBox(page).check();
+  await writingForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await writingForm(page).getByRole("button", { name: /^Agree, and write/ }).click();
+  await expect(writingForm(page).getByRole("alert")).toContainText("What would be sent is not what you were shown");
+  await expect(page.getByTestId("reimplementation-offer").getByRole("region", { name: "What the model would be given" })).toContainText("A sentence that was added.");
+  await expect(agreeBox(page)).not.toBeChecked();
+  await expect(writingForm(page).getByRole("button", { name: /^Agree, and write/ })).toBeDisabled();
+  await page.unroute("**/api/paperagents/*/reimplementation");
+  expect((await reimplementationOf(page, id)).kept).toBeNull();
+
+  // The server's own reasons are said as they are
+  await page.reload();
+  await page.route("**/api/paperagents/*/reimplementation", refuse("docker_missing", "Docker is not installed on this machine, and a function is imported in a container."));
+  await agreeBox(page).check();
+  await writingForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await writingForm(page).getByRole("button", { name: /^Agree, and write/ }).click();
+  await expect(writingForm(page).getByRole("alert")).toContainText("Docker is not installed on this machine");
+  await page.unroute("**/api/paperagents/*/reimplementation");
+
+  // Reading that is not what it was, or tools that are made since the page looked, are not a reason to refuse: the page looks again
+  let looked = 0;
+  await page.route("**/api/paperagents/*/reimplementation", (route) => {
+    if (route.request().method() === "GET") looked += 1;
+
+    return route.request().method() === "POST" ? refuse("has_tools", "This agent has tools that run the authors' own code")(route) : route.fallback();
+  });
+  await page.reload();
+  const before = looked;
+  await agreeBox(page).check();
+  await writingForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await writingForm(page).getByRole("button", { name: /^Agree, and write/ }).click();
+  await expect.poll(() => looked).toBeGreaterThan(before);
+  await expect(writingForm(page).getByRole("alert")).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/reimplementation");
+
+  // The same is said of checking, for a function that is no more, and the server's reasons are said as they are
+  await writeThrough(page, id);
+  await openAgent(page, id, "Refused function");
+  await page.route("**/api/paperagents/*/reimplementation/checks", refuse("docker_missing", "Docker is not installed on this machine, and a function is called in a container."));
+  await matchingForm(page).getByLabel("Most it may spend, in dollars").fill("1");
+  await matchingForm(page).getByRole("button", { name: "Check it against the paper" }).click();
+  await expect(matchingForm(page).getByRole("alert")).toContainText("Docker is not installed on this machine");
+  await page.unroute("**/api/paperagents/*/reimplementation/checks");
+
+  let seen = 0;
+  await page.route("**/api/paperagents/*/reimplementation", (route) => {
+    if (route.request().method() === "GET") seen += 1;
+
+    return route.fallback();
+  });
+  await page.route("**/api/paperagents/*/reimplementation/checks", refuse("no_function", "There is no function written from the paper to check"));
+  const after = seen;
+  await matchingForm(page).getByRole("button", { name: "Check it against the paper" }).click();
+  await expect.poll(() => seen).toBeGreaterThan(after);
+  await expect(matchingForm(page).getByRole("alert")).toHaveCount(0);
+  await page.unroute("**/api/paperagents/*/reimplementation/checks");
+  await page.unroute("**/api/paperagents/*/reimplementation");
+  expect((await reimplementationOf(page, id)).kept).toMatchObject({ status: "written" });
   expect(await accessibilityProblems(page)).toEqual([]);
 });

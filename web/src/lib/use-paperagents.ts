@@ -11,6 +11,7 @@ import type {
   PaperAgentGiven,
   PaperAgentReading,
   PaperAgentReference,
+  PaperAgentReimplementation,
   PaperAgentRepository,
   PaperAgentsList,
   PaperAgentTools,
@@ -98,6 +99,19 @@ export function usePaperAgentClaims(id: string, report: (error: unknown) => void
 
     return { reproduction, divergence, variants };
   }, [id]);
+
+  return useLooked(look, report, again);
+}
+
+// What there is of writing a function from an agent's paper and checking it, looked at again when it may have changed: as the paper is
+// read, which is what it is written from and checked against, as tools of the authors' code are made, which it is not written beside,
+// and as it is written and checked
+export function usePaperAgentReimplementation(
+  id: string,
+  report: (error: unknown) => void,
+  again: string,
+): Looked<PaperAgentReimplementation> {
+  const look = useCallback(() => api.paperAgentReimplementation(id), [id]);
 
   return useLooked(look, report, again);
 }

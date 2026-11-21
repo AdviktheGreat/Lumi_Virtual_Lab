@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, NetworkError } from "./api";
+import { api, ApiError, choiceQuery, NetworkError } from "./api";
 
 function answer(body: unknown, status = 200): Response {
   return new Response(body === undefined ? null : JSON.stringify(body), { status });
@@ -384,6 +384,48 @@ describe("the API", () => {
     stub(new DOMException("Aborted", "AbortError"));
 
     await expect(api.chat("a")).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("a function written from a paper", () => {
+  it("asks for the offer of what was chosen, each section by itself, and nothing of what was left out", async () => {
+    expect(choiceQuery({})).toBe("");
+    expect(choiceQuery({ sections: [1, 3], search: "a & b", name: "doubled_sum", goal: "Sum them, then double" })).toBe(
+      "?sections=1&sections=3&search=a+%26+b&name=doubled_sum&goal=Sum+them%2C+then+double",
+    );
+    expect(choiceQuery({ sections: [], name: "doubled_sum" })).toBe("?name=doubled_sum");
+
+    const fetch = stub(answer({ id: "a b" }));
+    await api.paperAgentReimplementation("a b", { sections: [2], name: "f" });
+    expect(fetch).toHaveBeenCalledWith("/api/paperagents/a%20b/reimplementation?sections=2&name=f", expect.objectContaining({ method: "GET" }));
+  });
+
+  it("writes it, checks it, and gives the inputs of a claim at their own addresses", async () => {
+    // Each call is answered anew, as an answer's body is read once
+    const fetch = vi.fn(async () => answer({ id: "a" }));
+    vi.stubGlobal("fetch", fetch);
+
+    await api.writePaperAgentReimplementation("a", { sections: [1], name: "f", agreed: "key", max_cost: 0.5 });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/paperagents/a/reimplementation",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ sections: [1], name: "f", agreed: "key", max_cost: 0.5 }) }),
+    );
+    await api.checkPaperAgentReimplementation("a", { ask: false, minutes: 5 });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/paperagents/a/reimplementation/checks",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ ask: false, minutes: 5 }) }),
+    );
+    await api.givePaperAgentInputs("a", "claim/1", { numbers: [1] });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/paperagents/a/reimplementation/inputs/claim%2F1",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ arguments: { numbers: [1] } }) }),
+    );
+    await api.clearPaperAgentInputs("a", "claim/1");
+    expect(fetch).toHaveBeenLastCalledWith("/api/paperagents/a/reimplementation/inputs/claim%2F1", expect.objectContaining({ method: "DELETE" }));
+    await api.clearPaperAgentReimplementationChecks("a");
+    expect(fetch).toHaveBeenLastCalledWith("/api/paperagents/a/reimplementation/checks", expect.objectContaining({ method: "DELETE" }));
+    await api.clearPaperAgentReimplementation("a");
+    expect(fetch).toHaveBeenLastCalledWith("/api/paperagents/a/reimplementation", expect.objectContaining({ method: "DELETE" }));
   });
 });
 

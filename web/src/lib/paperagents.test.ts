@@ -53,6 +53,10 @@ import {
   checksJob,
   lastReproductionJob,
   lastVariantJob,
+  lastMatchingJob,
+  lastReimplementationJob,
+  matchingJob,
+  reimplementationJob,
   reproductionJob,
   toolsJob,
   variantJob,
@@ -893,5 +897,38 @@ describe("the job that makes a variant of a claim of an agent", () => {
     expect(readingKey([varying()], 0, "cells")).toBe("0||varying:v1");
     expect(readingKey([varying({ subject: "dogs" })], 0, "cells")).toBe("0|");
     expect(readingKey([varying({ state: "succeeded" })], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the jobs that write a function from the paper of an agent, and check it", () => {
+  const writing = (changes: Partial<Job> = {}) => job({ id: "w1", kind: "paperagent-reimplementation", ...changes });
+  const matching = (changes: Partial<Job> = {}) => job({ id: "m1", kind: "paperagent-reimplementation-checks", ...changes });
+
+  it("are each the one at work on that agent, and not the other or another agent's", () => {
+    const jobs = [matching(), writing({ id: "other", subject: "dogs" }), writing({ id: "old", state: "failed" }), writing()];
+
+    expect(reimplementationJob(jobs, "cells")?.id).toBe("w1");
+    expect(reimplementationJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(matchingJob(jobs, "cells")?.id).toBe("m1");
+    expect(matchingJob([writing()], "cells")).toBeUndefined();
+    expect(matchingJob([matching({ subject: "dogs" })], "cells")).toBeUndefined();
+  });
+
+  it("are, when none is at work, the latest that is over", () => {
+    const jobs = [writing({ id: "new", state: "stopped" }), matching({ id: "checked", state: "succeeded" }), writing({ id: "old", state: "failed" })];
+
+    expect(lastReimplementationJob(jobs, "cells")?.id).toBe("new");
+    expect(lastReimplementationJob([writing()], "cells")).toBeUndefined();
+    expect(lastReimplementationJob([writing({ subject: "dogs", state: "failed" })], "cells")).toBeUndefined();
+    expect(lastMatchingJob(jobs, "cells")?.id).toBe("checked");
+    expect(lastMatchingJob([matching()], "cells")).toBeUndefined();
+    expect(lastMatchingJob([writing({ state: "failed" })], "cells")).toBeUndefined();
+  });
+
+  it("change the key that the page looks again by, and say nothing of another agent's or of one that is over", () => {
+    expect(readingKey([writing()], 0, "cells")).toBe("0||writing:w1");
+    expect(readingKey([matching()], 0, "cells")).toBe("0||matching:m1");
+    expect(readingKey([writing({ subject: "dogs" }), matching({ state: "succeeded" })], 0, "cells")).toBe("0|");
+    expect(readingKey([matching({ subject: "dogs" })], 0, "cells")).toBe("0|");
   });
 });
