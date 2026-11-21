@@ -78,6 +78,7 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}/tools/{name}  one tool: its wrapper, its signature, and each call that was made again
     DELETE /api/paperagents/{id}/tools  takes away the tools, so that they can be made again
     GET    /api/paperagents/library  each agent that has tools: version, environment, tools' hashes and tiers
+    GET    /api/paperagents/graph  how the agents' papers relate: shared datasets, methods, code, names, claims
     POST   /api/paperagents/{id}/export  starts making a package of the tools (an MCP server) and checking it
     GET    /api/paperagents/{id}/export  the agent as the library lists it, its package, and the job
     GET    /api/paperagents/{id}/export/package  the package, as a ZIP
@@ -230,6 +231,7 @@ from virtual_lab.server.mcp_catalog import MCP_CATALOG, describe_catalog
 from virtual_lab.server.mcp_seen import seen_record
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
 from virtual_lab.server.paperagent_given import view as given_view
+from virtual_lab.server.paperagent_graph import view as graph_view
 from virtual_lab.server.paperagents import MAX_DATASET_CHARS, MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
 from virtual_lab.server.papers import DEFAULT_FUNCTIONS, MAX_FUNCTIONS, MAX_MIN_PAPERS, MAX_TITLE_CHARS, Papers
 from virtual_lab.server.security import LOCAL_HOSTS, Guard, policy_of_file
@@ -1516,6 +1518,15 @@ def create_app(
     @api.get("/paperagents/library")
     def get_paperagent_library() -> dict[str, Any]:
         return paperagents.library()
+
+    @api.get("/paperagents/graph")
+    def get_paperagent_graph(
+        ids: list[str] | None = Query(None, max_length=100),
+        agent: str | None = Query(None, max_length=200),
+        kind: str | None = Query(None, max_length=40),
+        about: str | None = Query(None, max_length=300),
+    ) -> dict[str, Any]:
+        return graph_view(paperagents, ids, agent, kind, about)
 
     @api.get("/paperagents/{agent_id}")
     def get_paperagent(agent_id: str) -> dict[str, Any]:
