@@ -47,6 +47,11 @@ and everything else is a request and an answer.
     GET    /api/paperagents/{id}        one agent; PATCH says what it is called, where its code is, and whether it is
                                         given to the conversations that are made from now on; DELETE deletes it
     GET    /api/paperagents/{id}/given  the tools a conversation is given of it, each with its tier, and why not some
+    POST   /api/paperagents/{id}/make  starts making it in one go, as a job that stops where the person is to say
+                                        something: reads the paper within a limit, fetches and builds the code, runs
+                                        its tutorials, makes and checks its tools, and gives it to conversations
+    GET    /api/paperagents/{id}/make   how that stands: each step, what stands in the way, and the job
+    DELETE /api/paperagents/{id}/make   forgets how that went, so that it is as if it was not asked for
     POST   /api/paperagents/{id}/paper  the paper of an agent whose paper is a file, as the body, named by ?name=
     DELETE /api/paperagents/{id}/paper  takes that paper away
     POST   /api/paperagents/{id}/reading  starts reading the paper, within the limit on spending in the body, as a job
@@ -238,6 +243,7 @@ from virtual_lab.server.mcp_seen import seen_record
 from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOFTWARE_NAME_CHARS, Own
 from virtual_lab.server.paperagent_given import view as given_view
 from virtual_lab.server.paperagent_graph import view as graph_view
+from virtual_lab.server.paperagent_onego import OneGo
 from virtual_lab.server.paperagent_triage import MOST_GIVEN as MOST_TRIAGED
 from virtual_lab.server.paperagent_triage import Triages
 from virtual_lab.server.paperagents import MAX_DATASET_CHARS, MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
@@ -469,6 +475,20 @@ class PaperAgentReadBody(RequestModel):
 
     max_cost: float = Field(strict=True, ge=0, allow_inf_nan=False)
     retry_failed: StrictBool = False
+
+
+class PaperAgentMakeBody(RequestModel):
+    """What to make an agent of in one go: the most that reading the paper may spend, which is said unless the paper has
+    been read, where the code is and which branch, tag, or commit, whether to give the agent to the conversations that
+    are made from now on, whether to go on without the code, and whether to go on with the code as it was looked at.
+    What is left out is what it was when this was asked for before."""
+
+    max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
+    repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
+    ref: str | None = Field(None, max_length=400)
+    give: StrictBool | None = None
+    without_code: StrictBool | None = None
+    go_on: StrictBool | None = None
 
 
 class PaperAgentCardFieldsBody(RequestModel):
@@ -1055,6 +1075,7 @@ def create_app(
     )
     bakeoffs = Bakeoffs(paperagents)
     triages = Triages(paperagents)
+    onego = OneGo(paperagents)
     vault = keychain if keychain is not None else Keychain.missing()
     # How each key the server has was given it: "keychain", or "session" for one kept only until the server stops; a
     # key that is not here was in the environment the server was started with
@@ -1608,6 +1629,20 @@ def create_app(
         paperagents.delete(agent_id)
 
         return paperagents.describe()
+
+    @api.post("/paperagents/{agent_id}/make", status_code=202)
+    def make_paperagent_in_one_go(agent_id: str, body: PaperAgentMakeBody) -> dict[str, Any]:
+        return onego.start(agent_id, body.max_cost, body.repo, body.ref, body.give, body.without_code, body.go_on)
+
+    @api.get("/paperagents/{agent_id}/make")
+    def get_paperagent_make(agent_id: str) -> dict[str, Any]:
+        return onego.view(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/make")
+    def clear_paperagent_make(agent_id: str) -> dict[str, Any]:
+        onego.clear(agent_id)
+
+        return onego.view(agent_id)
 
     @api.post("/paperagents/{agent_id}/paper", status_code=201)
     async def upload_paperagent_paper(
