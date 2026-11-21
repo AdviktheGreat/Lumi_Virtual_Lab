@@ -8,6 +8,8 @@ import { Looked } from "@/components/looked";
 import { Notice, ProblemNotice } from "@/components/messages";
 import { PageSection } from "@/components/page-section";
 import { BakeoffFields } from "@/components/paper-bakeoff-fields";
+import { FindMethods } from "@/components/paper-bakeoff-find";
+import { AddMethod, MethodList, MethodsWork } from "@/components/paper-bakeoff-methods";
 import { useServer } from "@/components/server-provider";
 import { useSetupJobs } from "@/components/setup-provider";
 import {
@@ -224,12 +226,35 @@ function ChangeForm({ bakeoff, list, onChanged }: { bakeoff: Bakeoff; list: Bake
   );
 }
 
-function BakeoffBody({ bakeoff, list, onChanged }: { bakeoff: Bakeoff; list: BakeoffsList; onChanged: LookedAt<Bakeoff>["set"] }) {
+function BakeoffBody({
+  bakeoff,
+  list,
+  onChanged,
+  reload,
+}: {
+  bakeoff: Bakeoff;
+  list: BakeoffsList;
+  onChanged: LookedAt<Bakeoff>["set"];
+  reload: () => void;
+}) {
   return (
     <div className="flex flex-col gap-10">
       <BakeoffHeader bakeoff={bakeoff} />
       <PageSection title="What it is">
         <Summary bakeoff={bakeoff} />
+      </PageSection>
+      <PageSection
+        title="Methods"
+        intro="The methods of the literature that are in the running, each from its paper. Whether one is built, and what stood in the way if it is not, is said for each."
+      >
+        <MethodsWork bakeoff={bakeoff} />
+        <MethodList bakeoff={bakeoff} onChanged={onChanged} reload={reload} />
+      </PageSection>
+      <PageSection title="Find methods" intro="Find methods for what you want done in the literature, to add to those in the running.">
+        <FindMethods bakeoff={bakeoff} />
+      </PageSection>
+      <PageSection title="Add a method" intro="A method that is not found, or that you know of, is put in the running by its paper.">
+        <AddMethod bakeoff={bakeoff} onChanged={onChanged} />
       </PageSection>
       <PageSection title="Change it" intro="Only what you change is said again. The limit cannot be less than what has been spent.">
         {/* The form is made again when what the bake-off is changes, so that it shows what it is and not what was typed before */}
@@ -259,7 +284,7 @@ export function BakeoffPage({ id }: { id: string }) {
       <Looked state={bakeoff.value} label="Looking at the bake-off" failure="The bake-off could not be looked at." onRetry={bakeoff.reload}>
         {(value) => (
           <Looked state={list.value} label="Looking at what a bake-off takes" failure="What a bake-off takes could not be looked at." onRetry={list.reload}>
-            {(limits) => <BakeoffBody bakeoff={value} list={limits} onChanged={bakeoff.set} />}
+            {(limits) => <BakeoffBody bakeoff={value} list={limits} onChanged={bakeoff.set} reload={bakeoff.reload} />}
           </Looked>
         )}
       </Looked>

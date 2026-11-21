@@ -4,7 +4,10 @@ import type { PickedFolder } from "./skill-folder";
 import type {
   Attachment,
   Bakeoff,
+  BakeoffBuildBody,
   BakeoffChange,
+  BakeoffMethodChange,
+  BakeoffShortlistBody,
   BakeoffsList,
   ChatFiles,
   ChatInfo,
@@ -32,6 +35,7 @@ import type {
   NewChat,
   NewImport,
   NewBakeoff,
+  NewBakeoffMethod,
   NewPaperAgent,
   NewPaperRun,
   OpenRouterList,
@@ -530,6 +534,17 @@ export const api = {
   bakeoff: (id: string, signal?: AbortSignal) => request<Bakeoff>("GET", `/bakeoffs/${encodeURIComponent(id)}`, undefined, signal),
   changeBakeoff: (id: string, change: BakeoffChange) => request<Bakeoff>("PATCH", `/bakeoffs/${encodeURIComponent(id)}`, change),
   deleteBakeoff: (id: string) => request<BakeoffsList>("DELETE", `/bakeoffs/${encodeURIComponent(id)}`),
+  addBakeoffMethod: (id: string, method: NewBakeoffMethod) => request<Bakeoff>("POST", `/bakeoffs/${encodeURIComponent(id)}/candidates`, method),
+  changeBakeoffMethod: (id: string, method: string, change: BakeoffMethodChange) =>
+    request<Bakeoff>("PATCH", `/bakeoffs/${encodeURIComponent(id)}/candidates/${encodeURIComponent(method)}`, change),
+  removeBakeoffMethod: (id: string, method: string) =>
+    request<Bakeoff>("DELETE", `/bakeoffs/${encodeURIComponent(id)}/candidates/${encodeURIComponent(method)}`),
+  goOnWithBakeoffMethod: (id: string, method: string, key: string) =>
+    request<Bakeoff>("POST", `/bakeoffs/${encodeURIComponent(id)}/candidates/${encodeURIComponent(method)}/go-on`, { key }),
+  takeBackBakeoffMethod: (id: string, method: string) =>
+    request<Bakeoff>("DELETE", `/bakeoffs/${encodeURIComponent(id)}/candidates/${encodeURIComponent(method)}/go-on`),
+  shortlistBakeoff: (id: string, body: BakeoffShortlistBody) => request<Job>("POST", `/bakeoffs/${encodeURIComponent(id)}/shortlist`, body),
+  buildBakeoff: (id: string, body: BakeoffBuildBody) => request<Job>("POST", `/bakeoffs/${encodeURIComponent(id)}/build`, body),
   uploadAgentPaper,
   removeAgentPaper: (id: string) => request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/paper`),
   // What has been read of an agent's paper, starting to read it, which goes on as a job, taking away what was read, and

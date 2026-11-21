@@ -1,6 +1,6 @@
 import { characters, sentence, type Checked } from "./checks";
 import { tidy } from "./scientists";
-import type { MethodCard, ScopeCheck, ScopeData, ScopeOutcome, ScopeStatement } from "./types";
+import type { MethodCard, ScopeData, ScopeOutcome, ScopeStatement, ScopeView } from "./types";
 
 // How long what is said of the data may be, as the server counts it: words, and the words for what a size counts
 export const MAX_SCOPE_CHARS = 200;
@@ -85,7 +85,7 @@ export const OUTCOME_TEXT: Record<ScopeOutcome, ScopeOutcomeText> = {
 };
 
 // What the card says as a whole of what was put against it, with how many things were outside if any
-export function describeOutcome(check: ScopeCheck): ScopeOutcomeText {
+export function describeOutcome(check: Pick<ScopeView, "outcome" | "warnings">): ScopeOutcomeText {
   const base = OUTCOME_TEXT[check.outcome];
   if (check.outcome !== "outside") return base;
   const count = check.warnings.length;
@@ -117,7 +117,7 @@ export function describeStatementPlace(statement: ScopeStatement): string | null
 
 // How far the paper was read, in a sentence that is said where the card may lack what the paper says, or null where it was read
 // to its end
-export function describeReading(check: ScopeCheck): string | null {
+export function describeReading(check: Pick<ScopeView, "reading">): string | null {
   const { complete, chunks, read, failed } = check.reading;
   if (chunks === null) return "The paper has not been read, so the card is what a person put on it.";
   if (complete) return null;
