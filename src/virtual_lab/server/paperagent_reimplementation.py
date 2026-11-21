@@ -7,7 +7,7 @@ shown as of another that took its place.
 
 A function that was written has not been checked against anything of the paper. It has been read as Python and
 imported in a container with no network, which shows that it is a function that can be a tool, and nothing about what it
-gives. It is not given to a conversation, and is of no tier, until it has matched a number that the paper reports.
+gives. It is of no tier until it has matched a number that the paper reports (paperagent_matching.py).
 
 Nothing is run here but the importing of the file, by function_generator, in the executor that is given.
 """
@@ -40,6 +40,10 @@ from virtual_lab.utils import MeetingUsage, write_atomically
 DIR = "reimplementation"
 RECORD_FILE = "record.json"
 FUNCTION_FILE = "function.py"
+# What checking the function against the paper's numbers keeps, and the inputs that the person gave for it
+# (paperagent_matching.py), which are of the function and go with it
+CHECKS_FILE = "checks.json"
+INPUTS_FILE = "inputs.json"
 # What a record says of how it is kept, so that a later version can read what an earlier one wrote
 SCHEMA = 1
 # The most that is read of a record or of a function, which is far more than either is
@@ -151,7 +155,10 @@ def keep(directory: Path, record: dict[str, Any], source: str | None) -> None:
 
 
 def forget(directory: Path) -> None:
-    """Takes away the record and the function."""
+    """Takes away the record and the function, and what was kept of checking it and the inputs that were given for it,
+    which are of the function."""
+    for name in (CHECKS_FILE, INPUTS_FILE):
+        (directory / DIR / name).unlink(missing_ok=True)
     record_path(directory).unlink(missing_ok=True)
     function_path(directory).unlink(missing_ok=True)
 

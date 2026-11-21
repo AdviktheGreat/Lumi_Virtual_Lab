@@ -95,6 +95,7 @@ from virtual_lab.constants import (
 )
 from virtual_lab.environment import StoppedError
 from virtual_lab.execution import DockerExecutor, DockerUnavailableError
+from virtual_lab.function_checks import FunctionSourceError, read_function
 from virtual_lab.function_generator import check_function_name
 from virtual_lab.llm import ModelSource
 from virtual_lab.mcp_tools import MCPTools, connect_mcp
@@ -103,6 +104,7 @@ from virtual_lab.paperagents import (
     asking,
     diverging,
     linking,
+    matching,
     proposing,
     reimplementing,
     reporting,
@@ -130,6 +132,7 @@ from virtual_lab.server import paperagent_checkwork as checkwork
 from virtual_lab.server import paperagent_data as kept_data
 from virtual_lab.server import paperagent_divergence as kept_divergence
 from virtual_lab.server import paperagent_environment as kept_environment
+from virtual_lab.server import paperagent_matching as kept_matching
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_reference as kept_reference
 from virtual_lab.server import paperagent_reimplementation as kept_reimplementation
@@ -188,6 +191,9 @@ REPRODUCTION_JOB = "paperagent-reproduction"
 VARIANT_JOB = "paperagent-variant"
 # The job that writes a function from the words of the paper, which is not done to an agent while another job is
 REIMPLEMENTATION_JOB = "paperagent-reimplementation"
+# The job that checks that function against the numbers that the paper reports, which is not done to an agent while
+# another job is
+MATCHING_JOB = "paperagent-reimplementation-checks"
 # What is left free on the disk when data is fetched, and the longest that a note of which data stands in for what is
 DISK_RESERVE_BYTES = 1 << 30
 MAX_DATASET_CHARS = 200
@@ -728,12 +734,16 @@ class PaperAgents:
         """The job that is writing a function from an agent's paper, if one is."""
         return next((job for job in self.jobs.active(REIMPLEMENTATION_JOB) if job.subject == agent_id), None)
 
+    def matching_job(self, agent_id: str) -> Job | None:
+        """The job that is checking the function written from an agent's paper against its numbers, if one is."""
+        return next((job for job in self.jobs.active(MATCHING_JOB) if job.subject == agent_id), None)
+
     def check_idle(self, agent_id: str, reading: bool = True) -> None:
         """
         :param reading: Whether a reading of the paper is waited for as well as the fetching of the code.
         :raises ApiError: If the agent's paper is being read, its code fetched, its environment built, its data
             fetched, its tutorials run, its tools made, its tools checked, its claims tried, a variant of one made, or a
-            function written from its paper, which what is done to them must wait for.
+            function written from its paper or checked against it, which what is done to them must wait for.
         """
         job = (
             (self.running(agent_id) if reading else None)
@@ -746,6 +756,7 @@ class PaperAgents:
             or self.reproduction_job(agent_id)
             or self.variant_job(agent_id)
             or self.reimplementation_job(agent_id)
+            or self.matching_job(agent_id)
         )
         if job is not None:
             raise ApiError(409, "busy", f"{job.title} is still going. Stop that first", job=job.snapshot())
@@ -3020,6 +3031,7 @@ class PaperAgents:
             "choice_problem": trouble,
             "kept": kept_reimplementation.shown(directory, file["sha256"] if file is not None else None),
             "job": job.snapshot() if job is not None else None,
+            "checks": self.matching_view(agent_id, directory, agent),
             "limits": {
                 "most_chars": reimplementing.MAX_PASSAGES_CHARS,
                 "most_goal_chars": reimplementing.MAX_GOAL_CHARS,
@@ -3113,6 +3125,175 @@ class PaperAgents:
             directory, _ = self.lookup(agent_id)
             self.check_idle(agent_id)
             kept_reimplementation.forget(directory)
+
+    # Checking that function against the numbers that the paper reports
+
+    def matching_view(self, agent_id: str, directory: Path, agent: dict[str, Any]) -> dict[str, Any]:
+        """What there is of checking the function written from an agent's paper: the claims that would be tried, each
+        with its passage and the person's inputs, what was found when it was last checked, the tier and label that come
+        of that, and the job if one is going."""
+        file = agent["paper"].get("file")
+        record = kept_reimplementation.load(directory)
+        source = kept_reimplementation.source_of(directory, record) if record is not None else None
+        job = self.matching_job(agent_id)
+
+        return {
+            **kept_matching.shown(
+                directory,
+                record,
+                source,
+                file["sha256"] if file is not None else None,
+                kept_reading.number_claims(directory),
+                kept_reading.load_document(directory / PAPER_DIR),
+            ),
+            "job": job.snapshot() if job is not None else None,
+        }
+
+    def checked_function(self, directory: Path, agent: dict[str, Any]) -> tuple[dict[str, Any], str, str]:
+        """The function written from an agent's paper, as it is kept, if it can be checked: its record, its code, and
+        the hash of the paper's file.
+
+        :raises ApiError: If a function cannot be written from the paper, or none was, or it is not of the paper that is
+            there now, or its file was changed.
+        """
+        trouble = self.reimplementation_problem(directory, agent)
+        if trouble is not None:
+            raise ApiError(422, trouble[0], trouble[1])
+        file = agent["paper"]["file"]
+        record = kept_reimplementation.load(directory)
+        source = kept_reimplementation.source_of(directory, record) if record is not None else None
+        if record is None or source is None or not kept_reimplementation.is_current(record, file["sha256"]):
+            raise ApiError(
+                422,
+                "no_function",
+                "Write the function from the paper first, as it is what is checked. One that was written from another "
+                "file of the paper, or whose file was changed since, is not it",
+            )
+
+        return record, source, file["sha256"]
+
+    def start_matching(self, agent_id: str, max_cost: Any = None, ask: Any = True, minutes: Any = None) -> Job:
+        """Starts checking the function written from the paper against the numbers that the paper reports. For each
+        claim that is tried, the inputs are the person's if they gave some, and otherwise, if a model is to be asked,
+        what the model of the settings reads in the passage around the claim, which a program checks against the
+        passage. The function is called with them twice in a container with no network, and the claim's number is
+        looked for in what it gave. What was kept of an earlier checking is taken away when the job begins.
+
+        :param max_cost: The most that asking the model may spend, in USD, which must be said if it is to be asked.
+        :param ask: Whether the model is asked for the inputs of the claims that the person gave none for.
+        :param minutes: The most minutes that all of the calls may take together.
+        :raises ApiError: If there is no agent with this id, what is said is not fit, a key or a price is missing,
+            Docker is not running, there is no function to check, the paper reports no number to try, no model is to
+            be asked and the person gave no inputs, or the agent is being worked on.
+        """
+        self.lookup(agent_id)
+        ask = check_flag(ask, "Whether a model reads the inputs from the paper")
+        budget = check_budget(max_cost, "The most it may spend", required=ask)
+        minutes = check_count(
+            matching.DEFAULT_MINUTES if minutes is None else minutes,
+            "The most minutes the calls may take",
+            1,
+            matching.MAX_MINUTES,
+        )
+        usable, problem = building.ready(self.docker_command)
+        if not usable:
+            raise ApiError(422, "docker_missing", problem or "Docker is not running, and calling the function takes it")
+
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            record, source, paper_sha256 = self.checked_function(directory, agent)
+            claims = kept_reading.number_claims(directory)
+            document = kept_reading.load_document(directory / PAPER_DIR)
+            assert document is not None
+            usage = MeetingUsage()
+            asker = None
+            if ask:
+                assert budget is not None
+                model = self.usable_model()
+                try:
+                    asker = matching.InputsAsker(model, budget, self.chat_models, self.client, usage)
+                except ValueError as error:
+                    raise ApiError(422, "invalid", str(error)) from error
+            elif not kept_matching.given_inputs(directory, source, claims):
+                raise ApiError(
+                    422,
+                    "no_inputs",
+                    "Give the inputs of a claim, or let a model read them from the paper, as the function has nothing "
+                    "to be called with otherwise",
+                )
+
+            def work(job: Job) -> str:
+                return kept_matching.check_function(
+                    job,
+                    directory,
+                    record["name"],
+                    source,
+                    paper_sha256,
+                    claims,
+                    document,
+                    asker,
+                    usage,
+                    minutes,
+                    self.workspace.root,
+                    self.docker_command,
+                    agent_id,
+                )
+
+            try:
+                return self.jobs.start(
+                    MATCHING_JOB,
+                    agent_id,
+                    f"Checking the function against the paper: {agent['title']}",
+                    work,
+                    exclusive=f"paperagent:{agent_id}",
+                )
+            except JobConflictError as error:
+                raise ApiError(
+                    409, "busy", f"{error.job.title} is already running", job=error.job.snapshot()
+                ) from error
+
+    def clear_matching(self, agent_id: str) -> None:
+        """Takes away what was kept of checking the function against the paper, and keeps the inputs that the person
+        gave.
+
+        :raises ApiError: If there is no agent with this id, or something is being done to it.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            kept_matching.forget_checks(directory)
+
+    def give_inputs(self, agent_id: str, claim_id: Any, arguments: Any) -> None:
+        """Keeps the inputs that the person gives for a claim, which the function is called with for it in place of
+        what a model would read, or takes them away. They are checked against the function: by the names of its
+        parameters and their types, those without a default given, no bigger than a call may be, and none that holds
+        the claim's number, as a function that is given it could give it back. They are the person's to say, and are not
+        held to the paper's words.
+
+        :param arguments: The arguments by the names of the parameters, or None to take away those that were given.
+        :raises ApiError: If there is no agent with this id, no function to give inputs to, no claim of this id that is
+            tried, inputs that cannot be called with, or the agent is being worked on.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            self.check_idle(agent_id)
+            record, source, _ = self.checked_function(directory, agent)
+            claims = kept_reading.number_claims(directory)
+            found = next(
+                ((claim, number) for claim, number in linking.usable_numbers(claims) if claim["id"] == claim_id), None
+            )
+            if found is None:
+                raise not_found("claim of the paper that is a number that can be tried, with that id")
+            if arguments is not None:
+                try:
+                    reading = read_function(source, record["name"])
+                except FunctionSourceError as error:
+                    raise ApiError(422, "no_function", "The function cannot be read as a tool") from error
+                why = matching.check_arguments(arguments, reading, found[1], None)
+                if why is not None:
+                    raise ApiError(422, "invalid", why)
+            kept_matching.keep_inputs(directory, source, claims, found[0]["id"], arguments)
 
     def divergence(self, agent_id: str) -> dict[str, Any]:
         """Where the tutorials of an agent first part from the paper for each claim that was not reproduced, or only
