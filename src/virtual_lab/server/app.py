@@ -92,11 +92,11 @@ and everything else is a request and an answer.
     DELETE /api/paperagents/{id}/variants  takes away the variants
     GET    /api/paperagents/{id}/tables/{kind}  the claims, or the variants, as a table to open in a spreadsheet
     GET    /api/bakeoffs                the bake-offs, and what a page needs to make one
-    POST   /api/bakeoffs                a bake-off: a task, which of the person's data it is on and what that is, and
-                                         its spending limit
+    POST   /api/bakeoffs                a bake-off: a task, which of the person's data it is on and what that is, where
+                                         the right answers are if they have them, and its spending limit
     GET    /api/bakeoffs/{id}           one, with its methods, what is left of its limit, and what it was found by
-    PATCH  /api/bakeoffs/{id}           says again what it is called, what it is for, which data, what that is, or the
-                                         limit
+    PATCH  /api/bakeoffs/{id}           says again what it is called, what it is for, which data, what that is, where
+                                         the right answers are, or the limit
     DELETE /api/bakeoffs/{id}           takes it away, leaving the PaperAgents that were made for its methods
     POST   /api/bakeoffs/{id}/candidates  puts a method in the running, by its paper
     PATCH  /api/bakeoffs/{id}/candidates/{method}  says again what a method is called and where its code is
@@ -191,6 +191,7 @@ from virtual_lab.export_notebook import chat_notebook, notebook_text
 from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.openrouter import Catalog
 from virtual_lab.paperagents.data import MAX_NAME_CHARS as MAX_DATA_FILE_CHARS
+from virtual_lab.paperagents.labelling import MAX_COLUMN_CHARS
 from virtual_lab.server import bakeoff_running, paperagent_bakeoff
 from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.bakeoffs import Bakeoffs
@@ -608,31 +609,45 @@ class PaperAgentChangeBody(RequestModel):
     given: StrictBool | None = None
 
 
-def described_of(body: PaperAgentScopeBody | None) -> dict[str, Any] | None:
-    """What a request says the data is: none if it did not say, and nothing if it said that there is nothing."""
+class BakeoffLabelsBody(RequestModel):
+    """Where the right answers are: the file on the Data page that has them (a .csv or .tsv), the column that has the
+    answer for each row, and, if the rows are not in the order of the data, the column that says what each is the
+    answer to. Saying none of it says that there are none."""
+
+    own: str | None = Field(None, max_length=1000)
+    column: str | None = Field(None, max_length=MAX_COLUMN_CHARS * 4)
+    id_column: str | None = Field(None, max_length=MAX_COLUMN_CHARS * 4)
+
+
+def described_of(body: PaperAgentScopeBody | BakeoffLabelsBody | None) -> dict[str, Any] | None:
+    """What a request says the data is, or where the right answers are: none if it did not say, and nothing if it said
+    that there is nothing."""
     return body.model_dump(exclude_none=True) if body is not None else None
 
 
 class BakeoffBody(RequestModel):
     """A bake-off: what the person wants done, which of their own data it is to be done on if that is known and what
-    that data is if they say, and the most that the whole of it may spend, in USD, which is always said."""
+    that data is if they say, where the right answers are if they have them, and the most that the whole of it may
+    spend, in USD, which is always said."""
 
     task: str = Field(max_length=paperagent_bakeoff.MAX_TASK_CHARS * 4)
     title: str | None = Field(None, max_length=paperagent_bakeoff.MAX_TITLE_CHARS * 4)
     data: str | None = Field(None, max_length=1000)
     described: PaperAgentScopeBody | None = None
+    labels: BakeoffLabelsBody | None = None
     limit: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
 
 
 class BakeoffChangeBody(RequestModel):
     """What to say again of a bake-off: any of these, and what is not given is left as it is. Empty data takes the data
-    away, saying nothing of what it is (an empty object) takes that away, and the limit is never less than what has
-    been spent."""
+    away, saying nothing of what it is or of where the right answers are (an empty object) takes that away, and the
+    limit is never less than what has been spent."""
 
     task: str | None = Field(None, max_length=paperagent_bakeoff.MAX_TASK_CHARS * 4)
     title: str | None = Field(None, max_length=paperagent_bakeoff.MAX_TITLE_CHARS * 4)
     data: str | None = Field(None, max_length=1000)
     described: PaperAgentScopeBody | None = None
+    labels: BakeoffLabelsBody | None = None
     limit: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
 
 
@@ -1678,7 +1693,14 @@ def create_app(
     @api.post("/bakeoffs", status_code=201)
     def make_bakeoff(body: BakeoffBody) -> dict[str, Any]:
         return bakeoffs.view(
-            bakeoffs.create(body.title, body.task, body.data, body.limit, described_of(body.described))
+            bakeoffs.create(
+                body.title,
+                body.task,
+                body.data,
+                body.limit,
+                described_of(body.described),
+                described_of(body.labels),
+            )
         )
 
     @api.get("/bakeoffs/{bakeoff_id}")
@@ -1687,7 +1709,15 @@ def create_app(
 
     @api.patch("/bakeoffs/{bakeoff_id}")
     def change_bakeoff(bakeoff_id: str, body: BakeoffChangeBody) -> dict[str, Any]:
-        bakeoffs.change(bakeoff_id, body.title, body.task, body.data, body.limit, described_of(body.described))
+        bakeoffs.change(
+            bakeoff_id,
+            body.title,
+            body.task,
+            body.data,
+            body.limit,
+            described_of(body.described),
+            described_of(body.labels),
+        )
 
         return bakeoffs.view(bakeoff_id)
 

@@ -32,6 +32,10 @@ each method's paper is worked out from it and the card as they are, each time, a
 person's saying to go on with a method whose card the data is outside of, with the data and the card's words that they
 were shown, so that it is not taken for going on with anything else.
 
+The person may also say where the right answers are: a table of theirs on the Data page, the column of it that has the
+answer for each row, and, if the rows are not in the order of the data, the column that says what each is the answer
+to. Only those names are kept, and not the table, which stays where the Data page has it and is read from there.
+
 A file that is not in the shape that a bake-off is kept in is not used, as it may not be if it was edited.
 """
 
@@ -41,7 +45,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from virtual_lab.paperagents import scope
+from virtual_lab.paperagents import labelling, scope
 from virtual_lab.paperagents.stock import matches
 from virtual_lab.provenance import utc_timestamp
 from virtual_lab.server.errors import ApiError
@@ -51,7 +55,7 @@ from virtual_lab.utils import MeetingUsage, compute_token_cost, write_atomically
 
 RECORD_FILE = "bakeoff.json"
 # What a record says of how it is kept, so that a later version can read what an earlier one wrote
-SCHEMA = 3
+SCHEMA = 4
 MAX_RECORD_BYTES = 2 << 20
 MAX_BAKEOFFS = 50
 MAX_CANDIDATES = 12
@@ -147,6 +151,7 @@ RECORD = {
     "task": str,
     "data": ({"own": str}, None),
     "described": (DESCRIBED, None),
+    "labels": ({"own": str, "column": str, "id_column": (str, None)}, None),
     "limit": NUMBER,
     "spent": NUMBER,
     "cost_known": bool,
@@ -218,6 +223,24 @@ def is_described(described: dict[str, Any]) -> bool:
     )
 
 
+def is_column(name: str) -> bool:
+    """Whether a name of a column can be looked for in a header, which is read without the space round its names."""
+    return name == name.strip() and 0 < len(name) <= labelling.MAX_COLUMN_CHARS and not has_control_character(name)
+
+
+def is_labels(labels: dict[str, Any]) -> bool:
+    """Whether what is kept of where the right answers are is that: a piece of data by a name, a column of the right
+    answers, and, if there is one, a different column that says what each is the answer to."""
+    return (
+        0 < len(labels["own"])
+        and not has_control_character(labels["own"])
+        and is_column(labels["column"])
+        and (
+            labels["id_column"] is None or (is_column(labels["id_column"]) and labels["id_column"] != labels["column"])
+        )
+    )
+
+
 def is_went_on(went_on: dict[str, Any]) -> bool:
     return KEY.fullmatch(went_on["key"]) is not None and not has_control_character(went_on["at"])
 
@@ -266,6 +289,7 @@ def is_record(value: Any) -> bool:
         and is_amount(value["limit"])
         and is_amount(value["spent"])
         and (value["described"] is None or is_described(value["described"]))
+        and (value["labels"] is None or is_labels(value["labels"]))
         and len(value["candidates"]) <= MAX_CANDIDATES
         and len(set(ids)) == len(ids)
         and all(is_candidate(candidate) for candidate in value["candidates"])
@@ -275,11 +299,12 @@ def is_record(value: Any) -> bool:
 
 def upgraded(value: Any) -> Any:
     """What an earlier version kept, as this one keeps it: the first, which had no building, has none said of any
-    candidate, and the first two, which had no saying what the data is, have none and no one gone on with. What is not
-    a record of one of those versions is as it was."""
+    candidate, the first two, which had no saying what the data is, have none and no one gone on with, and the first
+    three, which had no saying where the right answers are, have none. What is not a record of one of those versions
+    is as it was."""
     if (
         not isinstance(value, dict)
-        or value.get("schema") not in (1, 2)
+        or value.get("schema") not in (1, 2, 3)
         or not isinstance(value.get("candidates"), list)
     ):
         return value
@@ -289,9 +314,15 @@ def upgraded(value: Any) -> Any:
         if not isinstance(each, dict):
             return each
 
-        return {**({"build": None} if earlier == 1 else {}), **each, "went_on": None}
+        return {**({"build": None} if earlier == 1 else {}), **each, **({"went_on": None} if earlier <= 2 else {})}
 
-    return {**value, "schema": SCHEMA, "described": None, "candidates": [made(each) for each in value["candidates"]]}
+    return {
+        **value,
+        "schema": SCHEMA,
+        **({"described": None} if earlier <= 2 else {}),
+        "labels": None,
+        "candidates": [made(each) for each in value["candidates"]],
+    }
 
 
 def load(directory: Path) -> dict[str, Any] | None:
@@ -312,7 +343,12 @@ def keep(directory: Path, record: dict[str, Any]) -> None:
 
 
 def new_record(
-    title: str, task: str, data: str | None, limit: float, described: dict[str, Any] | None = None
+    title: str,
+    task: str,
+    data: str | None,
+    limit: float,
+    described: dict[str, Any] | None = None,
+    labels: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A bake-off with nothing spent and nobody in the running."""
     return {
@@ -322,6 +358,7 @@ def new_record(
         "task": task,
         "data": {"own": data} if data is not None else None,
         "described": described,
+        "labels": labels,
         "limit": limit,
         "spent": 0.0,
         "cost_known": True,
