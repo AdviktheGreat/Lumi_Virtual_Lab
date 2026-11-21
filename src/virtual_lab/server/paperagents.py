@@ -922,6 +922,9 @@ class PaperAgents:
         wanted = check_flag(given, "given") if given is not None else None
         with self._lock:
             directory, agent = self.lookup(agent_id)
+            if wanted is not None and (going := self.going(agent_id)) is not None:
+                # Whether it is given is said by what is asked of the making of it, while it is being made in one go
+                raise ApiError(409, "busy", f"{going.title} is still going. Stop that first", job=going.snapshot())
             if title is not None:
                 agent = {**agent, "title": check_title(title)}
             if wanted is not None:

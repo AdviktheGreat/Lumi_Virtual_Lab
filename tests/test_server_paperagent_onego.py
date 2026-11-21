@@ -376,6 +376,40 @@ class TestMakingAnAgent:
         assert view["state"] == "done" and "start_checks" in started
         assert kept_checks.STALE not in tools_checked(agents, agent_id)
 
+    def test_checks_that_do_not_all_run_are_failed_and_gone_on_from(
+        self,
+        onego: OneGo,
+        agents: PaperAgents,
+        jobs: Jobs,
+        stack: Remotes,
+        model_client: FakeClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        agent_id = agent_of(agents)
+        read_by(model_client, FIRST_CODE)
+        real = agents.start_checks
+        monkeypatch.setattr(
+            agents,
+            "start_checks",
+            lambda *arguments, **options: jobs.start(
+                "something-else", agent_id, "Checking the tools", lambda job: "The time for checks ran out"
+            ),
+        )
+
+        view = go(onego, jobs, agent_id)
+
+        assert view["state"] == "failed" and (view["stuck"]["step"], view["stuck"]["kind"]) == ("checks", "failed")
+        assert (
+            "Not every check ran" in view["stuck"]["reason"]
+            and "The time for checks ran out" in view["stuck"]["reason"]
+        )
+        assert kept_checks.NOT_RUN in tools_checked(agents, agent_id)
+
+        monkeypatch.setattr(agents, "start_checks", real)
+        again = go(onego, jobs, agent_id, max_cost=None)
+
+        assert again["state"] == "done" and kept_checks.NOT_RUN not in tools_checked(agents, agent_id)
+
     def test_an_agent_is_not_given_to_conversations_when_that_is_not_asked_for(
         self,
         onego: OneGo,
@@ -1142,6 +1176,22 @@ class TestWhatIsAskedFor:
         read_by(model_client, FIRST_CODE)
         assert go(onego, jobs, agent_id, repo=FIRST_CODE)["state"] == "done"
 
+    def test_code_that_was_fetched_at_one_ref_is_not_made_of_another(
+        self, onego: OneGo, agents: PaperAgents, jobs: Jobs, stack: Remotes, model_client: FakeClient
+    ) -> None:
+        agent_id = agent_of(agents)
+        read_by(model_client, FIRST_CODE)
+        assert go(onego, jobs, agent_id)["state"] == "done"
+
+        error = refused(onego.start, agent_id, 1, None, "v2")
+
+        assert (error.status, error.code) == (409, "code_fetched")
+        assert COMMIT[:12] in error.message and "Take it away" in error.message
+        assert onego.view(agent_id)["state"] == "done"
+
+        # What it was fetched at, said as its commit, is not another, and neither is nothing said
+        assert go(onego, jobs, agent_id, max_cost=None, ref=COMMIT)["state"] == "done"
+
     def test_an_agent_that_another_server_hosts_has_nothing_here_to_make_it_of(
         self, onego: OneGo, agents: PaperAgents, stack: Remotes
     ) -> None:
@@ -1268,6 +1318,74 @@ class TestWhileItGoes:
         finally:
             docker.gate.set()
             settle(jobs, agent_id)
+
+    def test_whether_it_is_given_is_not_changed_from_outside_while_it_is_made(
+        self, onego: OneGo, agents: PaperAgents, jobs: Jobs, stack: Remotes, docker: Docker, model_client: FakeClient
+    ) -> None:
+        agent_id = agent_of(agents)
+        read_by(model_client, FIRST_CODE)
+        docker.gate = threading.Event()
+        onego.start(agent_id, 1)
+        assert docker.started.wait(10)
+        try:
+            error = refused(agents.change, agent_id, given=False)
+            assert (error.status, error.code) == (409, "busy") and error.details["job"]["kind"] == ONEGO_JOB
+            agents.change(agent_id, title="Renamed")
+        finally:
+            docker.gate.set()
+            settle(jobs, agent_id)
+
+        assert onego.view(agent_id)["state"] == "done" and is_given(agents.lookup(agent_id)[1])
+        agents.change(agent_id, given=False)
+        assert not is_given(agents.lookup(agent_id)[1])
+
+    def test_it_cannot_be_started_as_the_agent_is_deleted(
+        self,
+        onego: OneGo,
+        agents: PaperAgents,
+        jobs: Jobs,
+        stack: Remotes,
+        docker: Docker,
+        model_client: FakeClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        agent_id = agent_of(agents)
+        read_by(model_client, FIRST_CODE)
+        real = jobs.start
+        entered = threading.Event()
+        resume = threading.Event()
+
+        def paused(kind: str, *arguments: Any, **options: Any) -> Job:
+            if kind == ONEGO_JOB:
+                entered.set()
+                resume.wait(10)
+
+            return real(kind, *arguments, **options)
+
+        monkeypatch.setattr(jobs, "start", paused)
+        outcome: list[Any] = []
+
+        def begin() -> None:
+            try:
+                outcome.append(onego.start(agent_id, 1))
+            except ApiError as error:
+                outcome.append(error)
+
+        starter = threading.Thread(target=begin)
+        starter.start()
+        assert entered.wait(10)
+        deletions: list[ApiError] = []
+        deleter = threading.Thread(target=lambda: deletions.append(refused(agents.delete, agent_id)))
+        deleter.start()
+        time.sleep(0.2)
+        resume.set()
+        starter.join(10)
+        deleter.join(10)
+        settle(jobs, agent_id)
+
+        assert isinstance(outcome[0], dict) and onego.view(agent_id)["state"] == "done"
+        assert [(error.status, error.code) for error in deletions] == [(409, "busy")]
+        assert agents.lookup(agent_id)[1]["title"] == "CellMapper"
 
     def test_a_step_that_someone_else_started_is_waited_for_and_not_failed_by(
         self,
@@ -1475,6 +1593,57 @@ class TestWhatIsKept:
             {"state": "finished"},
             {"started_at": 3},
             {"settings": []},
+            {
+                "settings": {
+                    "max_cost": 1,
+                    "repo": None,
+                    "ref": None,
+                    "give": True,
+                    "without_code": "false",
+                    "go_on": None,
+                }
+            },
+            {
+                "settings": {
+                    "max_cost": "1",
+                    "repo": None,
+                    "ref": None,
+                    "give": True,
+                    "without_code": False,
+                    "go_on": None,
+                }
+            },
+            {
+                "settings": {
+                    "max_cost": None,
+                    "repo": None,
+                    "ref": None,
+                    "give": "yes",
+                    "without_code": False,
+                    "go_on": None,
+                }
+            },
+            {"settings": {"max_cost": None, "repo": None, "ref": None, "give": True, "without_code": False}},
+            {
+                "settings": {
+                    "max_cost": None,
+                    "repo": 7,
+                    "ref": None,
+                    "give": True,
+                    "without_code": False,
+                    "go_on": None,
+                }
+            },
+            {
+                "settings": {
+                    "max_cost": float("nan"),
+                    "repo": None,
+                    "ref": None,
+                    "give": True,
+                    "without_code": False,
+                    "go_on": None,
+                }
+            },
             {"steps": {}},
             {"steps": [{"step": "nothing", "state": "done", "note": None}]},
             {"steps": [{"step": "reading", "state": "ended", "note": None}]},

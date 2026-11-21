@@ -36,6 +36,7 @@ it is kept in is not used, as it may not be if it was edited.
 """
 
 import json
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -144,6 +145,21 @@ def is_step(value: Any) -> bool:
     )
 
 
+def is_settings(value: Any) -> bool:
+    """Whether what a record says was asked is in the shape that asking keeps it, and nothing else: a damaged record is
+    not gone on from, as one whose settings say what was never asked would do what was never asked."""
+    if not isinstance(value, dict) or set(value) != {"max_cost", "repo", "ref", "give", "without_code", "go_on"}:
+        return False
+    cost = value["max_cost"]
+
+    return (
+        (cost is None or (isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost)))
+        and all(value[name] is None or isinstance(value[name], str) for name in ("repo", "ref", "go_on"))
+        and isinstance(value["give"], bool)
+        and isinstance(value["without_code"], bool)
+    )
+
+
 def is_record(value: Any) -> bool:
     """Whether what a file holds is a record of making an agent in one go: when it began, how it stands, what was asked,
     and how each step went."""
@@ -152,7 +168,7 @@ def is_record(value: Any) -> bool:
         and value.get("schema") == SCHEMA
         and value.get("state") in STATES
         and isinstance(value.get("started_at"), str)
-        and isinstance(value.get("settings"), dict)
+        and is_settings(value.get("settings"))
         and isinstance(value.get("steps"), list)
         and all(is_step(step) for step in value["steps"])
         and (value.get("stuck") is None or isinstance(value["stuck"], dict))
@@ -323,9 +339,28 @@ class OneGo:
             else:
                 given["go_on"] = None
 
-        with self._lock:
+        with self.paperagents._lock, self._lock:
+            # With the lock that deleting an agent takes, from the last look at it to the job being there to be seen,
+            # so that one cannot be deleted between them, which would leave its directory made again with only this
+            directory, agent = self.paperagents.lookup(agent_id)
             earlier = self.load(directory)
             settings = self.settings_of(earlier["settings"] if earlier is not None else None, given)
+            if (
+                intake is not None
+                and settings["ref"] is not None
+                and settings["ref"]
+                not in (
+                    intake.get("ref"),
+                    intake["commit"],
+                )
+            ):
+                raise ApiError(
+                    409,
+                    "code_fetched",
+                    f"The code of this agent has been fetched at {intake['commit'][:12]}"
+                    + (f" ({intake['ref']})" if intake.get("ref") is not None else "")
+                    + ". Take it away on the page of its code first, to fetch another branch, tag, or commit",
+                )
             if steps_of(agent)["reading"] != "done":
                 if settings["max_cost"] is None:
                     raise ApiError(422, "invalid", "Say the most that reading the paper may spend, in dollars")
@@ -605,6 +640,15 @@ class OneGo:
         if self.checked(agent_id):
             return "done", "The tools had been checked."
         child = self.run(job, "checks", lambda: self.paperagents.start_checks(agent_id))
+        if not self.checked(agent_id):
+            raise Stuck(
+                "failed",
+                "checks",
+                "failed",
+                "Not every check ran"
+                + (f": {child.message}" if child is not None and child.message else "")
+                + ". Ask again to carry on with those that are left.",
+            )
 
         return "done", child.message if child is not None else "The tools had been checked."
 
