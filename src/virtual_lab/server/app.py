@@ -97,6 +97,8 @@ and everything else is a request and an answer.
     POST   /api/paperagents/{id}/reproduction  starts trying the claims against what the tutorials gave, within a limit
     GET    /api/paperagents/{id}/reproduction  each claim: reproduced, partly, not, or not attempted, and against what
     DELETE /api/paperagents/{id}/reproduction  takes away what was kept of the trying, so that it can be done again
+    GET    /api/paperagents/{id}/author  what a reader of the paper would hit, a reproducibility card, and a statement
+    GET    /api/paperagents/{id}/author/package  those, the exact versions, and the tools, as a ZIP
     GET    /api/paperagents/{id}/divergence  for each claim that did not reproduce, where its tutorial first parts from
                                          the paper and what differs that was found, with nothing run
     POST   /api/paperagents/{id}/variants  starts making a variant of a claim: its call made again, arguments changed
@@ -206,7 +208,7 @@ from virtual_lab.mcp_presets import MCP_PRESETS
 from virtual_lab.openrouter import Catalog
 from virtual_lab.paperagents.data import MAX_NAME_CHARS as MAX_DATA_FILE_CHARS
 from virtual_lab.paperagents.labelling import MAX_COLUMN_CHARS
-from virtual_lab.server import bakeoff_running, paperagent_bakeoff
+from virtual_lab.server import bakeoff_running, paperagent_authoring, paperagent_bakeoff
 from virtual_lab.server.asking import not_waiting
 from virtual_lab.server.bakeoffs import Bakeoffs
 from virtual_lab.server.config import describe_models, library, public_settings, update_settings
@@ -1862,6 +1864,16 @@ def create_app(
         paperagents.clear_variants(agent_id)
 
         return paperagents.variants(agent_id)
+
+    @api.get("/paperagents/{agent_id}/author")
+    def get_paperagent_author(agent_id: str) -> dict[str, Any]:
+        return paperagent_authoring.view(paperagents, agent_id)
+
+    @api.get("/paperagents/{agent_id}/author/package")
+    def download_paperagent_author(agent_id: str) -> Response:
+        name, content = paperagent_authoring.package(paperagents, agent_id)
+
+        return Response(content, media_type="application/zip", headers=download_headers(name, "zip"))
 
     @api.get("/paperagents/{agent_id}/tables/{kind}")
     def get_paperagent_table(agent_id: str, kind: str) -> Response:
