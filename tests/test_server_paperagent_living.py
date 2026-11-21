@@ -328,6 +328,41 @@ class TestWhatIsFound:
         assert found["status"] == "unchecked" and found["tools"] == []
         assert "a file is not what it says" in found["tools_message"]
 
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            (lambda folder, package: ("timed_out", None, ""), "was stopped after"),
+            (lambda folder, package: ("too_big", None, ""), "for writing more than"),
+            (lambda folder, package: ("done", 1, "Traceback: boom"), "without a report"),
+        ],
+    )
+    def test_a_check_that_gave_no_report_is_unchecked_and_is_not_every_tool_failing(
+        self, agents: PaperAgents, made: str, source: Source, packages: Packages, play: Any, said: str
+    ) -> None:
+        packages.play = play
+
+        look(agents, made)
+
+        found = found_of(agents, made)
+        assert found["status"] == "unchecked" and found["tools"] == []
+        assert found["tools_message"].startswith("The check did not report") and said in found["tools_message"]
+
+    def test_a_report_that_is_of_another_package_is_not_taken_as_the_tools_giving_again_what_they_did(
+        self, agents: PaperAgents, made: str, source: Source, packages: Packages
+    ) -> None:
+        def play(folder: Path, package: Path) -> tuple[str, int | None, str]:
+            ended, code, text = library_tests.run_check(folder, package)
+            path = folder / library.REPORT_FILE
+            path.write_text(json.dumps({**json.loads(path.read_text()), "name": "another"}))
+            return ended, code, text
+
+        packages.play = play
+
+        look(agents, made)
+
+        found = found_of(agents, made)
+        assert found["status"] == "unchecked" and "another package" in found["tools_message"]
+
     def test_a_source_that_is_gone_makes_it_degraded_though_its_tools_work(
         self, agents: PaperAgents, made: str, source: Source, packages: Packages
     ) -> None:
@@ -372,6 +407,17 @@ class TestWhatIsFound:
         assert "Docker is not running" in found["tools_message"] and packages.runs == []
         assert agents.health(made)["docker"] == {"ready": False, "message": "Docker is not running."}
 
+    def test_docker_that_does_not_answer_about_the_image_is_not_an_image_that_is_gone(
+        self, agents: PaperAgents, made: str, source: Source, packages: Packages, docker: Docker
+    ) -> None:
+        docker.unanswering = True
+
+        look(agents, made)
+
+        found = found_of(agents, made)
+        assert found["status"] == "unchecked" and found["image"] == {"present": None}
+        assert packages.runs == [] and "could not be asked" in found["tools_message"]
+
     def test_each_look_is_added_to_how_the_agent_has_been_and_the_last_ten_are_kept(
         self, agents: PaperAgents, made: str, source: Source, packages: Packages
     ) -> None:
@@ -394,13 +440,32 @@ class TestWhatIsFound:
         _, agent = agents.lookup(made)
         intake, built, _ = agents.library_pieces(directory, agent)
 
-        assert living.health_view(record, intake, built) == record
-        assert living.health_view(record, {**intake, "commit": NEWER}, built) is None
-        assert (
-            living.health_view(record, intake, {**built, "image": {**built["image"], "id": "sha256:" + "f" * 64}})
-            is None
-        )
-        assert living.health_view(None, intake, built) is None and living.health_view(record, None, None) is None
+        _, _, kept = agents.library_pieces(directory, agent)
+
+        assert living.health_view(record, intake, built, kept) == record
+        assert living.health_view(record, {**intake, "commit": NEWER}, built, kept) is None
+        other_image = {**built, "image": {**built["image"], "id": "sha256:" + "f" * 64}}
+        assert living.health_view(record, intake, other_image, kept) is None
+        assert living.health_view(record, intake, built, {**kept, "started_at": "2001-01-01T00:00:00+00:00"}) is None
+        assert living.health_view(record, intake, built, {**kept, "finished_at": "2001-01-01T00:00:00+00:00"}) is None
+        assert living.health_view(None, intake, built, kept) is None
+        assert living.health_view(record, None, None, None) is None
+        assert living.health_view(record, intake, built, None) is None
+
+    def test_what_was_found_is_not_shown_for_tools_that_were_made_again(
+        self, agents: PaperAgents, made: str, source: Source, packages: Packages, docker: Docker
+    ) -> None:
+        look(agents, made)
+        assert agents.health(made)["health"] is not None
+        directory = agents.workspace.paperagents_dir / made
+        record = living.load_health(directory)
+
+        agents.clear_tools(made)
+        tools.make(agents, made)
+
+        assert agents.health(made)["health"] is None
+        assert agents.library()["agents"][0]["health"]["status"] == "unchecked"
+        assert living.load_health(directory) == record
 
 
 class TestPins:
@@ -479,6 +544,29 @@ class TestANewerVersion:
         assert changed["path"] == "cellmapper/mapping.py" and changed["change"] == "changed"
         assert "-    return counts" in changed["diff"] and "+    return list(counts)" in changed["diff"]
         assert "stay as they are" in shown["pinned"] and shown["version"]["commit"] == COMMIT
+
+    def test_a_look_that_is_stopped_while_the_newer_version_is_compared_keeps_no_proposal(
+        self,
+        agents: PaperAgents,
+        made: str,
+        moved: Newer,
+        packages: Packages,
+        workspace: Workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        compare = watching.diff_trees
+
+        def stopping(old: Path, new: Path, should_stop: Any = None) -> Any:
+            agents.jobs.active(HEALTH_JOB)[0].request_stop()
+            return compare(old, new, should_stop)
+
+        monkeypatch.setattr(watching, "diff_trees", stopping)
+
+        job = look(agents, made)
+
+        assert job.state == "stopped"
+        directory = directory_of(workspace, made)
+        assert living.load_update(directory) is None and living.load_health(directory) is None
 
     def test_the_agent_is_still_as_healthy_as_its_kept_version_is_and_a_newer_version_is_not_a_state(
         self, agents: PaperAgents, made: str, moved: Newer, pins: Pins, packages: Packages

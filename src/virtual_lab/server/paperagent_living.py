@@ -54,6 +54,7 @@ HEALTH = {
     "reasons": [str],
     "commit": str,
     "image_id": str,
+    "tools_made_at": str,
     "source": {"state": str, "commit": (str, None), "message": str, "update_error": (str, None)},
     "image": {"present": (bool, None)},
     "dependencies": (
@@ -76,8 +77,8 @@ WATCH = {"schema": int, "every_hours": int, "set_at": str, "last_started_at": (s
 FILE = {
     "path": str,
     "change": str,
-    "added": int,
-    "removed": int,
+    "added": (int, None),
+    "removed": (int, None),
     "diff": (str, None),
     "cut": bool,
     "binary": bool,
@@ -142,14 +143,28 @@ def load_update(directory: Path) -> dict[str, Any] | None:
     return read(directory, UPDATE_FILE, UPDATE)
 
 
+def made_at(kept: dict[str, Any]) -> str:
+    """When the tools that are kept were made, which says which tools they are: making them again makes other ones."""
+    return f"{kept['started_at']} {kept['finished_at']}"
+
+
 def health_view(
-    record: dict[str, Any] | None, intake: dict[str, Any] | None, built: dict[str, Any] | None
+    record: dict[str, Any] | None,
+    intake: dict[str, Any] | None,
+    built: dict[str, Any] | None,
+    kept: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """What the last check found, if it was of the commit and the image that are kept now."""
-    if record is None or intake is None or built is None:
+    """What the last check found, if it was of the commit, the image, and the tools that are kept now."""
+    if record is None or intake is None or built is None or kept is None:
         return None
 
-    return record if record["commit"] == intake["commit"] and record["image_id"] == built["image"]["id"] else None
+    return (
+        record
+        if record["commit"] == intake["commit"]
+        and record["image_id"] == built["image"]["id"]
+        and record["tools_made_at"] == made_at(kept)
+        else None
+    )
 
 
 def update_view(record: dict[str, Any] | None, intake: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -206,7 +221,9 @@ def propose_update(
             return None
         if job.stop.is_set():
             raise StoppedError("Stopped.")
-        changes = watching.diff_trees(kept_repository.repo_path(directory), fetched)
+        changes = watching.diff_trees(kept_repository.repo_path(directory), fetched, job.stop.is_set)
+        if job.stop.is_set():
+            raise StoppedError("Stopped.")
     paths = changes.pop("paths")
     record = {
         "proposed_at": utc_timestamp(),
@@ -326,7 +343,11 @@ def check_health(
             with kept_library.checked_package(
                 job, directory, scratch_root, agent_id, agent, intake, built, kept, data, docker_command
             ) as checked:
-                if checked.report is not None and checked.report["problems"]:
+                if checked.report is None:
+                    ran_message = f"The check did not report: {checked.reason or 'it gave no reason'}"[:MAX_TEXT]
+                elif (other := kept_library.not_of_the_package(checked.report, checked.manifest)) is not None:
+                    ran_message = other
+                elif checked.report["problems"]:
                     ran_message = "Its check said: " + " ".join(checked.report["problems"])[:MAX_TEXT]
                 else:
                     ran = tools_found(checked)
@@ -351,6 +372,7 @@ def check_health(
             "reasons": [reason[:MAX_TEXT] for reason in reasons],
             "commit": intake["commit"],
             "image_id": built["image"]["id"],
+            "tools_made_at": made_at(kept),
             "source": {
                 "state": found.state,
                 "commit": found.commit,

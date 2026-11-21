@@ -2712,8 +2712,8 @@ class PaperAgents:
     ) -> dict[str, Any]:
         """How an agent was when it was last looked at, in a few words, and whether a newer version of its code is
         proposed. It is unchecked if it was not looked at, or was looked at in another environment or of other code."""
-        intake, built, _ = pieces
-        found = kept_living.health_view(kept_living.load_health(directory), intake, built)
+        intake, built, kept = pieces
+        found = kept_living.health_view(kept_living.load_health(directory), intake, built, kept)
         proposed = kept_living.update_view(kept_living.load_update(directory), intake)
         watch = kept_living.load_watch(directory)
 
@@ -2732,7 +2732,7 @@ class PaperAgents:
         """
         directory, agent = self.lookup(agent_id)
         pieces = self.library_pieces(directory, agent)
-        intake, built = (pieces[0], pieces[1]) if pieces is not None else (None, None)
+        intake, built, kept = pieces if pieces is not None else (None, None, None)
         proposed = kept_living.update_view(kept_living.load_update(directory), intake)
         usable, problem = building.ready(self.docker_command)
         job = self.health_job(agent_id)
@@ -2743,7 +2743,7 @@ class PaperAgents:
             "version": (
                 {"commit": intake["commit"], "ref": intake["ref"], "url": intake["url"]} if intake is not None else None
             ),
-            "health": kept_living.health_view(kept_living.load_health(directory), intake, built),
+            "health": kept_living.health_view(kept_living.load_health(directory), intake, built, kept),
             "watch": kept_living.load_watch(directory),
             "update": (
                 {
@@ -2812,7 +2812,7 @@ class PaperAgents:
             present = None
             if usable:
                 tag = building.tag_of(agent_id, intake["commit"])
-                present = building.image_id_of(tag, self.docker_command) == built["image"]["id"]
+                present = building.image_is(tag, built["image"]["id"], self.docker_command)
 
             return kept_living.check_health(
                 job,

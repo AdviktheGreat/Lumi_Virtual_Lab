@@ -272,7 +272,8 @@ class TestAskingTheIndex:
         assert answer.closed
 
     @pytest.mark.parametrize(
-        "name, version", [("../x", "1"), ("a b", "1"), ("numpy", "1/../2"), ("numpy", ""), ("", "1")]
+        "name, version",
+        [("../x", "1"), ("a b", "1"), ("numpy", "1/../2"), ("numpy", ""), ("", "1"), ("torch", "2.1.0+cu118")],
     )
     def test_a_name_or_a_version_that_is_not_one_is_not_asked_of(
         self, monkeypatch: pytest.MonkeyPatch, name: str, version: str
@@ -407,7 +408,8 @@ class TestTheDifferenceOfTwoVersions:
         assert found["changed"] == 60 and len(found["files"]) == 60 and found["truncated"] is True
         assert len(shown) == watching.MOST_SHOWN and all(entry["cut"] for entry in shown)
         assert all(len(entry["diff"]) <= watching.MAX_FILE_DIFF for entry in shown)
-        assert all(entry["added"] == 2000 for entry in found["files"])
+        assert all(entry["added"] == 2000 for entry in shown)
+        assert all(entry["added"] is None and entry["removed"] is None for entry in found["files"][len(shown) :])
         monkeypatch.setattr(watching, "MOST_LISTED", 5)
         listed = watching.diff_trees(old, new)
         assert len(listed["files"]) == 5 and listed["changed"] == 60 and listed["truncated"] is True
@@ -431,6 +433,64 @@ class TestTheDifferenceOfTwoVersions:
 
         shown = [len(entry["diff"]) for entry in found["files"] if entry["diff"] is not None]
         assert sum(shown) == 700 and shown[0] == 500 and shown[1] == 200
+
+    def test_a_file_whose_lines_are_not_shown_is_not_compared(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        compared: list[str] = []
+        compare = watching.difflib.unified_diff
+
+        def spy(was: list[str], now: list[str], name: str, *rest: Any, **options: Any) -> Any:
+            compared.append(name)
+            return compare(was, now, name, *rest, **options)
+
+        monkeypatch.setattr(watching.difflib, "unified_diff", spy)
+        old = tree(tmp_path / "old", {f"f{number:03}.py": "a\n" for number in range(watching.MOST_SHOWN + 5)})
+        new = tree(tmp_path / "new", {f"f{number:03}.py": "b\n" for number in range(watching.MOST_SHOWN + 5)})
+
+        found = watching.diff_trees(old, new)
+
+        assert len(compared) == watching.MOST_SHOWN and found["changed"] == watching.MOST_SHOWN + 5
+        assert found["truncated"] is True
+        assert found["files"][-1]["diff"] is None and found["files"][-1]["added"] is None
+
+    def test_files_that_are_new_or_gone_are_counted_without_being_compared_once_the_most_is_shown(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(watching, "MOST_SHOWN", 1)
+        old = tree(tmp_path / "old", {"a.py": "a\n", "b.py": "1\n2\n3\n"})
+        new = tree(tmp_path / "new", {"a.py": "b\n", "c.py": "1\n2\n"})
+
+        by_path = {entry["path"]: entry for entry in watching.diff_trees(old, new)["files"]}
+
+        assert by_path["a.py"]["diff"] is not None
+        assert (by_path["b.py"]["diff"], by_path["b.py"]["added"], by_path["b.py"]["removed"]) == (None, 0, 3)
+        assert (by_path["c.py"]["diff"], by_path["c.py"]["added"], by_path["c.py"]["removed"]) == (None, 2, 0)
+
+    def test_two_versions_of_a_file_with_too_many_lines_to_compare_are_not_compared(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(watching, "MAX_DIFF_LINES", 10)
+        old = tree(tmp_path / "old", {"big.py": "a\n" * 6, "small.py": "a\n"})
+        new = tree(tmp_path / "new", {"big.py": "b\n" * 6, "small.py": "b\n"})
+
+        by_path = {entry["path"]: entry for entry in watching.diff_trees(old, new)["files"]}
+
+        assert by_path["big.py"]["diff"] is None and by_path["big.py"]["added"] is None
+        assert by_path["small.py"]["diff"] is not None and by_path["small.py"]["added"] == 1
+
+    def test_what_is_asked_to_stop_gives_what_was_done_and_compares_no_more(self, tmp_path: Path) -> None:
+        old = tree(tmp_path / "old", {f"f{number}.py": "a\n" for number in range(5)})
+        new = tree(tmp_path / "new", {f"f{number}.py": "b\n" for number in range(5)})
+        asked = []
+
+        def stop() -> bool:
+            asked.append(1)
+            return len(asked) > 2
+
+        found = watching.diff_trees(old, new, stop)
+
+        assert found["changed"] == 2 and len(asked) == 3
 
 
 class TestWhichToolsAFileIsOf:

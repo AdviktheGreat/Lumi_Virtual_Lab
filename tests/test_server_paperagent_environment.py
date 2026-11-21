@@ -63,6 +63,7 @@ class Docker:
         self.started = threading.Event()
         self.during: Any = None
         self.refuses = False
+        self.unanswering = False
         self.count = 0
 
     def ready(self, docker_command: Any = ("docker",)) -> tuple[bool, str | None]:
@@ -128,6 +129,12 @@ class Docker:
     def image_id_of(self, tag: str, docker_command: Any = ("docker",)) -> str | None:
         return self.images.get(tag)
 
+    def image_is(self, tag: str, image_id: str, docker_command: Any = ("docker",)) -> bool | None:
+        if self.unanswering:
+            return None
+
+        return self.images.get(tag) == image_id
+
     def remove_image(self, tag: str, docker_command: Any = ("docker",)) -> bool:
         self.removed.append(tag)
         if self.refuses:
@@ -169,6 +176,7 @@ def docker(monkeypatch: pytest.MonkeyPatch) -> Docker:
     monkeypatch.setattr(building, "ready", stand_in.ready)
     monkeypatch.setattr(building, "build_environment", stand_in.build)
     monkeypatch.setattr(building, "image_id_of", stand_in.image_id_of)
+    monkeypatch.setattr(building, "image_is", stand_in.image_is)
     monkeypatch.setattr(building, "remove_image", stand_in.remove_image)
     monkeypatch.setattr(building, "remove_images", stand_in.remove_images)
     monkeypatch.setattr(building, "remove_builds", stand_in.remove_builds)

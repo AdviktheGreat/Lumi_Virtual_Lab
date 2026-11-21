@@ -80,6 +80,8 @@ MOST_LISTED = 400
 MAX_FILE_BYTES = 512 * 1024
 MAX_FILE_DIFF = 6000
 MAX_ALL_DIFF = 60000
+# The most lines, of the two versions of a file together, that are compared, as comparing grows with the square of them
+MAX_DIFF_LINES = 4000
 MAX_WALK_FILES = 100_000
 
 # Files that say what an environment is made of, which a change in decides whether the one that is kept is still right
@@ -174,8 +176,9 @@ class Index:
     follow a redirect, so that it asks nowhere else."""
 
     def status(self, name: str, version: str) -> str | None:
-        """FOUND, YANKED, MISSING, or None if the index could not be asked or did not say."""
-        if PIN.fullmatch(f"{name}=={version}") is None:
+        """FOUND, YANKED, MISSING, or None if the index could not be asked or did not say. A local version (2.1.0+cu118)
+        is of a build that is not on the index, so the index is not asked of it."""
+        if "+" in version or PIN.fullmatch(f"{name}=={version}") is None:
             return None
         connection = http.client.HTTPSConnection(
             INDEX_HOST, timeout=REQUEST_SECONDS, context=ssl.create_default_context()
@@ -289,14 +292,22 @@ def lines_of(path: Path) -> list[str] | None:
     return data.decode("utf-8", errors="replace").splitlines()
 
 
-def diff_trees(old: Path, new: Path) -> dict[str, Any]:
+def diff_trees(old: Path, new: Path, should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
     """What differs between the files of two folders, as a diff that is bounded: which files were added, taken away, or
     changed, and for the first of those that changed, the lines. A file that is too big, or is not text, is said to be
-    changed and is not read. The paths of all that differ are given too, as only the first of them are listed."""
+    changed and is not read. The paths of all that differ are given too, as only the first of them are listed.
+
+    Only the files whose lines are shown are compared, so that the work is bounded too: of the others, the lines that
+    were added or taken away are counted if the file is new or gone, and are not (None) if it is changed.
+
+    :param should_stop: Asked between files; if it says so, what was done is given and is not the whole.
+    """
     before, after = files_of(old), files_of(new)
     listed: list[dict[str, Any]] = []
     shown = spent = 0
     for path in sorted(before.keys() | after.keys()):
+        if should_stop is not None and should_stop():
+            break
         if path in before and path in after:
             if digest_of(before[path]) == digest_of(after[path]):
                 continue
@@ -310,16 +321,20 @@ def diff_trees(old: Path, new: Path) -> dict[str, Any]:
             entry["binary"] = True
         else:
             entry["binary"] = False
-            made = list(difflib.unified_diff(was, now, f"a/{path}", f"b/{path}", lineterm="", n=2))
-            entry["added"] = sum(1 for line in made if line.startswith("+") and not line.startswith("+++"))
-            entry["removed"] = sum(1 for line in made if line.startswith("-") and not line.startswith("---"))
-            text = "\n".join(made)
-            if shown < MOST_SHOWN and spent < MAX_ALL_DIFF:
+            if shown < MOST_SHOWN and spent < MAX_ALL_DIFF and len(was) + len(now) <= MAX_DIFF_LINES:
+                made = list(difflib.unified_diff(was, now, f"a/{path}", f"b/{path}", lineterm="", n=2))
+                entry["added"] = sum(1 for line in made if line.startswith("+") and not line.startswith("+++"))
+                entry["removed"] = sum(1 for line in made if line.startswith("-") and not line.startswith("---"))
+                text = "\n".join(made)
                 allowed = min(MAX_FILE_DIFF, MAX_ALL_DIFF - spent)
                 entry["diff"] = text[:allowed]
                 entry["cut"] = len(text) > allowed
                 spent += len(entry["diff"])
                 shown += 1
+            elif change == "changed":
+                entry["added"] = entry["removed"] = None
+            else:
+                entry["added"], entry["removed"] = len(now), len(was)
         listed.append(entry)
 
     return {
