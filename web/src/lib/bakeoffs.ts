@@ -95,7 +95,7 @@ interface Parts {
 // What was typed, checked, part by part. A part that was left blank is nothing, and what is wrong is said where it is.
 function checkParts(draft: BakeoffDraft, limits: Pick<BakeoffLimits, "max_task_chars" | "max_title_chars"> | null): Checked<Parts, BakeoffKey> {
   const problems: Partial<Record<BakeoffKey, string>> = {};
-  const task = draft.task.trim();
+  const task = tidy(draft.task);
   const mostTask = limits?.max_task_chars ?? MAX_BAKEOFF_TASK;
   const mostTitle = limits?.max_title_chars ?? MAX_BAKEOFF_TITLE;
   if (task === "") problems.task = "Say what you want done.";
@@ -182,7 +182,9 @@ export function checkChange(draft: BakeoffDraft, was: Bakeoff): Checked<BakeoffC
   const checked = checkParts(draft, was.limits);
   const problems: Partial<Record<BakeoffKey, string>> = { ...checked.problems };
   if (tidy(draft.title) === "") problems.title = "Say what it is called.";
-  if (checked.value !== null && checked.value.limit < was.spent) {
+  // What has been spent may be more than the limit, as the spending is looked at before a request and not after it, so only a limit
+  // that is said again is held to be at least what has been spent
+  if (checked.value !== null && checked.value.limit !== was.limit && checked.value.limit < was.spent) {
     problems.limit = `${formatCost(was.spent)} has been spent already, so the most it may spend is at least that.`;
   }
   if (Object.keys(problems).length > 0 || checked.value === null) return { value: null, problems };

@@ -196,7 +196,7 @@ describe("whether something is said of the data", () => {
 
 describe("making a bake-off of what was typed", () => {
   it("sends the task and the limit, and leaves out what was left blank", () => {
-    expect(checkBakeoff(typed({ task: "  Cluster   my cells " }), LIMITS)).toEqual({ value: { task: "Cluster   my cells", limit: 5 }, problems: {} });
+    expect(checkBakeoff(typed({ task: "  Cluster my cells " }), LIMITS)).toEqual({ value: { task: "Cluster my cells", limit: 5 }, problems: {} });
   });
 
   it("sends what else was typed, with the title tidied", () => {
@@ -246,6 +246,13 @@ describe("making a bake-off of what was typed", () => {
     expect(checkBakeoff(typed({ title: "x".repeat(121) }), LIMITS).problems.title).toBe("That is at most 120 characters.");
     expect(checkBakeoff(typed({ task: "x".repeat(10) }), { ...LIMITS, max_task_chars: 9 }).problems.task).toBe("That is at most 9 characters.");
     expect(checkBakeoff(typed({ title: "x".repeat(10) }), { ...LIMITS, max_title_chars: 9 }).problems.title).toBe("That is at most 9 characters.");
+  });
+
+  it("keeps the task on one line with one space between words, and counts it so, as the server does", () => {
+    expect(checkBakeoff(typed({ task: " Cluster\n\n  my\tcells " }), LIMITS).value?.task).toBe("Cluster my cells");
+    // 2100 characters as they were typed, of which 1399 are kept
+    expect(checkBakeoff(typed({ task: "a  ".repeat(700) }), LIMITS).value?.task).toBe(Array(700).fill("a").join(" "));
+    expect(checkBakeoff(typed({ task: "a ".repeat(1001) }), LIMITS).problems.task).toBe("That is at most 2000 characters.");
   });
 
   it("goes by what the server has taught it, and by what it knows if it has not been told", () => {
@@ -361,6 +368,20 @@ describe("changing a bake-off", () => {
     expect(checked.value).toBeNull();
     expect(checked.problems.limit).toBe("$1.00 has been spent already, so the most it may spend is at least that.");
     expect(checkChange({ ...base, limit: "1" }, was).value).toEqual({ limit: 1 });
+  });
+
+  it("does not take the same task said again with other spaces for a change", () => {
+    expect(checkChange({ ...draftOf(was), task: "  Cluster   my\ncells " }, was).value).toEqual({});
+  });
+
+  it("does not hold a limit that is not said again to be at least what was spent, which may be more than it", () => {
+    const over = bakeoff({ limit: 1, spent: 1.4 });
+
+    expect(checkChange({ ...draftOf(over), title: "Another name" }, over)).toEqual({ value: { title: "Another name" }, problems: {} });
+    expect(checkChange({ ...draftOf(over), limit: "1.2" }, over).problems.limit).toBe(
+      "$1.40 has been spent already, so the most it may spend is at least that.",
+    );
+    expect(checkChange({ ...draftOf(over), limit: "1.4" }, over).value).toEqual({ limit: 1.4 });
   });
 
   it("has what is wrong with it said even if the part is not one that differs", () => {
