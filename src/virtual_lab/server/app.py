@@ -550,7 +550,7 @@ class PaperAgentReimplementationBody(RequestModel):
     that asking it may spend, in USD, which must be said, and the choice the key is of: the sections of the paper, the
     words that were searched for, the name of the function, and what is wanted of it, each as it was shown."""
 
-    agreed: str = Field(max_length=64)
+    agreed: str | None = Field(None, max_length=64)
     max_cost: float | None = Field(None, strict=True, ge=0, allow_inf_nan=False)
     sections: list[StrictInt] | None = Field(default=None, max_length=100)
     search: str | None = Field(None, max_length=300)

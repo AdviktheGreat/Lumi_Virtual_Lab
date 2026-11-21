@@ -291,6 +291,16 @@ class TestWriting:
         assert kept_record["task"]["brief_sha256"] == brief_hash
         json.dumps(found)
 
+    def test_the_model_that_writes_is_the_one_that_was_agreed_to(
+        self, agents: PaperAgents, read: str, fake_client: FakeClient, importer: Import, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # However the settings' model would be read now, what writes is the model of the offer that was agreed to
+        monkeypatch.setattr(PaperAgents, "usable_model", lambda self: "another-model")
+        job = write(agents, read, fake_client, importer, CODE)
+
+        assert job.state == "succeeded", job.error
+        assert agents.reimplementation(read)["kept"]["model"] == TEST_MODEL
+
     def test_the_model_is_asked_to_write_from_the_papers_words_and_nothing_else(
         self, agents: PaperAgents, read: str, fake_client: FakeClient, importer: Import
     ) -> None:
@@ -343,6 +353,7 @@ class TestWriting:
         assert job.state == "failed"
         record = agents.reimplementation(read)["kept"]
         assert record["status"] == "failed" and "Docker stopped being available" in (record["error"] or "")
+        assert record["attempts"] == 1
 
     def test_the_limit_being_reached_is_kept(
         self, agents: PaperAgents, read: str, fake_client: FakeClient, importer: Import
@@ -354,6 +365,25 @@ class TestWriting:
         assert job.state == "failed"
         record = agents.reimplementation(read)["kept"]
         assert record["status"] == "failed" and "limit" in (record["error"] or "")
+
+    def test_the_limit_being_reached_after_an_answer_keeps_the_attempt(
+        self, agents: PaperAgents, read: str, fake_client: FakeClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An import that fails is given back for one correction, which the limit of one answer leaves no room for
+        importer = Import(exit_code=1)
+        monkeypatch.setattr(module, "DockerExecutor", importer.make)
+        job = write(agents, read, fake_client, importer, CODE, CODE)
+        assert job.state == "failed"
+        one_answer = agents.reimplementation(read)["kept"]["cost"] / 2
+
+        agents.clear_reimplementation(read)
+        key = offer_of(agents, read)["key"]
+        fake_client.completions.responses.append(text_response(CODE))
+        job = finish(agents.start_reimplementation(read, key, one_answer))
+
+        assert job.state == "failed"
+        record = agents.reimplementation(read)["kept"]
+        assert "limit" in (record["error"] or "") and record["attempts"] == 1
 
     def test_a_second_writing_is_not_started_while_one_goes(
         self, agents: PaperAgents, read: str, fake_client: FakeClient, importer: Import
@@ -455,6 +485,12 @@ class TestOverHttp:
 
     def test_nothing_is_written_without_agreeing(self, client: Any, agents: PaperAgents, read: str) -> None:
         answer = client.post(f"/api/paperagents/{read}/reimplementation", json={"agreed": "", "max_cost": 1.0})
+
+        assert answer.status_code == 422
+        assert answer.json()["error"]["code"] == "not_agreed"
+
+    def test_nothing_is_written_with_no_key_at_all(self, client: Any, agents: PaperAgents, read: str) -> None:
+        answer = client.post(f"/api/paperagents/{read}/reimplementation", json={"max_cost": 1.0})
 
         assert answer.status_code == 422
         assert answer.json()["error"]["code"] == "not_agreed"

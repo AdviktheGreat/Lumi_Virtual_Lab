@@ -3059,7 +3059,6 @@ class PaperAgents:
                 "not_agreed",
                 "Agree first, to the words of the paper that the model is to be given, which are shown with their key",
             )
-        model = self.usable_model()
         usable, problem = building.ready(self.docker_command)
         if not usable:
             raise ApiError(422, "docker_missing", problem or "Docker is not running, and writing a function takes it")
@@ -3082,6 +3081,7 @@ class PaperAgents:
                     "model, or the paper itself is not the same. Look at what is offered now",
                     offer=offer,
                 )
+            model = check_model(offer["model"], self.missing_keys)
             offer["agreed_at"] = utc_timestamp()
             usage = MeetingUsage()
             executor = DockerExecutor(allow_network=False, docker_command=self.docker_command)

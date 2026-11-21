@@ -267,18 +267,18 @@ def write_function(
             system_prompt=reimplementing.SYSTEM_PROMPT,
         )
     except StopWork:
-        failed(STOPPED, "Stopped before a function was written.", [], 0)
+        failed(STOPPED, "Stopped before a function was written.", [], usage.num_calls)
         raise StoppedError("Stopped. What it cost is kept, and the function was not written.") from None
     except FunctionBudgetExceededError as error:
         message = f"No function was written. {error}"
-        failed(FAILED, message, [], 0)
+        failed(FAILED, message, [], usage.num_calls)
         raise RuntimeError(message) from None
     except FunctionGenerationError as error:
         failed(FAILED, str(error), [str(problem) for problem in error.problems], error.attempts)
         raise RuntimeError(str(error)) from None
     except DockerUnavailableError as error:
         message = f"Docker stopped being available while the function was imported: {error}"
-        failed(FAILED, message, [], 0)
+        failed(FAILED, message, [], usage.num_calls)
         raise RuntimeError(message) from None
 
     source = written.source or ""
