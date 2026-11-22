@@ -24,6 +24,7 @@ import {
   dataJob,
   environmentJob,
   existingOf,
+  exportJob,
   factCount,
   factGroups,
   hasReading,
@@ -31,6 +32,7 @@ import {
   isRepo,
   lastDataJob,
   lastEnvironmentJob,
+  lastExportJob,
   lastReadingJob,
   lastReferenceJob,
   lastChecksJob,
@@ -442,6 +444,32 @@ describe("the job that runs the tutorials of an agent", () => {
     expect(readingKey([running()], 0, "cells")).not.toBe(readingKey([job({ id: "r1", kind: "paperagent-data" })], 0, "cells"));
     expect(readingKey([running({ subject: "dogs" })], 0, "cells")).toBe("0|");
     expect(readingKey([running({ state: "succeeded" })], 0, "cells")).toBe("0|");
+  });
+});
+
+describe("the job that makes a package of an agent's tools", () => {
+  const packing = (changes: Partial<Job> = {}) => job({ id: "e1", kind: "paperagent-export", ...changes });
+
+  it("is the one at work on that agent, and not a look at it or another agent's", () => {
+    const jobs = [job({ id: "reading" }), packing({ id: "other", subject: "dogs" }), packing({ id: "old", state: "failed" }), packing()];
+
+    expect(exportJob(jobs, "cells")?.id).toBe("e1");
+    expect(exportJob(jobs.slice(0, 3), "cells")).toBeUndefined();
+    expect(exportJob([job({ kind: "paperagent-health" })], "cells")).toBeUndefined();
+  });
+
+  it("is, when none is at work, the latest that is over", () => {
+    const jobs = [packing({ id: "new", state: "stopped" }), packing({ id: "old", state: "failed" }), job({ state: "failed" })];
+
+    expect(lastExportJob(jobs, "cells")?.id).toBe("new");
+    expect(lastExportJob([packing()], "cells")).toBeUndefined();
+    expect(lastExportJob([job({ kind: "paperagent-health", state: "failed" })], "cells")).toBeUndefined();
+  });
+
+  it("changes the key that the page looks again by, and says nothing of another agent's", () => {
+    expect(readingKey([packing()], 0, "cells")).toBe("0||export:e1");
+    expect(readingKey([packing({ subject: "dogs" })], 0, "cells")).toBe("0|");
+    expect(readingKey([packing({ state: "succeeded" })], 0, "cells")).toBe("0|");
   });
 });
 

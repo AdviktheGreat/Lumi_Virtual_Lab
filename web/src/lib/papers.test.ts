@@ -251,6 +251,8 @@ describe("paperView", () => {
     expect(paperView("surveys")).toBe("surveys");
     expect(paperView("bakeoffs")).toBe("bakeoffs");
     expect(paperView("triage")).toBe("triage");
+    expect(paperView("library")).toBe("library");
+    expect(paperView("Library")).toBe("agents");
     expect(paperView("triages")).toBe("agents");
     expect(paperView("Bakeoffs")).toBe("agents");
     expect(paperView(null)).toBe("agents");
