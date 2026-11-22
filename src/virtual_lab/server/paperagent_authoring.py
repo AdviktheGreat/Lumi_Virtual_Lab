@@ -215,9 +215,11 @@ def gather(paperagents: PaperAgents, agent_id: str) -> dict[str, Any]:
     reproduction = paperagents.reproduction(agent_id)
     intake, stock = repository["intake"], repository["stock"]
     built, failure, unsupported, docker = build_of(paperagents, directory, intake, stock)
+    # What is kept while the tutorials are being run is the run so far, which would be said to have stopped early
+    running = paperagents.reference_job(agent_id) is not None
     reference = (
         kept_reference.load(directory, intake["commit"], built["image"]["id"])
-        if built is not None and intake is not None
+        if built is not None and intake is not None and not running
         else None
     )
     claims = tried_of(reproduction)
@@ -228,7 +230,7 @@ def gather(paperagents: PaperAgents, agent_id: str) -> dict[str, Any]:
         found += authoring.check_findings(repository["preflight"]["checks"], stock)
         found += authoring.requirement_findings(missing_requirements(directory, stock))
     found += authoring.build_findings(built, failure, unsupported, docker, intake is not None)
-    found += authoring.tutorial_findings(reference, built is not None)
+    found += authoring.tutorial_findings(reference, built is not None, running)
     found += authoring.data_findings(data, data["read"])
     found += authoring.claim_findings(claims["entries"] if claims is not None else [])
     found = authoring.ordered(found)
@@ -238,7 +240,7 @@ def gather(paperagents: PaperAgents, agent_id: str) -> dict[str, Any]:
         "read": data["read"],
         "code": intake is not None,
         "environment": built is not None or cannot_build,
-        "tutorials": reference is not None or cannot_build,
+        "tutorials": reference is not None or cannot_build or running,
         "claims": claims is not None or cannot_build or (data["read"] and nothing_to_try),
     }
     unchecked = authoring.not_checked(steps, agent_id)
@@ -257,6 +259,7 @@ def gather(paperagents: PaperAgents, agent_id: str) -> dict[str, Any]:
         "license": exporting.license_of(stock["license"] if stock is not None else None),
         "environment": environment_of(directory, built),
         "tutorials": tutorials_of(reference),
+        "tutorials_running": running,
         "claims": claims,
         "datasets": datasets,
         "places": places,

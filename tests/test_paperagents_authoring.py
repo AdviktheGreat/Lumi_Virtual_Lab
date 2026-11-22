@@ -196,10 +196,12 @@ class TestWhatNoFileNames:
         )
 
         assert (found["id"], found["area"], found["severity"]) == ("requirements", "environment", "warn")
-        assert "2 imports" in found["detail"] and "pandas, tqdm" in found["detail"]
+        assert "2 imports are named" in found["detail"] and "pandas, tqdm" in found["detail"]
         assert "false alarm" in found["detail"]
         assert found["where"] == ["pandas: a.py, b.py", "tqdm: a.py"] and found["fix"]
         assert authoring.requirement_findings([]) == []
+        [one] = authoring.requirement_findings([{"name": "joblib", "files": ["a.py"]}])
+        assert one["detail"].startswith("1 import is named by no file")
 
 
 def check(name: str, status: str, detail: str = "It is so.") -> dict[str, str]:
@@ -390,6 +392,11 @@ class TestWhatTheTutorialsSayToAReader:
         [found] = authoring.tutorial_findings(reference(tutorial("a"), complete=False), True)
 
         assert found["id"] == "tutorials_stopped"
+
+    def test_a_run_that_goes_on_is_said_for_what_is_kept_of_it(self) -> None:
+        [found] = authoring.tutorial_findings(reference(tutorial("a", "failed"), complete=False), True, running=True)
+
+        assert found["id"] == "tutorials_running" and found["severity"] == "note" and found["fix"] is None
 
     def test_only_so_many_are_named_and_what_they_print_does_not_run_on(self) -> None:
         many = [tutorial(f"t{number}", "failed") for number in range(authoring.MAX_EACH + 5)]
@@ -677,6 +684,11 @@ class TestTheCard:
         assert "The paper and the code do not say where the data is." in card
         assert "No tools were made of this code." in card and "## Package" not in card
         assert "Paper: not given" in card and "0 would stop them" in card
+
+    def test_tutorials_that_are_being_run_are_said_to_be_and_not_to_be_unrun(self) -> None:
+        card = authoring.card_of(facts(tutorials=None, tutorials_running=True))
+
+        assert "- Being run here now" in card and "- Not run here." not in card
 
     def test_a_pair_of_a_license_that_is_not_known_says_so(self) -> None:
         assert "License: none was recognized" in authoring.card_of(facts(license={"name": None, "kind": None}))

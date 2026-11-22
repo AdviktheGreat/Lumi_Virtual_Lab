@@ -173,7 +173,7 @@ class TestWhatTheCodeSaysBeforeAnythingIsBuilt:
 
         assert (found["severity"], found["area"]) == ("warn", "environment")
         assert found["where"] == ["scanpy: analysis.py"]
-        assert "1 imports" in found["detail"]
+        assert "1 import is named" in found["detail"]
 
     def test_an_import_in_a_notebook_counts_and_a_test_or_the_project_itself_does_not(
         self, agents: PaperAgents, remote: Remote
@@ -347,6 +347,19 @@ class TestWhatTheTutorialsSay:
 
         assert not [item for item in found["findings"] if item["area"] == "examples" and item["severity"] != "note"]
         assert "2 run in the environment with no network" in found["card"]
+        assert found["steps"]["tutorials"] is True and "reference" not in steps_not_run(agents, referenced)
+
+    def test_tutorials_that_are_being_run_are_said_to_be_and_the_run_so_far_is_not_taken_for_one_that_stopped(
+        self, agents: PaperAgents, referenced: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(agents, "reference_job", lambda agent_id: object() if agent_id == referenced else None)
+
+        found = view(agents, referenced)
+
+        [running] = [item for item in found["findings"] if item["area"] == "examples"]
+        assert running["id"] == "tutorials_running" and running["severity"] == "note"
+        assert "2 run in the environment with no network" not in found["card"]
+        assert "Being run here now" in found["card"] and "Not run here." not in found["card"]
         assert found["steps"]["tutorials"] is True and "reference" not in steps_not_run(agents, referenced)
 
     def test_one_that_did_not_run_to_the_end_is_a_warning_and_is_counted(

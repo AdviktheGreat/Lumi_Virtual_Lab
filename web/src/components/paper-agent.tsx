@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ExternalLink, Trash2, X } from "lucide-react";
@@ -16,6 +16,8 @@ import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
 import { ImportedSection } from "@/components/paper-agent-imported";
 import { LivingSection } from "@/components/paper-agent-living";
+import { AuthorSection } from "@/components/paper-agent-author";
+import { partsSignature } from "@/lib/paperagent-authoring";
 import { PackageSection } from "@/components/paper-agent-package";
 import { OneGoSection } from "@/components/paper-agent-onego";
 import { CardSection } from "@/components/paper-agent-card";
@@ -108,6 +110,7 @@ import type {
   PaperAgentClaims,
   PaperAgentData,
   PaperAgentEnvironment,
+  PaperAgentAuthor,
   PaperAgentExport,
   PaperAgentGiven,
   PaperAgentHealth,
@@ -128,6 +131,7 @@ import {
   usePaperAgentClaims,
   usePaperAgentData,
   usePaperAgentEnvironment,
+  usePaperAgentAuthor,
   usePaperAgentExport,
   usePaperAgentGiven,
   usePaperAgentHealth,
@@ -660,6 +664,7 @@ function Agent({
   onego,
   health,
   exported,
+  author,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
@@ -677,6 +682,7 @@ function Agent({
   onego: LookedAt<PaperAgentOneGo>;
   health: LookedAt<PaperAgentHealth>;
   exported: LookedAt<PaperAgentExport>;
+  author: LookedAt<PaperAgentAuthor>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -1401,6 +1407,14 @@ function Agent({
           )}
         </Looked>
       </PageSection>
+      <PageSection
+        title="For authors and reviewers"
+        intro="What a reader who takes the paper's code as a stranger would hit: what would stop them, what would probably stop or mislead them, and what they should know, from what the steps above kept, with nothing run and no model asked. With it is a package to put in the repository or send with the paper."
+      >
+        <Looked state={author.value} label="Looking at what a reader would hit" failure="What a reader would hit could not be looked at." onRetry={author.reload}>
+          {(value) => <AuthorSection view={value} onReload={author.reload} />}
+        </Looked>
+      </PageSection>
       <PageSection title="Steps" intro="What is done to make the paper usable. A step is added to the lab as it is built.">
         <Steps agent={agent} />
       </PageSection>
@@ -1411,6 +1425,9 @@ function Agent({
     </>
   );
 }
+
+// How long what the page has of an agent is left to settle before what a reader would hit is looked at again
+const AUTHOR_SETTLE_MS = 400;
 
 // One agent: its paper, how far it has got, what was read of it, and the way to say again what it is called and where its
 // code is
@@ -1434,6 +1451,38 @@ export function AgentPage({ id }: { id: string }) {
   const health = usePaperAgentHealth(id, report, again);
   const exported = usePaperAgentExport(id, report, again);
   const list = usePaperAgentsList(report, "");
+  // What a reader would hit is made of what every step keeps, so it is looked at again once what the page has of them has changed
+  // and settled. Not when they are first looked at, as it is looked at then too, and not when they are looked at again and found
+  // the same, as when the page is shown again, when it looks again by itself.
+  const signature = useMemo(
+    () =>
+      partsSignature([
+        agent.value,
+        reading.value,
+        repository.value,
+        environment.value,
+        data.value,
+        reference.value,
+        tools.value,
+        checks.value,
+        claims.value,
+        given.value,
+        exported.value,
+      ]),
+    [agent.value, reading.value, repository.value, environment.value, data.value, reference.value, tools.value, checks.value, claims.value, given.value, exported.value],
+  );
+  const seen = useRef<string | null>(null);
+  const [settled, setSettled] = useState(0);
+  useEffect(() => {
+    if (signature === null || signature === seen.current) return;
+    const first = seen.current === null;
+    seen.current = signature;
+    if (first) return;
+    const timer = setTimeout(() => setSettled((count) => count + 1), AUTHOR_SETTLE_MS);
+
+    return () => clearTimeout(timer);
+  }, [signature]);
+  const author = usePaperAgentAuthor(id, report, String(settled));
 
   return (
     <>
@@ -1470,6 +1519,7 @@ export function AgentPage({ id }: { id: string }) {
                 onego={onego}
                 health={health}
                 exported={exported}
+                author={author}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />
