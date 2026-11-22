@@ -56,6 +56,11 @@ def short_title(title: str) -> str:
     return cut(plain(title), MAX_TITLE_CHARS)
 
 
+def seat_of(title: str) -> str:
+    """The title of the scientist that speaks for an agent of this title, where no other on the team has it."""
+    return f"{MEMBER_PREFIX}{short_title(title)}"
+
+
 def names_of(title: str) -> set[str]:
     """What a scientist of this title is told apart by: the title as the team compares them, and the name that a request
     to a model gives it, which cuts a title short and leaves out what is not a letter, a digit, or a dash."""
@@ -80,7 +85,7 @@ def member_of(workspace: Workspace, agent_id: str, model: str, taken: Collection
     described = kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with())
     card = described["card"] if described["chunks"] is not None else None
     heard = {name for each in taken for name in names_of(each)}
-    name = f"{MEMBER_PREFIX}{short_title(title)}"
+    name = seat_of(title)
     if names_of(name) & heard:
         name = f"{name} ({agent_id[-6:]})"
     search = tool_name(agent_id, READING_TOOLS[0])
@@ -138,22 +143,27 @@ def replace_role(agent: Agent, task: str) -> Agent:
 
 def paper_members(
     workspace: Workspace, agent_ids: Iterable[str], model: str, team: Sequence[Agent], lead: Agent
-) -> tuple[Agent, ...]:
+) -> tuple[tuple[Agent, ...], list[dict[str, str]]]:
     """The team, and the scientists of the agents that are given, after it. With two or more of them, the Scientific
     Critic, if the team has one, is asked to set the papers' claims against each other.
 
     :param team: The scientists that the person's team has.
     :param lead: The head of the lab, whose title no scientist may have.
+    :returns: The team, and the seat of each agent that has one: its id, its title, and the title of the scientist that
+        speaks for it, which is what /lab names it by.
     """
     members: list[Agent] = []
+    seats: list[dict[str, str]] = []
     titles = [lead.title, *(agent.title for agent in team)]
     for agent_id in dict.fromkeys(agent_ids):
         member = member_of(workspace, agent_id, model, titles)
         if member is not None:
             members.append(member)
             titles.append(member.title)
+            found = find(workspace, agent_id)
+            seats.append({"id": agent_id, "title": found[1]["title"] if found else agent_id, "seat": member.title})
 
-    return (with_critic_task(team) if len(members) > 1 else tuple(team)) + tuple(members)
+    return (with_critic_task(team) if len(members) > 1 else tuple(team)) + tuple(members), seats
 
 
 def claims_on(workspace: Workspace, agent_id: str, topic: frozenset[str]) -> tuple[str, list[dict[str, Any]]] | None:

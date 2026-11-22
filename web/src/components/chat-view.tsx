@@ -468,6 +468,7 @@ export function ChatView({ id }: { id: string }) {
             agenda={labbing}
             lead={status.info.lead}
             team={status.info.team}
+            papers={status.info.papers}
             ceiling={status.info.max_rounds}
             onStart={sendLab}
             onClose={(left) => {

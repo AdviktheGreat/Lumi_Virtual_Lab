@@ -295,7 +295,7 @@ server says: `origin` is Paper2Agent only for the three addresses it knows), whe
 imported and last connected to, and the tools the server listed, each with the names of what it is passed, as the server named
 them. **Connect again** (`POST /api/paperagents/{id}/imported/check`) lists them again, and if the server cannot be connected to
 says why and that what was kept is as it was; **Remove the server** asks first, and leaves the agent of the paper. An agent that
-was made here has a form to import a server for it (`POST /api/paperagents/import` with the agent's id). The In conversations
+was made here has a form to import a server for it (`POST /api/paperagents/import` with the agent's id). The In Lumi
 part then shows the tier Imported (`describeTier`), the imported tools named as a conversation would call them (`kind:
 "imported"`, each said to call a server that someone else runs and to ask first), and what the tier means, from the server's
 `given` view.

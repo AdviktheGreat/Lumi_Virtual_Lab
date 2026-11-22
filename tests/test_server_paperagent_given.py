@@ -891,6 +891,11 @@ class TestTheApi:
         assert "None of them shows that what it says or gives is right." in found["meaning"]
         assert "tier B" in found["meaning"]
         assert found["limits"] == {"call_seconds": 300, "memory": "8g", "cpus": "4"}
+        assert found["seat"] == "PaperAgent: CellMapper"
+        assert found["told"].startswith('You are a PaperAgent: CellMapper. Your expertise is in the paper "CellMapper"')
+        assert "its method card has" in found["told"]
+        listed = client.get("/api/paperagents").json()["agents"]
+        assert [agent["seat"] for agent in listed if agent["id"] == made] == ["PaperAgent: CellMapper"]
 
     def test_an_agent_with_nothing_to_give_has_no_tier(self, client: TestClient) -> None:
         agent_id = client.post("/api/paperagents", json={"title": "Cell", "paper": {"kind": "file"}}).json()["id"]
@@ -898,6 +903,8 @@ class TestTheApi:
         found = client.get(f"/api/paperagents/{agent_id}/given").json()
 
         assert (found["tier"], found["tools"], found["problem"]) == (None, [], None)
+        assert found["seat"] == "PaperAgent: Cell"
+        assert "only by its title, since it has not been read" in found["told"]
 
     def test_an_image_that_is_not_in_docker_is_said_and_the_tools_that_read_are_still_shown(
         self, client: TestClient, made: str, docker: tools.Docker

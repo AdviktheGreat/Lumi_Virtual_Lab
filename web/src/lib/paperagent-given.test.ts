@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeGiving, describeKind, describeLimits, describeTier, describeTools, runsCode, whyNone } from "./paperagent-given";
+import { byTier, describeGiving, describeKind, describeLimits, describeTier, describeTools, runsCode, whyNone } from "./paperagent-given";
 import type { GivenTool, PaperAgent, PaperAgentGiven } from "./types";
 
 function tool(name: string, kind: GivenTool["kind"]): GivenTool {
@@ -40,6 +40,8 @@ function givenOf(tools: GivenTool[], changes: Partial<PaperAgentGiven> = {}): Pa
     meaning: "",
     imported: null,
     limits: { call_seconds: 300, memory: "8g", cpus: "4" },
+    seat: "PaperAgent: CellMapper",
+    told: "You are a PaperAgent: CellMapper.",
     ...changes,
   };
 }
@@ -56,6 +58,27 @@ describe("describeTier", () => {
 
   it("does not make up what a tier it does not know is", () => {
     expect(describeTier("Z")).toBe("Tier Z: not known to this page");
+  });
+});
+
+describe("byTier", () => {
+  it("puts the tools of each tier together, in the order of the tiers, with what each tier is", () => {
+    const checked = { ...tool("c", "run"), tier: "B" };
+    const groups = byTier([tool("a", "reading"), tool("b", "run"), checked, tool("d", "reading"), tool("e", "imported"), tool("f", "reimplementation")]);
+
+    expect(groups.map((group) => [group.tier, group.tools.map((one) => one.name)])).toEqual([
+      ["A", ["b"]],
+      ["B", ["c"]],
+      ["C", ["f"]],
+      ["D", ["a", "d"]],
+      ["Imported", ["e"]],
+    ]);
+    expect(groups[0].title).toBe("Tier A: runs the authors' code");
+    expect(byTier([])).toEqual([]);
+  });
+
+  it("puts a tier it does not know after those it does", () => {
+    expect(byTier([{ ...tool("z", "run"), tier: "Z" }, tool("a", "reading")]).map((group) => group.tier)).toEqual(["D", "Z"]);
   });
 });
 

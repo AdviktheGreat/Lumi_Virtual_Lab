@@ -9,14 +9,18 @@ import {
   questionsOf,
   remember,
   remembered,
+  reseated,
+  seatsOf,
   withMember,
   withMode,
   type LabDraft,
 } from "./team-choice";
-import type { LibraryScientist } from "./types";
+import type { LibraryScientist, PaperSeat } from "./types";
 
 const scientist = (title: string, builtin = true): LibraryScientist => ({ title, expertise: `${title} things`, goal: "g", role: "r", builtin });
 const LIBRARY = ["Principal Investigator", "Scientific Critic", "Immunologist", "Geneticist"].map((title) => scientist(title));
+
+const SEATS: PaperSeat[] = [{ id: "cell-1", title: "CellMapper", seat: "PaperAgent: CellMapper" }];
 
 const DRAFT: LabDraft = { mode: "team", agenda: "Design a binder", members: ["Immunologist"], rounds: "1", questions: "" };
 
@@ -64,6 +68,28 @@ describe("who can be chosen", () => {
       "Geneticist",
     ]);
     expect(choosable(LIBRARY, "principal  investigator", "individual").map((each) => each.title)).toEqual(["Immunologist", "Geneticist"]);
+  });
+
+  it("has, before the library, those who speak for the papers, with what they speak for, once each, and not the lead", () => {
+    const found = choosable([...LIBRARY, scientist("Mine", false)], "Principal Investigator", "individual", [
+      ...SEATS,
+      { id: "cell-2", title: "Copy", seat: "paperagent:  cellmapper" },
+      { id: "lead", title: "Lead", seat: "Principal Investigator" },
+    ]);
+
+    expect(found.map((each) => [each.title, each.kind])).toEqual([
+      ["PaperAgent: CellMapper", "paper"],
+      ["Immunologist", "builtin"],
+      ["Geneticist", "builtin"],
+      ["Mine", "yours"],
+    ]);
+    expect(found[1].about).toBe("Immunologist things");
+    expect(found[0].about).toBe("Speaks for the paper “CellMapper”, from what was read of it and its tools");
+    // One of the library who has the title of a seat is the seat, as the conversation's team has it
+    expect(choosable([scientist("paperagent: cellmapper", false), scientist("Geneticist")], "Principal Investigator", "team", SEATS)).toEqual([
+      { title: "PaperAgent: CellMapper", about: "Speaks for the paper “CellMapper”, from what was read of it and its tools", kind: "paper" },
+      { title: "Geneticist", about: "Geneticist things", kind: "builtin" },
+    ]);
   });
 
   it("joins the team when they are not on it, however their titles are spelled", () => {
@@ -122,6 +148,52 @@ describe("the panel's draft", () => {
   });
 });
 
+describe("the seats of the agents of a conversation that has not begun", () => {
+  it("are those the list says, told apart by the end of the id where two would be the same or one would be the lead", () => {
+    expect(
+      seatsOf(
+        [
+          { id: "a-111111", title: "Cell", seat: "PaperAgent: Cell" },
+          { id: "b-222222", title: "cell", seat: "PaperAgent: cell" },
+          { id: "c-333333", title: "Old", seat: undefined },
+          { id: "d-444444", title: "Lead", seat: "Principal Investigator" },
+        ],
+        "Principal Investigator",
+      ),
+    ).toEqual([
+      { id: "a-111111", title: "Cell", seat: "PaperAgent: Cell" },
+      { id: "b-222222", title: "cell", seat: "PaperAgent: cell (222222)" },
+      { id: "d-444444", title: "Lead", seat: "Principal Investigator (444444)" },
+    ]);
+  });
+
+  it("are named in a choice by the seats that the conversation gives them once it has begun", () => {
+    const planned = [...SEATS, { id: "cell-2", title: "Other", seat: "PaperAgent: Other" }];
+    const seated = [{ ...SEATS[0], seat: "PaperAgent: CellMapper (cell-1)" }];
+    const choice = { mode: "team" as const, members: ["Immunologist", "paperagent: cellmapper", "PaperAgent: Other"], rounds: 1, questions: [] };
+
+    expect(reseated(choice, planned, seated)).toEqual({ ...choice, members: ["Immunologist", "PaperAgent: CellMapper (cell-1)", "PaperAgent: Other"] });
+  });
+
+  it("are named by the agent and not the place, where the server told two of the same title apart the other way round", () => {
+    const planned = [
+      { id: "a-aaaaaa", title: "X", seat: "PaperAgent: X" },
+      { id: "b-bbbbbb", title: "X", seat: "PaperAgent: X (bbbbbb)" },
+    ];
+    const seated = [
+      { id: "b-bbbbbb", title: "X", seat: "PaperAgent: X" },
+      { id: "a-aaaaaa", title: "X", seat: "PaperAgent: X (aaaaaa)" },
+    ];
+    const choice = { mode: "team" as const, members: ["PaperAgent: X (bbbbbb)"], rounds: 1, questions: [] };
+
+    expect(reseated(choice, planned, seated).members).toEqual(["PaperAgent: X"]);
+    expect(reseated({ ...choice, members: ["PaperAgent: X", "PaperAgent: X (bbbbbb)"] }, planned, seated).members).toEqual([
+      "PaperAgent: X (aaaaaa)",
+      "PaperAgent: X",
+    ]);
+  });
+});
+
 describe("what is kept for the next time", () => {
   function stub() {
     const kept = new Map<string, string>();
@@ -176,5 +248,21 @@ describe("what is kept for the next time", () => {
     expect(
       initialDraft("", { mode: "individual", members: ["Scientific Critic", "Geneticist"], rounds: 1 }, LIBRARY, "Principal Investigator", 3).members,
     ).toEqual(["Geneticist"]);
+  });
+
+  it("opens with those who are wanted chosen too, or, where one works alone, in place of the one chosen last", () => {
+    const kept = { mode: "team" as const, members: ["Geneticist"], rounds: 1 };
+
+    expect(initialDraft("", kept, LIBRARY, "Principal Investigator", 3, SEATS, ["PaperAgent: CellMapper"]).members).toEqual([
+      "Geneticist",
+      "PaperAgent: CellMapper",
+    ]);
+    expect(initialDraft("", kept, LIBRARY, "Principal Investigator", 3, SEATS, ["geneticist"]).members).toEqual(["Geneticist"]);
+    expect(initialDraft("", { ...kept, mode: "individual" }, LIBRARY, "Principal Investigator", 3, SEATS, ["PaperAgent: CellMapper"]).members).toEqual([
+      "PaperAgent: CellMapper",
+    ]);
+    expect(initialDraft("", { ...kept, mode: "individual" }, LIBRARY, "Principal Investigator", 3, SEATS, ["Gone"]).members).toEqual(["Geneticist"]);
+    expect(initialDraft("", null, LIBRARY, "Principal Investigator", 3, [], ["PaperAgent: CellMapper"]).members).toEqual([]);
+    expect(initialDraft("", { ...kept, members: ["PaperAgent: CellMapper"] }, LIBRARY, "Principal Investigator", 3).members).toEqual([]);
   });
 });

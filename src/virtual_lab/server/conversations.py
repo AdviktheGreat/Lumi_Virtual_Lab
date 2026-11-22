@@ -57,7 +57,7 @@ from virtual_lab.server.mcp import is_on, server_title
 from virtual_lab.server.mcp_seen import describe_held, seen_record
 from virtual_lab.server.own import given
 from virtual_lab.server.paperagent_given import given_entries, imported_among
-from virtual_lab.server.paperagent_team import cross_tools, paper_members
+from virtual_lab.server.paperagent_team import MEMBER_PREFIX, cross_tools, names_of, paper_members
 from virtual_lab.server.setup import Setup
 from virtual_lab.server.skills import Skills, load_skills
 from virtual_lab.server.tools import conversation_tools
@@ -139,6 +139,9 @@ class ChatHandle:
         # What it asks the researcher with: for its servers, and for a PaperAgent's tool that is held to go on with data
         # that is outside what the agent's card says. None for a conversation that has neither, and for a keyless one.
         self.asker: Asker | None = None
+        # The PaperAgents that have a seat on its team: each one's id, title, and the title of the scientist that speaks
+        # for it
+        self.papers: list[dict[str, str]] = []
         self.keyless = keyless
         self.closed = False
         self._loop = loop
@@ -184,7 +187,7 @@ class ChatHandle:
         return None if self.session is not None else (CHAT_UPLOADS_DIR_NAME,)
 
     def info(self) -> dict[str, Any]:
-        return {**self.chat.describe(), "config": self.config.to_dict()}
+        return {**self.chat.describe(), "config": self.config.to_dict(), "papers": [dict(seat) for seat in self.papers]}
 
     def tell(self, kind: Literal["connection", "approval", "question"], text: str = "", **data: Any) -> None:
         """Tells of what happens round the lead's work, as Chat.tell does."""
@@ -504,7 +507,8 @@ class Conversations:
     ) -> ChatHandle:
         """Has a conversation's team include these scientists of the library, which are those the researcher chose to
         work on a message and who it was not begun with. What was said and its files are kept, and code that was running
-        starts afresh. A conversation whose team has them all is left as it is, working or not.
+        starts afresh. A conversation whose team has them all is left as it is, working or not, and its team has the
+        scientists that speak for its PaperAgents, who are not in the library.
 
         :param check: Called with the conversation and the titles of those who are to join, before the team is changed,
             and raises ValueError if what they are to work on cannot be, so that the team is not changed for nothing.
@@ -515,7 +519,9 @@ class Conversations:
         with self._lock:
             handle = self.get(chat_id)
             config = handle.config
+            # The team as the conversation has it, which has the scientists that speak for its PaperAgents too
             known = {normalize_title(member["title"]) for member in (config.lead, *config.team)}
+            known |= {normalize_title(agent.title) for agent in (handle.chat.lead, *handle.chat.team)}
             scientists = library(self.workspace)
             missing: list[dict[str, str]] = []
             for title in titles:
@@ -524,8 +530,26 @@ class Conversations:
                 try:
                     missing.append(describe_scientist(title, scientists))
                 except ValueError as error:
+                    if normalize_title(title).startswith(normalize_title(MEMBER_PREFIX)):
+                        raise ApiError(
+                            422,
+                            "invalid",
+                            f"{title} is not on this conversation's team. A PaperAgent has a seat in the "
+                            "conversations that are begun with it.",
+                        ) from error
                     raise ApiError(422, "invalid", str(error)) from error
                 known.add(normalize_title(missing[-1]["title"]))
+            # One who joins with a name of a seat would have the seat named otherwise when the team is made again, and
+            # what is to be worked on names the seat as it is
+            seats = {name for seat in handle.papers for name in names_of(seat["seat"])}
+            for joining in missing:
+                if names_of(joining["title"]) & seats:
+                    raise ApiError(
+                        422,
+                        "invalid",
+                        f"{joining['title']} would have the name of a scientist that speaks for a PaperAgent of this "
+                        "conversation. Choose that scientist, or another.",
+                    )
             if not missing:
                 return handle
             if check is not None:
@@ -767,7 +791,9 @@ class Conversations:
             self.workspace, config.paperagents, entries, {tool.name for tool in (*chosen, *written, *agents)}
         )
         # Who speaks for each paper in a team session, besides those the person set up
-        team = paper_members(self.workspace, config.paperagents, config.model, config.team_agents(), lead)
+        team, handle.papers = paper_members(
+            self.workspace, config.paperagents, config.model, config.team_agents(), lead
+        )
         if servers and asker is not None:
 
             def remember(name: str, entry: Mapping[str, Any], opened: MCPTools) -> None:
