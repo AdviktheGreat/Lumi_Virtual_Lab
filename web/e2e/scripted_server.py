@@ -151,6 +151,7 @@ from virtual_lab.execution import ExecutionResult  # noqa: E402
 from virtual_lab.paperagents import checking  # noqa: E402
 from virtual_lab.paperagents import data as finding  # noqa: E402
 from virtual_lab.paperagents import datahosts as hosting  # noqa: E402
+from virtual_lab.paperagents import exporting  # noqa: E402
 from virtual_lab.paperagents import environment as building  # noqa: E402
 from virtual_lab.paperagents import fetch as fetching  # noqa: E402
 from virtual_lab.paperagents import matching  # noqa: E402
@@ -159,6 +160,7 @@ from virtual_lab.paperagents import reference as referencing  # noqa: E402
 from virtual_lab.paperagents import repository as cloning  # noqa: E402
 from virtual_lab.paperagents import reproducing  # noqa: E402
 from virtual_lab.paperagents import toolmaking as making  # noqa: E402
+from virtual_lab.paperagents import watching  # noqa: E402
 from virtual_lab.paperagents import wrappers  # noqa: E402
 from virtual_lab.paperagents.reading import (  # noqa: E402
     ChunkReading,
@@ -172,6 +174,7 @@ from virtual_lab.paperagents.reading import (  # noqa: E402
 from virtual_lab.papers import PaperFindings  # noqa: E402
 from virtual_lab.prompts import result_check_prompt  # noqa: E402
 from virtual_lab.server import app as server_app  # noqa: E402
+from virtual_lab.server import paperagent_library as kept_library  # noqa: E402
 from virtual_lab.server import paperagents as server_paperagents  # noqa: E402
 from virtual_lab.server import serve  # noqa: E402
 from virtual_lab.server.keychain import Keychain  # noqa: E402
@@ -712,6 +715,7 @@ def stand_in_clone(
                 raise StoppedError("Stopped while the code was fetched.")
             time.sleep(0.1)
     needs_gpu = "gpu" in url
+    newer = "moves" in url and url in MOVED
     if "bare" in url:
         destination.mkdir(parents=True, exist_ok=True)
         (destination / "README.md").write_text("# cellmapper\n\nMaps cells.\n")
@@ -737,6 +741,13 @@ def stand_in_clone(
                 "from cellmapper.core import scale\n\n\n"
                 "def test_scale_doubles():\n    assert scale([1.0], 2.0) == [2.0]\n"
             )
+    if newer:
+        files["cellmapper/core.py"] = CORE.replace(
+            '"""Multiplies each value by a factor."""',
+            '"""Multiplies each value by a factor, which is 1 unless said."""',
+        )
+        files["requirements.txt"] = "scanpy==1.10.0\nnumpy==1.26.4\n"
+        files["CHANGELOG.md"] = "# 0.2.0\n\nSays what the factor of scale is.\n"
     if "many" in url:
         files["examples/demo.py"] = "import cellmapper\nprint(cellmapper.scale([1, 2, 3], 2.5))\n"
         files["examples/second.py"] = "import cellmapper\nprint(cellmapper.scale([4], 2.0))\n"
@@ -744,8 +755,83 @@ def stand_in_clone(
     for name, text in files.items():
         (destination / name).parent.mkdir(parents=True, exist_ok=True)
         (destination / name).write_text(text)
+    if newer:
+        # A commit that is asked for is the one that is given, as the newer version is fetched at the commit that was approved
+        return cloning.Cloned(commit=asked if cloning.COMMIT.fullmatch(asked) else newer_commit(url), ref=asked)
 
     return cloning.Cloned(commit=hashlib.sha1(f"{url}@{asked}".encode()).hexdigest(), ref=asked)
+
+
+# The addresses of code that moves on: once a look has asked where one is, its ref is at a newer commit, which is what fetching the
+# ref gives from then on. The rest stay where they were, but one whose address says "gone", which cannot be found any more
+MOVED: set[str] = set()
+
+
+def newer_commit(url: str) -> str:
+    return hashlib.sha1(f"{url}@newer".encode()).hexdigest()
+
+
+def stand_in_probe(url: str, ref: str, commit: str, *arguments: Any, **options: Any) -> watching.Probe:
+    """What asking where the code's ref is now finds, without Git."""
+    if cloning.COMMIT.fullmatch(ref):
+        return watching.Probe(watching.PINNED, None, "It was fetched at one commit, which does not move.")
+    if "gone" in url:
+        return watching.Probe(watching.GONE, None, f"{url} cannot be found any more.")
+    now = commit
+    if "moves" in url:
+        MOVED.add(url)
+        now = newer_commit(url)
+    if now == commit:
+        return watching.Probe(watching.SAME, now, "The code is where it was fetched from, at the same commit.")
+
+    return watching.Probe(
+        watching.MOVED, now, f"{ref!r} is now at {now[:12]}, and the code that is kept is of {commit[:12]}."
+    )
+
+
+YANKED_PIN = ("oldpin", "0.0.1")
+
+
+class StandInIndex:
+    """What PyPI says of a version, without asking it: every version is there, but the one that the lock of an agent whose
+    id says "yanked" pins beside the others, which was yanked."""
+
+    def status(self, name: str, version: str) -> str | None:
+        return watching.YANKED if (name, version) == YANKED_PIN else watching.FOUND
+
+
+def stand_in_package_check(
+    self: kept_library.PackageRunner,
+) -> tuple[dict[str, Any] | None, str, int | None, list[str]]:
+    """What a package's own check reports of itself, without Docker: each tool's recorded calls give what their tutorials got,
+    but none do of code whose address says "breaks"."""
+    manifest = json.loads((self.mounts[0][0] / exporting.MANIFEST_FILE).read_text())
+    url = manifest["code"]["url"]
+    tools = []
+    differs = "breaks" in url
+    for tool in manifest["tools"]:
+        cases = [
+            {
+                "case": case,
+                "status": "mismatch" if differs else "match",
+                "differences": ["gave 0.91 where its tutorial got 0.93"] if differs else [],
+                "message": None,
+                "seconds": 0.2,
+            }
+            for case in range(min(len(tool["examples"]), kept_library.MAX_CASES))
+        ]
+        tools.append({"name": tool["name"], "cases": cases})
+    report = {
+        "schema": 1,
+        "ok": not any(case["status"] != "match" for tool in tools for case in tool["cases"]),
+        "python": "3.11.9",
+        "name": manifest["name"],
+        "version": manifest["version"],
+        "problems": [],
+        "tools": tools,
+    }
+
+    return report, "done", 0, ["The package checked itself."]
 
 
 # How long a file of data that is "slow" takes to be sent, which is long enough for it to be followed and stopped
@@ -970,7 +1056,7 @@ def stand_in_build(
         size_bytes=180_000_000,
         added_bytes=130_000_000,
         python=f"{recipe.python or '3.11'}.9",
-        lock="numpy==1.26.4\nscanpy==1.9.3\n",
+        lock="numpy==1.26.4\nscanpy==1.9.3\n" + ("==".join(YANKED_PIN) + "\n" if "yanked" in label else ""),
         lock_name="conda-explicit.txt" if recipe.kind == "conda" else "pip-freeze.txt",
         packages=2,
         pip_check={"ok": True, "problems": []},
@@ -1832,6 +1918,13 @@ def main() -> None:
     referencing.remove_runs = stand_in_remove_runs
     making.ToolRunner.replay = stand_in_replay  # type: ignore[method-assign]
     checking.CheckRunner.run_tests = stand_in_run_tests  # type: ignore[method-assign]
+    # A look at an agent asks where its code is, asks PyPI of what its lock pins, and runs its package's own check, none of which is
+    # done for real. The server takes the first two when it starts
+    watching.probe_source = stand_in_probe
+    watching.Index = StandInIndex  # type: ignore[misc,assignment]
+    kept_library.PackageRunner.check = stand_in_package_check  # type: ignore[method-assign]
+    # The schedules of the agents that are watched are checked every few seconds, not every minute, so that a test can see one kept to
+    server_app.SCHEDULE_SECONDS = 2
     openrouter.fetch_models = stand_in_openrouter_models
     # The containers that a function written from a paper's words is imported and called in are stand-ins too
     server_paperagents.DockerExecutor = ImportContainer  # type: ignore[misc,assignment]

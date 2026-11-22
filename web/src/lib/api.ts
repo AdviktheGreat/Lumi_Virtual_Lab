@@ -63,6 +63,8 @@ import type {
   PaperAgentVariantOptions,
   PaperAgentVariants,
   PaperAgentGiven,
+  PaperAgentHealth,
+  PaperAgentUpdate,
   PaperAgentImportCheck,
   PaperAgentMakeOptions,
   PaperAgentMatchingOptions,
@@ -690,6 +692,19 @@ export const api = {
   clearPaperAgentChecks: (id: string) => request<PaperAgentChecks>("DELETE", `/paperagents/${encodeURIComponent(id)}/checks`),
   paperAgentToolChecks: (id: string, name: string, signal?: AbortSignal) =>
     request<CheckedToolDetail>("GET", `/paperagents/${encodeURIComponent(id)}/checks/${encodeURIComponent(name)}`, undefined, signal),
+  // How an agent was found when it was last looked at, looking at it again, which goes on as a job, the schedule it is looked at on,
+  // and a newer version of its code that is proposed, which is taken only for the commit that the person approves
+  paperAgentHealth: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentHealth>("GET", `/paperagents/${encodeURIComponent(id)}/health`, undefined, signal),
+  lookAtPaperAgent: (id: string) => request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/health`),
+  watchPaperAgent: (id: string, everyHours: number) =>
+    request<PaperAgentHealth>("PUT", `/paperagents/${encodeURIComponent(id)}/watch`, { every_hours: everyHours }),
+  stopWatchingPaperAgent: (id: string) => request<PaperAgentHealth>("DELETE", `/paperagents/${encodeURIComponent(id)}/watch`),
+  paperAgentUpdate: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentUpdate>("GET", `/paperagents/${encodeURIComponent(id)}/update`, undefined, signal),
+  applyPaperAgentUpdate: (id: string, commit: string) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/update/apply`, { commit }),
+  dismissPaperAgentUpdate: (id: string) => request<PaperAgentUpdate>("DELETE", `/paperagents/${encodeURIComponent(id)}/update`),
   // The trying of the claims, which is held to what the tutorials gave, and where each first parts from the paper, which is made from
   // what is kept
   paperAgentReproduction: (id: string, signal?: AbortSignal) =>

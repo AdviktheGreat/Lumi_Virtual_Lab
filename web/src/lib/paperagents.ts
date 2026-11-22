@@ -314,12 +314,13 @@ export function readingKey(jobs: readonly Job[] | null, ended: number, agent: st
   const varying = (jobs ?? []).filter((job) => isActive(job) && job.kind === VARIANT_JOB && job.subject === agent).map((job) => job.id);
   const writing = (jobs ?? []).filter((job) => isActive(job) && job.kind === REIMPLEMENTATION_JOB && job.subject === agent).map((job) => job.id);
   const matching = (jobs ?? []).filter((job) => isActive(job) && job.kind === MATCHING_JOB && job.subject === agent).map((job) => job.id);
+  const looking = (jobs ?? []).filter((job) => isActive(job) && job.kind === HEALTH_JOB && job.subject === agent).map((job) => job.id);
   // Making it in one go is followed from step to step, as each step changes what there is of the agent
   const going = (jobs ?? [])
     .filter((job) => isActive(job) && job.kind === ONEGO_JOB && job.subject === agent)
     .map((job) => `${job.id}:${job.progress.finished ?? ""}`);
 
-  return `${ended}|${going.length > 0 ? `onego:${going.join(",")}|` : ""}${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}${checking.length > 0 ? `|checks:${checking.join(",")}` : ""}${trying.length > 0 ? `|trying:${trying.join(",")}` : ""}${varying.length > 0 ? `|varying:${varying.join(",")}` : ""}${writing.length > 0 ? `|writing:${writing.join(",")}` : ""}${matching.length > 0 ? `|matching:${matching.join(",")}` : ""}`;
+  return `${ended}|${going.length > 0 ? `onego:${going.join(",")}|` : ""}${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}${checking.length > 0 ? `|checks:${checking.join(",")}` : ""}${trying.length > 0 ? `|trying:${trying.join(",")}` : ""}${varying.length > 0 ? `|varying:${varying.join(",")}` : ""}${writing.length > 0 ? `|writing:${writing.join(",")}` : ""}${matching.length > 0 ? `|matching:${matching.join(",")}` : ""}${looking.length > 0 ? `|health:${looking.join(",")}` : ""}`;
 }
 
 // The job that fetches the code of an agent, which the server runs with the agent's id as its subject
@@ -450,6 +451,19 @@ export function matchingJob(jobs: readonly Job[], agent: string): Job | undefine
 // The latest checking of that function that is over, whose outcome is what it was last done with
 export function lastMatchingJob(jobs: readonly Job[], agent: string): Job | undefined {
   return jobs.find((job) => !isActive(job) && job.kind === MATCHING_JOB && job.subject === agent);
+}
+
+// The job that looks at an agent, to say how it is now, which the server runs with the agent's id as its subject
+export const HEALTH_JOB = "paperagent-health";
+
+// The job at work looking at an agent, which nothing else is done to the agent in the meantime
+export function healthJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === HEALTH_JOB && job.subject === agent);
+}
+
+// The latest look at an agent that is over, whose outcome is what it was last done with
+export function lastHealthJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => !isActive(job) && job.kind === HEALTH_JOB && job.subject === agent);
 }
 
 // The job that makes an agent in one go, step after step, which the server runs with the agent's id as its subject

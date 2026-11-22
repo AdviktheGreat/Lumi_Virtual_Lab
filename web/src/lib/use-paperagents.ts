@@ -9,6 +9,7 @@ import type {
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentGiven,
+  PaperAgentHealth,
   PaperAgentOneGo,
   PaperAgentReading,
   PaperAgentReference,
@@ -126,6 +127,14 @@ export function usePaperAgentOneGo(id: string, report: (error: unknown) => void,
 
 export function usePaperAgentGiven(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentGiven> {
   const look = useCallback(() => api.paperAgentGiven(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+// How an agent was found when it was last looked at, its schedule, and a newer version of its code that is proposed, looked at again
+// as it is looked at, and as what it is made of changes
+export function usePaperAgentHealth(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentHealth> {
+  const look = useCallback(() => api.paperAgentHealth(id), [id]);
 
   return useLooked(look, report, again);
 }

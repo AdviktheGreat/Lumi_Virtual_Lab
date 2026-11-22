@@ -3268,3 +3268,101 @@ export interface NewTriage {
   most_looked_at?: number;
   max_megabytes?: number;
 }
+
+// How an agent was found when it was last looked at, in one word, which is said beside what it means
+export type HealthStatus = "healthy" | "degraded" | "broken" | "unchecked";
+
+// Where the ref that the code was fetched at is now: where it was, moved, gone, not known, or a commit, which does not move
+export type SourceState = "same" | "moved" | "gone" | "unknown" | "pinned";
+
+// The commit of the code that an agent is of, at the ref and the address it was fetched from
+export interface CodeVersion {
+  commit: string;
+  ref: string;
+  url: string;
+}
+
+// What a look at an agent found, which is shown only while it is of the commit, the image, and the tools that are kept
+export interface HealthRecord {
+  checked_at: string;
+  status: HealthStatus;
+  reasons: string[];
+  commit: string;
+  image_id: string;
+  tools_made_at: string;
+  source: { state: SourceState; commit: string | null; message: string; update_error: string | null };
+  // Whether the image of the environment is in Docker, or null if Docker could not be asked
+  image: { present: boolean | null };
+  // What the package index said of the versions that a pip lock pins, or null if they were not asked of
+  dependencies: {
+    kind: string;
+    total: number;
+    looked_at: number;
+    unsaid: number;
+    problems: { name: string; version: string; state: string }[];
+  } | null;
+  dependencies_message: string | null;
+  // Each tool's recorded calls as they were run again, of which a tool with none was not held to anything
+  tools: { name: string; calls: number; matched: number; message: string | null }[];
+  tools_message: string | null;
+  seconds: number;
+  // The words of the last looks, the oldest first and this one last
+  history: { at: string; status: HealthStatus }[];
+}
+
+// The schedule that the person set, which the server keeps to while it runs
+export interface HealthWatch {
+  every_hours: number;
+  set_at: string;
+  last_started_at: string | null;
+}
+
+// A newer version of the code that is proposed, without its diff
+export interface ProposedUpdateSummary {
+  proposed_at: string;
+  from_commit: string;
+  to_commit: string;
+  // The tools that are of a file that changed, and the files that changed that say what an environment is made of
+  affects: string[];
+  environment_files: string[];
+  changed: number;
+}
+
+export interface PaperAgentHealth {
+  id: string;
+  // Whether it can be looked at, which is whether it has tools that were made to their end
+  watchable: boolean;
+  version: CodeVersion | null;
+  health: HealthRecord | null;
+  watch: HealthWatch | null;
+  update: ProposedUpdateSummary | null;
+  job: Job | null;
+  docker: { ready: boolean; message: string | null };
+  meaning: string;
+  limits: { min_hours: number; max_hours: number };
+}
+
+// One file of a newer version that differs from the one that is kept. The lines that were added and taken away are not counted of a
+// changed file whose lines were not compared, and its diff is null then, or cut when it is long
+export interface UpdateFile {
+  path: string;
+  change: "added" | "removed" | "changed";
+  added: number | null;
+  removed: number | null;
+  diff: string | null;
+  cut: boolean;
+  binary: boolean;
+}
+
+export interface ProposedUpdate extends Omit<ProposedUpdateSummary, "changed"> {
+  url: string;
+  ref: string;
+  diff: { changed: number; added: number; removed: number; files: UpdateFile[]; truncated: boolean };
+}
+
+export interface PaperAgentUpdate {
+  id: string;
+  update: ProposedUpdate | null;
+  version: CodeVersion | null;
+  pinned: string;
+}

@@ -15,6 +15,7 @@ import { DataSection } from "@/components/paper-agent-data";
 import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
 import { ImportedSection } from "@/components/paper-agent-imported";
+import { LivingSection } from "@/components/paper-agent-living";
 import { OneGoSection } from "@/components/paper-agent-onego";
 import { CardSection } from "@/components/paper-agent-card";
 import { ReadingSection } from "@/components/paper-agent-reading";
@@ -53,10 +54,12 @@ import {
   describeSteps,
   environmentJob,
   existingOf,
+  healthJob,
   isLink,
   lastChecksJob,
   lastDataJob,
   lastEnvironmentJob,
+  lastHealthJob,
   lastMatchingJob,
   lastReadingJob,
   lastReferenceJob,
@@ -102,6 +105,7 @@ import type {
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentGiven,
+  PaperAgentHealth,
   PaperAgentOneGo,
   PaperAgentReading,
   PaperAgentReference,
@@ -120,6 +124,7 @@ import {
   usePaperAgentData,
   usePaperAgentEnvironment,
   usePaperAgentGiven,
+  usePaperAgentHealth,
   usePaperAgentOneGo,
   usePaperAgentReading,
   usePaperAgentReference,
@@ -642,6 +647,7 @@ function Agent({
   reimplementation,
   given,
   onego,
+  health,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
@@ -657,6 +663,7 @@ function Agent({
   reimplementation: LookedAt<PaperAgentReimplementation>;
   given: LookedAt<PaperAgentGiven>;
   onego: LookedAt<PaperAgentOneGo>;
+  health: LookedAt<PaperAgentHealth>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -744,6 +751,11 @@ function Agent({
   // Making it in one go, which does the steps one after another, and nothing else is done to the agent in the meantime. The agent
   // says that it is being made before the jobs have been looked at
   const going = onegoJob(all, agent.id);
+  // Looking at how the agent is now, which is not a step of the agent either, and which nothing else is done to it beside
+  const looking = healthJob(all, agent.id);
+  const lastLook = lastHealthJob(all, agent.id);
+  // How the last look ended is said if it did not end well, as what it found is shown in its section
+  const lastLookShown = lastLook !== undefined && lastLook.state !== "succeeded" ? lastLook : undefined;
   const makingInOneGo = going !== undefined || agent.onego != null;
   // Whether anything but making it in one go is being done to the agent, which starting that waits for
   const othersIdle =
@@ -757,7 +769,8 @@ function Agent({
     tryingClaims === undefined &&
     makingVariant === undefined &&
     writingFunction === undefined &&
-    checkingFunction === undefined;
+    checkingFunction === undefined &&
+    looking === undefined;
   const idle = othersIdle && !makingInOneGo;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
@@ -772,6 +785,7 @@ function Agent({
     reimplementation.reload();
     checks.reload();
     given.reload();
+    health.reload();
     onego.reload();
   };
   const shared = { agent, list, working: !idle, onChanged: changed };
@@ -872,7 +886,9 @@ function Agent({
                                     ? "A function is being written from the paper. Reading waits for that."
                                     : checkingFunction !== undefined
                                       ? "The function written from the paper is being checked. Reading waits for that."
-                                      : runningTutorials
+                                      : looking !== undefined
+                                        ? "The agent is being looked at. Reading waits for that."
+                                        : runningTutorials
                                         ? "The tutorials are being run or the tools made. Reading waits for that."
                                         : null
               }
@@ -889,6 +905,7 @@ function Agent({
                 data.reload();
                 // The tools that read it are given only while its text is kept
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -953,6 +970,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
                 onReload();
               }}
               onStale={() => {
@@ -966,6 +984,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -999,6 +1018,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
                 onReload();
               }}
               onStale={() => {
@@ -1010,6 +1030,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -1038,6 +1059,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
                 onReload();
               }}
             />
@@ -1066,6 +1088,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
                 onReload();
               }}
               onStale={() => {
@@ -1076,6 +1099,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -1103,6 +1127,7 @@ function Agent({
                 // A function can be written from the paper only while there are no tools of the authors' code
                 reimplementation.reload();
                 given.reload();
+                health.reload();
                 onReload();
               }}
               onStale={() => {
@@ -1113,6 +1138,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -1136,6 +1162,7 @@ function Agent({
                 checks.set(cleared);
                 // What a conversation is given says the tier of each tool
                 given.reload();
+                health.reload();
                 onReload();
               }}
               onStale={() => {
@@ -1146,6 +1173,7 @@ function Agent({
                 reimplementation.reload();
                 checks.reload();
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -1174,6 +1202,7 @@ function Agent({
                 checks.reload();
                 claims.reload();
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -1202,6 +1231,7 @@ function Agent({
                 checks.reload();
                 claims.reload();
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -1232,6 +1262,7 @@ function Agent({
                 reimplementation.set(next);
                 // What a conversation is given is of the function and of what came of checking it
                 given.reload();
+                health.reload();
               }}
               onStale={() => {
                 onReload();
@@ -1239,6 +1270,7 @@ function Agent({
                 tools.reload();
                 reimplementation.reload();
                 given.reload();
+                health.reload();
               }}
             />
           )}
@@ -1267,6 +1299,37 @@ function Agent({
               onChanged={(next) => {
                 onChanged(next);
                 given.reload();
+                health.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Health"
+        intro="Whether the agent still works as it did: where its code is now, whether the versions that its environment pins can still be had, and its tools run again in the environment that is kept. A newer version of the code is shown as a diff, and is taken only when you approve it."
+      >
+        <WorkStatus job={looking} last={lastLookShown} jobs={jobs} label="Looking at the agent" />
+        <Looked state={health.value} label="Looking at how the agent is" failure="How the agent is could not be looked at." onRetry={health.reload}>
+          {(value) => (
+            <LivingSection
+              key={agent.id}
+              agent={agent}
+              health={value}
+              busy={!idle}
+              looking={looking}
+              jobs={jobs}
+              onChanged={health.set}
+              onApplied={() => {
+                // The code is being replaced, and what was made of it goes with the old commit
+                onReload();
+                repository.reload();
+                health.reload();
+              }}
+              onStale={() => {
+                onReload();
+                tools.reload();
+                health.reload();
               }}
             />
           )}
@@ -1302,6 +1365,7 @@ export function AgentPage({ id }: { id: string }) {
   const reimplementation = usePaperAgentReimplementation(id, report, again);
   const given = usePaperAgentGiven(id, report, again);
   const onego = usePaperAgentOneGo(id, report, again);
+  const health = usePaperAgentHealth(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -1337,6 +1401,7 @@ export function AgentPage({ id }: { id: string }) {
                 reimplementation={reimplementation}
                 given={given}
                 onego={onego}
+                health={health}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />
