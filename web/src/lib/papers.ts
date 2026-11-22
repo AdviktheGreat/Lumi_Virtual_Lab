@@ -26,16 +26,16 @@ export const DEFAULT_FUNCTIONS = 10;
 // The jobs that work on a run, only one of which is at work on it at a time
 export const WORK_KINDS = ["papers", "functions"];
 
-// The page has four parts, each its own address: the agents, which is the page's own, the triages, which rank a listing of
-// papers by a look at their code, the bake-offs, which ask which method is best for a task on a person's own data, and the
-// surveys, which are the runs that read many papers for what they share
-export type PaperView = "agents" | "triage" | "bakeoffs" | "surveys";
+// The page has five parts, each its own address: the agents, which is the page's own, the library, which lists the agents that have
+// tools as versions that are pinned, the triages, which rank a listing of papers by a look at their code, the bake-offs, which ask
+// which method is best for a task on a person's own data, and the surveys, which are the runs that read many papers for what they share
+export type PaperView = "agents" | "library" | "triage" | "bakeoffs" | "surveys";
 
 export const SURVEYS_ADDRESS = "/papers?view=surveys";
 
 // Which part the address's query asks for, which is the agents unless it says another
 export function paperView(view: string | null): PaperView {
-  return view === "surveys" || view === "bakeoffs" || view === "triage" ? view : "agents";
+  return view === "surveys" || view === "bakeoffs" || view === "triage" || view === "library" ? view : "agents";
 }
 
 export const SOURCE_LABELS: Record<PaperSourceKind, string> = {

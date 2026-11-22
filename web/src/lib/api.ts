@@ -65,6 +65,8 @@ import type {
   PaperAgentGiven,
   PaperAgentHealth,
   PaperAgentUpdate,
+  PaperAgentLibrary,
+  PaperAgentExport,
   PaperAgentImportCheck,
   PaperAgentMakeOptions,
   PaperAgentMatchingOptions,
@@ -705,6 +707,14 @@ export const api = {
   applyPaperAgentUpdate: (id: string, commit: string) =>
     request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/update/apply`, { commit }),
   dismissPaperAgentUpdate: (id: string) => request<PaperAgentUpdate>("DELETE", `/paperagents/${encodeURIComponent(id)}/update`),
+  // The agents that have tools, each as a version that is pinned, with its package if one was made
+  paperAgentLibrary: (signal?: AbortSignal) => request<PaperAgentLibrary>("GET", "/paperagents/library", undefined, signal),
+  paperAgentExport: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentExport>("GET", `/paperagents/${encodeURIComponent(id)}/export`, undefined, signal),
+  // Making a package is a job; a license that is flagged is refused (409 license) until it is said to go on
+  exportPaperAgent: (id: string, acceptLicense: boolean) =>
+    request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/export`, { accept_license: acceptLicense }),
+  removePaperAgentExport: (id: string) => request<PaperAgentExport>("DELETE", `/paperagents/${encodeURIComponent(id)}/export`),
   // The trying of the claims, which is held to what the tutorials gave, and where each first parts from the paper, which is made from
   // what is kept
   paperAgentReproduction: (id: string, signal?: AbortSignal) =>

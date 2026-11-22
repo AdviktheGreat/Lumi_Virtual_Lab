@@ -10,6 +10,8 @@ import type {
   PaperAgentEnvironment,
   PaperAgentGiven,
   PaperAgentHealth,
+  PaperAgentExport,
+  PaperAgentLibrary,
   PaperAgentOneGo,
   PaperAgentReading,
   PaperAgentReference,
@@ -135,6 +137,18 @@ export function usePaperAgentGiven(id: string, report: (error: unknown) => void,
 // as it is looked at, and as what it is made of changes
 export function usePaperAgentHealth(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentHealth> {
   const look = useCallback(() => api.paperAgentHealth(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+export function usePaperAgentExport(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentExport> {
+  const look = useCallback(() => api.paperAgentExport(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+export function usePaperAgentLibrary(report: (error: unknown) => void, again: string): Looked<PaperAgentLibrary> {
+  const look = useCallback(() => api.paperAgentLibrary(), []);
 
   return useLooked(look, report, again);
 }

@@ -16,6 +16,7 @@ import { EnvironmentSection } from "@/components/paper-agent-environment";
 import { GivenSection } from "@/components/paper-agent-given";
 import { ImportedSection } from "@/components/paper-agent-imported";
 import { LivingSection } from "@/components/paper-agent-living";
+import { PackageSection } from "@/components/paper-agent-package";
 import { OneGoSection } from "@/components/paper-agent-onego";
 import { CardSection } from "@/components/paper-agent-card";
 import { ReadingSection } from "@/components/paper-agent-reading";
@@ -54,11 +55,13 @@ import {
   describeSteps,
   environmentJob,
   existingOf,
+  exportJob,
   healthJob,
   isLink,
   lastChecksJob,
   lastDataJob,
   lastEnvironmentJob,
+  lastExportJob,
   lastHealthJob,
   lastMatchingJob,
   lastReadingJob,
@@ -104,6 +107,7 @@ import type {
   PaperAgentClaims,
   PaperAgentData,
   PaperAgentEnvironment,
+  PaperAgentExport,
   PaperAgentGiven,
   PaperAgentHealth,
   PaperAgentOneGo,
@@ -123,6 +127,7 @@ import {
   usePaperAgentClaims,
   usePaperAgentData,
   usePaperAgentEnvironment,
+  usePaperAgentExport,
   usePaperAgentGiven,
   usePaperAgentHealth,
   usePaperAgentOneGo,
@@ -648,6 +653,7 @@ function Agent({
   given,
   onego,
   health,
+  exported,
   onChanged,
   onReload,
 }: Pick<Shared, "agent" | "list" | "onChanged"> & {
@@ -664,6 +670,7 @@ function Agent({
   given: LookedAt<PaperAgentGiven>;
   onego: LookedAt<PaperAgentOneGo>;
   health: LookedAt<PaperAgentHealth>;
+  exported: LookedAt<PaperAgentExport>;
   // Looks at the agent again, as is done when what was read of its paper is taken away, which changes its steps
   onReload: () => void;
 }) {
@@ -756,6 +763,11 @@ function Agent({
   const lastLook = lastHealthJob(all, agent.id);
   // How the last look ended is said if it did not end well, as what it found is shown in its section
   const lastLookShown = lastLook !== undefined && lastLook.state !== "succeeded" ? lastLook : undefined;
+  // Making a package of the tools and checking it, which is not a step of the agent either
+  const packing = exportJob(all, agent.id);
+  const lastPacking = lastExportJob(all, agent.id);
+  // How the last making ended is said if it did not end well, as the package that it made is shown in its section
+  const lastPackingShown = lastPacking !== undefined && lastPacking.state !== "succeeded" ? lastPacking : undefined;
   const makingInOneGo = going !== undefined || agent.onego != null;
   // Whether anything but making it in one go is being done to the agent, which starting that waits for
   const othersIdle =
@@ -770,7 +782,8 @@ function Agent({
     makingVariant === undefined &&
     writingFunction === undefined &&
     checkingFunction === undefined &&
-    looking === undefined;
+    looking === undefined &&
+    packing === undefined;
   const idle = othersIdle && !makingInOneGo;
   // What the agent's address, paper, or title is changed to may take away its code, and what the paper points to is found from
   // its paper, so the code is looked at again, and the environment, which is of the code
@@ -786,6 +799,7 @@ function Agent({
     checks.reload();
     given.reload();
     health.reload();
+    exported.reload();
     onego.reload();
   };
   const shared = { agent, list, working: !idle, onChanged: changed };
@@ -888,6 +902,8 @@ function Agent({
                                       ? "The function written from the paper is being checked. Reading waits for that."
                                       : looking !== undefined
                                         ? "The agent is being looked at. Reading waits for that."
+                                        : packing !== undefined
+                                          ? "A package of the tools is being made. Reading waits for that."
                                         : runningTutorials
                                         ? "The tutorials are being run or the tools made. Reading waits for that."
                                         : null
@@ -906,6 +922,7 @@ function Agent({
                 // The tools that read it are given only while its text is kept
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -971,6 +988,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
                 onReload();
               }}
               onStale={() => {
@@ -985,6 +1003,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1019,6 +1038,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
                 onReload();
               }}
               onStale={() => {
@@ -1031,6 +1051,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1060,6 +1081,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
                 onReload();
               }}
             />
@@ -1089,6 +1111,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
                 onReload();
               }}
               onStale={() => {
@@ -1100,6 +1123,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1128,6 +1152,7 @@ function Agent({
                 reimplementation.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
                 onReload();
               }}
               onStale={() => {
@@ -1139,6 +1164,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1163,6 +1189,7 @@ function Agent({
                 // What a conversation is given says the tier of each tool
                 given.reload();
                 health.reload();
+                exported.reload();
                 onReload();
               }}
               onStale={() => {
@@ -1174,6 +1201,7 @@ function Agent({
                 checks.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1203,6 +1231,7 @@ function Agent({
                 claims.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1232,6 +1261,7 @@ function Agent({
                 claims.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1263,6 +1293,7 @@ function Agent({
                 // What a conversation is given is of the function and of what came of checking it
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
               onStale={() => {
                 onReload();
@@ -1271,6 +1302,7 @@ function Agent({
                 reimplementation.reload();
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1300,6 +1332,7 @@ function Agent({
                 onChanged(next);
                 given.reload();
                 health.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1325,11 +1358,38 @@ function Agent({
                 onReload();
                 repository.reload();
                 health.reload();
+                exported.reload();
               }}
               onStale={() => {
                 onReload();
                 tools.reload();
                 health.reload();
+                exported.reload();
+              }}
+            />
+          )}
+        </Looked>
+      </PageSection>
+      <PageSection
+        title="Package"
+        intro="The tools as a version that is pinned: the commit of the code, the environment with the exact versions it installed, and each tool with its tier. A package of them is a server of the Model Context Protocol that runs anywhere, which is checked in a clean container before it is kept."
+      >
+        <WorkStatus job={packing} last={lastPackingShown} jobs={jobs} label="Making the package" />
+        <Looked state={exported.value} label="Looking at the package" failure="The package could not be looked at." onRetry={exported.reload}>
+          {(value) => (
+            <PackageSection
+              key={agent.id}
+              agent={agent}
+              exported={value}
+              busy={!idle}
+              making={packing}
+              jobs={jobs}
+              onChanged={exported.set}
+              onStale={() => {
+                onReload();
+                environment.reload();
+                tools.reload();
+                exported.reload();
               }}
             />
           )}
@@ -1366,6 +1426,7 @@ export function AgentPage({ id }: { id: string }) {
   const given = usePaperAgentGiven(id, report, again);
   const onego = usePaperAgentOneGo(id, report, again);
   const health = usePaperAgentHealth(id, report, again);
+  const exported = usePaperAgentExport(id, report, again);
   const list = usePaperAgentsList(report, "");
 
   return (
@@ -1402,6 +1463,7 @@ export function AgentPage({ id }: { id: string }) {
                 given={given}
                 onego={onego}
                 health={health}
+                exported={exported}
                 onChanged={agent.set}
                 onReload={agent.reload}
               />

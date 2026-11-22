@@ -3366,3 +3366,100 @@ export interface PaperAgentUpdate {
   version: CodeVersion | null;
   pinned: string;
 }
+
+// Why a package of code is not made until the person says to go on: the code has no license, one that was not recognized, one for
+// non-commercial use only, or a copyleft one. A license that is not flagged needs nothing said
+export type LicenseFlag = "none" | "unrecognized" | "noncommercial" | "copyleft";
+
+// What the code's license was found to be when it was fetched, and what is said of it first if it is flagged
+export interface CodeLicense {
+  name: string | null;
+  kind: string | null;
+  files: string[];
+  flag: LicenseFlag | null;
+  said: string | null;
+}
+
+// A package of an agent's tools that was made, and kept as it passed its check in a clean container. It is current while what it was
+// made of is what is kept now, and can be downloaded only then
+export interface ToolPackage {
+  name: string;
+  file: string;
+  made_at: string;
+  bytes: number;
+  sha256: string;
+  commit: string;
+  current: boolean;
+  accepted_license: boolean;
+  license: { flag: LicenseFlag | null; name: string | null; kind: string | null };
+  tools: { name: string; tier: string; wrapper_sha256: string }[];
+  repo: { files: number; bytes: number; sha256: string };
+  tested: {
+    ok: boolean;
+    python: string;
+    image_id: string;
+    at: string;
+    seconds: number;
+    calls: number;
+    tools: { name: string; cases: { case: number; status: string; seconds: number }[] }[];
+  };
+}
+
+// One tool of an agent as the library lists it, with the tier its checks come to now and the hash of its wrapper
+export interface LibraryTool {
+  name: string;
+  function: string;
+  tier: string;
+  made_as: string;
+  passed: string[];
+  wrapper_sha256: string;
+  calls: number;
+}
+
+// An agent that has tools, as a version that is pinned: the commit of its code, the environment its tools were made in, and its tools
+export interface LibraryEntry {
+  id: string;
+  title: string;
+  given: boolean;
+  tier: string | null;
+  version: CodeVersion & { short: string; fetched_at: string };
+  environment: {
+    kind: string;
+    python: string;
+    base_image: string;
+    image: EnvironmentBuilt["image"];
+    built_at: string;
+    lock: { name: string; packages: number; sha256: string };
+    pip_check: boolean;
+  };
+  license: CodeLicense;
+  tools: LibraryTool[];
+  // How many functions were not made into tools
+  dropped: number;
+  export: ToolPackage | null;
+  state: string;
+}
+
+export interface LibraryHealth {
+  status: HealthStatus;
+  checked_at: string | null;
+  update: boolean;
+  watched_every_hours: number | null;
+}
+
+export interface PaperAgentLibrary {
+  agents: (LibraryEntry & { health: LibraryHealth })[];
+  docker: { ready: boolean; message: string | null };
+  meaning: string;
+  flags: Record<LicenseFlag, string>;
+}
+
+// What there is of a package of an agent's tools: the agent as the library lists it, if it has tools, and the making of one
+export interface PaperAgentExport {
+  id: string;
+  docker: { ready: boolean; message: string | null };
+  entry: LibraryEntry | null;
+  job: Job | null;
+  meaning: string;
+  flags: Record<LicenseFlag, string>;
+}

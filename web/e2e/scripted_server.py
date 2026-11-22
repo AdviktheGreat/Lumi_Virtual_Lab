@@ -47,7 +47,8 @@ from a script: no key is needed, and every run says the same. What it says depen
 - The code of a PaperAgent is given by a stand-in for Git, which writes a small project for any address, at a commit
   that is the same for the same address and ref: one with a README that shows how it is used, an MIT license, pinned
   requirements, a tutorial, and a test, which a GPU is used by if there is one. "gpu" in the address makes it one that
-  needs a GPU and has a license for non-commercial use only, and no tutorial, "slow" makes fetching it take a while,
+  needs a GPU and has a license for non-commercial use only, and no tutorial, "copyleft" gives it the GPL, "unlicensed"
+  gives it no license, "slow" makes fetching it take a while,
   "missing" makes it a project that is not there, and "huge" makes it more than the most that was asked to be fetched,
   and "bare" makes it a project that no file says how to install, and "many" gives it scripts to run as well.
 - The environment of a PaperAgent's code is built by a stand-in for Docker, which says what the build prints and keeps
@@ -646,6 +647,9 @@ NONCOMMERCIAL_LICENSE = (
     "Creative Commons Attribution-NonCommercial 4.0 International\n\nThe work may be used for noncommercial "
     "purposes only.\n"
 )
+GPL_LICENSE = (
+    "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n\nEveryone is permitted to copy and distribute it.\n"
+)
 NOTEBOOK = json.dumps(
     {
         "nbformat": 4,
@@ -723,7 +727,7 @@ def stand_in_clone(
     files = {
         "README.md": "# cellmapper\n\nMaps cells.\n"
         + ("" if needs_gpu else "\n## Usage\n\nRun `cellmapper sample.h5ad`.\n"),
-        "LICENSE": NONCOMMERCIAL_LICENSE if needs_gpu else MIT_LICENSE,
+        "LICENSE": NONCOMMERCIAL_LICENSE if needs_gpu else GPL_LICENSE if "copyleft" in url else MIT_LICENSE,
         "requirements.txt": "cupy-cuda12x==13.0.0\ntorch==2.1.0\n" if needs_gpu else "scanpy==1.9.3\nnumpy==1.26.4\n",
         "cellmapper/__init__.py": "",
         "cellmapper/core.py": CORE_FOR_GPU if needs_gpu else CORE,
@@ -752,6 +756,8 @@ def stand_in_clone(
         files["examples/demo.py"] = "import cellmapper\nprint(cellmapper.scale([1, 2, 3], 2.5))\n"
         files["examples/second.py"] = "import cellmapper\nprint(cellmapper.scale([4], 2.0))\n"
         files["examples/analysis.R"] = "print(1)\n"
+    if "unlicensed" in url:
+        del files["LICENSE"]
     for name, text in files.items():
         (destination / name).parent.mkdir(parents=True, exist_ok=True)
         (destination / name).write_text(text)
