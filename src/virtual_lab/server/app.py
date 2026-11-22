@@ -46,7 +46,8 @@ and everything else is a request and an answer.
     DELETE /api/paperagents/{id}/imported  takes away what it was imported from, leaving the agent of its paper
     GET    /api/paperagents/{id}        one agent; PATCH says what it is called, where its code is, and whether it is
                                         given to the conversations that are made from now on; DELETE deletes it
-    GET    /api/paperagents/{id}/given  the tools a conversation is given of it, each with its tier, and why not some
+    GET    /api/paperagents/{id}/given  the tools a conversation is given of it, each with its tier, and why not some,
+                                        and the seat that speaks for it on a conversation's team, with what it is told
     POST   /api/paperagents/{id}/make  starts making it in one go, as a job that stops where the person is to say
                                         something: reads the paper within a limit, fetches and builds the code, runs
                                         its tutorials, makes and checks its tools, and gives it to conversations
@@ -244,6 +245,7 @@ from virtual_lab.server.own import MAX_DESCRIPTION_CHARS, MAX_OWN_ITEMS, MAX_SOF
 from virtual_lab.server.paperagent_given import view as given_view
 from virtual_lab.server.paperagent_graph import view as graph_view
 from virtual_lab.server.paperagent_onego import OneGo
+from virtual_lab.server.paperagent_team import member_of, seat_of
 from virtual_lab.server.paperagent_triage import MOST_GIVEN as MOST_TRIAGED
 from virtual_lab.server.paperagent_triage import Triages
 from virtual_lab.server.paperagents import MAX_DATASET_CHARS, MAX_DOI_CHARS, MAX_URL_CHARS, PaperAgents
@@ -1542,9 +1544,15 @@ def create_app(
     def paper_table(run_id: str, kind: str) -> FileResponse:
         return file_response(papers.summary_file(run_id, kind), download=True)
 
+    def listed_paperagents() -> dict[str, Any]:
+        # With the seat that each would have, which a page that begins a conversation with some of them names them by
+        listed = paperagents.describe()
+
+        return {**listed, "agents": [{**agent, "seat": seat_of(agent["title"])} for agent in listed["agents"]]}
+
     @api.get("/paperagents")
     def get_paperagents() -> dict[str, Any]:
-        return paperagents.describe()
+        return listed_paperagents()
 
     @api.post("/paperagents", status_code=201)
     def make_paperagent(body: PaperAgentBody) -> dict[str, Any]:
@@ -1622,13 +1630,18 @@ def create_app(
 
     @api.get("/paperagents/{agent_id}/given")
     def get_paperagent_given(agent_id: str) -> dict[str, Any]:
-        return given_view(store, agent_id, docker_command)
+        view = given_view(store, agent_id, docker_command)
+        member = member_of(store, agent_id, "", ())
+        if member is None:
+            raise not_found("PaperAgent with that id")
+
+        return {**view, "seat": member.title, "told": member.prompt}
 
     @api.delete("/paperagents/{agent_id}")
     def delete_paperagent(agent_id: str) -> dict[str, Any]:
         paperagents.delete(agent_id)
 
-        return paperagents.describe()
+        return listed_paperagents()
 
     @api.post("/paperagents/{agent_id}/make", status_code=202)
     def make_paperagent_in_one_go(agent_id: str, body: PaperAgentMakeBody) -> dict[str, Any]:

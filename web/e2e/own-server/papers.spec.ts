@@ -2807,7 +2807,7 @@ test("says what would be made, asks for what is wrong with the asking to be put 
   await expect(step(page, "Build the tools")).toContainText("Done");
   // It says what was and was not shown, and where a conversation is given the tools
   await expect(keptTools(page)).toContainText("does not show that");
-  await expect(keptTools(page)).toContainText("A conversation is given the tools when the agent is given to conversations, under In conversations below.");
+  await expect(keptTools(page)).toContainText("A conversation is given the tools when the agent is given to conversations, under In Lumi below.");
 
   await expect(page.getByTestId("tool")).toHaveCount(1);
   const scale = toolNamed(page, "scale");
@@ -3415,7 +3415,7 @@ test("says when Docker is not running, why the server refused to check, and look
   expect((await checksOf(page, id)).tools).toHaveLength(1);
 });
 
-const inConversations = (page: Page) => page.getByRole("region", { name: "In conversations" });
+const inConversations = (page: Page) => page.getByRole("region", { name: "In Lumi" });
 const givenTools = (page: Page) => inConversations(page).getByTestId("given-tool");
 const giveBox = (page: Page) => page.getByLabel("Give this agent to the conversations I start");
 const givenSummary = (page: Page) => page.getByTestId("given-summary");
@@ -3567,6 +3567,113 @@ test("says that an agent whose paper has not been read has nothing to give yet, 
   // An agent that is not there is not given, and the page says so
   await page.request.delete(`/api/paperagents/${id}`);
   expect((await page.request.get(`/api/paperagents/${id}/given`)).status()).toBe(404);
+});
+
+const labPanel = (page: Page) => page.getByTestId("lab-dialog");
+const seatBox = (page: Page, seat: string) => labPanel(page).getByRole("checkbox", { name: seat, exact: true });
+const messageBox = (page: Page) => page.getByRole("textbox", { name: "Message" });
+const chatOf = async (page: Page, id: string) => (await page.request.get(`/api/chats/${id}`)).json();
+const madeChat = (page: Page) => page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/chats");
+
+test("has a seat on the team of a conversation that has the agent, says what the seat is told, and begins a lab session with it from its page", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Seat cells", paper: { kind: "file" } });
+  await sendPaper(page, id, "cells.txt", CELLS);
+  await readTheAgent(page, id);
+  await openAgent(page, id, "Seat cells");
+
+  // The page says who speaks for the paper, what it is told, and the tools by their tiers
+  const seat = page.getByTestId("given-seat");
+  await expect(seat).toContainText("PaperAgent: Seat cells speaks for the paper on the team of a conversation that has this agent.");
+  await expect(page.getByTestId("given-told")).toBeHidden();
+  await seat.getByText("What it is told", { exact: true }).click();
+  await expect(page.getByTestId("given-told")).toContainText('You are a PaperAgent: Seat cells. Your expertise is in the paper "Seat cells" and its method');
+  await expect(page.getByTestId("given-told")).not.toContainText("fabricate");
+  await expect(inConversations(page).getByTestId("given-tier")).toHaveCount(1);
+  await expect(inConversations(page).getByRole("region", { name: "Tier D: reads the paper" }).getByTestId("given-tool")).toHaveCount(4);
+  await expect(seat).toContainText("Begins a conversation that has it, though it is not given to the others");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A lab session is begun with it, though it is not given, with the panel open and its seat chosen
+  await page.getByRole("link", { name: "Start a lab session with this agent" }).click();
+  await expect(page).toHaveURL(new RegExp(`/\\?paperagent=${id}$`));
+  await expect(seatBox(page, "PaperAgent: Seat cells")).toBeChecked();
+  await expect(labPanel(page).locator("li[data-kind=paper]").filter({ hasText: "PaperAgent: Seat cells" })).toContainText(
+    "Speaks for the paper “Seat cells”, from what was read of it and its tools",
+  );
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await labPanel(page).getByRole("textbox", { name: "What should they work on?" }).fill("What does the paper say of mapping cells?");
+  const made = madeChat(page);
+  await labPanel(page).getByTestId("lab-start").click();
+  expect((await made).postDataJSON().paperagents).toContain(id);
+  await expect(page).toHaveURL(/\/chat\?id=/);
+  const chatId = new URL(page.url()).searchParams.get("id") ?? "";
+  await expect(page.getByTestId("lab-choice")).toHaveText("PaperAgent: Seat cells · 1 round");
+  await expect(page.getByTestId("lab-turn").filter({ hasText: "As the PaperAgent: Seat cells" }).first()).toBeVisible({ timeout: 30_000 });
+  const info = await chatOf(page, chatId);
+  expect(info.papers).toContainEqual({ id, title: "Seat cells", seat: "PaperAgent: Seat cells" });
+  expect(info.team).toContain("PaperAgent: Seat cells");
+  expect(info.config.paperagents).toContain(id);
+  expect((await givenOf(page, id)).given).toBe(false);
+  await expect.poll(async () => (await chatOf(page, chatId)).state, { timeout: 30_000 }).toBe("idle");
+
+  // In the conversation, /lab lists the seat before the library's scientists, and it is on the team, so it does not join it
+  await messageBox(page).fill("/lab Again");
+  await messageBox(page).press("Enter");
+  await expect(seatBox(page, "PaperAgent: Seat cells")).toBeChecked();
+  await expect(labPanel(page).getByTestId("lab-members").locator("li").first()).toHaveAttribute("data-kind", "paper");
+  await expect(labPanel(page).getByText("not on this program's team")).toHaveCount(0);
+  await labPanel(page).getByTestId("lab-start").click();
+  await expect(labPanel(page)).toHaveCount(0);
+  await expect(page.getByTestId("lab-choice")).toHaveCount(2);
+  await expect.poll(async () => (await chatOf(page, chatId)).state, { timeout: 30_000 }).toBe("idle");
+  expect((await chatOf(page, chatId)).team.filter((title: string) => title.startsWith("PaperAgent: "))).toEqual(["PaperAgent: Seat cells"]);
+
+  // A seat that is not on the team is refused, and the server says how one is had
+  const refused = await page.request.post(`/api/chats/${chatId}/messages`, {
+    data: { text: "Elsewhere", attachments: [], directive: "lab", lab: { mode: "team", members: ["PaperAgent: Not here"], rounds: 0, questions: [] } },
+  });
+  expect(refused.status()).toBe(422);
+  expect(JSON.stringify(await refused.json())).toContain("A PaperAgent has a seat in the conversations that are begun with it.");
+
+  // On the page where a program is begun, the agents it has are chosen, and those chosen are what it is begun with
+  await page.goto("/");
+  await page.getByTestId("papers-button").click();
+  const choosing = page.getByTestId("papers-dialog");
+  const mine = choosing.getByRole("checkbox", { name: "Seat cells", exact: true });
+  await expect(mine).not.toBeChecked();
+  await expect(choosing.locator(`[data-testid=paper-choice][data-id="${id}"]`)).toContainText("PaperAgent: Seat cells");
+  expect(await accessibilityProblems(page)).toEqual([]);
+  await mine.check();
+  await choosing.getByRole("button", { name: "Use these" }).click();
+  await expect(choosing).toHaveCount(0);
+  await messageBox(page).fill("/lab Once more");
+  await messageBox(page).press("Enter");
+  await expect(seatBox(page, "PaperAgent: Seat cells")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(labPanel(page)).toHaveCount(0);
+  const begun = madeChat(page);
+  await messageBox(page).fill("tool:offered in a conversation where code runs nowhere");
+  await messageBox(page).press("Enter");
+  expect((await begun).postDataJSON().paperagents).toContain(id);
+  await answered(page, "Offered:");
+  await expect(page.getByTestId("lead-message").last()).toContainText("seat_cells_search_paper");
+  expect(await offeredIn(page, "nowhere")).not.toContain("seat_cells_search_paper");
+
+  // A link that names an agent that is not there begins a program without it, and says so
+  await page.goto("/?paperagent=gone-agent");
+  await expect(page.getByText("The PaperAgent that the link names is not there any more, so the program is begun without it.")).toBeVisible();
+  await expect(labPanel(page)).toHaveCount(0);
+
+  // Where the agents cannot be looked at, the page says so of the link, and is not taken for one that is wrong
+  await page.route("**/api/paperagents", (route) => route.fulfill({ status: 500, json: { error: { code: "internal", message: "for the sake of a test" } } }));
+  await page.goto(`/?paperagent=${id}`);
+  await expect(page.getByText("The PaperAgents could not be looked at, so the program is begun with those given to conversations.")).toBeVisible();
+  await expect(page.getByText("for the sake of a test")).toHaveCount(0);
+  await expect(labPanel(page)).toHaveCount(0);
+  await expect(page.getByTestId("papers-button")).toHaveCount(0);
+  await page.unroute("**/api/paperagents");
 });
 
 const FIGURE_ADDRESS = "https://github.com/example/figure-cellmapper";

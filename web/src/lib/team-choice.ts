@@ -1,5 +1,5 @@
 import { sameTitle, tidy } from "./scientists";
-import type { LabChoice, LibraryScientist } from "./types";
+import type { LabChoice, LibraryScientist, PaperSeat } from "./types";
 
 // The scientist who reviews one that works alone, and who is therefore not one to choose to work alone
 export const CRITIC_TITLE = "Scientific Critic";
@@ -41,10 +41,55 @@ export function describeChoice(choice: LabChoice): string {
   return `${who} · ${roundsOf(choice.rounds)}`;
 }
 
-// The scientists to choose from: those of the library, but for the lead, who leads, and, for one who works alone, the
-// Critic, who reviews
-export function choosable(library: readonly LibraryScientist[], lead: string, mode: LabMode): LibraryScientist[] {
-  return library.filter((scientist) => !sameTitle(scientist.title, lead) && (mode === "team" || !sameTitle(scientist.title, CRITIC_TITLE)));
+// One who can be chosen to work on a message: a scientist of the library, or the one who speaks for a PaperAgent's paper
+export interface Candidate {
+  title: string;
+  // What they know, in a few words
+  about: string;
+  kind: "builtin" | "yours" | "paper";
+}
+
+// Who can be chosen: those who speak for the papers of the conversation's PaperAgents, first, since a conversation that has
+// them was begun for them, and then the scientists of the library, but for the lead, who leads, for one who works alone,
+// the Critic, who reviews, and one who has the title of a seat, which names the seat on the conversation's team
+export function choosable(library: readonly LibraryScientist[], lead: string, mode: LabMode, papers: readonly PaperSeat[] = []): Candidate[] {
+  const seats: Candidate[] = [];
+  for (const paper of papers) {
+    if (sameTitle(paper.seat, lead) || seats.some((each) => sameTitle(each.title, paper.seat))) continue;
+    seats.push({ title: paper.seat, about: `Speaks for the paper “${paper.title}”, from what was read of it and its tools`, kind: "paper" });
+  }
+  const scientists: Candidate[] = library
+    .filter((scientist) => !sameTitle(scientist.title, lead) && (mode === "team" || !sameTitle(scientist.title, CRITIC_TITLE)))
+    .filter((scientist) => !seats.some((seat) => sameTitle(seat.title, scientist.title)))
+    .map((scientist) => ({ title: scientist.title, about: scientist.expertise, kind: scientist.builtin ? "builtin" : "yours" }));
+
+  return [...seats, ...scientists];
+}
+
+// The seats that agents would have on the team of a conversation that is begun with them, as the list of the agents says
+// them, where two that would have the same are told apart by the end of the id, as the server tells them apart
+export function seatsOf(agents: readonly { id: string; title: string; seat?: string }[], lead: string): PaperSeat[] {
+  const seats: PaperSeat[] = [];
+  for (const { id, title, seat } of agents) {
+    if (seat === undefined) continue;
+    const taken = sameTitle(seat, lead) || seats.some((each) => sameTitle(each.seat, seat));
+    seats.push({ id, title, seat: taken ? `${seat} (${id.slice(-6)})` : seat });
+  }
+
+  return seats;
+}
+
+// The choice with each who was chosen by the seat that an agent was to have named by the seat it has, which the server
+// may have made unlike the title of another on the team
+export function reseated(choice: LabChoice, planned: readonly PaperSeat[], seated: readonly PaperSeat[]): LabChoice {
+  const members = choice.members.map((member) => {
+    const agent = planned.find((each) => sameTitle(each.seat, member));
+    const now = agent === undefined ? undefined : seated.find((each) => each.id === agent.id);
+
+    return now === undefined ? member : now.seat;
+  });
+
+  return { ...choice, members };
 }
 
 // Those chosen who are not on the conversation's team, and who therefore join it
@@ -150,20 +195,27 @@ export function remember(choice: LabChoice): void {
 }
 
 // The panel as it opens: what is to be worked on, as it was written in the box, and who and how as they were chosen last
-// where those are still to be had
+// where those are still to be had, with those that are wanted chosen too, or in place of the one who works alone
 export function initialDraft(
   agenda: string,
   kept: Remembered | null,
   library: readonly LibraryScientist[],
   lead: string,
   ceiling: number,
+  papers: readonly PaperSeat[] = [],
+  wanted: readonly string[] = [],
 ): LabDraft {
   const mode = kept?.mode ?? "team";
-  const there = choosable(library, lead, mode);
-  const members = (kept?.members ?? [])
-    .map((member) => there.find((scientist) => sameTitle(scientist.title, member))?.title)
-    .filter((title): title is string => title !== undefined);
+  const there = choosable(library, lead, mode, papers);
+  const named = (titles: readonly string[]) =>
+    titles.map((title) => there.find((each) => sameTitle(each.title, title))?.title).filter((title): title is string => title !== undefined);
+  const before = named(kept?.members ?? []);
+  const asked = named(wanted);
+  const members =
+    mode === "individual"
+      ? (asked.length > 0 ? asked : before).slice(0, 1)
+      : [...before, ...asked.filter((title) => !before.some((member) => sameTitle(member, title)))];
   const rounds = Math.min(kept?.rounds ?? 1, ceiling);
 
-  return { mode, agenda, members: mode === "individual" ? members.slice(0, 1) : members, rounds: String(rounds), questions: "" };
+  return { mode, agenda, members, rounds: String(rounds), questions: "" };
 }

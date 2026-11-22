@@ -16,6 +16,16 @@ export function describeTier(tier: string | null): string {
   return `Tier ${tier}: ${TIER_TITLES[tier]?.toLowerCase() ?? "not known to this page"}`;
 }
 
+// The tools, by their tiers, in the order the tiers are listed in and those that this page does not know last
+export function byTier(tools: readonly GivenTool[]): { tier: string; title: string; tools: GivenTool[] }[] {
+  const order = Object.keys(TIER_TITLES);
+  const tiers = [...new Set(tools.map((tool) => tool.tier))].sort(
+    (one, other) => (order.indexOf(one) + 1 || order.length + 1) - (order.indexOf(other) + 1 || order.length + 1),
+  );
+
+  return tiers.map((tier) => ({ tier, title: describeTier(tier), tools: tools.filter((tool) => tool.tier === tier) }));
+}
+
 // What a tool does, in words
 export function describeKind(kind: GivenTool["kind"]): string {
   if (kind === "imported") return "Calls the server that someone else runs, and asks you first";

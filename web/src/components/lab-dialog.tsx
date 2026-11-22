@@ -29,7 +29,7 @@ import {
   type LabMode,
   type LabProblems,
 } from "@/lib/team-choice";
-import type { LabChoice, LibraryScientist } from "@/lib/types";
+import type { LabChoice, LibraryScientist, PaperSeat } from "@/lib/types";
 import { useLooked } from "@/lib/use-looked";
 
 const MODES: { value: LabMode; label: string; hint: string }[] = [
@@ -37,7 +37,8 @@ const MODES: { value: LabMode; label: string; hint: string }[] = [
   { value: "individual", label: "One scientist", hint: "One scientist works on it, and the Scientific Critic reviews what they do." },
 ];
 
-// Who works on a message, and how, which is chosen from the whole library of scientists, and what they are to work on. Starting
+// Who works on a message, and how, which is chosen from the whole library of scientists and those who speak for the papers of
+// the conversation's PaperAgents, and what they are to work on. Starting
 // it gives onStart the agenda and the choice, which may refuse by throwing, and whose refusal is shown here. The lead writes
 // the agenda that the team is given, from what is asked here. Closing it gives onClose what was written, to put back where
 // it came from, or null when it was started.
@@ -45,6 +46,8 @@ export function LabDialog({
   agenda,
   lead,
   team,
+  papers = [],
+  wanted = [],
   ceiling,
   onStart,
   onClose,
@@ -54,6 +57,10 @@ export function LabDialog({
   lead: string;
   // Who is on the conversation's team, or null where it has not begun, so that it is not known
   team: readonly string[] | null;
+  // The PaperAgents that have a seat on the team, or are to have one where it has not begun
+  papers?: readonly PaperSeat[];
+  // Who is chosen as it opens, as well as those who were chosen last
+  wanted?: readonly string[];
   // The most rounds the lead may ask a session for
   ceiling: number;
   onStart: (agenda: string, choice: LabChoice) => Promise<void>;
@@ -82,6 +89,8 @@ export function LabDialog({
               agenda={agenda}
               lead={lead}
               team={team}
+              papers={papers}
+              wanted={wanted}
               ceiling={ceiling}
               writtenRef={writtenRef}
               sending={sending}
@@ -101,6 +110,8 @@ function LabForm({
   agenda,
   lead,
   team,
+  papers,
+  wanted,
   ceiling,
   writtenRef,
   sending,
@@ -112,6 +123,8 @@ function LabForm({
   agenda: string;
   lead: string;
   team: readonly string[] | null;
+  papers: readonly PaperSeat[];
+  wanted: readonly string[];
   ceiling: number;
   writtenRef: React.RefObject<string>;
   sending: boolean;
@@ -120,14 +133,14 @@ function LabForm({
   onClose: (agenda: string | null) => void;
 }) {
   const id = useId();
-  const [draft, setDraft] = useState<LabDraft>(() => initialDraft(agenda, remembered(), scientists, lead, ceiling));
+  const [draft, setDraft] = useState<LabDraft>(() => initialDraft(agenda, remembered(), scientists, lead, ceiling, papers, wanted));
   const [problem, setProblem] = useState<Problem | null>(null);
   // What has been changed, since what is wrong with what has not been is not said until it is, as nothing is wrong with a form
   // that has not been filled in yet
   const [touched, setTouched] = useState<ReadonlySet<keyof LabProblems>>(new Set());
   const { choice, problems } = checkLab(draft, ceiling);
   const shown: LabProblems = Object.fromEntries(Object.entries(problems).filter(([field]) => touched.has(field as keyof LabProblems)));
-  const available = choosable(scientists, lead, draft.mode);
+  const available = choosable(scientists, lead, draft.mode, papers);
   const joins = team === null ? [] : joining(draft.members, team);
   const agendaId = `${id}-agenda`;
   const roundsId = `${id}-rounds`;
@@ -210,7 +223,7 @@ function LabForm({
               const Control = draft.mode === "team" ? Checkbox : Radio;
 
               return (
-                <li key={scientist.title}>
+                <li key={scientist.title} data-kind={scientist.kind}>
                   <label className="flex cursor-pointer items-start gap-2.5 px-3 py-2 text-sm hover:bg-muted/50">
                     <Control
                       name={`${id}-member`}
@@ -222,9 +235,9 @@ function LabForm({
                     <span className="flex min-w-0 flex-col">
                       <span className="flex flex-wrap items-center gap-1.5 font-medium">
                         {scientist.title}
-                        {!scientist.builtin && <Badge variant="outline">yours</Badge>}
+                        {scientist.kind === "yours" && <Badge variant="outline">yours</Badge>}
                       </span>
-                      <span className="truncate text-xs text-muted-foreground">{scientist.expertise}</span>
+                      <span className="truncate text-xs text-muted-foreground">{scientist.about}</span>
                     </span>
                   </label>
                 </li>

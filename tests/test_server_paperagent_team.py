@@ -17,6 +17,7 @@ from virtual_lab.server import paperagent_given as given
 from virtual_lab.server import paperagent_reading as kept_reading
 from virtual_lab.server import paperagent_team as team
 from virtual_lab.server.conversations import Conversations
+from virtual_lab.server.errors import ApiError
 from virtual_lab.server.paperagents import PaperAgents
 from virtual_lab.server.workspace import Workspace
 from virtual_lab.tools import Tool
@@ -169,6 +170,84 @@ class TestAgentsAsMembers:
 
         assert not [title for title in member_titles(handle) if title.startswith(team.MEMBER_PREFIX)]
         assert "Scientific Critic" in member_titles(handle)
+
+
+class TestSeats:
+    def test_a_conversation_says_which_agents_have_a_seat_and_what_it_is_called(
+        self, agents: PaperAgents, conversations: Conversations, scoped: str
+    ) -> None:
+        mine = {"title": "PaperAgent: CellMapper", "expertise": "my own", "goal": "do my own", "role": "be my own"}
+
+        handle = conversations.create(local(team=[mine], paperagents=[scoped]))
+
+        seat = f"PaperAgent: CellMapper ({scoped[-6:]})"
+        assert handle.info()["papers"] == [{"id": scoped, "title": agents.lookup(scoped)[1]["title"], "seat": seat}]
+        assert seat in member_titles(handle)
+        assert conversations.create(local(team=[])).info()["papers"] == []
+
+    def test_lab_may_name_a_seat_without_the_conversation_being_opened_again(
+        self, conversations: Conversations, scoped: str
+    ) -> None:
+        handle = conversations.create(local(team=[], paperagents=[scoped]))
+
+        assert conversations.include_scientists(handle.id, ["paperagent: cellmapper"]) is handle
+
+    def test_and_a_seat_with_a_scientist_of_the_library_who_joins(
+        self, conversations: Conversations, scoped: str
+    ) -> None:
+        handle = conversations.create(local(team=[], paperagents=[scoped]))
+
+        joined = conversations.include_scientists(handle.id, ["PaperAgent: CellMapper", "Immunologist"])
+
+        assert joined is not handle
+        assert [member["title"] for member in joined.config.team] == ["Immunologist"]
+        assert set(member_titles(joined)) == {"Immunologist", "PaperAgent: CellMapper"}
+
+    def test_a_seat_the_conversation_does_not_have_is_refused_with_why(self, conversations: Conversations) -> None:
+        handle = conversations.create(local(team=[]))
+
+        with pytest.raises(ApiError) as caught:
+            conversations.include_scientists(handle.id, ["PaperAgent: CellMapper"])
+
+        assert caught.value.status == 422
+        assert "not on this conversation's team" in caught.value.message
+        assert conversations.get(handle.id) is handle
+
+    def test_a_scientist_of_the_library_with_such_a_title_still_joins(
+        self, workspace: Workspace, conversations: Conversations
+    ) -> None:
+        mine = {"title": "PaperAgent: Mine", "expertise": "my own", "goal": "do my own", "role": "be my own"}
+        workspace.save_scientist(mine)
+        handle = conversations.create(local(team=[]))
+
+        joined = conversations.include_scientists(handle.id, ["PaperAgent: Mine"])
+
+        assert [member["title"] for member in joined.config.team] == ["PaperAgent: Mine"]
+
+    def test_a_scientist_of_the_library_with_the_title_of_a_seat_is_the_seat(
+        self, workspace: Workspace, conversations: Conversations, scoped: str
+    ) -> None:
+        mine = {"title": "PaperAgent: CellMapper", "expertise": "my own", "goal": "do my own", "role": "be my own"}
+        workspace.save_scientist(mine)
+        handle = conversations.create(local(team=[], paperagents=[scoped]))
+
+        assert conversations.include_scientists(handle.id, ["PaperAgent: CellMapper"]) is handle
+        assert handle.config.team == ()
+
+    def test_one_who_would_have_the_name_of_a_seat_is_refused_and_the_team_is_left_as_it_is(
+        self, workspace: Workspace, conversations: Conversations, scoped: str
+    ) -> None:
+        mine = {"title": "PaperAgent CellMapper", "expertise": "my own", "goal": "do my own", "role": "be my own"}
+        workspace.save_scientist(mine)
+        handle = conversations.create(local(team=[], paperagents=[scoped]))
+
+        with pytest.raises(ApiError) as caught:
+            conversations.include_scientists(handle.id, ["PaperAgent: CellMapper", "PaperAgent CellMapper"])
+
+        assert caught.value.status == 422
+        assert "would have the name of a scientist that speaks for a PaperAgent" in caught.value.message
+        assert conversations.get(handle.id) is handle
+        assert handle.info()["papers"][0]["seat"] == "PaperAgent: CellMapper"
 
 
 class TestTwoPapers:

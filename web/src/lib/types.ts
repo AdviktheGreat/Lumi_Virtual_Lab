@@ -68,6 +68,8 @@ export interface ChatConfig {
   skills: string[];
   // The id of the campaign the program is one of, or "" for one that is not part of any
   campaign: string;
+  // The ids of the PaperAgents it was given
+  paperagents?: string[];
 }
 
 // A conversation as the list of them shows it
@@ -127,6 +129,15 @@ export interface ChatInfo {
   // Why each command that is given with a message cannot be given to it, in words, or null if it can
   directives: Record<string, string | null>;
   config: ChatConfig;
+  // The PaperAgents that have a seat on its team, each with the title of the scientist that speaks for it
+  papers: PaperSeat[];
+}
+
+// A PaperAgent that a conversation has, and the scientist of its team that speaks for its paper, whom /lab names
+export interface PaperSeat {
+  id: string;
+  title: string;
+  seat: string;
 }
 
 // Who is to work on a message given with /lab, and how: by title, any scientist of the library. A team is several
@@ -161,6 +172,8 @@ export interface NewChat {
   skills?: string[];
   // The id of the campaign the program is to be one of
   campaign?: string | null;
+  // The ids of the PaperAgents it is given, in place of those that are given to conversations
+  paperagents?: string[];
 }
 
 // What a conversation may be changed to while it goes on: any of these, where null is no spending limit, or what the
@@ -896,6 +909,9 @@ export interface PaperAgent {
   // The job that is making it in one go, if one is, which nothing else is done to it meanwhile. A server from before
   // making in one go does not say.
   onego?: Job | null;
+  // The title of the scientist that speaks for it on a conversation's team, where no other there has the title, which
+  // only the list gives
+  seat?: string;
 }
 
 // How making an agent in one go stands: not asked for, going, waiting for the person to say something, done, failed,
@@ -1314,6 +1330,10 @@ export interface PaperAgentGiven {
   // What the agent was imported from, if it was
   imported: PaperAgentImported | null;
   limits: { call_seconds: number; memory: string; cpus: string };
+  // The title of the scientist that speaks for it on a conversation's team, where no other there has the title
+  seat: string;
+  // What that scientist is told, which is its system prompt, and has nothing that the paper says
+  told: string;
 }
 
 // What was found in a project's files, by looking at them: nothing in it was run

@@ -1083,8 +1083,8 @@ function Agent({
         <ImportedSection key={agent.id} agent={agent} onChanged={changed} />
       </PageSection>
       <PageSection
-        title="In conversations"
-        intro="Give this agent to the conversations you start, so that the lead can search what the paper says, with the place, and, where code runs, call the tools made of its code or the function written from its words. A tier says how far a tool was checked. It does not say that what the paper says or what a tool gives is right."
+        title="In Lumi"
+        intro="Give this agent to the conversations you start, so that the lead can search what the paper says, with the place, and, where code runs, call the tools made of its code or the function written from its words, and so that a scientist who speaks for the paper is on the team. A tier says how far a tool was checked. It does not say that what the paper says or what a tool gives is right."
       >
         <Looked state={given.value} label="Looking at what the agent gives" failure="What the agent gives could not be looked at." onRetry={given.reload}>
           {(value) => (

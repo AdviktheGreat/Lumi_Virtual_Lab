@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { KeyRound } from "lucide-react";
 import { BrandLogo } from "@/components/brand";
@@ -12,6 +12,7 @@ import { LabDialog } from "@/components/lab-dialog";
 import { LimitsDialog } from "@/components/limits-dialog";
 import { Notice, ProblemNotice } from "@/components/messages";
 import { ModelButton, ModelDialog } from "@/components/model-dialog";
+import { PaperAgentsButton, PaperAgentsDialog } from "@/components/paper-agents-dialog";
 import { PageHeader } from "@/components/page-header";
 import { PROGRAM_CODE_ID, PROGRAM_INSTRUCTIONS_ID, PROGRAM_NAME_ID, ProgramStart } from "@/components/program-start";
 import { useServer } from "@/components/server-provider";
@@ -23,15 +24,19 @@ import { readiness } from "@/lib/attachments";
 import { givenAs, isDirective, written, type Invocation, type PromptInvocation, type Sendable } from "@/lib/commands";
 import { plainProblem, problemOf, type Problem } from "@/lib/errors";
 import { formatAmount } from "@/lib/limits";
+import { choosesPapers, papersOf } from "@/lib/paper-choice";
 import { checkProgram, type ProgramDraft, type ProgramProblems } from "@/lib/programs";
 import { withPrompt } from "@/lib/prompts";
 import { choiceButtonText, choiceKept, choiceStart, vanished } from "@/lib/skills";
-import { DEFAULT_LEAD_TITLE } from "@/lib/team-choice";
+import { DEFAULT_LEAD_TITLE, reseated, seatsOf } from "@/lib/team-choice";
 import { useAttachments } from "@/lib/use-attachments";
+import { useLooked } from "@/lib/use-looked";
 import { useMissingKeys } from "@/lib/use-missing-keys";
 import { usePromptChoices } from "@/lib/use-prompt-choices";
 import { useSkillChoices } from "@/lib/use-skill-choices";
 import type { ChatInfo, LabChoice, LimitsChange, ProgramKind } from "@/lib/types";
+
+function ignore() {}
 
 // What shows what is chosen of the skills, beside the model, and opens the choice
 function SkillsButton({ chosen, disabled, onClick }: { chosen: string[] | null; disabled: boolean; onClick: () => void }) {
@@ -50,17 +55,19 @@ function SkillsButton({ chosen, disabled, onClick }: { chosen: string[] | null; 
 }
 
 // The page where a program is begun, which begins as the one that a link to it names (build_skill), and as a quick task
-// otherwise, and in the campaign that the link names. It begins again when the link changes, as a new program does, with
-// nothing typed.
+// otherwise, and in the campaign that the link names. A link that names a PaperAgent begins one that has it, with the lab's
+// panel open and the scientist who speaks for its paper chosen. It begins again when the link changes, as a new program
+// does, with nothing typed.
 export function HomeView() {
   const params = useSearchParams();
   const kind: ProgramKind = params.get("program") === "build_skill" ? "build_skill" : "quick_task";
   const campaign = params.get("campaign") ?? "";
+  const paperagent = params.get("paperagent") ?? "";
 
-  return <Home key={`${kind}:${campaign}`} kind={kind} linked={campaign} />;
+  return <Home key={`${kind}:${campaign}:${paperagent}`} kind={kind} linked={campaign} linkedAgent={paperagent} />;
 }
 
-function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
+function Home({ kind, linked, linkedAgent }: { kind: ProgramKind; linked: string; linkedAgent: string }) {
   const router = useRouter();
   const { server, report } = useServer();
   const { refresh, campaigns } = useChats();
@@ -80,6 +87,14 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
   const [skilling, setSkilling] = useState(false);
   // What was written after /lab while it is being chosen who works on it, which is null while it is not
   const [labbing, setLabbing] = useState<string | null>(null);
+  // Who the panel chooses as it opens, besides those chosen last, which is the seat of the agent that the link names
+  const [labWanted, setLabWanted] = useState<string[]>([]);
+  // The PaperAgents chosen here for it, which are null while it is to have those that are given to conversations, and
+  // whether they are being chosen
+  const [papersChosen, setPapersChosen] = useState<string[] | null>(null);
+  const [papering, setPapering] = useState(false);
+  // Whether the panel was opened for the agent that the link names, which is done once, when the agents have been looked at
+  const [linkOpened, setLinkOpened] = useState(false);
   const [helping, setHelping] = useState(false);
   // What it is to be begun as, and what is wrong with what was typed of it, which is shown once it has been tried to begin it
   const [program, setProgram] = useState<ProgramDraft>({ kind, name: "", instructions: "" });
@@ -89,6 +104,23 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
   const campaign = campaigns === null || campaigns.some((each) => each.id === campaignChosen) ? campaignChosen : "";
   // There is no conversation to send files to until the message is, so they are held until then
   const attachments = useAttachments(null, server.status === "ready" ? server.settings.max_upload_bytes : null);
+  const lookAgents = useCallback(() => api.paperAgents(), []);
+  // A page that begins a program is not wrong where the agents could not be looked at: it begins one without them
+  const agentsLooked = useLooked(lookAgents, ignore, "");
+  const agents = agentsLooked.value.kind === "ready" ? agentsLooked.value.value.agents : null;
+  const having = agents === null ? [] : papersOf(agents, papersChosen, linkedAgent);
+  // The seats the agents are to have, which /lab names them by until the conversation says the seats they have
+  const planned = seatsOf(having, DEFAULT_LEAD_TITLE);
+  const linkedSeat = planned.find((seat) => seat.id === linkedAgent)?.seat;
+  const linkedGone = agents !== null && linkedAgent !== "" && !agents.some((agent) => agent.id === linkedAgent);
+  const linkedUnseen = agentsLooked.value.kind === "failed" && linkedAgent !== "";
+  if (!linkOpened && agents !== null && linkedAgent !== "") {
+    setLinkOpened(true);
+    if (linkedSeat !== undefined) {
+      setLabWanted([linkedSeat]);
+      setLabbing("");
+    }
+  }
 
   function attach(files: File[]) {
     const refused = attachments.add(files);
@@ -106,9 +138,11 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
         ...(chosen === null ? {} : { model: chosen }),
         ...limitsChosen,
         ...(skillsChosen === null ? {} : { skills: skillsChosen }),
+        ...(agents !== null && choosesPapers(agents, papersChosen, linkedAgent) ? { paperagents: having.map((agent) => agent.id) } : {}),
       });
       const names = await attachments.upload(chat.id);
-      await api.send(chat.id, text, names, false, directive, lab, skill);
+      const seated = lab === undefined ? undefined : reseated(lab, planned, chat.papers ?? []);
+      await api.send(chat.id, text, names, false, directive, seated, skill);
       void refresh();
       router.push(`/chat?id=${encodeURIComponent(chat.id)}`);
     } catch (error) {
@@ -269,6 +303,10 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
 
             <div className="flex flex-col gap-2">
               {problem && <ProblemNotice problem={problem} />}
+              {linkedGone && <Notice tone="muted">The PaperAgent that the link names is not there any more, so the program is begun without it.</Notice>}
+              {linkedUnseen && (
+                <Notice tone="muted">The PaperAgents could not be looked at, so the program is begun with those given to conversations.</Notice>
+              )}
               {missing.length > 0 && problem?.fix !== "keys" && (
                 <Notice
                   tone="muted"
@@ -302,6 +340,9 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
                     <span className="flex min-w-0 items-center gap-3">
                       <ModelButton model={model} disabled={sending} onClick={() => setChoosing(true)} />
                       <SkillsButton chosen={skillsChosen} disabled={sending} onClick={() => setSkilling(true)} />
+                      {agents !== null && agents.length > 0 && (
+                        <PaperAgentsButton count={having.length} disabled={sending} onClick={() => setPapering(true)} />
+                      )}
                     </span>
                   ) : undefined
                 }
@@ -353,12 +394,26 @@ function Home({ kind, linked }: { kind: ProgramKind; linked: string }) {
               agenda={labbing}
               lead={DEFAULT_LEAD_TITLE}
               team={null}
+              papers={planned}
+              wanted={labWanted}
               ceiling={limitsChosen.max_rounds ?? ready.chat_limits.max_rounds.default}
               onStart={startLab}
               onClose={(left) => {
                 setLabbing(null);
+                setLabWanted([]);
                 if (left !== null && left.trim() !== "") setDraft(written({ name: "lab", arg: left.trim() }));
               }}
+            />
+          )}
+          {papering && agents !== null && (
+            <PaperAgentsDialog
+              agents={agents}
+              had={having.map((agent) => agent.id)}
+              onDone={(next) => {
+                setPapersChosen(next);
+                setPapering(false);
+              }}
+              onClose={() => setPapering(false)}
             />
           )}
           {helping && <CommandsHelp place="home" onClose={() => setHelping(false)} />}
