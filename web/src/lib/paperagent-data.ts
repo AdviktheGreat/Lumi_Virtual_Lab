@@ -15,6 +15,9 @@ export const MEGABYTE = 1024 * 1024;
 // The longest that an address, a DOI, or an accession is that the server takes
 export const MAX_REFERENCE_CHARS = 500;
 
+// The most places for the data that a person adds, for a server that does not say
+export const MAX_DATA_LINKS = 20;
+
 export interface DataFetchDraft {
   // The most to fetch, in megabytes, as it was typed
   megabytes: string;
@@ -146,12 +149,12 @@ export function describeCandidate(candidate: DataCandidate): string {
   return "Nothing fetched yet";
 }
 
-// Where the places that the paper names are said: in the paper, in its code, or both
+// Where the places for the data are said: in the paper, in its code, or both, and whether the person added it
 export function describeSaid(candidate: DataCandidate): string | null {
   const paper = candidate.facts.length;
-  if (paper > 0 && candidate.in_code) return "Named in the paper and in its code";
-  if (paper > 0) return "Named in the paper";
-  if (candidate.in_code) return "Named in the code";
+  const named =
+    paper > 0 && candidate.in_code ? "Named in the paper and in its code" : paper > 0 ? "Named in the paper" : candidate.in_code ? "Named in the code" : null;
+  if (candidate.added !== true) return named;
 
-  return null;
+  return named === null ? "Added by you" : `${named}, and added by you`;
 }

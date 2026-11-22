@@ -5429,3 +5429,132 @@ test("says that the agent was made when making it in one go is refused, and star
   expect((await (await page.request.get("/api/paperagents")).json()).agents).toHaveLength(1);
   await expect.poll(async () => (await onegoOf(page, agents[0].id)).state).not.toBe("none");
 });
+
+// What is uploaded with a paper, which is read after it
+const supplementaryOf = async (page: Page, id: string) => (await (await page.request.get(`/api/paperagents/${id}`)).json()).supplementary;
+const supplementaryFile = (page: Page) => page.getByTestId("paper-agent-supplementary");
+
+test("keeps the supplementary files of a paper, reads them with it, and takes what was read away when one is", async ({ page }) => {
+  test.slow();
+  const id = await makeAgent(page, { title: "With extras", paper: { kind: "file" } });
+  await sendPaper(page, id, "cells.txt", CELLS);
+  await openAgent(page, id, "With extras");
+  await expect(page.getByRole("heading", { name: "Supplementary files", level: 2 })).toBeVisible();
+  await expect(page.getByText("No supplementary files are kept with the paper.")).toBeVisible();
+
+  // What is not a file that is read is said not to be, and is not sent
+  await page.getByLabel("Upload a supplementary file").setInputFiles({ name: "run.exe", mimeType: "application/octet-stream", buffer: Buffer.from("MZ") });
+  await expect(page.getByRole("alert").filter({ hasText: "run.exe is not a file this reads" })).toBeVisible();
+  // Nor is the paper itself
+  await page.getByLabel("Upload a supplementary file").setInputFiles({ name: "again.txt", mimeType: "text/plain", buffer: Buffer.from(CELLS) });
+  await expect(page.getByRole("alert").filter({ hasText: "again.txt is the paper itself" })).toBeVisible();
+  expect(await supplementaryOf(page, id)).toEqual([]);
+
+  await page.getByLabel("Upload a supplementary file").setInputFiles({ name: "s1.txt", mimeType: "text/plain", buffer: Buffer.from(ZENODO_LINKS[0]) });
+  await expect(supplementaryFile(page)).toHaveCount(1);
+  await expect(supplementaryFile(page)).toContainText("s1.txt");
+  expect(await supplementaryOf(page, id)).toMatchObject([{ name: "s1.txt", bytes: ZENODO_LINKS[0].length }]);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What is said in it is read with the paper: the place it names is among the places for the data, with its words
+  await readTheAgent(page, id);
+  await openAgent(page, id, "With extras");
+  await expect(step(page, "Read the paper")).toContainText("Done");
+  const zenodo = placeNamed(page, "Zenodo record 1000001");
+  await expect(zenodo).toContainText("Named in the paper");
+  await expect(zenodo.getByRole("blockquote")).toHaveText(ZENODO_LINKS[0]);
+
+  // One of the same name is put in its place, and what was read is taken away, since it was read without it
+  await page.getByLabel("Upload a supplementary file").setInputFiles({ name: "s1.txt", mimeType: "text/plain", buffer: Buffer.from(ZENODO_LINKS[1]) });
+  await expect(supplementaryFile(page)).toHaveCount(1);
+  await expect(step(page, "Read the paper")).toContainText("Not started");
+  expect(await supplementaryOf(page, id)).toMatchObject([{ name: "s1.txt", bytes: ZENODO_LINKS[1].length }]);
+
+  await readTheAgent(page, id);
+  await openAgent(page, id, "With extras");
+  await expect(step(page, "Read the paper")).toContainText("Done");
+  await page.getByRole("button", { name: "Remove s1.txt" }).click();
+  await expect(page.getByText("No supplementary files are kept with the paper.")).toBeVisible();
+  await expect(step(page, "Read the paper")).toContainText("Not started");
+  await expect(page.getByTestId("paper-agent-file")).toContainText("cells.txt");
+  expect(await supplementaryOf(page, id)).toEqual([]);
+});
+
+test("keeps other addresses of an agent's code, which are tried if it cannot be fetched from where it is", async ({ page }) => {
+  const id = await makeAgent(page, { title: "Mirrored", paper: { kind: "doi", doi: "10.1000/mirrored" } });
+  await openAgent(page, id, "Mirrored");
+  const details = form(page, "What the agent is");
+  const others = details.getByLabel("Other places its code may be");
+  await expect(others).toHaveValue("");
+
+  // They are only tried if the code cannot be fetched from where it is, which has to be said first
+  await others.fill("https://gitlab.com/group/mirror");
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(details.getByText("Say where the code is first.", { exact: false })).toBeVisible();
+  await details.getByLabel("Where its code is").fill("https://github.com/owner/name");
+  await others.fill("https://gitlab.com/group/mirror\nnot an address");
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(details.getByText("not an address is not the address of a project", { exact: false })).toBeVisible();
+  expect(await accessibilityProblems(page)).toEqual([]);
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).repo).toBeNull();
+
+  await others.fill("https://gitlab.com/group/mirror\n\nhttps://codeberg.org/owner/fork\n");
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("or 2 other addresses if it cannot be fetched from there", { exact: false })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Save" })).toBeDisabled();
+  await expect(others).toHaveValue("https://gitlab.com/group/mirror\nhttps://codeberg.org/owner/fork");
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).repo).toMatchObject({
+    url: "https://github.com/owner/name",
+    also: ["https://gitlab.com/group/mirror", "https://codeberg.org/owner/fork"],
+  });
+
+  // Taking one away is saved as well, and taking away where the code is takes them all
+  await others.fill("https://codeberg.org/owner/fork");
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("or 1 other address if it cannot be fetched from there", { exact: false })).toBeVisible();
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).repo.also).toEqual(["https://codeberg.org/owner/fork"]);
+  await details.getByLabel("Where its code is").fill("");
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText(/^Code:/)).toHaveCount(0);
+  await expect(others).toHaveValue("");
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).repo).toBeNull();
+});
+
+test("adds places for the data that the paper does not name, which are listed with those it does, and takes them away", async ({ page }) => {
+  const id = await agentWithData(page, "Data adder");
+  await expect(places(page).getByTestId("data-candidate")).toHaveCount(5);
+  const where = page.getByLabel("Another place");
+
+  // What is not a place is said not to be, and nothing is added
+  await page.getByRole("button", { name: "Add this place" }).click();
+  await expect(page.getByText("Say where the data is: an address", { exact: false })).toBeVisible();
+
+  await where.fill("https://zenodo.org/records/1000004");
+  await page.getByRole("button", { name: "Add this place" }).click();
+  await expect(places(page).getByTestId("data-candidate")).toHaveCount(6);
+  const added = placeNamed(page, "Zenodo record 1000004");
+  await expect(added).toContainText("Added by you.");
+  await expect(where).toHaveValue("");
+  expect((await dataOf(page, id)).links).toMatchObject([{ key: "zenodo:1000004", text: "https://zenodo.org/records/1000004" }]);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // A place is added once, and one that the paper names is said to be both
+  await where.fill("10.5281/zenodo.1000004");
+  await page.getByRole("button", { name: "Add this place" }).click();
+  await expect(page.getByText("Zenodo record 1000004 is added already", { exact: false })).toBeVisible();
+  await where.fill("https://zenodo.org/records/1000001");
+  await page.getByRole("button", { name: "Add this place" }).click();
+  await expect(placeNamed(page, "Zenodo record 1000001")).toContainText("Named in the paper, and added by you.");
+  await expect(places(page).getByTestId("data-candidate")).toHaveCount(6);
+
+  // Its files are seen as those of any other place
+  await seeFilesOf(page, "Zenodo record 1000001");
+
+  // Taking away what the person added leaves what the paper names
+  await placeNamed(page, "Zenodo record 1000001").getByRole("button", { name: "Remove Zenodo record 1000001, which you added" }).click();
+  await expect(placeNamed(page, "Zenodo record 1000001")).not.toContainText("added by you");
+  await expect(placeNamed(page, "Zenodo record 1000001")).toContainText("Named in the paper.");
+  await added.getByRole("button", { name: "Remove Zenodo record 1000004, which you added" }).click();
+  await expect(places(page).getByTestId("data-candidate")).toHaveCount(5);
+  expect((await dataOf(page, id)).links).toEqual([]);
+});

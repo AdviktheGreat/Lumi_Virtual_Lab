@@ -899,6 +899,8 @@ export interface PaperAgent {
   title: string;
   created_at: string;
   paper: PaperAgentPaper;
+  // The files that came with the paper, which are read with it, in the order they were added. A server from before them does not say.
+  supplementary?: PaperAgentFile[];
   // Where the paper's code is, if that is known, and once it is fetched the commit that was, with what was asked for to get it
   repo: PaperAgentRepo | null;
   steps: Record<PaperAgentStep, PaperAgentStatus>;
@@ -1053,6 +1055,8 @@ export interface PaperAgentImportCheck {
 
 export interface PaperAgentRepo {
   url: string;
+  // The other addresses of the code, which are tried in this order if it cannot be fetched from the one before. Only one is fetched.
+  also?: string[];
   ref?: string;
   commit?: string;
 }
@@ -1061,8 +1065,10 @@ export interface PaperAgentsList {
   agents: PaperAgent[];
   max_agents: number;
   max_paper_bytes: number;
-  // What a paper uploaded may end in, with the dot
+  // What a paper uploaded may end in, with the dot, which a supplementary file may as well
   suffixes: string[];
+  // The most supplementary files a paper keeps. A server from before them does not say.
+  max_supplementary?: number;
   // The hosts the code of a paper may be at
   repo_hosts: string[];
   // The servers that others host, which can be imported
@@ -1294,6 +1300,8 @@ export interface NewPaperAgent {
 export interface PaperAgentChange {
   title?: string;
   repo?: string;
+  // The other addresses of the code, in the order they are tried, which are said again whole
+  also?: string[];
   // Whether the conversations that are made from now on are given the agent
   given?: boolean;
 }
@@ -1581,8 +1589,17 @@ export interface DataCandidate {
   // Where in the paper it is said, and whether the code names it too
   facts: ReadFact[];
   in_code: boolean;
+  // Whether the person added it to the agent. A server from before that could be does not say.
+  added?: boolean;
   // How many of its files are kept
   fetched: number;
+}
+
+// A place for the data that the person added, as they wrote it
+export interface DataLink {
+  key: string;
+  text: string;
+  added_at: string;
 }
 
 // Some of a person's own data that stands in for a dataset the paper used, as a note of which: nothing is copied
@@ -1661,12 +1678,21 @@ export interface PaperAgentData {
   datasets: DataDataset[];
   candidates: DataCandidate[];
   stand_ins: (DataStandIn & { own_data: OwnDataSummary | null })[];
+  // The places that the person added, which are among the candidates. A server from before them does not say.
+  links?: DataLink[];
   own: OwnDataSummary[];
   kept: { files: number; bytes: number; sources: KeptDataSource[] };
   sources: DataSourceInfo[];
   // The fetching that is at work, if one is
   job: Job | null;
-  limits: { default_megabytes: number; min_megabytes: number; max_megabytes: number; max_kept_megabytes: number; max_files: number };
+  limits: {
+    default_megabytes: number;
+    min_megabytes: number;
+    max_megabytes: number;
+    max_kept_megabytes: number;
+    max_files: number;
+    max_links?: number;
+  };
 }
 
 // A file that a place has, as the place lists it
