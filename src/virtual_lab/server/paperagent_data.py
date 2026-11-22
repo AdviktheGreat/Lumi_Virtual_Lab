@@ -7,7 +7,9 @@ matched, since a file that did not is not kept, the address it was fetched from,
 the file is in place, and what it names is checked against what is on disk each time it is shown.
 
 data.json also says which of the person's own data stands in for data that the paper used. That is only a name, from the
-Data page, and nothing is copied: the data stays where it is, as theirs.
+Data page, and nothing is copied: the data stays where it is, as theirs. And it says the places that the person added
+for the data, as they wrote them, which are shown with the places the paper names: nothing is fetched from one but the
+files the person chooses, as from any other.
 
 Nothing in the record is trusted to be a path: each path is worked out again from the place and the name, and a record
 that has one that is not what that comes to is not shown.
@@ -18,7 +20,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from virtual_lab.paperagents.data import SOURCES, Reference, folder_of, safe_path
+from virtual_lab.paperagents.data import SOURCES, DataError, Reference, folder_of, parse_reference, safe_path
 from virtual_lab.server.workspace import read_json
 from virtual_lab.utils import write_atomically
 
@@ -28,6 +30,7 @@ RECORD_FILE = "data.json"
 # What a record says of how it is kept, so that a later version can read what an earlier one wrote
 SCHEMA = 1
 MAX_STAND_INS = 50
+MAX_LINKS = 20
 SHA256_LENGTH = 64
 ALGORITHMS = ("md5", "sha256")
 
@@ -101,8 +104,24 @@ def is_stand_in(value: Any) -> bool:
     )
 
 
+def is_link(value: Any) -> bool:
+    """Whether what a record says of a place that the person added is of one: what they wrote, which still names the
+    place it is kept as, and when."""
+    if not isinstance(value, dict) or not is_text(value.get("text")) or not is_text(value.get("added_at")):
+        return False
+    try:
+        return parse_reference(value["text"]).key == value.get("key")
+    except DataError:
+        return False
+
+
+def links_of(record: dict[str, Any]) -> list[Reference]:
+    """The places that the person added, in the order they were."""
+    return [parse_reference(link["text"]) for link in record["links"]]
+
+
 def empty() -> dict[str, Any]:
-    return {"schema": SCHEMA, "sources": [], "stand_ins": []}
+    return {"schema": SCHEMA, "sources": [], "stand_ins": [], "links": []}
 
 
 def load(directory: Path) -> dict[str, Any]:
@@ -113,11 +132,13 @@ def load(directory: Path) -> dict[str, Any]:
         return empty()
     sources = record.get("sources") if isinstance(record.get("sources"), list) else []
     stand_ins = record.get("stand_ins") if isinstance(record.get("stand_ins"), list) else []
+    links = record.get("links") if isinstance(record.get("links"), list) else []
 
     return {
         "schema": SCHEMA,
         "sources": [source for source in sources if is_source(source)],
         "stand_ins": [stand_in for stand_in in stand_ins if is_stand_in(stand_in)][:MAX_STAND_INS],
+        "links": [link for link in links if is_link(link)][:MAX_LINKS],
     }
 
 

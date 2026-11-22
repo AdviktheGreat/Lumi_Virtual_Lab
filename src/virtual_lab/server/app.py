@@ -664,6 +664,12 @@ class PaperAgentDataBody(RequestModel):
     max_megabytes: StrictInt | None = None
 
 
+class PaperAgentDataLinkBody(RequestModel):
+    """A place for the data that the person adds: an address, a DOI, or an accession."""
+
+    reference: str = Field(max_length=500)
+
+
 class PaperAgentStandInBody(RequestModel):
     """Which of the person's own data stands in for a dataset that the paper used."""
 
@@ -726,11 +732,13 @@ class PaperAgentImportBody(RequestModel):
 
 class PaperAgentChangeBody(RequestModel):
     """What to say again of an agent: any of these, and what is not given is left as it is. An empty repo takes the code
-    away, and given is whether the conversations that are made from now on are given the agent."""
+    away, also is the other addresses of the code, which are tried in turn if it cannot be fetched from repo, and given
+    is whether the conversations that are made from now on are given the agent."""
 
     title: str | None = Field(None, max_length=MAX_TITLE_CHARS * 4)
     repo: str | None = Field(None, max_length=MAX_URL_CHARS * 2)
     given: StrictBool | None = None
+    also: list[Annotated[str, StringConstraints(max_length=MAX_URL_CHARS * 2)]] | None = Field(None, max_length=20)
 
 
 class BakeoffLabelsBody(RequestModel):
@@ -1624,7 +1632,7 @@ def create_app(
 
     @api.patch("/paperagents/{agent_id}")
     def change_paperagent(agent_id: str, body: PaperAgentChangeBody) -> dict[str, Any]:
-        paperagents.change(agent_id, body.title, body.repo, body.given)
+        paperagents.change(agent_id, body.title, body.repo, body.given, body.also)
 
         return paperagents.view(agent_id)
 
@@ -1679,6 +1687,33 @@ def create_app(
     @api.delete("/paperagents/{agent_id}/paper")
     def delete_paperagent_paper(agent_id: str) -> dict[str, Any]:
         paperagents.remove_paper(agent_id)
+
+        return paperagents.view(agent_id)
+
+    @api.post("/paperagents/{agent_id}/supplementary", status_code=201)
+    async def upload_paperagent_supplementary(
+        request: Request, agent_id: str, name: str = Query(min_length=1, max_length=1000)
+    ) -> Any:
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > paperagents.max_upload_bytes:
+            raise ApiError(
+                413,
+                "too_large",
+                f"The file is larger than the {paperagents.max_upload_bytes} bytes that can be uploaded",
+            )
+        reader = RequestBodyReader(request, asyncio.get_running_loop())
+        try:
+            await run_in_threadpool(paperagents.put_supplementary, agent_id, name, cast(BinaryIO, reader))
+        except ClientDisconnect:
+            return Response(status_code=499)
+
+        return await run_in_threadpool(paperagents.view, agent_id)
+
+    @api.delete("/paperagents/{agent_id}/supplementary")
+    def delete_paperagent_supplementary(
+        agent_id: str, name: str = Query(min_length=1, max_length=1000)
+    ) -> dict[str, Any]:
+        paperagents.remove_supplementary(agent_id, name)
 
         return paperagents.view(agent_id)
 
@@ -2110,6 +2145,18 @@ def create_app(
     @api.delete("/paperagents/{agent_id}/data")
     def delete_paperagent_data(agent_id: str, source: str | None = Query(None, max_length=600)) -> dict[str, Any]:
         paperagents.clear_data(agent_id, source)
+
+        return paperagents.data(agent_id)
+
+    @api.post("/paperagents/{agent_id}/data/links", status_code=201)
+    def add_paperagent_data_link(agent_id: str, body: PaperAgentDataLinkBody) -> dict[str, Any]:
+        paperagents.add_data_link(agent_id, body.reference)
+
+        return paperagents.data(agent_id)
+
+    @api.delete("/paperagents/{agent_id}/data/links")
+    def delete_paperagent_data_link(agent_id: str, key: str = Query(max_length=600)) -> dict[str, Any]:
+        paperagents.remove_data_link(agent_id, key)
 
         return paperagents.data(agent_id)
 

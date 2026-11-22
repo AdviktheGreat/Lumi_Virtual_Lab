@@ -221,6 +221,16 @@ describe("how a place is described", () => {
     expect(describeSaid(candidate({ in_code: true }))).toBe("Named in the code");
     expect(describeSaid(candidate())).toBeNull();
   });
+
+  it("says that the person added a place, and where else it is named", () => {
+    const fact = { id: "f", quote: "q", anchor: { start: 0, end: 1, page: null, section: null } };
+
+    expect(describeSaid(candidate({ added: true }))).toBe("Added by you");
+    expect(describeSaid(candidate({ added: true, facts: [fact] }))).toBe("Named in the paper, and added by you");
+    expect(describeSaid(candidate({ added: true, in_code: true }))).toBe("Named in the code, and added by you");
+    expect(describeSaid(candidate({ added: true, facts: [fact], in_code: true }))).toBe("Named in the paper and in its code, and added by you");
+    expect(describeSaid(candidate({ added: false, in_code: true }))).toBe("Named in the code");
+  });
 });
 
 describe("the person's own data that stands in", () => {

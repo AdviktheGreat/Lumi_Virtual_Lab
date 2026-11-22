@@ -128,8 +128,9 @@ class Document:
         self._section_starts.extend(section.start for section in self.sections)
 
     def page_at(self, offset: int) -> int | None:
-        """The page, from 1, that a character is on, or None if the text has no pages."""
-        if not self.pages:
+        """The page, from 1, that a character is on, or None if the text has no pages, or it is after the last of
+        them, as the text of a file that is read after a paper is."""
+        if not self.pages or offset > self.pages[-1][1]:
             return None
 
         return max(bisect.bisect_right(self._page_starts, offset), 1)

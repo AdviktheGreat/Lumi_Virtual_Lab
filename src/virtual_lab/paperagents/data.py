@@ -433,20 +433,33 @@ def place(fact: dict[str, Any]) -> dict[str, Any]:
     return {"id": fact["id"], "quote": fact["quote"], "anchor": fact["anchor"]}
 
 
-def find(card: dict[str, Any], resources: dict[str, Any], stock_data: dict[str, Any] | None) -> dict[str, Any]:
-    """The places that the paper and its code point to for the data, and the data that the paper says it used.
+def find(
+    card: dict[str, Any],
+    resources: dict[str, Any],
+    stock_data: dict[str, Any] | None,
+    added: Iterable[Reference] = (),
+) -> dict[str, Any]:
+    """The places that the paper, its code, and the person point to for the data, and the data that the paper says it
+    used.
 
     :param card: The draft method card of the reading, which has the datasets the paper names.
     :param resources: What reading found of the links and statements of where data is.
     :param stock_data: What was found of the data in the code, which is none if the code was not fetched.
-    :return: "candidates", each place once, with the places in the paper that give it and whether the code does; and
+    :param added: The places that the person added to the agent, which are its as well.
+    :return: "candidates", each place once, with the places in the paper that give it, whether the code does, and
+        whether the person added it; and
         "datasets", each dataset on the card, with whose it is, where in the paper it is if it is, and the candidate it
         points to, if its accession does. A dataset that a person added, or whose accession they changed, still points
         to its place, but no place in the paper is said to give it.
     """
     candidates: dict[str, dict[str, Any]] = {}
 
-    def add(item: Reference | Unsupported, fact: dict[str, Any] | None = None, in_code: bool = False) -> None:
+    def add(
+        item: Reference | Unsupported,
+        fact: dict[str, Any] | None = None,
+        in_code: bool = False,
+        by_person: bool = False,
+    ) -> None:
         if item.key not in candidates:
             shown = (
                 {**item.to_dict(), "supported": True, "reason": None}
@@ -461,11 +474,12 @@ def find(card: dict[str, Any], resources: dict[str, Any], stock_data: dict[str, 
                     "reason": item.reason,
                 }
             )
-            candidates[item.key] = {**shown, "facts": [], "in_code": False}
+            candidates[item.key] = {**shown, "facts": [], "in_code": False, "added": False}
         entry = candidates[item.key]
         if fact is not None and all(known["id"] != fact["id"] for known in entry["facts"]):
             entry["facts"].append(place(fact))
         entry["in_code"] = entry["in_code"] or in_code
+        entry["added"] = entry["added"] or by_person
 
     datasets = []
     for fact in card.get("datasets", []):
@@ -505,6 +519,8 @@ def find(card: dict[str, Any], resources: dict[str, Any], stock_data: dict[str, 
         for accession in stock_data.get("accessions", []):
             if (item := accession_reference(accession)) is not None:
                 add(item, in_code=True)
+    for reference in added:
+        add(reference, by_person=True)
 
     def order(entry: dict[str, Any]) -> tuple[bool, bool, int, str]:
         facts = entry["facts"]

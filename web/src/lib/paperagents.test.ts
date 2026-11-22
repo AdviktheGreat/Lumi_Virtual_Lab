@@ -46,6 +46,12 @@ import {
   refProblem,
   repoName,
   repoProblem,
+  otherRepos,
+  otherReposProblem,
+  sameAddresses,
+  supplementaryFiles,
+  supplementaryProblem,
+  MAX_OTHER_REPOS,
   repositoryJob,
   stockRows,
   STOCK_ITEMS_SHOWN,
@@ -950,5 +956,70 @@ describe("the job that makes an agent in one go", () => {
     expect(readingKey([going({ progress: {} })], 0, "cells")).toBe("0|onego:g1:|");
     expect(readingKey([going({ subject: "dogs" }), going({ id: "g0", state: "succeeded" })], 0, "cells")).toBe("0|");
     expect(readingKey([going(), job({ id: "r1", kind: "paperagent-reading", progress: { chunks: 3, finished: 1 } })], 0, "cells")).toBe("0|onego:g1:2|r1:1");
+  });
+});
+
+describe("the other addresses of code that are typed", () => {
+  it("are each line once, in order, without the blank ones", () => {
+    expect(otherRepos("")).toEqual([]);
+    expect(otherRepos(" https://gitlab.com/a/b \n\n https://github.com/c/d\nhttps://gitlab.com/a/b\n")).toEqual([
+      "https://gitlab.com/a/b",
+      "https://github.com/c/d",
+    ]);
+  });
+
+  it("need the address of the code, and each to be one", () => {
+    expect(otherReposProblem("", "")).toBeNull();
+    expect(otherReposProblem(" \n ", "")).toBeNull();
+    expect(otherReposProblem("https://gitlab.com/a/b", " ")).toContain("Say where the code is first");
+    expect(otherReposProblem("https://gitlab.com/a/b\nhttps://github.com/c/d", "https://github.com/o/n")).toBeNull();
+    expect(otherReposProblem("https://gitlab.com/a/b\nnope", "https://github.com/o/n")).toBe(
+      "nope is not the address of a project at github.com, gitlab.com, bitbucket.org, codeberg.org.",
+    );
+    expect(otherReposProblem("https://example.org/a/b", "https://example.org/o/n", ["example.org"])).toBeNull();
+  });
+
+  it("are no more than are kept", () => {
+    const addresses = (count: number) => Array.from({ length: count }, (_, index) => `https://github.com/o/n${index}`).join("\n");
+
+    expect(otherReposProblem(addresses(MAX_OTHER_REPOS), "https://github.com/o/n")).toBeNull();
+    expect(otherReposProblem(addresses(MAX_OTHER_REPOS + 1), "https://github.com/o/n")).toBe(
+      `At most ${MAX_OTHER_REPOS} other addresses are kept, and these are ${MAX_OTHER_REPOS + 1}.`,
+    );
+  });
+
+  it("are the same only in the same order", () => {
+    expect(sameAddresses([], [])).toBe(true);
+    expect(sameAddresses(["a", "b"], ["a", "b"])).toBe(true);
+    expect(sameAddresses(["a", "b"], ["b", "a"])).toBe(false);
+    expect(sameAddresses(["a"], ["a", "b"])).toBe(false);
+    expect(sameAddresses(["a", "b"], ["a"])).toBe(false);
+  });
+});
+
+describe("the supplementary files of a paper", () => {
+  const limits = { bytes: 1000, suffixes: [".pdf", ".txt"], files: 2 };
+  const kept = (name: string) => ({ name, bytes: 10, sha256: "0".repeat(64) });
+
+  it("are none for a server that does not say", () => {
+    expect(supplementaryFiles({ supplementary: undefined } as unknown as PaperAgent)).toEqual([]);
+    expect(supplementaryFiles({ supplementary: [kept("a.pdf")] } as unknown as PaperAgent)).toEqual([kept("a.pdf")]);
+  });
+
+  it("are files that are read, of a size that is uploaded", () => {
+    expect(supplementaryProblem({ name: "s1.PDF", size: 1000 }, [], limits)).toBeNull();
+    expect(supplementaryProblem({ name: "s1.docx", size: 10 }, [], limits)).toBe(
+      "s1.docx is not a file this reads: give a file that ends in .pdf, .txt.",
+    );
+    expect(supplementaryProblem({ name: "s1.pdf", size: 1001 }, [], limits)).toContain("is larger than the");
+  });
+
+  it("are no more than are kept, but one may be put in the place of the file of its name", () => {
+    expect(supplementaryProblem({ name: "b.pdf", size: 10 }, [kept("a.pdf")], limits)).toBeNull();
+    expect(supplementaryProblem({ name: "c.pdf", size: 10 }, [kept("a.pdf"), kept("b.pdf")], limits)).toBe(
+      "A paper keeps no more than 2 supplementary files. Remove one first.",
+    );
+    expect(supplementaryProblem({ name: "b.pdf", size: 10 }, [kept("a.pdf"), kept("b.pdf")], limits)).toBeNull();
+    expect(supplementaryProblem({ name: "B.pdf", size: 10 }, [kept("a.pdf"), kept("b.pdf")], limits)).toBeNull();
   });
 });

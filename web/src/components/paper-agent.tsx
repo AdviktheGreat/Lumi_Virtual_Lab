@@ -39,6 +39,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { describeError } from "@/lib/errors";
 import { formatBytes } from "@/lib/files";
@@ -66,7 +67,11 @@ import {
   lastVariantJob,
   matchingJob,
   MAX_AGENT_TITLE,
+  MAX_OTHER_REPOS,
+  MAX_SUPPLEMENTARY,
   onegoJob,
+  otherRepos,
+  otherReposProblem,
   paperFile,
   paperLink,
   readingJob,
@@ -77,9 +82,12 @@ import {
   reproductionJob,
   repositoryJob,
   repoProblem,
+  sameAddresses,
   STATUS_LABELS,
   STEP_LABELS,
   STEPS,
+  supplementaryFiles,
+  supplementaryProblem,
   titleProblem,
   toolsJob,
   variantJob,
@@ -169,7 +177,7 @@ function AgentHeader({ agent, working }: { agent: PaperAgent; working: boolean }
             )}
           </p>
           {agent.repo !== null && (
-            <p className="break-all text-sm text-muted-foreground">
+            <p className="break-words text-sm text-muted-foreground">
               Code:{" "}
               {isLink(agent.repo.url) ? (
                 <a href={agent.repo.url} target="_blank" rel="noreferrer noopener" className={cn("inline-flex items-center gap-1", LINK)}>
@@ -185,6 +193,9 @@ function AgentHeader({ agent, working }: { agent: PaperAgent; working: boolean }
                   {" "}
                   at commit <code className="font-mono text-xs">{agent.repo.commit.slice(0, 12)}</code>
                 </>
+              )}
+              {agent.repo.commit === undefined && (agent.repo.also?.length ?? 0) > 0 && (
+                <>, or {agent.repo.also?.length === 1 ? "1 other address" : `${agent.repo.also?.length} other addresses`} if it cannot be fetched from there</>
               )}
             </p>
           )}
@@ -244,25 +255,33 @@ function Details({ agent, list, onChanged }: Shared) {
   const attempt = useAttempt(report);
   const [title, setTitle] = useState(agent.title);
   const [repo, setRepo] = useState(agent.repo?.url ?? "");
+  const [others, setOthers] = useState((agent.repo?.also ?? []).join("\n"));
   const [tried, setTried] = useState(false);
   const wrongTitle = titleProblem(title, true);
   const wrongRepo = repoProblem(repo, list.repo_hosts);
   const named = tidy(title);
   const where = repo.trim();
+  // An address that is taken away takes the others with it, which the server does, so what they are is not asked then
+  const dropping = where === "" && agent.repo !== null;
+  const wrongOthers = dropping ? null : otherReposProblem(others, repo, list.repo_hosts);
+  const also = where === "" ? [] : otherRepos(others);
   const change = {
     ...(named !== agent.title ? { title: named } : {}),
     ...(where !== (agent.repo?.url ?? "") ? { repo: where } : {}),
+    ...(!sameAddresses(also, agent.repo?.also ?? []) ? { also } : {}),
   };
-  const changed = Object.keys(change).length > 0;
+  // Others typed without an address change nothing, but saving them says why they are not kept
+  const changed = Object.keys(change).length > 0 || wrongOthers !== null;
 
   async function save() {
     setTried(true);
-    if (wrongTitle !== null || wrongRepo !== null || !changed) return;
+    if (wrongTitle !== null || wrongRepo !== null || wrongOthers !== null || !changed) return;
     const next = await attempt.run(() => api.changePaperAgent(agent.id, change));
     if (next) {
       onChanged(next);
       setTitle(next.title);
       setRepo(next.repo?.url ?? "");
+      setOthers((next.repo?.also ?? []).join("\n"));
       setTried(false);
     }
   }
@@ -308,6 +327,25 @@ function Details({ agent, list, onChanged }: Shared) {
           readOnly={attempt.busy}
           aria-invalid={tried && wrongRepo !== null}
           aria-describedby={describedBy(`${id}-repo`, { hint: true, problem: tried && wrongRepo !== null })}
+        />
+      </Field>
+      <Field
+        id={`${id}-others`}
+        label="Other places its code may be"
+        hint={`One address to a line, such as a mirror or a fork, up to ${MAX_OTHER_REPOS}. If the code cannot be fetched from where it is, these are tried in this order, and only the first that can be is fetched. It is then where the code is.`}
+        problem={tried && wrongOthers !== null ? wrongOthers : undefined}
+      >
+        <Textarea
+          id={`${id}-others`}
+          value={others}
+          onChange={(event) => setOthers(event.target.value)}
+          rows={2}
+          placeholder="https://gitlab.com/owner/name"
+          autoComplete="off"
+          spellCheck={false}
+          readOnly={attempt.busy}
+          aria-invalid={tried && wrongOthers !== null}
+          aria-describedby={describedBy(`${id}-others`, { hint: true, problem: tried && wrongOthers !== null })}
         />
       </Field>
       {attempt.problem && <ProblemNotice problem={attempt.problem} />}
@@ -462,6 +500,128 @@ function PaperFile({ agent, list, working, onChanged }: Shared) {
             </Link>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// The files that came with the paper, which are read with it, and the way to upload one or take one away. Either takes
+// away what was read, since it was read without them as they now are.
+function SupplementaryFiles({ agent, list, working, onChanged }: Shared) {
+  const { report } = useServer();
+  const id = useId();
+  const attempt = useAttempt(report);
+  const [sending, setSending] = useState<{ name: string; progress: number } | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  // A file chosen cannot be taken out of its input, so the input is made again to empty it
+  const [inputs, setInputs] = useState(0);
+  const controller = useRef<AbortController | null>(null);
+  const files = supplementaryFiles(agent);
+  const most = list.max_supplementary ?? MAX_SUPPLEMENTARY;
+  const busy = working || attempt.busy || sending !== null;
+
+  useEffect(() => () => controller.current?.abort(), []);
+
+  async function upload(chosen: File | undefined) {
+    if (chosen === undefined) return;
+    setProblem(null);
+    const wrong = supplementaryProblem(chosen, files, { bytes: list.max_paper_bytes, suffixes: list.suffixes, files: most });
+    if (wrong !== null) {
+      setProblem(wrong);
+      setInputs((was) => was + 1);
+
+      return;
+    }
+    const called = new AbortController();
+    controller.current = called;
+    setSending({ name: chosen.name, progress: 0 });
+    try {
+      onChanged(
+        await api.uploadAgentSupplementary(agent.id, chosen, {
+          onProgress: (progress) => setSending({ name: chosen.name, progress }),
+          signal: called.signal,
+        }),
+      );
+    } catch (error) {
+      // A file that was called off is not a failure to say anything of
+      if (!called.signal.aborted) {
+        report(error);
+        setProblem(describeError(error));
+      }
+    }
+    controller.current = null;
+    setSending(null);
+    setInputs((was) => was + 1);
+  }
+
+  async function remove(name: string) {
+    setProblem(null);
+    const next = await attempt.run(() => api.removeAgentSupplementary(agent.id, name));
+    if (next) onChanged(next);
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {files.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No supplementary files are kept with the paper.</p>
+      ) : (
+        <ul className="flex flex-col gap-1.5" aria-label="Supplementary files">
+          {files.map((file) => (
+            <li
+              key={file.name}
+              className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5"
+              data-testid="paper-agent-supplementary"
+            >
+              <code className="min-w-0 flex-1 break-all text-sm">{file.name}</code>
+              <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(file.bytes)}</span>
+              <Button variant="ghost" size="icon-sm" onClick={() => void remove(file.name)} disabled={busy} aria-label={`Remove ${file.name}`}>
+                <Trash2 />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {attempt.problem && <ProblemNotice problem={attempt.problem} />}
+      {files.length < most ? (
+        <Field
+          id={`${id}-file`}
+          label="Upload a supplementary file"
+          hint={`${list.suffixes.join(", ")} files, of up to ${formatBytes(list.max_paper_bytes)}, and up to ${most} of them. One with the name of a file kept is put in its place.`}
+        >
+          <Input
+            key={inputs}
+            id={`${id}-file`}
+            type="file"
+            accept={list.suffixes.join(",")}
+            disabled={busy}
+            onChange={(event) => void upload(event.target.files?.[0])}
+            aria-describedby={describedBy(`${id}-file`, { hint: true })}
+            className="h-auto cursor-pointer py-1 file:mr-3 file:cursor-pointer file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground"
+          />
+        </Field>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          A paper keeps no more than {most} supplementary files. Remove one to upload another.
+        </p>
+      )}
+      {sending !== null && (
+        <div className="flex flex-col gap-1" role="status">
+          <Progress value={sending.progress} aria-label={`Uploading ${sending.name}`} />
+          <p className="text-xs text-muted-foreground">
+            Uploading {sending.name}, {Math.round(sending.progress * 100)}%
+          </p>
+          <div>
+            <Button type="button" variant="outline" size="xs" onClick={() => controller.current?.abort()}>
+              <X />
+              Cancel the upload
+            </Button>
+          </div>
+        </div>
+      )}
+      {problem !== null && (
+        <p role="alert" className="text-sm text-destructive">
+          {problem}
+        </p>
       )}
     </div>
   );
@@ -657,11 +817,23 @@ function Agent({
           key={agent.id}
           {...shared}
           onChanged={(next) => {
-            onChanged(next);
-            // Whether the paper can be read, and what was read of it, are changed by the file that is kept
+            // What was read of the paper is taken away with the file it was read from, and what was found from that reading
+            // with it, such as the places for the data and the projects for the code
+            changed(next);
             reading.reload();
-            // A function written from the paper is of the file it was written from
-            reimplementation.reload();
+          }}
+        />
+      </PageSection>
+      <PageSection
+        title="Supplementary files"
+        intro="Files that came with the paper, such as its supplementary methods or tables. They are read with the paper, after it, in the order they were uploaded. Uploading or removing one takes away what was read."
+      >
+        <SupplementaryFiles
+          key={agent.id}
+          {...shared}
+          onChanged={(next) => {
+            changed(next);
+            reading.reload();
           }}
         />
       </PageSection>
@@ -1104,7 +1276,8 @@ function Agent({
         <Steps agent={agent} />
       </PageSection>
       <PageSection title="Details">
-        <Details key={agent.id} {...shared} />
+        {/* What the agent's code is may change without this form, as when it is fetched from one of its other addresses */}
+        <Details key={`${agent.id} ${agent.repo?.url ?? ""} ${(agent.repo?.also ?? []).join(" ")}`} {...shared} />
       </PageSection>
     </>
   );

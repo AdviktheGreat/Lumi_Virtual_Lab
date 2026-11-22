@@ -3,7 +3,8 @@
 An agent is kept in a directory of its own in the workspace's paperagents/. Its agent.json says which paper it is of
 (a DOI, a link, or a file the person uploaded, which is kept beside it in paper/), where the paper's code is, if that is
 known, and how far each step of making it has got. The steps are added one at a time: so far the paper can be read,
-which is a job that keeps what it finds in the agent's directory.
+which is a job that keeps what it finds in the agent's directory. The files that came with the paper, its supplementary
+files, are kept in supplementary/ and read with it (paperagent_supplementary.py).
 
 The paper is how an agent is told from others: one paper is one agent, so a DOI, a link, or a file already in an agent
 is refused, with the agent it is in. What is read is the text of a file, which a paper that is a DOI or a link can have
@@ -149,6 +150,7 @@ from virtual_lab.server import paperagent_reference as kept_reference
 from virtual_lab.server import paperagent_reimplementation as kept_reimplementation
 from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server import paperagent_reproduction as kept_reproduction
+from virtual_lab.server import paperagent_supplementary as kept_supplementary
 from virtual_lab.server import paperagent_tools as kept_tools
 from virtual_lab.server import paperagent_toolwork as toolwork
 from virtual_lab.server import paperagent_variants as kept_variants
@@ -240,6 +242,8 @@ STATUSES = ("pending", "running", "done", "failed", "skipped")
 
 # Where the code of a paper may be, since it is cloned from there later
 REPO_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "codeberg.org")
+# The most addresses of its code an agent keeps besides its own, which are tried in turn if that one cannot be fetched
+MAX_OTHER_REPOS = 4
 
 # Where a paper may come from, and what each is told about itself
 PAPERS = {
@@ -361,6 +365,53 @@ def check_repo(text: Any) -> str:
 def is_blank(text: Any) -> bool:
     """Whether the address of code that was given says there is none: it is left out, or is nothing but space."""
     return text is None or (isinstance(text, str) and not text.strip())
+
+
+def check_other_repos(value: Any, url: str | None) -> list[str]:
+    """The other addresses of a paper's code, as they are kept: each as check_repo keeps it, once, in the order given,
+    and without the agent's own address. One that is blank is left out.
+
+    :param url: The agent's own address, which there must be for there to be others.
+    :raises ApiError: If what is given is not a list of addresses, one is not fit, there are more than may be kept, or
+        there are some and the agent has no address of its own.
+    """
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ApiError(422, "invalid", "The other addresses of the code are a list of addresses")
+    kept: list[str] = []
+    for item in value:
+        if not is_blank(item) and (address := check_repo(item)) != url and address not in kept:
+            kept.append(address)
+    if len(kept) > MAX_OTHER_REPOS:
+        raise ApiError(
+            422, "invalid", f"No more than {MAX_OTHER_REPOS} other addresses of the code are kept, not {len(kept)}"
+        )
+    if kept and url is None:
+        raise ApiError(
+            422, "invalid", "Say where the code is first: the other addresses are tried if it cannot be fetched there"
+        )
+
+    return kept
+
+
+def is_other_repos(value: Any, url: str) -> bool:
+    """Whether what an agent's code says of its other addresses is fit, as check_other_repos keeps them."""
+    if value is None:
+        return True
+    try:
+        return bool(value) and check_other_repos(value, url) == value
+    except ApiError:
+        return False
+
+
+def code_of(url: str, others: list[str], **pin: str) -> dict[str, Any]:
+    """An agent's code as its record keeps it: the address, the others that are tried if it cannot be fetched there,
+    if there are any, and the commit that was fetched with what was asked for to get it, once it has been."""
+    return {"url": url, **({"also": others} if others else {}), **pin}
+
+
+def other_repos(agent: dict[str, Any]) -> list[str]:
+    """The other addresses of an agent's code, in the order they are tried."""
+    return list((agent.get("repo") or {}).get("also") or [])
 
 
 def check_paper(paper: dict[str, Any]) -> dict[str, Any]:
@@ -493,12 +544,19 @@ def is_agent(value: Any) -> bool:
         and is_source(file.get("source"))
     ):
         return False
+    if not kept_supplementary.is_listing(value.get("supplementary")):
+        return False
     repo = value.get("repo")
     imported = value.get("imported")
     if imported is not None and not importing.is_imported(imported):
         return False
 
-    return repo is None or (isinstance(repo, dict) and passes(check_repo, repo.get("url")) and is_pin(repo))
+    return repo is None or (
+        isinstance(repo, dict)
+        and passes(check_repo, repo.get("url"))
+        and is_pin(repo)
+        and is_other_repos(repo.get("also"), repo["url"])
+    )
 
 
 def is_pin(repo: dict[str, Any]) -> bool:
@@ -650,6 +708,7 @@ class PaperAgents:
             "max_agents": MAX_AGENTS,
             "max_paper_bytes": self.max_upload_bytes,
             "suffixes": list(PAPER_SUFFIXES),
+            "max_supplementary": kept_supplementary.MAX_FILES,
             "repo_hosts": list(REPO_HOSTS),
             "importable": self.importable(),
         }
@@ -722,6 +781,7 @@ class PaperAgents:
             "title": agent["title"],
             "created_at": agent["created_at"],
             "paper": agent["paper"],
+            "supplementary": kept_supplementary.listed(agent),
             "repo": agent.get("repo"),
             "steps": steps,
             "given": is_given(agent),
@@ -911,14 +971,20 @@ class PaperAgents:
     def save(self, directory: Path, agent: dict[str, Any]) -> None:
         write_atomically(directory / AGENT_FILE, json.dumps(agent, indent=4).encode("utf-8"))
 
-    def change(self, agent_id: str, title: Any = None, repo: Any = None, given: Any = None) -> None:
-        """Says again what an agent is called, where its code is, and whether it is given to the conversations that are
-        made from now on. What is left out is left as it was, and an empty address takes the code away.
+    def change(self, agent_id: str, title: Any = None, repo: Any = None, given: Any = None, also: Any = None) -> None:
+        """Says again what an agent is called, where its code is, the other addresses that are tried if it cannot be
+        fetched there, and whether it is given to the conversations that are made from now on. What is left out is left
+        as it was, and an empty address takes the code away, with the other addresses. The others are not fetched from
+        while the code that was fetched is kept, so saying them again leaves it.
 
         :raises ApiError: If there is no agent with this id, or what is given is not fit.
         """
-        if title is None and repo is None and given is None:
-            raise ApiError(422, "invalid", "Say what to change: the title, where the code is, or whether it is given")
+        if title is None and repo is None and given is None and also is None:
+            raise ApiError(
+                422,
+                "invalid",
+                "Say what to change: the title, where the code is, its other addresses, or whether it is given",
+            )
         wanted = check_flag(given, "given") if given is not None else None
         with self._lock:
             directory, agent = self.lookup(agent_id)
@@ -929,22 +995,29 @@ class PaperAgents:
                 agent = {**agent, "title": check_title(title)}
             if wanted is not None:
                 agent = {**agent, "given": wanted}
-            if repo is not None:
-                url = None if is_blank(repo) else check_repo(repo)
-                if url != (agent.get("repo") or {}).get("url"):
-                    # The code that was fetched is of the address it was fetched from, and is not another's
-                    self.check_idle(agent_id, reading=False)
-                    self.forget_code(directory)
-                    agent = {
-                        **agent,
-                        "repo": {"url": url} if url is not None else None,
-                        "steps": {
-                            **steps_of(agent),
-                            "repository": "pending",
-                            "environment": "pending",
-                            "tools": "pending",
-                        },
-                    }
+            current = agent.get("repo")
+            url = (current or {}).get("url") if repo is None else None if is_blank(repo) else check_repo(repo)
+            others = check_other_repos(also, url) if also is not None else other_repos(agent)
+            others = [address for address in others if address != url] if url is not None else []
+            if url != (current or {}).get("url"):
+                # The code that was fetched is of the address it was fetched from, and is not another's
+                self.check_idle(agent_id, reading=False)
+                self.forget_code(directory)
+                agent = {
+                    **agent,
+                    "repo": code_of(url, others) if url is not None else None,
+                    "steps": {
+                        **steps_of(agent),
+                        "repository": "pending",
+                        "environment": "pending",
+                        "tools": "pending",
+                    },
+                }
+            elif current is not None and others != other_repos(agent):
+                # Again, since the one-go job reads them, and the fetching of the code tries them, when they begin
+                self.check_idle(agent_id, reading=False)
+                pin = {key: current[key] for key in ("ref", "commit") if key in current}
+                agent = {**agent, "repo": code_of(current["url"], others, **pin)}
             self.save(directory, agent)
 
     def import_agent(
@@ -1115,28 +1188,114 @@ class PaperAgents:
 
         with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
             temporary = Path(scratch) / "upload"
-            digest = hashlib.sha256()
-            size = 0
-            with temporary.open("wb") as file:
-                while block := content.read(1 << 20):
-                    size += len(block)
-                    if size > self.max_upload_bytes:
-                        raise ApiError(
-                            413,
-                            "too_large",
-                            f"{filename} is larger than the {describe_size(self.max_upload_bytes)} that can be "
-                            "uploaded as a paper.",
-                        )
-                    digest.update(block)
-                    file.write(block)
-            kept = {"name": filename, "bytes": size, "sha256": digest.hexdigest()}
+            kept = self.receive(filename, content, temporary, "a paper")
             with self._lock:
                 directory, agent = self.lookup(agent_id)
                 self.check_idle(agent_id)
                 paper = {**agent["paper"], "file": kept}
                 self.check_unique(paper, besides=agent_id)
+                if same := next(
+                    (file for file in kept_supplementary.listed(agent) if file["sha256"] == kept["sha256"]), None
+                ):
+                    raise ApiError(
+                        409, "exists", f"{filename} is kept already, as the supplementary file {same['name']}"
+                    )
                 self.swap_paper(directory, self.unread(agent, paper), temporary, filename)
                 kept_reading.forget(directory)
+
+    def receive(self, filename: str, content: BinaryIO, temporary: Path, what: str) -> dict[str, Any]:
+        """Writes what is uploaded to a file as it arrives, and says how big it is and the SHA-256 of it.
+
+        :param what: What it is uploaded as, which saying that it is too big names.
+        :raises ApiError: If it is more than may be uploaded.
+        """
+        digest = hashlib.sha256()
+        size = 0
+        with temporary.open("wb") as file:
+            while block := content.read(1 << 20):
+                size += len(block)
+                if size > self.max_upload_bytes:
+                    raise ApiError(
+                        413,
+                        "too_large",
+                        f"{filename} is larger than the {describe_size(self.max_upload_bytes)} that can be uploaded "
+                        f"as {what}.",
+                    )
+                digest.update(block)
+                file.write(block)
+
+        return {"name": filename, "bytes": size, "sha256": digest.hexdigest()}
+
+    def put_supplementary(self, agent_id: str, name: str, content: BinaryIO) -> None:
+        """Keeps a supplementary file of an agent's paper, which is read with the paper, in place of one of the same
+        name if there is one. What was read of the paper is taken away, since it was read without this. What a person
+        did to the method card stays, as it is of the paper.
+
+        :param name: What it was called, which may have a path, as a browser sends it.
+        :raises ApiError: If there is no agent with this id, the file is not one that is read, it is too big, it is the
+            paper or another of its files, there are as many as may be kept, or the agent is being worked on.
+        """
+        self.lookup(agent_id)
+        filename = safe_filename(name)
+        if not filename or Path(filename).suffix.lower() not in PAPER_SUFFIXES:
+            raise ApiError(422, "invalid", f"{filename or name!r} is not a file this reads: give {PAPER_KINDS}")
+
+        with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
+            temporary = Path(scratch) / "upload"
+            kept = self.receive(filename, content, temporary, "a supplementary file")
+            with self._lock:
+                directory, agent = self.lookup(agent_id)
+                self.check_idle(agent_id)
+                files = kept_supplementary.listed(agent)
+                if (paper := agent["paper"].get("file")) is not None and paper["sha256"] == kept["sha256"]:
+                    raise ApiError(409, "exists", f"{filename} is the paper itself")
+                # A name is one file whatever its case, as it is on a file system that does not tell cases apart
+                named = filename.casefold()
+                if same := next(
+                    (file for file in files if file["sha256"] == kept["sha256"] and file["name"].casefold() != named),
+                    None,
+                ):
+                    raise ApiError(409, "exists", f"{filename} is kept already, as {same['name']}")
+                was = next((file["name"] for file in files if file["name"].casefold() == named), None)
+                replaced = was is not None
+                if not replaced and len(files) >= kept_supplementary.MAX_FILES:
+                    raise ApiError(
+                        409,
+                        "too_many",
+                        f"A paper keeps no more than {kept_supplementary.MAX_FILES} supplementary files. "
+                        "Remove one first.",
+                    )
+                folder = kept_supplementary.folder_of(directory)
+                folder.mkdir(exist_ok=True)
+                if not is_real_directory(folder):
+                    raise ApiError(409, "invalid", f"{folder.name}/ of this agent is not a folder of its own")
+                if was is not None and was != filename:
+                    (folder / was).unlink(missing_ok=True)
+                os.replace(temporary, folder / filename)
+                files = [kept if file["name"] == was else file for file in files] if replaced else [*files, kept]
+                self.save(directory, self.unread({**agent, "supplementary": files}, agent["paper"]))
+                kept_reading.forget(directory, edits=False)
+
+    def remove_supplementary(self, agent_id: str, name: Any) -> None:
+        """Takes away a supplementary file of an agent's paper, with what was read of the paper, which was read with it.
+
+        :raises ApiError: If there is no agent with this id, it has no such file, or the agent is being worked on.
+        """
+        with self._lock:
+            directory, agent = self.lookup(agent_id)
+            files = kept_supplementary.listed(agent)
+            if not any(file["name"] == name for file in files):
+                raise not_found("supplementary file of that name")
+            self.check_idle(agent_id)
+            left = [file for file in files if file["name"] != name]
+            rest = {key: value for key, value in agent.items() if key != "supplementary"}
+            self.save(directory, self.unread({**rest, "supplementary": left} if left else rest, agent["paper"]))
+            folder = kept_supplementary.folder_of(directory)
+            if is_real_directory(folder):
+                (folder / name).unlink(missing_ok=True)
+                if not left:
+                    shutil.rmtree(folder, ignore_errors=True)
+            kept_reading.forget(directory, edits=False)
 
     def swap_paper(self, directory: Path, agent: dict[str, Any], uploaded: Path, filename: str) -> None:
         """Puts a paper in place of the one an agent had, and saves the agent that says so. The record never names a
@@ -1468,9 +1627,25 @@ class PaperAgents:
             raise StoppedError("Stopped before any of the paper was read.")
         job.update("Reading the file")
         pages, paged = read_paper_pages(directory / PAPER_DIR / file["name"])
-        document = document_from(pages, paged, MAX_PAPER_CHARS)
-        if not document.text.strip():
+        if not document_from(pages, paged).text.strip():
             raise ValueError("There is no text in the paper to read. A paper that is a scan of pages has none.")
+        # Nothing is done to the agent while it is read, so these are the files that it has until the reading ends
+        _, agent = self.lookup(directory.name)
+        extras = []
+        folder = kept_supplementary.folder_of(directory)
+        for extra in kept_supplementary.listed(agent):
+            path = folder / extra["name"]
+            try:
+                if not is_real_directory(folder) or path.is_symlink():
+                    raise ValueError("it is not a file of this agent's own")
+                extras.append((extra["name"], read_paper_pages(path)[0]))
+            except FileNotFoundError:
+                raise ValueError(
+                    f"The supplementary file {extra['name']} is missing. Remove it, and upload it again."
+                ) from None
+            except (OSError, ValueError) as error:
+                raise ValueError(f"The supplementary file {extra['name']} could not be read: {error}") from error
+        document = kept_supplementary.document_with(pages, paged, extras, MAX_PAPER_CHARS)
         kept_reading.save_text(directory / PAPER_DIR, document)
         chunks = plan_chunks(document, DEFAULT_PAPER_CHUNK_SIZE, DEFAULT_PAPER_CHUNK_OVERLAP)
         run = {
@@ -1659,11 +1834,12 @@ class PaperAgents:
             if url is None:
                 raise ApiError(422, "no_repo", "Say where the code is first")
             self.check_idle(agent_id)
+            others = [address for address in other_repos(agent) if address != url]
             if url != current:
                 self.forget_code(directory)
                 agent = {
                     **agent,
-                    "repo": {"url": url},
+                    "repo": code_of(url, others),
                     "steps": {**steps_of(agent), "repository": "pending", "environment": "pending", "tools": "pending"},
                 }
                 self.save(directory, agent)
@@ -1674,7 +1850,7 @@ class PaperAgents:
                     REPOSITORY_JOB,
                     agent_id,
                     f"Fetching the code and taking stock of it: {agent['title']}",
-                    self.cloner(agent_id, url, asked, megabytes * cloning.MEGABYTE),
+                    self.cloner(agent_id, url, asked, megabytes * cloning.MEGABYTE, others=others),
                     exclusive=f"paperagent:{agent_id}",
                 )
             except JobConflictError as error:
@@ -1683,18 +1859,26 @@ class PaperAgents:
                 ) from error
 
     def cloner(
-        self, agent_id: str, url: str, ref: str, max_bytes: int, as_ref: str | None = None
+        self,
+        agent_id: str,
+        url: str,
+        ref: str,
+        max_bytes: int,
+        as_ref: str | None = None,
+        others: Sequence[str] = (),
     ) -> Callable[[Job], str | None]:
         """What a job does to fetch the code: fetches it, takes stock of it, and keeps both.
 
         :param as_ref: What to keep as the ref that the code is of, if it is not what was asked for: a commit that was
             fetched as the newer version of a branch is still of that branch.
+        :param others: The other addresses of the code, which are tried in turn if it cannot be fetched from the one
+            before. Only one is fetched, and kept.
         """
 
         def work(job: Job) -> str | None:
             failed = False
             try:
-                return self.take_repository(job, agent_id, url, ref, max_bytes, as_ref)
+                return self.take_any_repository(job, agent_id, url, list(others), ref, max_bytes, as_ref)
             except StoppedError:
                 raise
             except BaseException:
@@ -1705,9 +1889,46 @@ class PaperAgents:
 
         return work
 
-    def take_repository(
-        self, job: Job, agent_id: str, url: str, ref: str, max_bytes: int, as_ref: str | None = None
+    def take_any_repository(
+        self, job: Job, agent_id: str, url: str, others: list[str], ref: str, max_bytes: int, as_ref: str | None
     ) -> str:
+        """Fetches the code from the agent's address, or if it cannot be from there, from the first of the others that
+        it can be, which is kept as the agent's address in place of it."""
+        tried: list[str] = []
+        for address in [url, *others]:
+            if tried:
+                job.log(f"Trying {address} in its place")
+            try:
+                done = self.take_repository(job, agent_id, address, ref, max_bytes, as_ref, url)
+            except cloning.RepositoryError as error:
+                if not others:
+                    raise
+                tried.append(f"{address}: {str(error).rstrip('.')}")
+                job.log(f"{address} could not be fetched: {error}")
+                continue
+
+            return f"{url} could not be fetched, so {address} was. {done}" if address != url else done
+
+        raise cloning.RepositoryError(
+            f"The code could not be fetched from any of its {len(tried)} addresses. {'. '.join(tried)}."
+        )
+
+    def take_repository(
+        self,
+        job: Job,
+        agent_id: str,
+        url: str,
+        ref: str,
+        max_bytes: int,
+        as_ref: str | None = None,
+        asked: str | None = None,
+    ) -> str:
+        """Fetches the code from an address, and keeps it as the agent's.
+
+        :param asked: The agent's address when the fetching was asked for, if this is another of its addresses, which
+            is kept as the agent's address in its place, with that one first of the others.
+        """
+        asked = asked or url
         job.update("Fetching the code")
         with tempfile.TemporaryDirectory(prefix="paperagent.", dir=self.workspace.root) as scratch:
             fetched = Path(scratch) / kept_repository.REPO_DIR
@@ -1728,8 +1949,10 @@ class PaperAgents:
             }
             with self._lock:
                 directory, agent = self.lookup(agent_id)
-                if (agent.get("repo") or {}).get("url") != url:
+                if (agent.get("repo") or {}).get("url") != asked:
                     raise ValueError("The address of the code was changed while it was fetched. Fetch it again.")
+                # The others cannot be changed while the code is fetched, so they are what was tried
+                left = [address for address in [asked, *other_repos(agent)] if address != url]
                 self.forget_environment(directory)
                 kept_repository.keep(directory, fetched, intake)
                 kept_living.drop(directory, kept_living.UPDATE_FILE)
@@ -1737,7 +1960,7 @@ class PaperAgents:
                     directory,
                     {
                         **agent,
-                        "repo": {"url": url, "ref": kept_ref, "commit": cloned.commit},
+                        "repo": code_of(url, left, ref=kept_ref, commit=cloned.commit),
                         "steps": {
                             **steps_of(agent),
                             "repository": "done",
@@ -1783,7 +2006,7 @@ class PaperAgents:
                 directory,
                 {
                     **agent,
-                    "repo": {"url": code["url"]} if code is not None else None,
+                    "repo": code_of(code["url"], other_repos(agent)) if code is not None else None,
                     "steps": {**steps_of(agent), "repository": "pending", "environment": "pending", "tools": "pending"},
                 },
             )
@@ -4173,10 +4396,13 @@ class PaperAgents:
         intake = kept_repository.load(directory, code["url"] if code is not None else None)
         file = agent["paper"].get("file")
         reading = kept_reading.describe(directory, file["sha256"] if file is not None else None, made_with())
-        found = finding.find(
-            reading["card"], reading["resources"], intake["stock"]["data"] if intake is not None else None
-        )
         record = kept_data.load(directory)
+        found = finding.find(
+            reading["card"],
+            reading["resources"],
+            intake["stock"]["data"] if intake is not None else None,
+            kept_data.links_of(record),
+        )
         own = self.own_data()
         stand_ins = {stand_in["key"]: stand_in for stand_in in record["stand_ins"]}
         fetched = {source["key"]: len(source["files"]) for source in record["sources"]}
@@ -4190,6 +4416,7 @@ class PaperAgents:
                 {**candidate, "fetched": fetched.get(candidate["key"], 0)} for candidate in found["candidates"]
             ],
             "stand_ins": [{**stand_in, "own_data": own.get(stand_in["own"])} for stand_in in record["stand_ins"]],
+            "links": record["links"],
             "own": list(own.values()),
             "kept": {
                 **kept_data.totals(record),
@@ -4209,6 +4436,7 @@ class PaperAgents:
                 "max_megabytes": finding.MAX_MEGABYTES,
                 "max_kept_megabytes": finding.MAX_KEPT_MEGABYTES,
                 "max_files": finding.MAX_CHOSEN_FILES,
+                "max_links": kept_data.MAX_LINKS,
             },
         }
 
@@ -4542,6 +4770,45 @@ class PaperAgents:
                 {**record, "stand_ins": [*others, {"key": key, "name": name, "own": own, "set_at": utc_timestamp()}]},
             )
             self.set_data_step(directory, agent)
+
+    def add_data_link(self, agent_id: str, reference: Any) -> None:
+        """Keeps a place for the data that the person adds, which is shown with the places that the paper and its code
+        name. Nothing is asked of it or fetched from it: the person sees its files and chooses which, as for any other.
+
+        :param reference: An address, a DOI, or an accession of a place that data is fetched from.
+        :raises ApiError: If there is no agent with this id, it is not such a place, it is added already, or as many
+            are as may be.
+        """
+        self.lookup(agent_id)
+        try:
+            place = finding.parse_reference(reference)
+        except finding.DataError as error:
+            raise data_error(error) from error
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            record = kept_data.load(directory)
+            if any(link["key"] == place.key for link in record["links"]):
+                raise ApiError(409, "exists", f"{place.label} is added already")
+            if len(record["links"]) >= kept_data.MAX_LINKS:
+                raise ApiError(
+                    409, "too_many", f"No more than {kept_data.MAX_LINKS} places can be added. Remove one first"
+                )
+            added = {"key": place.key, "text": " ".join(str(reference).split()), "added_at": utc_timestamp()}
+            kept_data.save(directory, {**record, "links": [*record["links"], added]})
+
+    def remove_data_link(self, agent_id: str, key: Any) -> None:
+        """Takes away a place for the data that the person added. What was fetched from it is kept.
+
+        :param key: The key of the place, as the places are listed by.
+        :raises ApiError: If there is no agent with this id, or the person added no such place.
+        """
+        with self._lock:
+            directory, _ = self.lookup(agent_id)
+            record = kept_data.load(directory)
+            left = [link for link in record["links"] if link["key"] != key]
+            if len(left) == len(record["links"]):
+                raise not_found("place added for that PaperAgent's data")
+            kept_data.save(directory, {**record, "links": left})
 
     def clear_stand_in(self, agent_id: str, dataset: Any) -> None:
         """Takes away what stands in for a dataset.

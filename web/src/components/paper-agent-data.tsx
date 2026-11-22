@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, Search, X } from "lucide-react";
+import { ExternalLink, Plus, Search, Trash2, X } from "lucide-react";
 import { JobOutput } from "@/components/job-output";
 import { KeptData, Files } from "@/components/paper-agent-data-files";
 import { ProblemNotice } from "@/components/messages";
@@ -17,6 +17,7 @@ import {
   describeCandidate,
   describeOwn,
   describeSaid,
+  MAX_DATA_LINKS,
   MAX_REFERENCE_CHARS,
   otherStandIns,
   referenceProblem,
@@ -253,8 +254,21 @@ function Datasets({ onSee, seeing, ...shared }: Shared & { onSee: (candidate: Da
   );
 }
 
-// A place that the paper or its code says its data is at, with the words that say it, and the way to see what it has
-function Candidate({ candidate, onSee, seeing }: { candidate: DataCandidate; onSee: (candidate: DataCandidate) => void; seeing: boolean }) {
+// A place that the paper or its code says its data is at, or that the person added, with the words that say it, the way to
+// see what it has, and the way to take it away if the person added it
+function Candidate({
+  candidate,
+  onSee,
+  seeing,
+  onRemove,
+  removing,
+}: {
+  candidate: DataCandidate;
+  onSee: (candidate: DataCandidate) => void;
+  seeing: boolean;
+  onRemove: (candidate: DataCandidate) => void;
+  removing: boolean;
+}) {
   const shown = candidate.facts.slice(0, PLACES_SHOWN);
   const said = describeSaid(candidate);
 
@@ -285,36 +299,73 @@ function Candidate({ candidate, onSee, seeing }: { candidate: DataCandidate; onS
       {candidate.facts.length > shown.length && (
         <p className="text-xs text-muted-foreground">And {candidate.facts.length - shown.length} more places in the paper.</p>
       )}
-      {candidate.supported && (
-        <div>
-          <Button variant="outline" size="xs" onClick={() => onSee(candidate)} disabled={seeing} aria-label={`See the files of ${candidate.label}`}>
-            <Search />
-            See the files
-          </Button>
+      {(candidate.supported || candidate.added === true) && (
+        <div className="flex flex-wrap gap-2">
+          {candidate.supported && (
+            <Button variant="outline" size="xs" onClick={() => onSee(candidate)} disabled={seeing} aria-label={`See the files of ${candidate.label}`}>
+              <Search />
+              See the files
+            </Button>
+          )}
+          {candidate.added === true && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => onRemove(candidate)}
+              disabled={removing}
+              aria-label={`Remove ${candidate.label}, which you added`}
+            >
+              <Trash2 />
+              Remove
+            </Button>
+          )}
         </div>
       )}
     </li>
   );
 }
 
-// Where the paper and its code say the data is, and the way to look at a place that is not among them
+// Where the paper and its code say the data is, and the places the person added, with the way to look at a place that is
+// not among them and to add it to them
 function Places({
+  agent,
   data,
+  onData,
   onSee,
   onType,
   seeing,
   problem,
-}: {
-  data: PaperAgentData;
+}: Shared & {
   onSee: (candidate: DataCandidate) => void;
   onType: (reference: string) => void;
   seeing: boolean;
   problem: Problem | null;
 }) {
+  const { report } = useServer();
   const id = useId();
+  const attempt = useAttempt(report);
   const [typed, setTyped] = useState("");
   const [tried, setTried] = useState(false);
   const wrong = referenceProblem(typed);
+  // A server from before places could be added does not say which were
+  const links = data.links;
+  const most = data.limits.max_links ?? MAX_DATA_LINKS;
+
+  async function add() {
+    setTried(true);
+    if (wrong !== null) return;
+    const next = await attempt.run(() => api.addPaperAgentDataLink(agent.id, typed.trim()));
+    if (next) {
+      onData(next);
+      setTyped("");
+      setTried(false);
+    }
+  }
+
+  async function remove(candidate: DataCandidate) {
+    const next = await attempt.run(() => api.removePaperAgentDataLink(agent.id, candidate.key));
+    if (next) onData(next);
+  }
 
   return (
     <section aria-labelledby={id} className="flex flex-col gap-3">
@@ -323,8 +374,8 @@ function Places({
           Where the data is <span className="font-normal text-muted-foreground">({data.candidates.length})</span>
         </h3>
         <p className="text-xs text-muted-foreground">
-          These are the places that the paper and its code name. Seeing the files of one asks that place what it has, and fetches none
-          of them.
+          These are the places that the paper and its code name, and those you added. Seeing the files of one asks that place what it
+          has, and fetches none of them.
         </p>
       </div>
       {data.candidates.length === 0 ? (
@@ -332,7 +383,14 @@ function Places({
       ) : (
         <ul aria-label="Places the paper names for its data" className="flex flex-col gap-2">
           {data.candidates.map((candidate) => (
-            <Candidate key={candidate.key} candidate={candidate} onSee={onSee} seeing={seeing} />
+            <Candidate
+              key={candidate.key}
+              candidate={candidate}
+              onSee={onSee}
+              seeing={seeing}
+              onRemove={(chosen) => void remove(chosen)}
+              removing={attempt.busy}
+            />
           ))}
         </ul>
       )}
@@ -348,7 +406,9 @@ function Places({
         <Field
           id={`${id}-where`}
           label="Another place"
-          hint="An address, a DOI, or an accession, such as https://zenodo.org/records/1234567, 10.5281/zenodo.1234567, or GSE12345. Only the places listed below are asked."
+          hint={`An address, a DOI, or an accession, such as https://zenodo.org/records/1234567, 10.5281/zenodo.1234567, or GSE12345. Only the places listed below are asked.${
+            links === undefined ? "" : ` Adding it keeps it with these, up to ${most} of them, and fetches nothing.`
+          }`}
           problem={tried && wrong !== null ? wrong : undefined}
         >
           <Input
@@ -362,13 +422,23 @@ function Places({
             aria-describedby={describedBy(`${id}-where`, { hint: true, problem: tried && wrong !== null })}
           />
         </Field>
-        <div>
+        <div className="flex flex-wrap gap-2">
           <Button type="submit" variant="outline" size="sm" disabled={seeing}>
             <Search />
             {seeing ? "Asking…" : "See the files"}
           </Button>
+          {links !== undefined && (
+            <Button type="button" variant="outline" size="sm" onClick={() => void add()} disabled={attempt.busy || links.length >= most}>
+              <Plus />
+              {attempt.busy ? "Adding…" : "Add this place"}
+            </Button>
+          )}
         </div>
+        {links !== undefined && links.length >= most && (
+          <p className="text-xs text-muted-foreground">You added {most} places, which is as many as are kept. Remove one to add another.</p>
+        )}
       </form>
+      {attempt.problem && <ProblemNotice problem={attempt.problem} />}
       {problem && <ProblemNotice problem={problem} />}
     </section>
   );
@@ -447,7 +517,7 @@ export function DataSection({
       {fetching !== undefined && <JobOutput key={fetching.id} job={fetching} jobs={jobs} />}
       <Datasets {...shared} onSee={(candidate) => void see(candidate.url ?? "")} seeing={asking} />
       <Places
-        data={data}
+        {...shared}
         onSee={(candidate) => void see(candidate.url ?? "")}
         onType={(reference) => void see(reference)}
         seeing={asking}

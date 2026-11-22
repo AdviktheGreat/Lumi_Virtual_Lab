@@ -2,6 +2,7 @@ import { ApiError } from "./api";
 import { characters, count, dollars, sentence, whole, type Checked } from "./checks";
 import { formatBytes } from "./files";
 import { formatCost, timeAgo } from "./format";
+import { isPaperName } from "./papers";
 import { tidy } from "./scientists";
 import { isActive } from "./setup";
 import type {
@@ -137,6 +138,38 @@ export function repoProblem(text: string, hosts: readonly string[] = REPO_HOSTS)
   return `Give the address of the project, such as https://github.com/owner/name, at ${hosts.join(", ")}.`;
 }
 
+// The most other addresses of its code that an agent keeps, as the server says
+export const MAX_OTHER_REPOS = 4;
+
+// The other addresses of an agent's code, as they are typed one to a line: each once, in the order typed, without the blank lines
+export function otherRepos(text: string): string[] {
+  const found: string[] = [];
+  for (const line of text.split("\n")) {
+    const address = line.trim();
+    if (address !== "" && !found.includes(address)) found.push(address);
+  }
+
+  return found;
+}
+
+// The other addresses of an agent's code as they are typed: the problem with them, or null. There are none without its own address.
+export function otherReposProblem(text: string, own: string, hosts: readonly string[] = REPO_HOSTS): string | null {
+  const addresses = otherRepos(text);
+  if (addresses.length === 0) return null;
+  if (own.trim() === "") return "Say where the code is first. These are only tried if it cannot be fetched from there.";
+  const wrong = addresses.find((address) => !isRepo(address, hosts));
+  if (wrong !== undefined) return `${wrong} is not the address of a project at ${hosts.join(", ")}.`;
+
+  return addresses.length > MAX_OTHER_REPOS
+    ? `At most ${MAX_OTHER_REPOS} other addresses are kept, and these are ${addresses.length}.`
+    : null;
+}
+
+// Whether two lists of addresses are the same, in the same order
+export function sameAddresses(first: readonly string[], second: readonly string[]): boolean {
+  return first.length === second.length && first.every((address, index) => address === second[index]);
+}
+
 // A title as it is typed, where one is needed: the problem with it, or null
 export function titleProblem(text: string, needed: boolean): string | null {
   const title = tidy(text);
@@ -176,6 +209,32 @@ export function checkAgent(draft: AgentDraft, hosts: readonly string[] = REPO_HO
 // beside it, and then it is not said to be missing.
 export function paperFile(paper: PaperAgentPaper): PaperAgentFile | null {
   return paper.file ?? null;
+}
+
+// The most supplementary files a paper keeps, for a server that does not say
+export const MAX_SUPPLEMENTARY = 10;
+
+// The files that came with an agent's paper, which a server from before them does not say
+export function supplementaryFiles(agent: PaperAgent): PaperAgentFile[] {
+  return agent.supplementary ?? [];
+}
+
+// Why a file cannot be uploaded as one that came with the paper, or null if it can. One of the same name as a file kept
+// is put in its place, whatever its case. The server holds the same limits and says it too, but a file that is too big is not sent first.
+export function supplementaryProblem(
+  file: { name: string; size: number },
+  kept: readonly PaperAgentFile[],
+  limits: { bytes: number; suffixes: readonly string[]; files: number },
+): string | null {
+  if (!isPaperName(file.name, limits.suffixes)) {
+    return `${file.name} is not a file this reads: give a file that ends in ${limits.suffixes.join(", ")}.`;
+  }
+  if (file.size > limits.bytes) return `${file.name} is larger than the ${formatBytes(limits.bytes)} that can be uploaded.`;
+  if (!kept.some((each) => each.name.toLowerCase() === file.name.toLowerCase()) && kept.length >= limits.files) {
+    return `A paper keeps no more than ${limits.files} supplementary files. Remove one first.`;
+  }
+
+  return null;
 }
 
 // Which paper an agent is of, in a few words

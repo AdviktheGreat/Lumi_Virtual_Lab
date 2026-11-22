@@ -204,6 +204,7 @@ class TestWhatThereIsToFetch:
             "max_megabytes": 20_000,
             "max_kept_megabytes": 50_000,
             "max_files": 100,
+            "max_links": 20,
         }
         assert web.asked == []
 

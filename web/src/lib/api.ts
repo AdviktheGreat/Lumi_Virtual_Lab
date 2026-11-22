@@ -328,6 +328,17 @@ function uploadAgentPaper(agent: string, file: File, options: UploadOptions = {}
   );
 }
 
+// Gives an agent's paper a supplementary file, kept by the server under the name it has, and the agent is given back as it now is
+function uploadAgentSupplementary(agent: string, file: File, options: UploadOptions = {}): Promise<PaperAgent> {
+  return sendFile(
+    `/api/paperagents/${encodeURIComponent(agent)}/supplementary?name=${encodeURIComponent(file.name)}`,
+    file,
+    (parsed) => (isPaperAgent(parsed) ? parsed : undefined),
+    "The server did not say what the agent holds",
+    options,
+  );
+}
+
 // What a request that is not for JSON is answered with, once it is known to have gone well: what went wrong is told in
 // the server's own shape, which is read, and what went well is left for the caller to read
 async function fetchBody(address: string, signal?: AbortSignal): Promise<Response> {
@@ -583,6 +594,9 @@ export const api = {
     request<BakeoffComparison>("GET", `/bakeoffs/${encodeURIComponent(id)}/comparison${toleranceQuery(tolerance)}`, undefined, signal),
   uploadAgentPaper,
   removeAgentPaper: (id: string) => request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/paper`),
+  uploadAgentSupplementary,
+  removeAgentSupplementary: (id: string, name: string) =>
+    request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/supplementary?name=${encodeURIComponent(name)}`),
   // What has been read of an agent's paper, starting to read it, which goes on as a job, taking away what was read, and
   // the paper's words at a place in it
   paperAgentReading: (id: string, signal?: AbortSignal) =>
@@ -628,6 +642,10 @@ export const api = {
       "DELETE",
       `/paperagents/${encodeURIComponent(id)}/data${source === undefined ? "" : `?source=${encodeURIComponent(source)}`}`,
     ),
+  addPaperAgentDataLink: (id: string, reference: string) =>
+    request<PaperAgentData>("POST", `/paperagents/${encodeURIComponent(id)}/data/links`, { reference }),
+  removePaperAgentDataLink: (id: string, key: string) =>
+    request<PaperAgentData>("DELETE", `/paperagents/${encodeURIComponent(id)}/data/links?key=${encodeURIComponent(key)}`),
   setPaperAgentStandIn: (id: string, dataset: string, own: string) =>
     request<PaperAgentData>("PUT", `/paperagents/${encodeURIComponent(id)}/data/stand-ins`, { dataset, own }),
   clearPaperAgentStandIn: (id: string, dataset: string) =>
