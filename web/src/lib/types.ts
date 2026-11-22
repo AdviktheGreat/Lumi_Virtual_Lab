@@ -3143,3 +3143,128 @@ export interface BakeoffComparison {
   methods: BakeoffComparedMethod[];
   pairs: BakeoffPair[];
 }
+
+// What a triage's papers come to, in the order they are ranked in: the answer of the pre-flight for those whose code was looked at,
+// then those whose code was not, and last those that say nowhere where their code is
+export type TriageTier = "go" | "ask" | "no-go" | "not_looked_at" | "no_code";
+
+// How a triage is: being made, done, stopped, failed, or interrupted, as it is when the server stopped while it was being made
+export type TriageState = "running" | "done" | "stopped" | "failed" | "interrupted";
+
+// What a triage was asked to list of bioRxiv
+export interface TriageListing {
+  since: string;
+  until: string | null;
+  subject: string;
+  limit: number;
+}
+
+// Where a triage's papers came from: how many were given by DOI, and what was listed of bioRxiv, if anything was
+export interface TriageSource {
+  papers: number;
+  listing: TriageListing | null;
+}
+
+// How many papers a triage has, and of each tier
+export type TriageCounts = { papers: number } & Record<TriageTier, number>;
+
+export interface TriageSummary {
+  id: string;
+  state: TriageState;
+  created_at: string;
+  finished_at: string | null;
+  source: TriageSource;
+  counts: TriageCounts;
+}
+
+export interface TriageLimits {
+  most_triages: number;
+  most_given: number;
+  most_listed: number;
+  default_listed: number;
+  most_looked_at: number;
+  default_looked_at: number;
+  default_megabytes: number;
+  min_megabytes: number;
+  max_megabytes: number;
+}
+
+export interface TriagesList {
+  triages: TriageSummary[];
+  // The subjects of bioRxiv, which a listing may be of one of
+  subjects: string[];
+  // Whether Git is installed, which fetching code takes
+  git: boolean;
+  limits: TriageLimits;
+}
+
+// A check of the pre-flight, as a triage keeps it: without its title, which is the same for every paper
+export interface TriageCheck {
+  id: string;
+  status: PreflightStatus;
+  detail: string;
+}
+
+// What was found of one paper. What only a look at its code says is null for a paper whose code was not looked at.
+export interface TriageEntry {
+  // Its place in the order, from 1, and in what was given and listed, from 1
+  rank: number;
+  position: number;
+  tier: TriageTier;
+  // Why it is in its tier: what the pre-flight said, or why its code was not looked at
+  why: string;
+  verdict: PreflightVerdict | null;
+  doi: string | null;
+  title: string;
+  // The day bioRxiv posted it and its subject there, for a paper that was listed
+  date: string | null;
+  category: string | null;
+  paper: { kind: "doi"; doi: string } | null;
+  // The address of its code, and whose it is: the person's, or the first that its abstract gives
+  code: string | null;
+  code_from: "person" | "abstract" | null;
+  other_codes: string[];
+  checks: TriageCheck[];
+  tutorials: number | null;
+  estimate: { low: number | null; high: number | null; tutorials: number } | null;
+  stock: { commit: string; files: number; bytes: number; languages: string[]; license: string | null } | null;
+}
+
+// What a triage's order means and does not, and what each tier is
+export interface TriageMeaning {
+  ranking: string;
+  order: string;
+  tiers: Record<TriageTier, string>;
+  checked: string;
+}
+
+export interface Triage {
+  id: string;
+  created_at: string;
+  finished_at: string | null;
+  source: TriageSource;
+  settings: { most_looked_at: number; max_megabytes: number };
+  counts: TriageCounts;
+  state: TriageState;
+  // Why it failed, if it did
+  note: string | null;
+  // The papers in order, which are kept when the look at them ends, so that there are none while it goes on
+  entries: TriageEntry[];
+  job: Job | null;
+  meaning: TriageMeaning;
+}
+
+// A paper to triage, given by its DOI, with the address of its code if that is known
+export interface TriagePaperBody {
+  doi: string;
+  title?: string;
+  abstract?: string;
+  code?: string;
+}
+
+export interface NewTriage {
+  papers?: TriagePaperBody[];
+  listing?: { since: string; until?: string; subject?: string; limit?: number };
+  most_looked_at?: number;
+  max_megabytes?: number;
+}

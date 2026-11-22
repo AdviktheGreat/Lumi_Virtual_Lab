@@ -43,6 +43,7 @@ import type {
   NewBakeoffMethod,
   NewPaperAgent,
   NewPaperRun,
+  NewTriage,
   OpenRouterList,
   Own,
   OwnPreview,
@@ -96,6 +97,8 @@ import type {
   SetupStatus,
   ToolInfo,
   ToolDetail,
+  Triage,
+  TriagesList,
   TutorialDetail,
 } from "./types";
 
@@ -592,6 +595,10 @@ export const api = {
   // The methods side by side, with the tolerance for two numbers to be the same if the person says one
   bakeoffComparison: (id: string, tolerance?: Partial<BakeoffTolerance>, signal?: AbortSignal) =>
     request<BakeoffComparison>("GET", `/bakeoffs/${encodeURIComponent(id)}/comparison${toleranceQuery(tolerance)}`, undefined, signal),
+  triages: (signal?: AbortSignal) => request<TriagesList>("GET", "/paperagents/triage", undefined, signal),
+  startTriage: (triage: NewTriage) => request<Triage>("POST", "/paperagents/triage", triage),
+  triage: (id: string, signal?: AbortSignal) => request<Triage>("GET", `/paperagents/triage/${encodeURIComponent(id)}`, undefined, signal),
+  deleteTriage: (id: string) => request<TriagesList>("DELETE", `/paperagents/triage/${encodeURIComponent(id)}`),
   uploadAgentPaper,
   removeAgentPaper: (id: string) => request<PaperAgent>("DELETE", `/paperagents/${encodeURIComponent(id)}/paper`),
   uploadAgentSupplementary,

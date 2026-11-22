@@ -247,9 +247,11 @@ describe("a paper that is uploaded", () => {
 });
 
 describe("paperView", () => {
-  it("asks for the surveys or the bake-offs only when the query says so", () => {
+  it("asks for the surveys, the bake-offs, or the triages only when the query says so", () => {
     expect(paperView("surveys")).toBe("surveys");
     expect(paperView("bakeoffs")).toBe("bakeoffs");
+    expect(paperView("triage")).toBe("triage");
+    expect(paperView("triages")).toBe("agents");
     expect(paperView("Bakeoffs")).toBe("agents");
     expect(paperView(null)).toBe("agents");
     expect(paperView("agents")).toBe("agents");
