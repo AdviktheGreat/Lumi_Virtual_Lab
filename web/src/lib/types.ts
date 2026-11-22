@@ -3463,3 +3463,90 @@ export interface PaperAgentExport {
   meaning: string;
   flags: Record<LicenseFlag, string>;
 }
+
+// How the papers of the agents relate, made from what is kept of each, with nothing run and no model asked
+export type GraphKind = "refers" | "code" | "dataset" | "software" | "method" | "agrees" | "differs";
+
+// How one paper's words say that it refers to another, from the words around the name
+export type GraphHow = "mentions" | "builds_on" | "replaces" | "replicates";
+
+// What one paper's words name the other by
+export type GraphBy = "doi" | "code" | "name" | "title";
+
+export type GraphClaimStatus = "reproduced" | "partly" | "not_reproduced" | "not_attempted";
+
+// A place in a paper that a relation is found from: what it names, and its quote and where that is
+export interface GraphPlace {
+  agent: string;
+  kind: string;
+  fact: string | null;
+  name: string;
+  quote: string;
+  page: number | null;
+  section: string | null;
+  // Of a claim: what the trying of it with the paper's code came to, if it was tried
+  reproduction?: GraphClaimStatus | null;
+}
+
+// What a relation is found from, which is of one of four shapes, by its kind: two places that name the same thing (dataset,
+// method, software), the address that two papers' code is at (code), the place where one paper names another (refers), and two
+// claims on the same words (agrees, differs)
+export interface GraphEvidence {
+  matched?: string;
+  basis?: "accession" | "name";
+  a?: GraphPlace;
+  b?: GraphPlace;
+  versions?: Record<string, string | null>;
+  same_version?: boolean | null;
+  commits?: Record<string, string | null>;
+  same_commit?: boolean | null;
+  by?: GraphBy;
+  how?: GraphHow;
+  at?: GraphPlace;
+  words?: string[];
+  numbers?: string[];
+}
+
+export interface GraphRelation {
+  kind: GraphKind;
+  a: string;
+  b: string;
+  // Only a paper that names another is from one to the other
+  directed: boolean;
+  how: GraphHow | null;
+  basis: string | null;
+  // Of claims that agree: whether the code of one of the papers gave the claim again
+  corroborated: boolean | null;
+  summary: string;
+  evidence: GraphEvidence[];
+}
+
+export interface GraphPaper {
+  id: string;
+  title: string;
+  read: boolean;
+  code: string | null;
+  claims: number;
+  facts: Record<string, number>;
+  reproduction: Record<GraphClaimStatus, number> | null;
+  // How many relations it is in, of all that were found
+  relations: number;
+}
+
+export interface PaperAgentGraph {
+  papers: GraphPaper[];
+  relations: GraphRelation[];
+  counts: Record<GraphKind, number>;
+  truncated: boolean;
+  left_out: number;
+  kinds: GraphKind[];
+  meaning: string;
+  limits: { most_papers: number; most_relations: number };
+}
+
+// What the graph is asked for: only the relations that a paper is in, of a kind, or that have some words
+export interface GraphQuery {
+  agent?: string;
+  kind?: GraphKind;
+  about?: string;
+}

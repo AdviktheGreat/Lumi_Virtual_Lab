@@ -30,6 +30,7 @@ import {
 } from "@/lib/paperagents";
 import { BAKEOFFS_ADDRESS } from "@/lib/bakeoffs";
 import { TRIAGES_ADDRESS } from "@/lib/triages";
+import { GRAPH_ADDRESS } from "@/lib/paperagent-graph";
 import { LIBRARY_ADDRESS } from "@/lib/paperagent-library";
 import { checkOneGo } from "@/lib/paperagent-onego";
 import { SURVEYS_ADDRESS, type PaperView } from "@/lib/papers";
@@ -41,6 +42,7 @@ import { cn } from "@/lib/utils";
 const VIEWS: { view: PaperView; label: string; href: string }[] = [
   { view: "agents", label: "Agents", href: AGENTS_ADDRESS },
   { view: "library", label: "Library", href: LIBRARY_ADDRESS },
+  { view: "graph", label: "Graph", href: GRAPH_ADDRESS },
   { view: "triage", label: "Triage", href: TRIAGES_ADDRESS },
   { view: "bakeoffs", label: "Bake-offs", href: BAKEOFFS_ADDRESS },
   { view: "surveys", label: "Surveys", href: SURVEYS_ADDRESS },

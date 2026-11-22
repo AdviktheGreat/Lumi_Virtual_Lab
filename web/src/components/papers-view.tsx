@@ -7,6 +7,7 @@ import { BakeoffPage } from "@/components/paper-bakeoff";
 import { Bakeoffs } from "@/components/paper-bakeoffs";
 import { TriagePage } from "@/components/paper-triage";
 import { Triages } from "@/components/paper-triages";
+import { Graph } from "@/components/paper-graph";
 import { Library } from "@/components/paper-library";
 import { Agents, PaperAgentsNav } from "@/components/paper-agents";
 import { NewRun, RunList } from "@/components/paper-runs";
@@ -19,7 +20,7 @@ import { paperView, workKey } from "@/lib/papers";
 import { usePapersList } from "@/lib/use-papers";
 
 const INTRO =
-  "A PaperAgent makes one paper, with the code that came with it, into something the lab can use. The library lists the agents that have tools, each pinned to a version of its code and environment. A triage ranks a list of papers by a look at their code, to find which to make first. A bake-off asks which method of the literature is best for a task on your own data. A survey reads many papers for what they have in common.";
+  "A PaperAgent makes one paper, with the code that came with it, into something the lab can use. The library lists the agents that have tools, each pinned to a version of its code and environment, and the graph says how their papers relate. A triage ranks a list of papers by a look at their code, to find which to make first. A bake-off asks which method of the literature is best for a task on your own data. A survey reads many papers for what they have in common.";
 
 const SURVEYS_INTRO =
   "A survey reads papers for the tasks, databases, and software they use, and writes functions for the tasks that many of them share. Each run is a set of papers, with what was read from them. Reading spends money on the model in the settings, so each run is told the most it may spend.";
@@ -93,7 +94,7 @@ export function PapersView() {
     <PageFrame title="PaperAgents" intro={INTRO}>
       <div className="flex flex-col gap-6">
         <PaperAgentsNav view={view} />
-        <div className="flex flex-col gap-12">{view === "surveys" ? <Runs /> : view === "bakeoffs" ? <Bakeoffs /> : view === "triage" ? <Triages /> : view === "library" ? <Library /> : <Agents />}</div>
+        <div className="flex flex-col gap-12">{view === "surveys" ? <Runs /> : view === "bakeoffs" ? <Bakeoffs /> : view === "triage" ? <Triages /> : view === "library" ? <Library /> : view === "graph" ? <Graph key={params.get("of") ?? ""} of={params.get("of")} /> : <Agents />}</div>
       </div>
     </PageFrame>
   );
