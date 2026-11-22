@@ -9,6 +9,7 @@ import type {
   PaperAgentData,
   PaperAgentEnvironment,
   PaperAgentGiven,
+  PaperAgentOneGo,
   PaperAgentReading,
   PaperAgentReference,
   PaperAgentReimplementation,
@@ -112,6 +113,13 @@ export function usePaperAgentReimplementation(
   again: string,
 ): Looked<PaperAgentReimplementation> {
   const look = useCallback(() => api.paperAgentReimplementation(id), [id]);
+
+  return useLooked(look, report, again);
+}
+
+// How making an agent in one go stands, looked at again as it goes from step to step and as the steps it starts end
+export function usePaperAgentOneGo(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentOneGo> {
+  const look = useCallback(() => api.paperAgentOneGo(id), [id]);
 
   return useLooked(look, report, again);
 }

@@ -82,7 +82,9 @@ function counted(job: Job): { done: number; total: number; noun: string } | null
           ? { done: finished, total: chunks, noun: "chunk" }
           : job.kind === "paperagent-data"
             ? { done: filesDone, total: filesTotal, noun: "file" }
-            : { done, total, noun: "file" };
+            : job.kind === "paperagent-onego"
+              ? { done: finished, total: job.progress.steps, noun: "step" }
+              : { done, total, noun: "file" };
 
   return typeof found.done === "number" && typeof found.total === "number" && found.total > 0
     ? { done: found.done, total: found.total, noun: found.noun }

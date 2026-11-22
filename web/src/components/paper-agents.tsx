@@ -10,8 +10,12 @@ import { AgentFields } from "@/components/paper-agent-fields";
 import { ImportAgents } from "@/components/paper-agents-import";
 import { PageSection } from "@/components/page-section";
 import { useServer } from "@/components/server-provider";
+import { useSetupJobs } from "@/components/setup-provider";
+import { describedBy, Field } from "@/components/settings-fields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import {
   agentAddress,
@@ -25,6 +29,7 @@ import {
   type AgentDraft,
 } from "@/lib/paperagents";
 import { BAKEOFFS_ADDRESS } from "@/lib/bakeoffs";
+import { checkOneGo } from "@/lib/paperagent-onego";
 import { SURVEYS_ADDRESS, type PaperView } from "@/lib/papers";
 import type { PaperAgent, PaperAgentsList } from "@/lib/types";
 import { useAttempt } from "@/lib/use-looked";
@@ -38,7 +43,7 @@ const VIEWS: { view: PaperView; label: string; href: string }[] = [
 ];
 
 const INTRO =
-  "A PaperAgent is one paper made usable: its text read, with each claim traced to the place it is made, a note of what its method was tested on, and tools built from the code that came with it. For now an agent keeps which paper it is of and where its code is. The steps that read the paper and build its tools are added one at a time.";
+  "A PaperAgent is one paper made usable: its text read, with each claim traced to the place it is made, a note of what its method was tested on, and tools built from the code that came with it. Each step can be asked for on its own, on the agent's page, or all of them in one go, which stops where you are to decide.";
 
 // The parts of the page, each reached by an address of its own, as the pages of the rail are
 export function PaperAgentsNav({ view }: { view: PaperView }) {
@@ -110,17 +115,28 @@ function AgentList({ agents }: { agents: readonly PaperAgent[] }) {
   );
 }
 
-// Makes an agent of a paper, which has nothing done to it yet. A paper that is a file is uploaded from the agent's own page.
+// Makes an agent of a paper, and, if it is asked for, starts making all of it in one go. A paper that is a file is uploaded from
+// the agent's own page, which is where making it in one go is asked for then.
 function NewAgent({ list }: { list: PaperAgentsList }) {
   const { report } = useServer();
+  const jobs = useSetupJobs();
   const router = useRouter();
   const id = useId();
   const [draft, setDraft] = useState<AgentDraft>(EMPTY_AGENT);
   const [tried, setTried] = useState(false);
   const [existing, setExisting] = useState<string | null>(null);
+  const [inOneGo, setInOneGo] = useState(false);
+  const [budget, setBudget] = useState("1");
+  // The agent that was made when making it in one go was then refused, with what it was made of, so that asking again for the
+  // same paper starts making that one rather than making it again
+  const [made, setMade] = useState<{ id: string; of: string } | null>(null);
   const attempt = useAttempt(report);
+  const going = useAttempt(report);
   const checked = checkAgent(draft, list.repo_hosts);
+  const oneGo = draft.kind !== "file" && inOneGo;
+  const onego = checkOneGo({ budget, repo: "", give: true, withoutCode: false }, { reads: true, asksRepo: false });
   const problems = tried ? checked.problems : {};
+  const budgetProblem = tried && oneGo ? onego.problems.budget : undefined;
   const field = (name: string) => `${id}-${name}`;
 
   function change(part: Partial<AgentDraft>) {
@@ -131,16 +147,33 @@ function NewAgent({ list }: { list: PaperAgentsList }) {
     setTried(true);
     setExisting(null);
     const body = checked.value;
-    if (body === null) return;
-    const agent = await attempt.run(async () => {
-      try {
-        return await api.makePaperAgent(body);
-      } catch (error) {
-        setExisting(existingOf(error));
-        throw error;
+    const options = oneGo ? onego.value : null;
+    if (body === null || (oneGo && options === null)) return;
+    const of = JSON.stringify(body);
+    const again = made !== null && made.of === of ? made.id : null;
+    setMade(null);
+    const agent =
+      again !== null
+        ? { id: again }
+        : await attempt.run(async () => {
+            try {
+              return await api.makePaperAgent(body);
+            } catch (error) {
+              setExisting(existingOf(error));
+              throw error;
+            }
+          });
+    if (!agent) return;
+    if (options !== null) {
+      const started = await going.run(() => api.makePaperAgentInOneGo(agent.id, options));
+      if (!started) {
+        setMade({ id: agent.id, of });
+
+        return;
       }
-    });
-    if (agent) router.push(agentAddress(agent.id));
+      if (started.job !== null) jobs.track(started.job);
+    }
+    router.push(agentAddress(agent.id));
   }
 
   return (
@@ -153,6 +186,33 @@ function NewAgent({ list }: { list: PaperAgentsList }) {
       className="flex flex-col gap-4 rounded-lg border border-border p-3"
     >
       <AgentFields draft={draft} change={change} problems={problems} busy={attempt.busy} list={list} field={field} />
+      {draft.kind !== "file" && (
+        <div className="flex flex-col gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={inOneGo} onChange={(event) => setInOneGo(event.target.checked)} />
+            Make all of it now, in one go
+          </label>
+          {inOneGo && (
+            <Field
+              id={field("budget")}
+              label="Most reading the paper may spend, in dollars"
+              hint="Only reading the paper costs money. The rest runs on this machine, and it stops to ask you where you are to decide."
+              problem={budgetProblem}
+            >
+              <Input
+                id={field("budget")}
+                value={budget}
+                onChange={(event) => setBudget(event.target.value)}
+                inputMode="decimal"
+                autoComplete="off"
+                className="sm:max-w-xs"
+                aria-invalid={budgetProblem !== undefined}
+                aria-describedby={describedBy(field("budget"), { hint: true, problem: budgetProblem !== undefined })}
+              />
+            </Field>
+          )}
+        </div>
+      )}
 
       {attempt.problem && (
         <div className="flex flex-col gap-1.5">
@@ -167,10 +227,22 @@ function NewAgent({ list }: { list: PaperAgentsList }) {
           )}
         </div>
       )}
+      {made !== null && going.problem && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm">The agent was made, but making all of it in one go could not be started.</p>
+          <ProblemNotice problem={going.problem} />
+          <Link
+            href={agentAddress(made.id)}
+            className="w-fit rounded-sm text-sm underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            Open the agent, to go on there
+          </Link>
+        </div>
+      )}
       <div>
-        <Button type="submit" disabled={attempt.busy}>
+        <Button type="submit" disabled={attempt.busy || going.busy}>
           <Plus />
-          {attempt.busy ? "Making…" : "Make the agent"}
+          {attempt.busy || going.busy ? "Making…" : oneGo ? "Make the agent, all in one go" : "Make the agent"}
         </Button>
       </div>
     </form>

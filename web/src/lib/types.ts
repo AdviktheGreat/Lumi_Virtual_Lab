@@ -537,6 +537,10 @@ export interface JobProgress {
   files_done?: number;
   files_total?: number;
   bytes_done?: number;
+  // What making an agent in one go counts: its steps, the one it is at, and what that step is doing
+  steps?: number;
+  step?: string | null;
+  detail?: string;
 }
 
 // A piece of work the server does in the background: building an image, or fetching the data lake
@@ -889,6 +893,82 @@ export interface PaperAgent {
   given: boolean;
   // What it was imported from, for an agent that someone else made of the paper, and null for one that was made here
   imported: PaperAgentImported | null;
+  // The job that is making it in one go, if one is, which nothing else is done to it meanwhile. A server from before
+  // making in one go does not say.
+  onego?: Job | null;
+}
+
+// How making an agent in one go stands: not asked for, going, waiting for the person to say something, done, failed,
+// stopped, or interrupted, as it is when the server stopped while it went
+export type OneGoState = "none" | "running" | "waiting" | "done" | "failed" | "stopped" | "interrupted";
+
+export type OneGoStepState = "pending" | "running" | "done" | "skipped" | "waiting" | "failed" | "stopped";
+
+export type OneGoStepName = "repository" | "reading" | "look" | "environment" | "reference" | "tools" | "checks" | "given";
+
+export interface OneGoStep {
+  step: OneGoStepName;
+  title: string;
+  state: OneGoStepState;
+  // How it came out, or why it was skipped, in a sentence
+  note: string | null;
+}
+
+// What was asked of it, which is what is asked again unless it is said otherwise
+export interface OneGoSettings {
+  max_cost: number | null;
+  repo: string | null;
+  ref: string | null;
+  give: boolean;
+  without_code: boolean;
+  // The commit of the code that the person said to go on with, after looking at it
+  go_on: string | null;
+}
+
+// A place that the paper points to, which is not taken for its code until the person says so
+export interface OneGoCandidate {
+  url: string;
+  role: RepositoryCandidate["role"];
+  quote: string;
+}
+
+// What stands in the way, on the step it stands at, with what a page needs to show the person what to decide
+export interface OneGoStuck {
+  step: OneGoStepName;
+  // What it is: code, preflight, limit, paper_file, paper_text, docker, git, or model when it is for the person to say,
+  // and failed, refused, error, no_code, or stopped otherwise
+  kind: string;
+  reason: string;
+  candidates?: OneGoCandidate[];
+  verdict?: PreflightVerdict;
+  commit?: string;
+  checks?: { title: string; status: PreflightStatus; detail: string }[];
+  spent?: number | null;
+  limit?: number | null;
+}
+
+export interface PaperAgentOneGo {
+  id: string;
+  state: OneGoState;
+  started_at: string | null;
+  finished_at: string | null;
+  settings: OneGoSettings;
+  steps: OneGoStep[];
+  stuck: OneGoStuck | null;
+  // What it came to, once every step has been got to
+  summary: string | null;
+  // The job that is making it, if one is, or the one that was just started
+  job: Job | null;
+}
+
+// What is asked when it is started, or gone on with: what is left out is what it was before
+export interface PaperAgentMakeOptions {
+  max_cost?: number;
+  repo?: string;
+  ref?: string;
+  give?: boolean;
+  without_code?: boolean;
+  go_on?: boolean;
 }
 
 // One tool that the server of an imported agent listed when it was last connected to

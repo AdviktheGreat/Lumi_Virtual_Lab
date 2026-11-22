@@ -178,6 +178,15 @@ describe("what a job has counted", () => {
     expect(jobFraction(job({ kind: "paperagent-reading", progress: {} }))).toBeNull();
   });
 
+  it("is the steps of making an agent in one go that are over, of how many there are", () => {
+    const making = job({ kind: "paperagent-onego", progress: { steps: 8, finished: 2, step: "look", detail: "" } });
+
+    expect(jobCounts(making)).toBe("2 of 8 steps");
+    expect(jobFraction(making)).toBe(0.25);
+    expect(jobCounts(job({ kind: "paperagent-onego", progress: { steps: 1, finished: 0 } }))).toBe("0 of 1 step");
+    expect(jobFraction(job({ kind: "paperagent-onego", progress: {} }))).toBeNull();
+  });
+
   it("says file for one file, and says nothing of bytes before any are fetched", () => {
     expect(jobCounts(job({ progress: { done: 0, total: 1, fetched: 0 } }))).toBe("0 of 1 file");
   });

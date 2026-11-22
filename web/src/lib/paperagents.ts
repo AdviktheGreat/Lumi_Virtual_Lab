@@ -255,8 +255,12 @@ export function readingKey(jobs: readonly Job[] | null, ended: number, agent: st
   const varying = (jobs ?? []).filter((job) => isActive(job) && job.kind === VARIANT_JOB && job.subject === agent).map((job) => job.id);
   const writing = (jobs ?? []).filter((job) => isActive(job) && job.kind === REIMPLEMENTATION_JOB && job.subject === agent).map((job) => job.id);
   const matching = (jobs ?? []).filter((job) => isActive(job) && job.kind === MATCHING_JOB && job.subject === agent).map((job) => job.id);
+  // Making it in one go is followed from step to step, as each step changes what there is of the agent
+  const going = (jobs ?? [])
+    .filter((job) => isActive(job) && job.kind === ONEGO_JOB && job.subject === agent)
+    .map((job) => `${job.id}:${job.progress.finished ?? ""}`);
 
-  return `${ended}|${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}${checking.length > 0 ? `|checks:${checking.join(",")}` : ""}${trying.length > 0 ? `|trying:${trying.join(",")}` : ""}${varying.length > 0 ? `|varying:${varying.join(",")}` : ""}${writing.length > 0 ? `|writing:${writing.join(",")}` : ""}${matching.length > 0 ? `|matching:${matching.join(",")}` : ""}`;
+  return `${ended}|${going.length > 0 ? `onego:${going.join(",")}|` : ""}${at.join(",")}${fetching.length > 0 ? `|${fetching.join(",")}` : ""}${building.length > 0 ? `|building:${building.join(",")}` : ""}${getting.length > 0 ? `|data:${getting.join(",")}` : ""}${running.length > 0 ? `|reference:${running.join(",")}` : ""}${making.length > 0 ? `|tools:${making.join(",")}` : ""}${checking.length > 0 ? `|checks:${checking.join(",")}` : ""}${trying.length > 0 ? `|trying:${trying.join(",")}` : ""}${varying.length > 0 ? `|varying:${varying.join(",")}` : ""}${writing.length > 0 ? `|writing:${writing.join(",")}` : ""}${matching.length > 0 ? `|matching:${matching.join(",")}` : ""}`;
 }
 
 // The job that fetches the code of an agent, which the server runs with the agent's id as its subject
@@ -387,6 +391,14 @@ export function matchingJob(jobs: readonly Job[], agent: string): Job | undefine
 // The latest checking of that function that is over, whose outcome is what it was last done with
 export function lastMatchingJob(jobs: readonly Job[], agent: string): Job | undefined {
   return jobs.find((job) => !isActive(job) && job.kind === MATCHING_JOB && job.subject === agent);
+}
+
+// The job that makes an agent in one go, step after step, which the server runs with the agent's id as its subject
+export const ONEGO_JOB = "paperagent-onego";
+
+// The job at work making an agent in one go, which nothing but its own steps is done to the agent in the meantime
+export function onegoJob(jobs: readonly Job[], agent: string): Job | undefined {
+  return jobs.find((job) => isActive(job) && job.kind === ONEGO_JOB && job.subject === agent);
 }
 
 export interface ReadingDraft {

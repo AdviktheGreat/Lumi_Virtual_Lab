@@ -16,7 +16,7 @@ const TASK = "RNA-seq differential expression with DESeq2";
 // Takes away every agent, and then every run, stopping what is at work on one first
 async function clear(page: Page) {
   const { jobs } = await (await page.request.get("/api/setup/jobs")).json();
-  const working = ["paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools", "paperagent-checks", "paperagent-reproduction", "paperagent-variant", "paperagent-reimplementation", "paperagent-reimplementation-checks"];
+  const working = ["paperagent-onego", "paperagent-reading", "paperagent-repository", "paperagent-environment", "paperagent-data", "paperagent-reference", "paperagent-tools", "paperagent-checks", "paperagent-reproduction", "paperagent-variant", "paperagent-reimplementation", "paperagent-reimplementation-checks"];
   for (const job of jobs.filter((job: { kind: string; state: string }) => working.includes(job.kind) && job.state === "running")) {
     await page.request.post(`/api/setup/jobs/${job.id}/stop`);
   }
@@ -5047,4 +5047,278 @@ test("shows what would be sent again when it is not what was shown, says why the
   await page.unroute("**/api/paperagents/*/reimplementation");
   expect((await reimplementationOf(page, id)).kept).toMatchObject({ status: "written" });
   expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+// Making an agent in one go, which does each step as its own section would, one after another, and stops where the person is
+// to say something
+const oneGo = (page: Page) => form(page, "Make it in one go");
+const goingOn = (page: Page) => page.getByRole("region", { name: "Making it in one go" });
+const decision = (page: Page) => page.getByTestId("onego-decision");
+const onegoSteps = (page: Page) => page.getByRole("list", { name: "Steps of making it in one go" }).getByTestId("onego-step");
+const onegoStep = (page: Page, title: string) => onegoSteps(page).filter({ hasText: title });
+const onegoOf = async (page: Page, id: string) => (await page.request.get(`/api/paperagents/${id}/make`)).json();
+const START = "Make it all now";
+const EVERY_STEP = "Every step is done. It is given to the conversations you start from now on.";
+
+test("makes an agent in one go, from its paper to the conversations, asking where its code is with the projects the paper points to", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Whole mapper", paper: { kind: "file" } });
+  await sendPaper(page, id, "cells.txt", CELLS);
+  await openAgent(page, id, "Whole mapper");
+  await expect(page.getByRole("heading", { name: "In one go", level: 2 })).toBeVisible();
+  await expect(oneGo(page)).toContainText("Only reading the paper costs money");
+
+  // What is asked for is said before it is sent
+  await oneGo(page).getByLabel("Most reading may spend, in dollars").fill("");
+  await oneGo(page).getByLabel("Where the code is").fill("https://example.org/owner/name");
+  await oneGo(page).getByRole("button", { name: START }).click();
+  await expect(oneGo(page).getByText("Say the most reading the paper may spend.")).toBeVisible();
+  await expect(oneGo(page).getByText(/Give the address of the project/)).toBeVisible();
+  expect((await onegoOf(page, id)).state).toBe("none");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await oneGo(page).getByLabel("Where the code is").fill("");
+  await oneGo(page).getByLabel("Most reading may spend, in dollars").fill("2");
+  await oneGo(page).getByRole("button", { name: START }).click();
+
+  // Nobody said where the code is, so the paper is read first, and then it asks, with the projects that the paper points to,
+  // none of which is taken for the code
+  await expect(decision(page)).toContainText("The paper points to the projects below", { timeout: 20_000 });
+  await expect(onegoStep(page, "Read the paper")).toHaveAttribute("data-state", "done");
+  await expect(onegoStep(page, "Fetch the code")).toHaveAttribute("data-state", "waiting");
+  await expect(onegoSteps(page).first()).toContainText("Read the paper");
+  await expect(page.getByText("Waiting for you", { exact: true }).first()).toBeVisible();
+  const candidate = decision(page).getByTestId("onego-candidate");
+  await expect(candidate).toHaveCount(1);
+  await expect(candidate).toContainText("The paper says it is the code");
+  await expect(candidate.getByRole("blockquote")).toContainText(CODE);
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).repo).toBeNull();
+  await expect(step(page, "Read the paper")).toContainText("Done");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // What the server refuses is said where it was asked
+  await page.route("**/api/paperagents/*/make", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "busy", message: "Fetching the code is already running" } }),
+        })
+      : route.fallback(),
+  );
+  await candidate.getByRole("button", { name: "Use as the code and go on: example/cellmapper" }).click();
+  await expect(decision(page).getByRole("alert")).toContainText("Fetching the code is already running");
+  await page.unroute("**/api/paperagents/*/make");
+
+  await candidate.getByRole("button", { name: "Use as the code and go on: example/cellmapper" }).click();
+
+  // Every step is gone through, each the step of its own section, and the agent is given to conversations
+  await expect(decision(page)).toContainText(EVERY_STEP, { timeout: 60_000 });
+  await expect(onegoSteps(page)).toHaveCount(8);
+  for (const each of await onegoSteps(page).all()) await expect(each).toHaveAttribute("data-state", "done");
+  await expect(onegoStep(page, "Give it to your conversations")).toContainText("Given to the conversations that you start from now on.");
+  const agent = await (await page.request.get(`/api/paperagents/${id}`)).json();
+  expect(agent).toMatchObject({ repo: { url: CODE_ADDRESS }, given: true, steps: { reading: "done", repository: "done", environment: "done", tools: "done" } });
+  await expect(step(page, "Build the tools")).toContainText("Done");
+  await expect(page.getByTestId("code-commit")).toContainText("example/cellmapper at ");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // How it went is kept, and is cleared for it to be asked for afresh, with nothing to spend now that the paper is read
+  await page.reload();
+  await expect(decision(page)).toContainText(EVERY_STEP);
+  await page.getByRole("button", { name: "Clear this and start afresh" }).click();
+  await expect(oneGo(page)).toBeVisible();
+  await expect(oneGo(page).getByLabel("Most reading may spend, in dollars")).toHaveCount(0);
+  await expect(oneGo(page).getByLabel("Where the code is")).toHaveCount(0);
+  await expect(oneGo(page)).toContainText("nothing it does costs money");
+  expect((await onegoOf(page, id)).state).toBe("none");
+});
+
+test("follows making it in one go while it goes on, which nothing else is done to the agent meanwhile, stops it, and goes on from where it stopped", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Slow whole mapper", paper: { kind: "file" }, repo: CODE_ADDRESS });
+  await sendPaper(page, id, "cells.txt", CELLS);
+  await readTheAgent(page, id);
+  await openAgent(page, id, "Slow whole mapper");
+  // The paper has been read and the code is where the agent says, so neither is asked
+  await expect(oneGo(page).getByLabel("Most reading may spend, in dollars")).toHaveCount(0);
+  await expect(oneGo(page).getByLabel("Where the code is")).toHaveCount(0);
+  await oneGo(page).getByLabel("Give it to my conversations once it is made").uncheck();
+  await oneGo(page).getByRole("button", { name: START }).click();
+
+  await expect(onegoStep(page, "Build the environment")).toHaveAttribute("data-state", "running", { timeout: 20_000 });
+  await expect(goingOn(page).getByRole("progressbar")).toBeVisible();
+  await expect(goingOn(page)).toContainText(/\d of 8 steps/);
+  await expect(onegoStep(page, "Fetch the code")).toHaveAttribute("data-state", "done");
+  await expect(onegoStep(page, "Read the paper")).toContainText("The paper had been read.");
+  await expect(building(page)).toBeVisible();
+  // Nothing else is done to the agent while it is made
+  await expect(page.getByRole("button", { name: "Delete Slow whole mapper" })).toBeDisabled();
+  await expect(reading(page)).toContainText("The agent is being made in one go. Reading waits for that.");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await goingOn(page).getByRole("button", { name: /^Stop: / }).click();
+
+  await expect(decision(page)).toContainText("Stopped. What was made is kept", { timeout: 20_000 });
+  await expect(onegoStep(page, "Build the environment")).toHaveAttribute("data-state", "stopped");
+  await expect(goingOn(page)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Delete Slow whole mapper" })).toBeEnabled();
+  expect((await onegoOf(page, id))).toMatchObject({ state: "stopped", stuck: { step: "environment", kind: "stopped" } });
+  // Leaving out the code is not offered for what the person stopped
+  await expect(decision(page).getByRole("button", { name: "Go on without the code" })).toHaveCount(0);
+
+  await decision(page).getByRole("button", { name: "Go on", exact: true }).click();
+
+  // It is not given, as that was asked, and the steps that were done are not done again
+  await expect(decision(page)).toContainText("Every step is done.", { timeout: 90_000 });
+  await expect(decision(page)).not.toContainText("It is given");
+  await expect(onegoStep(page, "Fetch the code")).toContainText("The code had been fetched.");
+  await expect(onegoStep(page, "Give it to your conversations")).toHaveAttribute("data-state", "skipped");
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json()).given).toBe(false);
+});
+
+test("makes an agent of a DOI all in one go from the form that makes it, and goes on without the code when the person says to", async ({ page }) => {
+  await page.goto("/papers");
+  const making = form(page, "Make an agent");
+  await making.getByLabel("DOI", { exact: true }).fill("10.1234/one.go");
+  // A file is uploaded on the agent's page, so it is made in one go there
+  await making.getByRole("radio", { name: "A file I upload" }).check();
+  await expect(making.getByLabel("Make all of it now, in one go")).toHaveCount(0);
+  await making.getByRole("radio", { name: "A DOI" }).check();
+  await making.getByLabel("Make all of it now, in one go").check();
+  await making.getByLabel("Most reading the paper may spend, in dollars").fill("lots");
+  await making.getByRole("button", { name: "Make the agent, all in one go" }).click();
+  await expect(making.getByText(/is an amount in dollars/)).toBeVisible();
+  expect((await (await page.request.get("/api/paperagents")).json()).agents).toEqual([]);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await making.getByLabel("Most reading the paper may spend, in dollars").fill("2");
+  await making.getByRole("button", { name: "Make the agent, all in one go" }).click();
+
+  await expect(page.getByRole("heading", { name: "10.1234/one.go", level: 2 })).toBeVisible();
+  const id = agentIn(page);
+  // The paper is fetched and read, and then it asks where the code is
+  await expect(decision(page)).toContainText("The paper points to the projects below", { timeout: 30_000 });
+  await decision(page).getByRole("button", { name: "Go on without the code" }).click();
+
+  await expect(decision(page)).toContainText("Made as far as the code allows. You chose to go on without the code.", { timeout: 30_000 });
+  for (const title of ["Fetch the code", "Look at the code against the paper", "Build the environment", "Run the tutorials", "Make the tools", "Check the tools"]) {
+    await expect(onegoStep(page, title)).toHaveAttribute("data-state", "skipped");
+  }
+  await expect(onegoStep(page, "Give it to your conversations")).toHaveAttribute("data-state", "done");
+  expect((await (await page.request.get(`/api/paperagents/${id}`)).json())).toMatchObject({ repo: null, given: true });
+  expect((await onegoOf(page, id)).settings).toMatchObject({ max_cost: 2, without_code: true });
+  expect(await accessibilityProblems(page)).toEqual([]);
+});
+
+test("asks for the paper's file when its text cannot be had, and for more to spend when reading reaches its limit, and for the code without a project to choose from", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Closed whole paper", paper: { kind: "doi", doi: "10.1234/closed.one" } });
+  await openAgent(page, id, "Closed whole paper");
+  await oneGo(page).getByLabel("Most reading may spend, in dollars").fill("0.0004");
+  await oneGo(page).getByRole("button", { name: START }).click();
+
+  // The text could not be fetched, so the paper's file is asked for, which it cannot go on without
+  await expect(decision(page)).toContainText("The text of the paper could not be had", { timeout: 20_000 });
+  await expect(decision(page)).toContainText("Upload the paper's file under Paper file, below, and then go on.");
+  await expect(decision(page).getByRole("button", { name: "Go on", exact: true })).toBeDisabled();
+  await expect(onegoStep(page, "Read the paper")).toHaveAttribute("data-state", "waiting");
+  await expect(decision(page).getByRole("button", { name: "Go on without the code" })).toHaveCount(0);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await sendPaper(page, id, "closed.txt", chunked(3, "plain:"));
+  await page.reload();
+  await expect(decision(page)).toContainText("The paper's file is uploaded, so it can go on.");
+  await decision(page).getByRole("button", { name: "Go on", exact: true }).click();
+
+  // Reading stops at the limit it was given, and asks for more, which it carries on with from where it stopped
+  await expect(decision(page)).toContainText("Reading reached the limit on spending", { timeout: 20_000 });
+  await expect(decision(page)).toContainText("of the <$0.01 it was given.");
+  const more = form(page, "Say how much more reading may spend");
+  await more.getByLabel("How much more it may spend, in dollars").fill("");
+  await more.getByRole("button", { name: "Go on reading" }).click();
+  await expect(more.getByText("Say how much more reading may spend.")).toBeVisible();
+  expect((await onegoOf(page, id)).state).toBe("waiting");
+  await more.getByLabel("How much more it may spend, in dollars").fill("2");
+  await more.getByRole("button", { name: "Go on reading" }).click();
+
+  // The paper points to no code, so where it is is asked with nothing to choose from, and what is typed is checked first
+  await expect(decision(page)).toContainText("the paper does not point to any", { timeout: 20_000 });
+  await expect(decision(page).getByTestId("onego-candidate")).toHaveCount(0);
+  await expect(summary(page)).toContainText("Read 3 of 3 chunks");
+  const where = form(page, "Say where the code is");
+  await where.getByRole("button", { name: "Go on with it" }).click();
+  await expect(where.getByText("Give the address of the code.")).toBeVisible();
+  await where.getByLabel("Where the code is").fill("https://example.org/owner/name");
+  await where.getByRole("button", { name: "Go on with it" }).click();
+  await expect(where.getByText(/Give the address of the project/)).toBeVisible();
+  expect((await onegoOf(page, id)).state).toBe("waiting");
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await decision(page).getByRole("button", { name: "Go on without the code" }).click();
+  await expect(decision(page)).toContainText("Made as far as the code allows.", { timeout: 20_000 });
+});
+
+test("asks whether to go on with code that looking at it says not to, before the paper is paid to be read, and skips what the code cannot do", async ({
+  page,
+}) => {
+  const id = await makeAgent(page, { title: "Gpu whole mapper", paper: { kind: "file" }, repo: "https://github.com/example/gpu-mapper" });
+  await sendPaper(page, id, "cells.txt", CELLS);
+  await openAgent(page, id, "Gpu whole mapper");
+  await oneGo(page).getByRole("button", { name: START }).click();
+
+  // The code is fetched and looked at first, and what stops it is said before anything is spent on reading
+  await expect(decision(page)).toContainText("Go on if you accept that, or go on without the code.", { timeout: 20_000 });
+  await expect(decision(page)).toContainText("Do not go on");
+  await expect(decision(page)).toContainText("Stops it");
+  await expect(decision(page)).toContainText("Of commit ");
+  await expect(onegoStep(page, "Look at the code against the paper")).toHaveAttribute("data-state", "waiting");
+  await expect(onegoStep(page, "Read the paper")).toHaveAttribute("data-state", "pending");
+  expect((await (await page.request.get(`/api/paperagents/${id}/reading`)).json()).chunks).toBeNull();
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  await decision(page).getByRole("button", { name: "Go on with this code anyway" }).click();
+
+  // It reads the paper, builds what it can, and skips what the code cannot be made into
+  await expect(decision(page)).toContainText("Made as far as the code allows.", { timeout: 60_000 });
+  await expect(onegoStep(page, "Look at the code against the paper")).toContainText("You said to go on.");
+  await expect(onegoStep(page, "Make the tools")).toHaveAttribute("data-state", "skipped");
+  await expect(onegoStep(page, "Check the tools")).toHaveAttribute("data-state", "skipped");
+  await expect(onegoStep(page, "Give it to your conversations")).toHaveAttribute("data-state", "done");
+  expect((await onegoOf(page, id)).settings.go_on).toMatch(/^[0-9a-f]{40}$/);
+});
+
+test("says that the agent was made when making it in one go is refused, and starts making that agent when asked again", async ({ page }) => {
+  await page.route("**/api/paperagents/*/make", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "invalid", message: "Something about it was refused" } }),
+        })
+      : route.fallback(),
+  );
+  await page.goto("/papers");
+  const making = form(page, "Make an agent");
+  await making.getByLabel("DOI", { exact: true }).fill("10.1234/refused.go");
+  await making.getByLabel("Make all of it now, in one go").check();
+  await making.getByRole("button", { name: "Make the agent, all in one go" }).click();
+
+  await expect(making).toContainText("The agent was made, but making all of it in one go could not be started.");
+  await expect(making.getByRole("alert")).toContainText("Something about it was refused");
+  const { agents } = await (await page.request.get("/api/paperagents")).json();
+  expect(agents).toHaveLength(1);
+  await expect(making.getByRole("link", { name: "Open the agent, to go on there" })).toHaveAttribute("href", `/papers?agent=${agents[0].id}`);
+  expect(await accessibilityProblems(page)).toEqual([]);
+
+  // Asked again, the same paper is not made again: making the agent that was made is started
+  await page.unroute("**/api/paperagents/*/make");
+  await making.getByRole("button", { name: "Make the agent, all in one go" }).click();
+  await expect(page.getByRole("heading", { name: "10.1234/refused.go", level: 2 })).toBeVisible();
+  expect(agentIn(page)).toBe(agents[0].id);
+  expect((await (await page.request.get("/api/paperagents")).json()).agents).toHaveLength(1);
+  await expect.poll(async () => (await onegoOf(page, agents[0].id)).state).not.toBe("none");
 });
