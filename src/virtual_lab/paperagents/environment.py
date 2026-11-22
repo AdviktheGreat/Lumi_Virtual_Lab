@@ -85,6 +85,13 @@ SYSTEM_PACKAGE = re.compile(r"[a-z0-9][a-z0-9+.-]{1,60}")
 PYTHON_PIN = re.compile(r"(?:python-)?(3)\.(\d{1,2})(?:\.\d+)?", re.IGNORECASE)
 SPECIFIER = re.compile(r"\s*(~=|===|==|!=|<=|>=|<|>)\s*(\d+(?:\.\d+)*)(\.\*)?\s*")
 
+# A project that takes its version from git: setuptools-scm, or hatch-vcs or flit_scm, which use it. The code is fetched
+# without its history, so it is given a version that says it is not known. Only the step that installs the project is
+# given it, as a package that pip builds from its sdist in that step takes it too, in place of its own. The form for one
+# distribution would not, but hatch-vcs does not say which distribution it is, so that form is not read.
+SCM_VERSIONING = re.compile(r"setuptools[-_]scm|hatch[-_]vcs|flit[-_]scm|vcs[-_]versioning|use_scm_version")
+UNKNOWN_VERSION = "0+unknown"
+
 FAILURE_KINDS = (
     "missing_system_library",
     "version_conflict",
@@ -470,6 +477,16 @@ def project_install(repo: Path) -> bool:
     return text is not None and re.search(r"^\[(?:project|tool\.poetry)\]", text, re.MULTILINE) is not None
 
 
+def versioned_from_git(repo: Path) -> bool:
+    """Whether the project takes its version from git, with setuptools-scm or a backend built on it, which cannot work
+    here, since the code is fetched without its history."""
+    if (repo / "PKG-INFO").is_file():
+        return False
+    texts = [read_text(repo / name) or "" for name in ("pyproject.toml", "setup.cfg", "setup.py")]
+
+    return any(SCM_VERSIONING.search(text) for text in texts)
+
+
 def requirements_file_of(repo: Path) -> str | None:
     for name in ("requirements.txt", "requirements/requirements.txt", "requirements/base.txt", "requirements/main.txt"):
         if (repo / name).is_file() and not (repo / name).is_symlink():
@@ -550,6 +567,12 @@ def plan(
     packages = tuple(system_packages)
     steps: list[Step] = [system_step(packages)] if packages else []
     files: list[str] = []
+    versioned = versioned_from_git(repo)
+    version_env = ("env", f"SETUPTOOLS_SCM_PRETEND_VERSION={UNKNOWN_VERSION}") if versioned else ()
+    version_note = (
+        f"The project takes its version from git, and the code is fetched without its history, so it was installed as "
+        f"version {UNKNOWN_VERSION}."
+    )
     if conda_file is not None:
         text = read_text(repo / conda_file)
         if text is None:
@@ -590,14 +613,16 @@ def plan(
                 )
             )
         if installs and not conda_installs_project(text):
+            conda_pip = (f"{CONDA_PREFIX}/bin/python", "-m", "pip", "install", "--no-input")
             steps.append(
                 Step(
                     "project",
                     "Install the project itself, without its dependencies, which the environment file gave",
-                    (f"{CONDA_PREFIX}/bin/python", "-m", "pip", "install", "--no-input", "--no-deps", "./"),
+                    (*version_env, *conda_pip, "--no-deps", "./"),
                 )
             )
             notes.append("The environment file does not install the project itself, so it was installed after it.")
+            notes += [version_note] if versioned else []
         steps.append(Step("clean", "Clear conda's downloads", ("conda", "clean", "--all", "--yes", "--quiet")))
 
         return Recipe("conda", version, where, CONDA_IMAGE, tuple(files), packages, tuple(steps), tuple(notes))
@@ -609,7 +634,8 @@ def plan(
         steps.append(Step("requirements", f"Install what {requirements} asks for", (*pip, "-r", f"./{requirements}")))
     if installs:
         files += [name for name in ("setup.py", "setup.cfg", "pyproject.toml") if (repo / name).is_file()]
-        steps.append(Step("project", "Install the project itself", (*pip, "./")))
+        steps.append(Step("project", "Install the project itself", (*version_env, *pip, "./")))
+        notes += [version_note] if versioned else []
 
     return Recipe("pip", version, where, f"python:{version}-slim", tuple(files), packages, tuple(steps), tuple(notes))
 

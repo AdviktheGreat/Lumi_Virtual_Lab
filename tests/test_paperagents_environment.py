@@ -270,6 +270,53 @@ class TestPlan:
                 planned(tmp_path / str(number), {"environment.yml": text})
             assert caught.value.kind == "no_environment"
 
+    @pytest.mark.parametrize(
+        "files",
+        [
+            {
+                "pyproject.toml": '[build-system]\nrequires = ["hatchling", "hatch-vcs"]\n\n[project]\nname = "x"\n'
+                'dynamic = ["version"]\n\n[tool.hatch.version]\nsource = "vcs"\n'
+            },
+            {"pyproject.toml": PYPROJECT + "[tool.setuptools_scm]\n"},
+            {"setup.py": "from setuptools import setup\nsetup(use_scm_version=True)\n"},
+            {"setup.cfg": "[options]\nsetup_requires = setuptools-scm\n"},
+        ],
+    )
+    def test_a_project_that_takes_its_version_from_git_is_given_one(
+        self, tmp_path: Path, files: dict[str, Any]
+    ) -> None:
+        recipe = planned(tmp_path, {"requirements.txt": "numpy\n", **files})
+        assert commands(recipe)[0][0] == "python"
+        assert commands(recipe)[1][:2] == ["env", "SETUPTOOLS_SCM_PRETEND_VERSION=0+unknown"]
+        assert commands(recipe)[1][2:] == [*commands(recipe)[0][:-2], "./"]
+        assert any("version from git" in note and "0+unknown" in note for note in recipe.notes)
+
+    def test_and_after_a_conda_file_too(self, tmp_path: Path) -> None:
+        recipe = planned(
+            tmp_path,
+            {"environment.yml": "dependencies:\n  - python=3.11\n", "setup.py": "setup(use_scm_version=True)\n"},
+        )
+        project = next(step for step in recipe.steps if step.id == "project")
+        assert project.command[:2] == ("env", "SETUPTOOLS_SCM_PRETEND_VERSION=0+unknown")
+        assert any("version from git" in note for note in recipe.notes)
+
+    @pytest.mark.parametrize(
+        "files",
+        [
+            {"pyproject.toml": PYPROJECT},
+            {"pyproject.toml": PYPROJECT + "[tool.setuptools_scm]\n", "PKG-INFO": "Version: 1.2\n"},
+        ],
+    )
+    def test_not_when_it_has_a_version_of_its_own(self, tmp_path: Path, files: dict[str, Any]) -> None:
+        recipe = planned(tmp_path, files)
+        assert commands(recipe)[0][0] == "python"
+        assert not any("version from git" in note for note in recipe.notes)
+
+    def test_nor_when_the_project_is_not_installed(self, tmp_path: Path) -> None:
+        recipe = planned(tmp_path, {"requirements.txt": "setuptools-scm\n"})
+        assert all(command[0] != "env" for command in commands(recipe))
+        assert not any("version from git" in note for note in recipe.notes)
+
     def test_lock_files_that_are_not_used_are_said_not_to_be(self, tmp_path: Path) -> None:
         recipe = planned(tmp_path, {"requirements.txt": "x\n", "poetry.lock": "# lock\n", "uv.lock": ""})
         said = " ".join(recipe.notes)
