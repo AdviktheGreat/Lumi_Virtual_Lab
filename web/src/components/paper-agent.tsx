@@ -98,6 +98,7 @@ import {
   toolsJob,
   variantJob,
 } from "@/lib/paperagents";
+import { graphAddress } from "@/lib/paperagent-graph";
 import { hasChecks } from "@/lib/paperagent-checks";
 import { uploadProblem } from "@/lib/papers";
 import { tidy } from "@/lib/scientists";
@@ -210,6 +211,11 @@ function AgentHeader({ agent, working }: { agent: PaperAgent; working: boolean }
             </p>
           )}
           <p className="text-sm text-muted-foreground">{describeSteps(agent)}</p>
+          <p className="text-sm">
+            <Link href={graphAddress(agent.id)} className={LINK}>
+              How its paper relates to the others
+            </Link>
+          </p>
         </div>
         <Button
           variant="outline"

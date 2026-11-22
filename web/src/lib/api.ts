@@ -24,6 +24,7 @@ import type {
   CheckedToolDetail,
   DataLake,
   DataListing,
+  GraphQuery,
   Health,
   Job,
   KeyStatuses,
@@ -65,6 +66,7 @@ import type {
   PaperAgentGiven,
   PaperAgentHealth,
   PaperAgentUpdate,
+  PaperAgentGraph,
   PaperAgentLibrary,
   PaperAgentExport,
   PaperAgentImportCheck,
@@ -168,6 +170,18 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   }
 
   return parsed as T;
+}
+
+// What the graph is asked for, as the query of its address, with what is not asked for left out
+export function graphQuery(query: GraphQuery): string {
+  const asked = new URLSearchParams();
+  if (query.agent) asked.set("agent", query.agent);
+  if (query.kind) asked.set("kind", query.kind);
+  const about = query.about?.trim();
+  if (about) asked.set("about", about);
+  const text = asked.toString();
+
+  return text === "" ? "" : `?${text}`;
 }
 
 // What an offer is asked for, as the query of its address: each section by itself, and what is left out is not said
@@ -709,6 +723,9 @@ export const api = {
   dismissPaperAgentUpdate: (id: string) => request<PaperAgentUpdate>("DELETE", `/paperagents/${encodeURIComponent(id)}/update`),
   // The agents that have tools, each as a version that is pinned, with its package if one was made
   paperAgentLibrary: (signal?: AbortSignal) => request<PaperAgentLibrary>("GET", "/paperagents/library", undefined, signal),
+  // Words that have none of their own (only words such as "the", or only numbers) are refused (422 invalid)
+  paperAgentGraph: (query: GraphQuery, signal?: AbortSignal) =>
+    request<PaperAgentGraph>("GET", `/paperagents/graph${graphQuery(query)}`, undefined, signal),
   paperAgentExport: (id: string, signal?: AbortSignal) =>
     request<PaperAgentExport>("GET", `/paperagents/${encodeURIComponent(id)}/export`, undefined, signal),
   // Making a package is a job; a license that is flagged is refused (409 license) until it is said to go on

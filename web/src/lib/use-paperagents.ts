@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback } from "react";
-import { api } from "./api";
+import { api, graphQuery } from "./api";
+import { problemOf, type Problem } from "./errors";
 import type {
   PaperAgent,
   PaperAgentChecks,
@@ -11,6 +12,7 @@ import type {
   PaperAgentGiven,
   PaperAgentHealth,
   PaperAgentExport,
+  PaperAgentGraph,
   PaperAgentLibrary,
   PaperAgentOneGo,
   PaperAgentReading,
@@ -19,6 +21,7 @@ import type {
   PaperAgentRepository,
   PaperAgentsList,
   PaperAgentTools,
+  GraphQuery,
 } from "./types";
 import { useLooked, type Looked } from "./use-looked";
 
@@ -149,6 +152,32 @@ export function usePaperAgentExport(id: string, report: (error: unknown) => void
 
 export function usePaperAgentLibrary(report: (error: unknown) => void, again: string): Looked<PaperAgentLibrary> {
   const look = useCallback(() => api.paperAgentLibrary(), []);
+
+  return useLooked(look, report, again);
+}
+
+// The graph with the query that it is the answer to, or why it could not be had, so that a page never shows the graph of one query
+// under another, which it would while the next is looked at, or after the next failed
+export interface AnsweredGraph {
+  key: string;
+  graph: PaperAgentGraph | null;
+  problem: Problem | null;
+}
+
+// How the papers of the agents relate, as it is asked for. A query is a look of its own, and is looked at again as the steps that
+// make what it is made from end
+export function usePaperAgentGraph(query: GraphQuery, report: (error: unknown) => void, again: string): Looked<AnsweredGraph> {
+  const { agent, kind, about } = query;
+  const look = useCallback(async (): Promise<AnsweredGraph> => {
+    const asked = { agent, kind, about };
+    try {
+      return { key: graphQuery(asked), graph: await api.paperAgentGraph(asked), problem: null };
+    } catch (error) {
+      report(error);
+
+      return { key: graphQuery(asked), graph: null, problem: problemOf(error) };
+    }
+  }, [agent, kind, about, report]);
 
   return useLooked(look, report, again);
 }
