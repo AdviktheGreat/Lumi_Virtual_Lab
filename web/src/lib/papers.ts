@@ -26,15 +26,16 @@ export const DEFAULT_FUNCTIONS = 10;
 // The jobs that work on a run, only one of which is at work on it at a time
 export const WORK_KINDS = ["papers", "functions"];
 
-// The page has three parts, each its own address: the agents, which is the page's own, the bake-offs, which ask which method is
-// best for a task on a person's own data, and the surveys, which are the runs that read many papers for what they share
-export type PaperView = "agents" | "bakeoffs" | "surveys";
+// The page has four parts, each its own address: the agents, which is the page's own, the triages, which rank a listing of
+// papers by a look at their code, the bake-offs, which ask which method is best for a task on a person's own data, and the
+// surveys, which are the runs that read many papers for what they share
+export type PaperView = "agents" | "triage" | "bakeoffs" | "surveys";
 
 export const SURVEYS_ADDRESS = "/papers?view=surveys";
 
-// Which part the address's query asks for, which is the agents unless it says bake-offs or surveys
+// Which part the address's query asks for, which is the agents unless it says another
 export function paperView(view: string | null): PaperView {
-  return view === "surveys" || view === "bakeoffs" ? view : "agents";
+  return view === "surveys" || view === "bakeoffs" || view === "triage" ? view : "agents";
 }
 
 export const SOURCE_LABELS: Record<PaperSourceKind, string> = {
@@ -222,7 +223,7 @@ export const EMPTY_RUN: RunDraft = {
 type RunKey = "title" | "path" | "since" | "until" | "limit";
 
 // Whether text is a day as YYYY-MM-DD, which the browser's date field gives and the server asks for
-function isDay(text: string): boolean {
+export function isDay(text: string): boolean {
   const found = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
   if (!found) return false;
   const [year, month, day] = [Number(found[1]), Number(found[2]), Number(found[3])];
