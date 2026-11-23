@@ -317,7 +317,19 @@ class TestAskingForIt:
 
     def test_the_paper_must_be_read(self, agents: PaperAgents, ran: str, fake_client: FakeClient) -> None:
         assert why(agents.start_reproduction, ran, max_cost=1) == (422, "no_claims")
+        assert agents.reproduction(ran)["problem"]["message"].startswith("Read the paper first")
         assert asked(fake_client) == []
+
+    def test_a_paper_whose_reading_found_no_claim_is_not_asked_to_be_read(
+        self, agents: PaperAgents, ran: str, fake_client: FakeClient
+    ) -> None:
+        read_paper(agents, ran, fake_client, [])
+        said = "No claim was found when the paper was read, so there is nothing to try"
+
+        assert agents.reproduction(ran)["problem"] == {"code": "no_claims", "message": said}
+        with pytest.raises(module.ApiError) as raised:
+            agents.start_reproduction(ran, max_cost=1)
+        assert (raised.value.status, raised.value.code, str(raised.value)) == (422, "no_claims", said)
 
     def test_what_it_may_spend_is_said_for_it_and_for_nothing_else(
         self, agents: PaperAgents, ready: str, fake_client: FakeClient
@@ -589,6 +601,7 @@ class TestWhenWhatWasKeptIsNotWhatItIsHeldTo:
         shown = agents.reproduction(ready)
 
         assert shown["current"] is False and shown["claims"] == [] and shown["problem"]["code"] == "no_claims"
+        assert shown["problem"]["message"].startswith("Read the paper first")
         assert shown["kept"] is not None
 
     def test_a_paper_that_is_read_again_to_the_same_claims_leaves_it_as_it_was(

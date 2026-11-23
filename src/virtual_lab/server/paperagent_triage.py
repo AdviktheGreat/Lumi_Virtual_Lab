@@ -31,7 +31,7 @@ from virtual_lab.paperagents import preflight, triaging
 from virtual_lab.paperagents import repository as cloning
 from virtual_lab.paperagents import stock as stocking
 from virtual_lab.provenance import utc_timestamp
-from virtual_lab.records import DatabaseError
+from virtual_lab.records import DatabaseError, RecordNotFoundError
 from virtual_lab.server import paperagent_repository as kept_repository
 from virtual_lab.server.errors import ApiError, not_found
 from virtual_lab.server.jobs import Job, JobConflictError
@@ -366,7 +366,12 @@ class Triages:
             job.update(f"Looking up the abstract of {item['doi']}")
             try:
                 article = literature.get_article(item["doi"])
-            except (WebRequestError, DatabaseError, ValueError):
+            except RecordNotFoundError:
+                item["unread"] = "Its abstract was not found"
+                continue
+            except (WebRequestError, DatabaseError, ValueError) as error:
+                reason = str(error).rstrip(".") or type(error).__name__
+                item["unread"] = f"Its abstract could not be looked up ({reason})"
                 continue
             item["abstract"] = article.abstract
             if item["title"] == item["doi"] and article.title:
@@ -410,9 +415,13 @@ class Triages:
         for position, entry in enumerate(entries, 1):
             code, source, others = triaging.choose_code(entry["code"], entry["abstract"], self.paperagents.as_repo)
             if code is None:
-                records.append(
-                    triaging.unlooked(entry, position, None, None, [], "No address of code was found in the abstract.")
-                )
+                why = "No address of code was found in the abstract."
+                if entry.get("unread"):
+                    why = (
+                        f"{entry['unread']}, so where its code is is not known. Give the address of its code with its "
+                        "DOI, or begin the triage again."
+                    )
+                records.append(triaging.unlooked(entry, position, None, None, [], why))
             elif len(queued) >= most:
                 records.append(
                     triaging.unlooked(

@@ -600,6 +600,14 @@ def steps_of(agent: dict[str, Any]) -> dict[str, str]:
     return {step: steps[step] if steps.get(step) in STATUSES else "pending" for step in STEPS}
 
 
+def no_claims_message(agent: dict[str, Any]) -> str:
+    """Why there are no claims to try: the paper has not been read, or its reading found none."""
+    if steps_of(agent)["reading"] == "done":
+        return "No claim was found when the paper was read, so there is nothing to try"
+
+    return "Read the paper first, as it is the claims that were read from it that are tried"
+
+
 def describe_run(detail: dict[str, Any]) -> str:
     """What came of a tutorial, in a line for a job's log."""
     if detail["failure"] is not None:
@@ -2590,10 +2598,10 @@ class PaperAgents:
         ran = account["tutorials"]
         finished = sum(1 for tutorial in ran if tutorial["status"] == "ok")
         agreed = sum(1 for tutorial in ran if tutorial["stable"] is True)
-        left = f" {len(not_run)} were not run." if not_run else ""
+        left = f" {len(not_run)} {'was' if len(not_run) == 1 else 'were'} not run." if not_run else ""
 
         return (
-            f"Ran {len(ran)} tutorials: {finished} to the end, {len(ran) - finished} not. "
+            f"Ran {checking.plural(len(ran), 'tutorial')}: {finished} to the end, {len(ran) - finished} not. "
             f"{agreed} gave the same each time it was run.{left}"
         )
 
@@ -3537,7 +3545,7 @@ class PaperAgents:
         usable = linking.usable_numbers(claims)
         problem = None
         if not claims:
-            problem = ("no_claims", "Read the paper first, as it is the claims that were read from it that are tried")
+            problem = ("no_claims", no_claims_message(agent))
         elif not usable:
             problem = ("no_numbers", "The paper reports no number with digits enough to be told from one by chance")
         elif reference is None:
@@ -3593,7 +3601,7 @@ class PaperAgents:
             self.check_idle(agent_id)
             claims = kept_reading.claims_of(directory)
             if not claims:
-                raise ApiError(422, "no_claims", "Read the paper first, as it is its claims that are tried")
+                raise ApiError(422, "no_claims", no_claims_message(agent))
             if not linking.usable_numbers(claims):
                 raise ApiError(
                     422, "no_numbers", "The paper reports no number with digits enough to be told from one by chance"

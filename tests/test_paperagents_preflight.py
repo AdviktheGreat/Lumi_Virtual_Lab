@@ -83,6 +83,37 @@ class TestTheCasesThatAreAskedAbout:
         assert "nothing to run as a reference" in checks_of(result)["tutorials"]["detail"]
         assert "portability" not in statuses(result)
 
+    def test_tutorials_none_of_which_is_python_are_a_thing_to_weigh(self, tmp_path: Path) -> None:
+        files = {key: value for key, value in GOOD.items() if key != "examples/intro.ipynb"}
+        files |= {"vignettes/intro.Rmd": "```{r}\n1\n```\n", "vignettes/more.qmd": "```{r}\n2\n```\n"}
+
+        result = checked(tmp_path, files)
+
+        assert result["verdict"] == "ask"
+        assert statuses(result)["tutorials"] == "warn"
+        assert checks_of(result)["tutorials"]["detail"].startswith(
+            "2 tutorials or examples, and none of them is Python, which is all that is run here."
+        )
+
+    def test_more_tutorials_than_are_listed_none_of_whose_listed_is_python_are_a_thing_to_weigh(
+        self, tmp_path: Path
+    ) -> None:
+        files = {key: value for key, value in GOOD.items() if key != "examples/intro.ipynb"}
+        files |= {f"vignettes/v{number:02d}.Rmd": "```{r}\n1\n```\n" for number in range(30)}
+
+        result = checked(tmp_path, files)
+
+        assert statuses(result)["tutorials"] == "warn"
+        assert checks_of(result)["tutorials"]["detail"].startswith(
+            "30 tutorials or examples, and none of the first 25, which are those that would be run, is Python"
+        )
+
+    def test_tutorials_of_which_one_is_python_are_fine(self, tmp_path: Path) -> None:
+        result = checked(tmp_path, {**GOOD, "vignettes/intro.Rmd": "```{r}\n1\n```\n"})
+
+        assert statuses(result)["tutorials"] == "ok"
+        assert "2 tutorials or examples, of which 1 notebook" in checks_of(result)["tutorials"]["detail"]
+
     def test_a_readme_that_shows_use_without_a_tutorial_is_said_to_be_all_there_is(self, tmp_path: Path) -> None:
         result = checked(tmp_path, {key: value for key, value in GOOD.items() if key != "examples/intro.ipynb"})
 
@@ -308,6 +339,15 @@ class TestTheCost:
         assert guess["tutorials"] == 20
         tokens_in = 20 * 60_000 // 4 + 20 * 3_000
         assert guess["low"] == round(self.price(tokens_in, 20 * 2_000), 4)
+
+    def test_there_is_none_when_no_tutorial_that_would_be_run_is_python(self, tmp_path: Path) -> None:
+        files = {key: value for key, value in GOOD.items() if key != "examples/intro.ipynb"}
+        files["vignettes/intro.Rmd"] = "```{r}\n1\n```\n"
+
+        guess = estimate(stock_of(tmp_path, files), self.price)
+
+        assert (guess["low"], guess["high"], guess["tutorials"]) == (None, None, 0)
+        assert guess["basis"] == "None of the tutorials that would be run is Python, so no tool is made from them."
 
     def test_there_is_none_with_no_tutorials(self, tmp_path: Path) -> None:
         guess = estimate(stock_of(tmp_path, {"a.py": "x"}), self.price)

@@ -929,7 +929,12 @@ def run_reference(
     not_run: list[dict[str, str]] = []
     chosen = list(items[: limits.tutorials])
     not_run.extend(
-        {"path": item.path, "reason": f"Only {limits.tutorials} tutorials are run at a time."}
+        {
+            "path": item.path,
+            "reason": "Only one tutorial is run at a time."
+            if limits.tutorials == 1
+            else f"Only {limits.tutorials} tutorials are run at a time.",
+        }
         for item in items[limits.tutorials :]
     )
     for number, item in enumerate(chosen, 1):

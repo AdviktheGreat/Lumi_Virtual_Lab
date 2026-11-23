@@ -16,6 +16,7 @@ from typing import Any
 
 from virtual_lab.chat import describe_size
 from virtual_lab.paperagents.card import accession_is_read
+from virtual_lab.paperagents.reference import plan as plan_runs
 
 # What the sandbox runs, so that code in anything else is not something tools can be made from
 RUNNABLE = ("Python", "R")
@@ -127,12 +128,28 @@ def tutorials_check(stock: dict[str, Any]) -> dict[str, str]:
     count = stock["tutorials"]["count"]
     if count:
         notebooks = stock["notebooks"]["count"]
+        found = plural(count, "tutorial or example", "tutorials or examples")
+        runs = plan_runs(stock)
+        # Only the listed tutorials are ever run, so if none of them is Python, nothing is
+        if runs.skipped and not runs.runnable:
+            which = (
+                f"none of the first {len(runs.skipped):,}, which are those that would be run,"
+                if runs.more
+                else "none of them"
+            )
+            return check(
+                "tutorials",
+                title,
+                "warn",
+                f"{found}, and {which} is Python, which is all that is run here. There is nothing to run as a "
+                "reference, and nothing to make tools from.",
+            )
         return check(
             "tutorials",
             title,
             "ok",
-            f"{plural(count, 'tutorial or example')}, of which {plural(notebooks, 'notebook')}. They are what tools "
-            "are made from, and what they are checked against.",
+            f"{found}, of which {plural(notebooks, 'notebook')}. They are what tools are made from, and what they are "
+            "checked against.",
         )
     if stock["readme"] and stock["readme"]["example"]:
         return check(
@@ -319,6 +336,14 @@ def estimate(stock: dict[str, Any], price: Callable[[int, int], float] | None) -
     count = min(tutorials["count"], MAX_TUTORIALS_COSTED)
     if count == 0:
         return {"low": None, "high": None, "tutorials": 0, "basis": "There are no tutorials to make tools from."}
+    runs = plan_runs(stock)
+    if runs.skipped and not runs.runnable:
+        return {
+            "low": None,
+            "high": None,
+            "tutorials": 0,
+            "basis": "None of the tutorials that would be run is Python, so no tool is made from them.",
+        }
     characters = min(tutorials["characters"], count * MAX_CHARACTERS_PER_TUTORIAL)
     tokens_in = characters // CHARACTERS_PER_TOKEN + count * TOKENS_IN_PER_TUTORIAL
     tokens_out = count * TOKENS_OUT_PER_TUTORIAL

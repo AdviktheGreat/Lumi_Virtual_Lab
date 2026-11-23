@@ -302,7 +302,13 @@ class TestRunning:
         assert containers.runs[0]["seconds"] <= 180
         kept = agents.reference(prepared)["kept"]
         assert kept["limits"]["tutorials"] == 1 and len(kept["not_run"]) == 1
-        assert "Only 1 tutorials are run" in kept["not_run"][0]["reason"]
+        assert kept["not_run"][0]["reason"] == "Only one tutorial is run at a time."
+
+    def test_one_tutorial_run_is_said_as_one(self, agents: PaperAgents, prepared: str, containers: Containers) -> None:
+        job = run(agents, prepared, tutorials=1, repeats=1)
+
+        assert job.message is not None
+        assert job.message.startswith("Ran 1 tutorial: 1 to the end, 0 not.") and job.message.endswith("1 was not run.")
 
     @pytest.mark.parametrize(
         "options",
