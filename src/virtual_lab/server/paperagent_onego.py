@@ -345,6 +345,14 @@ class OneGo:
             directory, agent = self.paperagents.lookup(agent_id)
             earlier = self.load(directory)
             settings = self.settings_of(earlier["settings"] if earlier is not None else None, given)
+            if intake is not None:
+                # The code that is kept is what was fetched since the address and the ref were asked for before, by the
+                # person on the page of its code or by another of its addresses when that one could not be used. Going on
+                # with what was asked before would take that code away, and all that was made of it, to fetch it again.
+                if "repo" not in given and settings["repo"] not in (None, current):
+                    settings["repo"] = None
+                if "ref" not in given and settings["ref"] not in (None, intake.get("ref"), intake["commit"]):
+                    settings["ref"] = None
             if (
                 intake is not None
                 and settings["ref"] is not None
