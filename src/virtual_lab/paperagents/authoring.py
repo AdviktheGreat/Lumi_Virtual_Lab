@@ -298,7 +298,7 @@ def requirement_findings(missing: Sequence[Mapping[str, Any]]) -> list[dict[str,
         return []
     names = ", ".join(item["name"] for item in missing[:8])
     detail = (
-        f"{len(missing)} imports are named by no file that says what to install ({names}). A reader who installs "
+        f"{len(missing)} import{'s are' if len(missing) != 1 else ' is'} named by no file that says what to install ({names}). A reader who installs "
         "from those files will meet an ImportError when the code gets there. This is found by name, so an import that "
         "is installed under another name, or is only tried, may be a false alarm."
     )
@@ -399,8 +399,22 @@ def build_findings(
     ]
 
 
-def tutorial_findings(reference: Mapping[str, Any] | None, built: bool) -> list[dict[str, Any]]:
-    """What the running of the tutorials says to a reader."""
+def tutorial_findings(reference: Mapping[str, Any] | None, built: bool, running: bool = False) -> list[dict[str, Any]]:
+    """What the running of the tutorials says to a reader.
+
+    :param running: Whether the tutorials are being run now, when what is kept of them is the run so far and is not
+        given.
+    """
+    if running:
+        return [
+            finding(
+                "tutorials_running",
+                "examples",
+                "note",
+                "The tutorials are being run",
+                "What a reader would see when they run the examples is known once the run ends.",
+            )
+        ]
     if reference is None:
         if not built:
             return []
@@ -653,7 +667,9 @@ def card_of(facts: Mapping[str, Any]) -> str:
         ]
     lines += ["", "## Tutorials", ""]
     tutorials = facts["tutorials"]
-    if tutorials is None:
+    if facts.get("tutorials_running"):
+        lines.append("- Being run here now: what came of them is known once the run ends.")
+    elif tutorials is None:
         lines.append("- Not run here.")
     else:
         lines.append(

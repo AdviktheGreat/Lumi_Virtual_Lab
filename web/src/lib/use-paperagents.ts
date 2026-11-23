@@ -11,6 +11,7 @@ import type {
   PaperAgentEnvironment,
   PaperAgentGiven,
   PaperAgentHealth,
+  PaperAgentAuthor,
   PaperAgentExport,
   PaperAgentGraph,
   PaperAgentLibrary,
@@ -152,6 +153,13 @@ export function usePaperAgentExport(id: string, report: (error: unknown) => void
 
 export function usePaperAgentLibrary(report: (error: unknown) => void, again: string): Looked<PaperAgentLibrary> {
   const look = useCallback(() => api.paperAgentLibrary(), []);
+
+  return useLooked(look, report, again);
+}
+
+// What a reader of the agent's paper would hit, and the package for its authors, which is made of what every step keeps
+export function usePaperAgentAuthor(id: string, report: (error: unknown) => void, again: string): Looked<PaperAgentAuthor> {
+  const look = useCallback(() => api.paperAgentAuthor(id), [id]);
 
   return useLooked(look, report, again);
 }

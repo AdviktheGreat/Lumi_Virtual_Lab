@@ -66,6 +66,7 @@ import type {
   PaperAgentGiven,
   PaperAgentHealth,
   PaperAgentUpdate,
+  PaperAgentAuthor,
   PaperAgentGraph,
   PaperAgentLibrary,
   PaperAgentExport,
@@ -732,6 +733,8 @@ export const api = {
   exportPaperAgent: (id: string, acceptLicense: boolean) =>
     request<Job>("POST", `/paperagents/${encodeURIComponent(id)}/export`, { accept_license: acceptLicense }),
   removePaperAgentExport: (id: string) => request<PaperAgentExport>("DELETE", `/paperagents/${encodeURIComponent(id)}/export`),
+  paperAgentAuthor: (id: string, signal?: AbortSignal) =>
+    request<PaperAgentAuthor>("GET", `/paperagents/${encodeURIComponent(id)}/author`, undefined, signal),
   // The trying of the claims, which is held to what the tutorials gave, and where each first parts from the paper, which is made from
   // what is kept
   paperAgentReproduction: (id: string, signal?: AbortSignal) =>

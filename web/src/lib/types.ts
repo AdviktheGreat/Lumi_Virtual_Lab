@@ -3550,3 +3550,46 @@ export interface GraphQuery {
   kind?: GraphKind;
   about?: string;
 }
+
+// What a reader who takes a paper's code as a stranger would hit, for the person who wrote it or reviews it, made from what the steps
+// of its agent kept, with nothing run and no model asked
+export type AuthorSeverity = "block" | "warn" | "note";
+
+export type AuthorVerdict = "not_checked" | "blocked" | "to_fix" | "unfinished" | "ready";
+
+export type AuthorArea = "code" | "license" | "environment" | "examples" | "data" | "claims" | "steps";
+
+export interface AuthorFinding {
+  id: string;
+  area: AuthorArea;
+  severity: AuthorSeverity;
+  title: string;
+  detail: string;
+  // The files, lines, or names it is of, at most five
+  where: string[];
+  fix: string | null;
+}
+
+// A step that was not run, which would look at more, and the call that runs it
+export interface AuthorUnchecked {
+  id: "reading" | "repository" | "environment" | "reference" | "reproduction";
+  title: string;
+  how: string;
+}
+
+export interface PaperAgentAuthor {
+  id: string;
+  title: string;
+  verdict: AuthorVerdict;
+  summary: string;
+  counts: Record<AuthorSeverity, number>;
+  findings: AuthorFinding[];
+  not_checked: AuthorUnchecked[];
+  steps: Record<"read" | "code" | "environment" | "tutorials" | "claims", boolean>;
+  // Markdown, to put in the repository or send with the paper
+  card: string;
+  statement: string;
+  package: { ready: boolean; files: { name: string; bytes: number }[]; carries_tools: boolean };
+  meaning: string;
+  limits: { most_files_read: number; most_carried_package_bytes: number };
+}
