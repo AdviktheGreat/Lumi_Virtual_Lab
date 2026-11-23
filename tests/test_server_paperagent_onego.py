@@ -1176,6 +1176,26 @@ class TestWhatIsAskedFor:
         read_by(model_client, FIRST_CODE)
         assert go(onego, jobs, agent_id, repo=FIRST_CODE)["state"] == "done"
 
+    def test_code_fetched_from_another_address_since_it_was_asked_is_gone_on_with_and_not_taken_away(
+        self, onego: OneGo, agents: PaperAgents, jobs: Jobs, stack: Remotes, model_client: FakeClient
+    ) -> None:
+        stack.by_address[FIRST_CODE] = without(stack.default, NO_LICENSE)
+        agent_id = agent_of(agents, None)
+        read_by(model_client, FIRST_CODE)
+        assert go(onego, jobs, agent_id, 0.75, repo=FIRST_CODE, ref="main")["state"] == "waiting"
+        # The person fetches the code of another address on the page of its code, at another branch
+        building_tests.finish(agents.fetch_repository(agent_id, SECOND_CODE, "dev"))
+        fetched = len(stack.calls)
+
+        view = go(onego, jobs, agent_id, max_cost=None)
+
+        assert view["state"] == "done", view["stuck"]
+        assert view["settings"]["repo"] is None and view["settings"]["ref"] is None
+        assert agents.lookup(agent_id)[1]["repo"]["url"] == SECOND_CODE
+        assert len(stack.calls) == fetched and steps_of(agents.lookup(agent_id)[1])["tools"] == "done"
+        # Said again, another address is still refused while this code is kept
+        assert why(onego.start, agent_id, None, FIRST_CODE) == (409, "code_fetched")
+
     def test_code_that_was_fetched_at_one_ref_is_not_made_of_another(
         self, onego: OneGo, agents: PaperAgents, jobs: Jobs, stack: Remotes, model_client: FakeClient
     ) -> None:
