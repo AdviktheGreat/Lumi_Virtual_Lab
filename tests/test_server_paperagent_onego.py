@@ -481,7 +481,7 @@ class TestWhatTheCodeAllows:
         assert "no tutorial" in note_of(view, "reference")
         assert note_of(view, "tools").startswith("Not done: ") and note_of(view, "checks").startswith("Not done: ")
         assert view["summary"].startswith("Made as far as the code allows.")
-        assert view["summary"].endswith("It is given to the conversations you start from now on.")
+        assert view["summary"].endswith("only Python is run. It is given to the conversations you start from now on.")
         assert containers.runs == [] and is_given(agents.lookup(agent_id)[1])
 
     def test_tutorials_that_made_no_call_that_comes_to_a_tool_leave_the_agent_of_the_paper_and_its_environment(
@@ -847,6 +847,7 @@ class TestWhereThePersonIsToSay:
         assert (
             "Europe PMC does not give out the text" in view["stuck"]["reason"] and "Upload" in view["stuck"]["reason"]
         )
+        assert ".." not in view["stuck"]["reason"]
         assert model_client.completions.parse_calls == [] and states(view)["repository"] == "done"
 
         papers.texts[DOI] = paper_of("CellMapper", FIRST_CODE)

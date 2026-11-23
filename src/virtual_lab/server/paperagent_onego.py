@@ -127,8 +127,16 @@ class Cannot(Exception):
     it."""
 
     def __init__(self, reason: str) -> None:
+        reason = sentence(reason)
         super().__init__(reason)
         self.reason = reason
+
+
+def sentence(text: str) -> str:
+    """Text that ends as a sentence does, as what is said after it begins one."""
+    text = text.rstrip()
+
+    return text if not text or text.endswith((".", "!", "?")) else f"{text}."
 
 
 def printable(text: str) -> str:
@@ -693,8 +701,8 @@ class OneGo:
                     "waiting",
                     "reading",
                     "paper_text",
-                    f"The text of the paper could not be had: {child.error or 'it failed'}. Upload its file on the "
-                    "paper's page, and go on.",
+                    f"The text of the paper could not be had: {(child.error or 'it failed').rstrip().rstrip('.')}. "
+                    "Upload its file on the paper's page, and go on.",
                 )
             raise Stuck("failed", step, "failed", child.error or "It failed")
         if child.state == "stopped":

@@ -356,10 +356,17 @@ class TestWhichCodeIsLookedAt:
         lookups.abstracts[doi(1)] = WebRequestError("Europe PMC is down")
         code.projects[ONE] = project(marker)
 
-        found = made(triages, papers=[{"doi": doi(1)}, given(2, says(ONE))])
+        found = made(triages, papers=[{"doi": doi(1)}, given(2, says(ONE)), {"doi": doi(3)}])
 
         assert found["state"] == "done"
         assert by_doi(found)[doi(1)]["tier"] == "no_code" and by_doi(found)[doi(2)]["tier"] == "go"
+        # It is said that the abstract was not had, and not that it has no address of code
+        assert by_doi(found)[doi(1)]["why"] == (
+            "Its abstract could not be looked up (Europe PMC is down), so where its code is is not known. Give the "
+            "address of its code with its DOI, or begin the triage again."
+        )
+        assert by_doi(found)[doi(3)]["tier"] == "no_code"
+        assert by_doi(found)[doi(3)]["why"].startswith("Its abstract was not found, so where its code is is not known.")
 
     def test_a_title_that_was_given_is_kept_and_one_that_was_not_is_the_looked_up_one_on_a_line(
         self, triages: Triages, code: Code, lookups: Lookups, marker: Path

@@ -515,6 +515,93 @@ class TestNamingAndDescribing:
             "required": ["region"],
         }
 
+    def test_alternatives_at_the_top_level_are_made_one_object_that_says_them(self) -> None:
+        # As Paperclip's import-attachment gives it, which OpenAI refuses for the anyOf at its top level
+        schema = {
+            "type": "object",
+            "properties": {"source_url": {"type": "string"}, "file": {"type": "object"}, "folder": {"type": "string"}},
+            "anyOf": [{"required": ["source_url"]}, {"required": ["file"]}],
+        }
+
+        assert tool_parameters(schema) == {
+            "type": "object",
+            "properties": {"source_url": {"type": "string"}, "file": {"type": "object"}, "folder": {"type": "string"}},
+            "description": "Give at least one of these: source_url; file.",
+        }
+
+    def test_each_branch_s_properties_are_kept_and_all_of_s_requirements_hold(self) -> None:
+        schema = {
+            "description": "Where to look.",
+            "properties": {"gene": {"type": "string"}},
+            "required": ["gene"],
+            "allOf": [{"properties": {"species": {"type": "string"}}, "required": ["species", "gene"]}],
+            "oneOf": [
+                {
+                    "properties": {"start": {"type": "integer"}, "end": {"type": "integer"}},
+                    "required": ["start", "end"],
+                },
+                {"properties": {"region": {"type": "string"}}, "required": ["region"]},
+            ],
+            "not": {"required": ["everything"]},
+        }
+
+        assert tool_parameters(schema) == {
+            "description": "Where to look. Give exactly one of these: start and end; region.",
+            "type": "object",
+            "properties": {
+                "gene": {"type": "string"},
+                "species": {"type": "string"},
+                "start": {"type": "integer"},
+                "end": {"type": "integer"},
+                "region": {"type": "string"},
+            },
+            "required": ["gene", "species"],
+        }
+
+    def test_a_property_that_branches_give_in_different_ways_may_be_any_of_them(self) -> None:
+        schema = {
+            "type": "object",
+            "oneOf": [
+                {"properties": {"action": {"const": "create"}, "name": {"type": "string"}}, "required": ["action"]},
+                {"properties": {"action": {"const": "delete"}, "name": {"type": "string"}}, "required": ["action"]},
+            ],
+        }
+
+        assert tool_parameters(schema)["properties"] == {
+            "action": {"anyOf": [{"const": "create"}, {"const": "delete"}]},
+            "name": {"type": "string"},
+        }
+
+    def test_references_into_the_alternatives_are_written_out_before_they_are_left_out(self) -> None:
+        region = {"type": "string", "description": "As chr:start-end."}
+        schema = {
+            "type": "object",
+            "anyOf": [
+                {"properties": {"region": region}, "required": ["region"]},
+                {"properties": {"regions": {"type": "array", "items": {"$ref": "#/anyOf/0/properties/region"}}}},
+                {"$ref": "#/definitions/ByGene"},
+            ],
+            "definitions": {"ByGene": {"properties": {"gene": {"type": "string"}}, "required": ["gene"]}},
+        }
+
+        properties = tool_parameters(schema)["properties"]
+
+        assert properties["regions"]["items"] == region and properties["gene"] == {"type": "string"}
+        assert "$ref" not in json.dumps(properties)
+
+    def test_a_reference_to_itself_is_left_as_it_is(self) -> None:
+        schema = {
+            "type": "object",
+            "anyOf": [{"properties": {"node": {"$ref": "#/anyOf/0/properties/node"}}, "required": ["node"]}],
+        }
+
+        assert tool_parameters(schema)["properties"] == {"node": {"$ref": "#/anyOf/0/properties/node"}}
+
+    def test_alternatives_that_need_nothing_are_not_said(self) -> None:
+        schema = {"type": "object", "anyOf": [{"properties": {"a": {"type": "string"}}}, {"required": ["b"]}]}
+
+        assert tool_parameters(schema) == {"type": "object", "properties": {"a": {"type": "string"}}}
+
     def test_parameters_are_always_an_object_with_properties(self) -> None:
         assert tool_parameters({}) == {"type": "object", "properties": {}}
         assert tool_parameters(None) == {"type": "object", "properties": {}}

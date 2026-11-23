@@ -120,6 +120,10 @@ MIN_HIDDEN_CHARS = 4
 # The longest name a tool may have, which is what OpenAI's API accepts
 MAX_TOOL_NAME_CHARS = 64
 
+# What OpenAI and Anthropic refuse at the top level of a tool's parameters, which must be one object
+TOP_LEVEL_ALTERNATIVES = {"anyOf": "at least one", "oneOf": "exactly one"}
+TOP_LEVEL_REFUSED = ("allOf", "enum", "const", "not")
+
 # Seconds beyond a call's own time limit to wait for the server's answer, before giving up on a
 # connection that cannot even say it timed out
 CALL_TIMEOUT_MARGIN = 5.0
@@ -588,11 +592,98 @@ def tool_name(prefix: str, name: str) -> str:
 def tool_parameters(schema: Any) -> dict[str, Any]:
     """A tool's input schema as a model is given it: written out in full, without titles."""
     parameters = {key: value for key, value in dict(schema or {}).items() if key != "$schema"}
-    parameters = inline_references(clean_schema(parameters))
+    parameters = one_object(inline_references(clean_schema(parameters)))
     parameters.setdefault("type", "object")
     parameters.setdefault("properties", {})
 
     return parameters
+
+
+def one_object(schema: dict[str, Any]) -> dict[str, Any]:
+    """A schema with alternatives or conditions at its top level, which providers refuse there, as one object.
+
+    Each branch's properties are put on the object, a property that branches give in different ways as any of them.
+    What all the branches of allOf require, it requires; what the alternatives of anyOf or oneOf require is said in the
+    schema's description, as the model cannot be held to it. Anything else at the top level that providers refuse is
+    left out, and the server still checks each call. A reference into the schema is written out first, since what it
+    refers to may be in what is left out.
+    """
+    if not any(key in schema for key in (*TOP_LEVEL_ALTERNATIVES, *TOP_LEVEL_REFUSED)):
+        return schema
+    schema = resolve_pointers(schema)
+    merged = {key: value for key, value in schema.items() if key not in (*TOP_LEVEL_ALTERNATIVES, *TOP_LEVEL_REFUSED)}
+    properties = dict(merged.get("properties") or {})
+    branched: dict[str, list[Any]] = {}
+    required = list(merged.get("required") or [])
+    said: list[str] = []
+
+    def take(branch: Any) -> list[str]:
+        if not isinstance(branch, dict):
+            return []
+        for name, value in (branch.get("properties") or {}).items():
+            if name not in properties:
+                ways = branched.setdefault(name, [])
+                if value not in ways:
+                    ways.append(value)
+        return [name for name in branch.get("required") or [] if isinstance(name, str)]
+
+    for branch in schema.get("allOf") or []:
+        required += [name for name in take(branch) if name not in required]
+    for keyword, how_many in TOP_LEVEL_ALTERNATIVES.items():
+        needs = [take(branch) for branch in schema.get(keyword) or []]
+        if needs and all(needs):
+            ways = "; ".join(" and ".join(each) for each in needs)
+            said.append(f"Give {how_many} of these: {ways}.")
+    if said:
+        merged["description"] = " ".join([*filter(None, [merged.get("description")]), *said])
+    for name, ways in branched.items():
+        properties[name] = ways[0] if len(ways) == 1 else {"anyOf": ways}
+    merged["properties"] = properties
+    if required:
+        merged["required"] = required
+
+    return merged
+
+
+def resolve_pointers(schema: dict[str, Any]) -> dict[str, Any]:
+    """A schema with each reference to a place in itself, such as #/anyOf/0/properties/x, written out where it is.
+
+    One that cannot be followed, or that refers to itself, is left as it is.
+    """
+
+    class Unresolvable(Exception):
+        pass
+
+    def find(pointer: str) -> Any:
+        found: Any = schema
+        for part in pointer[2:].split("/") if pointer != "#/" else []:
+            part = part.replace("~1", "/").replace("~0", "~")
+            if isinstance(found, dict) and part in found:
+                found = found[part]
+            elif isinstance(found, list) and part.isdigit() and int(part) < len(found):
+                found = found[int(part)]
+            else:
+                raise Unresolvable(pointer)
+        return found
+
+    def resolve(value: Any, seen: tuple[str, ...]) -> Any:
+        if isinstance(value, list):
+            return [resolve(item, seen) for item in value]
+        if not isinstance(value, dict):
+            return value
+        reference = value.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/"):
+            if reference in seen:
+                raise Unresolvable(reference)
+            siblings = {key: item for key, item in value.items() if key != "$ref"}
+            target = resolve(find(reference), (*seen, reference))
+            return {**target, **resolve(siblings, seen)} if isinstance(target, dict) else target
+        return {key: resolve(item, seen) for key, item in value.items()}
+
+    try:
+        return resolve(schema, ())
+    except Unresolvable:
+        return schema
 
 
 def wraps_result(tool: Any) -> bool:
